@@ -1,7 +1,7 @@
 /**
  * Shared types for the long-lived session core (src/agent/session/**).
  *
- * This module is the SOLE owner of `SessionRole`, `EnvelopeKind` (the full 8-member union
+ * This module is the SOLE owner of `SessionRole`, `EnvelopeKind` (the full 10-member union
  * used by envelopes and the ledger), `Envelope`/`EnvelopeMeta`, `TurnKind`, and the
  * `JournalEntry` discriminated union (plan amendment A1). Downstream packages (P4-P8) import
  * from here rather than redeclaring any of these.
@@ -56,10 +56,10 @@ export type SessionQueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>, o
  * The full set of envelope kinds the ledger and conductor key off of. `queued.human` in the
  * ledger keys on `kind === 'discord'`; every other kind increments `queued.other`.
  */
-export type EnvelopeKind = 'discord' | 'perch' | 'notification' | 'catchup' | 'wrapup' | 'resume' | 'compact' | 'boot' | 'task';
+export type EnvelopeKind = 'discord' | 'perch' | 'notification' | 'catchup' | 'wrapup' | 'resume' | 'compact' | 'boot' | 'task' | 'peer';
 
 /** Every {@link EnvelopeKind} member, for table-driven tests that must stay exhaustive as the union grows. */
-export const ENVELOPE_KINDS: readonly EnvelopeKind[] = ['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task'];
+export const ENVELOPE_KINDS: readonly EnvelopeKind[] = ['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task', 'peer'];
 
 /**
  * The minimal envelope shape the ledger keys `turn_submitted` events on — distinct from
@@ -94,6 +94,14 @@ export interface Envelope {
     authorId?:    string
     /** Present only for envelopes that originated from a human message (currently: discord). */
     origin?:      { kind: 'human' }
+    /**
+     * Present only on `peer`-kind envelopes (session-peers block 2): the sender of a
+     * `<cross-session-message>` prompt the SDK delivered from another Claude Code process on
+     * this machine. `from` is the raw `uds:/tmp/cc-socks/<pid>.sock` reply address (verified as
+     * a working `SendMessage` `to:` target by the block-0 probe, 2026-09-09); `fromName` is the
+     * peer-registry name the tag carried, absent when the tag named none.
+     */
+    peer?:        { from: string, fromName?: string }
     /**
      * How the host queues/escalates this envelope: `'human'` interrupts promptly (a direct
      * message), `'wake'` escalates after a wait (perch, catch-up, resume, a waking

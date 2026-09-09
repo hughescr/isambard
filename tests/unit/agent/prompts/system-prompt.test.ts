@@ -1,10 +1,12 @@
 import { describe, test, expect } from 'bun:test';
 import {
     buildSessionSystemPrompt,
+    buildPeerPrompt,
     SESSION_BASE_PROMPT,
     CONVERSATION_ROLE_PROMPT,
     PERCH_ROLE_PROMPT
 } from '../../../../src/agent/prompts/system-prompt';
+import { SESSION_PEER_NAMES } from '../../../../src/agent/session/query-options';
 
 /**
  * Test-local prompt-hygiene check shared by every `buildSessionSystemPrompt` case: no
@@ -124,6 +126,73 @@ describe.concurrent('system-prompt', () => {
             // arriving as a separate notification envelope.
             expect(SESSION_BASE_PROMPT).toContain('When it finishes, the host wakes you with its result in a new turn; whatever you write in that turn is delivered to the channel and person the work was launched for, exactly like a normal reply — so report as you would to them, or write nothing if there is nothing worth saying.');
             expect(SESSION_BASE_PROMPT).not.toContain('its result arrives as its own envelope, a notification, rather than as a continuation of the turn that launched it.');
+        });
+
+        test.each([
+            ['conversation', 'Izzy-main', 'Izzy-perch'],
+            ['perch', 'Izzy-perch', 'Izzy-main'],
+        ] as const)('role=%s names itself %s and its peer %s, and says SendMessage to the peer arrives as a [PEER ...] envelope', (role, self, other) => {
+            const prompt = buildSessionSystemPrompt({ role, identity: 'id' });
+
+            expect(prompt).toContain(`You are running as \`${self}\``);
+            expect(prompt).toContain(`\`SendMessage\` to \`${other}\``);
+            expect(prompt).toContain(`[PEER · ${self} · `);
+            assertPromptHygiene(prompt);
+        });
+
+        test('the names in the prompt are the same names query-options gives the SDK, not a second hard-coded copy', () => {
+            for(const role of ['conversation', 'perch'] as const) {
+                expect(buildPeerPrompt(role)).toContain(SESSION_PEER_NAMES[role]);
+            }
+            expect(buildPeerPrompt('conversation')).toContain(SESSION_PEER_NAMES.perch);
+            expect(buildPeerPrompt('perch')).toContain(SESSION_PEER_NAMES.conversation);
+        });
+
+        test('both roles carry the "no Izzy- prefix means it is probably Craig\'s own session" rule, with the caveat that messaging one can confuse its work', () => {
+            for(const role of ['conversation', 'perch'] as const) {
+                const prompt = buildSessionSystemPrompt({ role, identity: 'id' });
+                expect(prompt).toContain('does not start with `Izzy-`');
+                expect(prompt).toContain('Craig\'s own Claude Code sessions');
+                expect(prompt).toContain('confuse that agent\'s own work');
+                assertPromptHygiene(prompt);
+            }
+        });
+
+        test('both roles carry the shared-subscription quota reminder: utilization can move without Izzy doing anything', () => {
+            // Block 5's text, owned by block 1: a jump in utilization is not evidence of Izzy's own spend.
+            for(const role of ['conversation', 'perch'] as const) {
+                const prompt = buildSessionSystemPrompt({ role, identity: 'id' });
+                expect(prompt).toContain('shared');
+                expect(prompt).toContain('not evidence of your own spending');
+                assertPromptHygiene(prompt);
+            }
+            expect(SESSION_BASE_PROMPT).toContain('five-hour and weekly utilization');
+        });
+
+        test('the peer section is appended after the role section and before the identity text', () => {
+            const prompt = buildSessionSystemPrompt({ role: 'perch', identity: 'unique-identity-marker' });
+            const roleIndex = prompt.indexOf(PERCH_ROLE_PROMPT);
+            const peerIndex = prompt.indexOf(buildPeerPrompt('perch'));
+            const identityIndex = prompt.indexOf('## Identity');
+
+            expect(roleIndex).toBeGreaterThan(-1);
+            expect(peerIndex).toBeGreaterThan(roleIndex);
+            expect(identityIndex).toBeGreaterThan(peerIndex);
+            // A blank line between every section — without it the markdown headings run into
+            // the previous section's last sentence.
+            expect(prompt).toContain(`${PERCH_ROLE_PROMPT}\n\n${buildPeerPrompt('perch')}\n\n## Identity`);
+            expect(prompt).toContain(`${SESSION_BASE_PROMPT}\n\n${PERCH_ROLE_PROMPT}`);
+        });
+
+        test('SESSION_BASE_PROMPT catalogues the [PEER ...] envelope kind alongside the others', () => {
+            expect(SESSION_BASE_PROMPT).toContain('[PEER ·');
+        });
+
+        test('buildPeerPrompt passes hygiene on its own for both roles', () => {
+            for(const role of ['conversation', 'perch'] as const) {
+                expect(buildPeerPrompt(role).length).toBeGreaterThan(0);
+                assertPromptHygiene(buildPeerPrompt(role));
+            }
         });
 
         test('SESSION_BASE_PROMPT, CONVERSATION_ROLE_PROMPT and PERCH_ROLE_PROMPT are non-empty and pass hygiene on their own', () => {

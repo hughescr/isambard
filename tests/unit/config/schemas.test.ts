@@ -130,6 +130,46 @@ describe('agentConfigSchema', () => {
         const result = agentConfigSchema.safeParse(config);
         expect(result.success).toBe(false);
     });
+
+    // Session-peers block 5 (docs/plans/session-peers-and-quota.md): quota thresholds and the
+    // perch ceiling.
+    test('should fill in the whole quota block when it is not provided', () => {
+        const result = agentConfigSchema.safeParse({ oauthToken: 'test-token' });
+
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.quota).toEqual({ pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] });
+        }
+    });
+
+    test('should fill in each quota default individually when the block is partially provided', () => {
+        const result = agentConfigSchema.safeParse({ oauthToken: 'test-token', quota: { perchPauseAtPercent: 80 } });
+
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.quota.perchPauseAtPercent).toBe(80);
+            expect(result.data.quota.pollIntervalMs).toBe(300_000);
+            expect(result.data.quota.notifyAtPercents).toEqual([75, 90]);
+        }
+    });
+
+    test('should coerce quota notifyAtPercents strings (the env-var array form) to numbers', () => {
+        const result = agentConfigSchema.safeParse({ oauthToken: 'test-token', quota: { notifyAtPercents: ['60', '80'] } });
+
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.quota.notifyAtPercents).toEqual([60, 80]);
+        }
+    });
+
+    test('should reject a quota percent above 100', () => {
+        expect(agentConfigSchema.safeParse({ oauthToken: 'test-token', quota: { perchPauseAtPercent: 101 } }).success).toBe(false);
+        expect(agentConfigSchema.safeParse({ oauthToken: 'test-token', quota: { notifyAtPercents: [101] } }).success).toBe(false);
+    });
+
+    test('should reject a non-positive quota pollIntervalMs', () => {
+        expect(agentConfigSchema.safeParse({ oauthToken: 'test-token', quota: { pollIntervalMs: 0 } }).success).toBe(false);
+    });
 });
 
 describe('emailConfigSchema', () => {

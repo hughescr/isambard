@@ -16,7 +16,7 @@ import { z } from 'zod';
 import type { JournalEntry, SessionRole } from '@/agent';
 
 /** Mirrors {@link EnvelopeKind} (src/agent/session/types.ts) as literal values — the type itself stays owned there; this is just the runtime list a zod schema needs. */
-const envelopeKindSchema = z.enum(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task']);
+const envelopeKindSchema = z.enum(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task', 'peer']);
 
 /** Mirrors {@link SessionRole} (src/agent/session/types.ts) as literal values, for the same reason as {@link envelopeKindSchema}. */
 const sessionRoleSchema = z.enum(['conversation', 'perch']);

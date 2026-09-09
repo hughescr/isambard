@@ -95,6 +95,26 @@ export const EXPLICIT_AGENTS = {
     },
 };
 
+/**
+ * The name each session role registers in the machine-wide Claude Code peer registry — the
+ * string a peer passes to `SendMessage({ to })` and sees in `ListAgents`.
+ *
+ * Set two ways below, because they are two different things (block-0 probe, 2026-09-09, see
+ * `docs/plans/session-peers-and-quota.md` "P1"): `Options.title` sets the persisted session
+ * title and the `session_title` field on every hook payload, but it NEVER reaches the peer
+ * registry (a peer addressed by title got `No agent named 'Izzy-probe-B' is reachable`). The
+ * only knob that sets the messaging identity is the `CLAUDE_CODE_SESSION_NAME` environment
+ * variable. Both are set to this same string so the two identities cannot drift.
+ *
+ * The `Izzy-` prefix is load-bearing: `src/agent/prompts/system-prompt.ts` tells both sessions
+ * that a listed peer WITHOUT it is most likely one of Craig's own Claude Code sessions, and
+ * `src/agent/hooks/agent-naming.ts` stamps the same prefix on every sub-agent and workflow.
+ */
+export const SESSION_PEER_NAMES: Record<SessionRole, string> = {
+    conversation: 'Izzy-main',
+    perch:        'Izzy-perch',
+};
+
 /** Cron tools disallowed for every session — cron scheduling stays host-driven, not agent-driven. */
 const DISALLOWED_CRON_TOOLS = ['CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup'];
 
@@ -208,6 +228,8 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
         model:           mainModel,
         fallbackModel,
         systemPrompt,
+        // Persisted session title only — NOT the messaging identity; see SESSION_PEER_NAMES.
+        title:           SESSION_PEER_NAMES[role],
         tools:           EXPLICIT_TOOLS,
         agents:          EXPLICIT_AGENTS,
         mcpServers:      buildMcpServers(mcpServers),
@@ -236,9 +258,14 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
         agentProgressSummaries: true,
         hooks,
         ...(resume && { resume }),
-        // Stryker disable StringLiteral,ObjectLiteral: Environment config - value doesn't affect test behavior
         env:                    {
             ...process.env,
+            // The peer-registry identity: the name `ListAgents` shows and `SendMessage({ to })`
+            // addresses. `Options.title` does NOT set it (block-0 probe P1) — this env var is the
+            // only knob that does, so unlike the rest of this block it is behaviour, not config,
+            // and is deliberately left outside the Stryker-disabled region below.
+            CLAUDE_CODE_SESSION_NAME:        SESSION_PEER_NAMES[role],
+            // Stryker disable StringLiteral,ObjectLiteral: Environment config - value doesn't affect test behavior
             // Defer rarely-used tool schemas behind ToolSearch once the tool set is large enough (SDK default threshold).
             ENABLE_TOOL_SEARCH:              'auto',
             // settingSources ['project'] is needed for Izzy's own agents/skills under scratch/.claude, but it also loads

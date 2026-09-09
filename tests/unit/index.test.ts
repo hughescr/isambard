@@ -35,6 +35,7 @@ import * as staticPluginLoaderModule from '@/agent/plugin-loader';
 import * as staticQuestionRegistryModule from '@/agent/question-registry';
 import * as staticSessionCleanupModule from '@/agent/session-cleanup';
 import * as staticAppLifecycleModule from '@/app/lifecycle';
+import { createSessionAmbience as importedCreateSessionAmbience } from '@/app/sessions';
 import * as staticSessionsModule from '@/app/sessions';
 import type { SessionConfig } from '@/config';
 import * as staticConfigModule from '@/config/loader';
@@ -67,6 +68,7 @@ import * as staticTaskSessionModule from '@/storage/task-session';
 const realCreateNotificationBridge = importedCreateNotificationBridge;
 const realCreateHealthOutageCoalescer = importedCreateHealthOutageCoalescer;
 const realCreateHealthNotificationListener = importedCreateHealthNotificationListener;
+const realCreateSessionAmbience = importedCreateSessionAmbience;
 
 const sessionConfig: SessionConfig = {
     compactThresholdPercent: 60,
@@ -208,6 +210,8 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
                 oauthToken:    'test-oauth-token-123',
                 mainModel:     'sonnet',
                 fallbackModel: 'sonnet',
+                // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
             },
             session: { ...sessionConfig, ...sessionOverrides },
             email:   {
@@ -300,6 +304,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123',
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -365,6 +371,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123',
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -522,6 +530,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123',
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -722,20 +732,27 @@ describe('createApp', () => {
             return { open: mock(async () => ({ sessionId, resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
         }
 
-        /** A controllable `LedgerStore` double: `emit` synchronously fires whatever was passed to `subscribe`. */
+        /**
+         * A controllable `LedgerStore` double: `emit` synchronously fires EVERY listener passed to
+         * `subscribe`, matching the real store — the composition root subscribes several
+         * consumers (the daily cost ceiling and, since session-peers block 5, the quota notes) to
+         * the same store, and a single-listener double would silently hide all but the last.
+         */
         function fakeLedgerStoreWithEmit(): LedgerStore & { emit: (ledger: Ledger, event: LedgerEvent) => void } {
-            let listener: ((ledger: Ledger, event: LedgerEvent) => void) | undefined;
+            const listeners = new Set<(ledger: Ledger, event: LedgerEvent) => void>();
             return {
                 get:       mock(() => initialLedger('conversation')),
                 dispatch:  mock(() => undefined),
                 subscribe: mock((cb: (ledger: Ledger, event: LedgerEvent) => void) => {
-                    listener = cb;
+                    listeners.add(cb);
                     return () => {
-                        listener = undefined;
+                        listeners.delete(cb);
                     };
                 }),
                 emit(ledger: Ledger, event: LedgerEvent) {
-                    listener?.(ledger, event);
+                    for(const listener of listeners) {
+                        listener(ledger, event);
+                    }
                 },
             };
         }
@@ -878,6 +895,113 @@ describe('createApp', () => {
 
             await expect(createApp()).resolves.toBeDefined();
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.any(String));
+        });
+
+        // Session-peers block 5: the quota ceiling rides the SAME isCostPaused predicate, so the
+        // perch scheduler's skip and presence's paused marker need no new plumbing.
+        describe('Quota ceiling (session-peers block 5)', () => {
+            const RESETS_AT = new Date('2026-09-09T22:30:00.000Z');
+
+            /** A ledger carrying one five-hour quota reading, as a `rate_limit_event` would leave it. */
+            function ledgerAtFiveHour(role: 'conversation' | 'perch', utilization: number): Ledger {
+                return { ...initialLedger(role), quota: { fiveHour: { utilization, resetsAt: RESETS_AT }, source: 'headers', at: new Date('2026-09-09T20:00:00.000Z') } };
+            }
+
+            test('a five-hour window at agent.quota.perchPauseAtPercent pauses isCostPaused(), with no daily cost ceiling configured at all', async () => {
+                wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: undefined, timezone: 'UTC' });
+                const conversationLedgerStore = fakeLedgerStoreWithEmit();
+                const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                    conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+                });
+                const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+                    start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                });
+                spies.push(createConversationConductorSpy, createBotSpy);
+
+                const { createApp } = staticIndexModule;
+                await createApp();
+
+                const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+                conversationLedgerStore.emit(ledgerAtFiveHour('conversation', 89), tickEvent());
+                expect(botOptions.isCostPaused!()).toBe(false);
+
+                conversationLedgerStore.emit(ledgerAtFiveHour('conversation', 90), tickEvent());
+                expect(botOptions.isCostPaused!()).toBe(true);
+            });
+
+            test('the perch ledger feeds the same quota ceiling', async () => {
+                wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: undefined, timezone: 'UTC' });
+                const perchLedgerStore = fakeLedgerStoreWithEmit();
+                const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                    conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+                });
+                const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
+                    conductor: fakeConductor('perch-sess'), ledgerStore: perchLedgerStore, compactionTelemetry: {} as CompactionTelemetry, setWakeTurnDelivery: mock(() => undefined),
+                });
+                const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+                    start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                });
+                spies.push(createConversationConductorSpy, createPerchConductorSpy, createBotSpy);
+
+                const { createApp } = staticIndexModule;
+                await createApp();
+
+                const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+                perchLedgerStore.emit(ledgerAtFiveHour('perch', 95), tickEvent());
+
+                expect(botOptions.isCostPaused!()).toBe(true);
+            });
+
+            test('the shared quota poller\'s recurring timer is armed by app.start() and cancelled by app.stop()', async () => {
+                // Without this the configured agent.quota.pollIntervalMs is dead config and an
+                // idle process never notices quota Craig's own sessions spent.
+                wireHappyPathForCleanupTests(spies, { timezone: 'UTC' });
+                const pollerStart = mock(() => undefined);
+                const pollerStop = mock(() => undefined);
+                spies.push(
+                    spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                        client:    { destroy: mock(() => {}) } as unknown as DynamoDBClient,
+                        docClient: { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient,
+                        tableName: 'IsambardMemory',
+                    }),
+                    spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                        conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+                    }),
+                    spyOn(staticSessionsModule, 'createSessionAmbience').mockImplementation(ambienceParams => ({
+                        ...realCreateSessionAmbience(ambienceParams),
+                        quotaPoller: { start: pollerStart, stop: pollerStop, noteResult: mock(() => undefined), poll: mock(async () => undefined) },
+                    }))
+                );
+
+                const { createApp } = staticIndexModule;
+                const app = await createApp();
+                expect(pollerStart).not.toHaveBeenCalled();
+
+                await app.start();
+                expect(pollerStart).toHaveBeenCalledTimes(1);
+                expect(pollerStop).not.toHaveBeenCalled();
+
+                await app.stop();
+                expect(pollerStop).toHaveBeenCalledTimes(1);
+            });
+
+            test('createQuotaNotes is built from config.agent.quota and the shared notification bridge\'s notify', async () => {
+                wireHappyPathForCleanupTests(spies, { timezone: 'UTC' });
+                const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                    conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+                });
+                const createQuotaNotesSpy = spyOn(staticAgentIndexModule, 'createQuotaNotes');
+                spies.push(createConversationConductorSpy, createQuotaNotesSpy);
+
+                const { createApp } = staticIndexModule;
+                await createApp();
+
+                expect(createQuotaNotesSpy).toHaveBeenCalledTimes(1);
+                const [notesParams] = createQuotaNotesSpy.mock.calls[0];
+                expect(notesParams.notifyAtPercents).toEqual([75, 90]);
+                expect(notesParams.perchPauseAtPercent).toBe(90);
+                expect(typeof notesParams.notify).toBe('function');
+            });
         });
     });
 
@@ -1211,7 +1335,9 @@ describe('createApp', () => {
          */
         function stubDocClientSend(): void {
             spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-                client:    {} as unknown as DynamoDBClient,
+                // `destroy` is real here because these tests call app.stop() to cancel the quota
+                // poller's real `pollIntervalMs` timer, and stop() destroys the client holder.
+                client:    { destroy: mock(() => {}) } as unknown as DynamoDBClient,
                 docClient: { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient,
                 tableName: 'IsambardMemory',
             }));
@@ -1235,6 +1361,10 @@ describe('createApp', () => {
             expect(handlerParams).not.toHaveProperty('bot');
             expect(typeof handlerParams.warmCache).toBe('function');
             expect(typeof handlerParams.submitCatchUp).toBe('function');
+
+            // start() now arms the shared quota poller's real `pollIntervalMs` timer; stop()
+            // cancels it, so the suite leaves no five-minute wall-clock timer behind.
+            await app.stop();
         });
     });
 
@@ -1357,6 +1487,8 @@ describe('createApp', () => {
                     oauthToken:    '', // Empty string (falsy)
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -1501,6 +1633,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123', // Truthy
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -1647,6 +1781,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123', // Truthy
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -1800,6 +1936,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123', // Truthy
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -1904,6 +2042,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123', // Truthy
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -1971,6 +2111,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123',
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -2041,6 +2183,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123',
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -2106,6 +2250,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123',
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {
@@ -2268,6 +2414,8 @@ describe('createApp', () => {
                     oauthToken:    'test-oauth-token-123',
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
+                    // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+                    quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
                 },
                 session: sessionConfig,
                 email:   {

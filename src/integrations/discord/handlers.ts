@@ -11,7 +11,7 @@ import type { DiscordRateLimiter } from './rate-limiter';
 import { sendEnvelopeResponse } from './response-sender';
 import { withDiscordRetry } from './retry';
 import { type DiscordMessageContext, type UserId, type ChannelId, createGuildId, createChannelId, createUserId  } from './types';
-import { buildDiscordEnvelope, type QuestionRegistry, type AnswerClassifier, type Conductor, type ContextBuilder } from '@/agent';
+import { buildDiscordEnvelope, type QuestionRegistry, type AnswerClassifier, type Conductor, type ContextBuilder, type TimeHeaderProvider } from '@/agent';
 import { formatTimeHeader, resolveTimezone } from '@/utils';
 
 /** Type guard: check if a channel supports typing indicators (has sendTyping). */
@@ -179,6 +179,13 @@ export interface PerchRoutingDeps {
      * default, exactly as before this field existed.
      */
     contextBuilder?:    Pick<ContextBuilder, 'loadUserTimezone'>
+    /**
+     * Session-peers block 4: renders the perch-channel envelope's time header, called with the
+     * author's resolved timezone. The composition root supplies the perch role's provider (which
+     * appends the ambient other-session/quota lines); omitted, this falls back to the bare
+     * `formatTimeHeader`, exactly as before that block.
+     */
+    timeHeader?:        TimeHeaderProvider
 }
 
 /** Sentinel thrown inside {@link PerchRoutingDeps.conductor}'s `deliver` callback to skip the journal write when nothing was actually sent (the `@@NO_RESPONSE@@` sentinel or a missing well-known channel) — mirrors `coordinator-setup.ts`'s identical `ResponseNotSentError`. */
@@ -516,7 +523,7 @@ async function submitPerchChannelMessage(
         isDM:        false,
         now:         new Date(),
         timezone,
-        timeHeader:  formatTimeHeader(timezone),
+        timeHeader:  (perch.timeHeader ?? formatTimeHeader)(timezone),
     });
 
     // Not `return`ed on a submit failure: this channel is entirely excluded from

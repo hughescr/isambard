@@ -1593,6 +1593,67 @@ describe('Discord Event Handlers', () => {
                 expect(mockInboxManager.recordHandled).toHaveBeenCalledWith(PERCH_CHANNEL_ID, mockMessage.id, mockMessage.createdAt.toISOString());
             });
 
+            it('renders the perch-channel envelope\'s time header through an injected provider, called with the resolved zone (session-peers block 4)', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: null });
+                const ingressGate = createMockIngressGate(() => 'pass');
+                const timeHeader = mock((_userTimezone?: string) => 'AMBIENT-HEADER\n- Conversation: idle');
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  mockCoordinator,
+                    inboxManager: mockInboxManager,
+                    ingressGate,
+                    perch:        {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                        contextBuilder: { loadUserTimezone: mock(() => Promise.resolve('Europe/London')) },
+                        timeHeader,
+                    },
+                });
+
+                await handler(mockMessage);
+
+                expect(timeHeader).toHaveBeenCalledWith('Europe/London');
+                const [ambientEnvelope] = perchConductor.submit.mock.calls[0] as unknown as [{ text: string }];
+                expect(ambientEnvelope.text).toContain('- Conversation: idle');
+            });
+
+            it('renders the perch-channel envelope\'s time header with formatTimeHeader when no provider is injected', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: null });
+                const ingressGate = createMockIngressGate(() => 'pass');
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  mockCoordinator,
+                    inboxManager: mockInboxManager,
+                    ingressGate,
+                    perch:        {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                        contextBuilder: { loadUserTimezone: mock(() => Promise.resolve('Europe/London')) },
+                    },
+                });
+
+                await handler(mockMessage);
+
+                const [defaultEnvelope] = perchConductor.submit.mock.calls[0] as unknown as [{ text: string }];
+                const text = defaultEnvelope.text;
+                expect(text).toContain('## Current Time');
+                expect(text).toContain('Europe/London');
+            });
+
             it('still records inbox activity/checkpoint and addRecentMessage for a perch-channel message', async () => {
                 const mockInboxManager = createMockInboxManager();
                 const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);

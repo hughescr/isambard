@@ -54,6 +54,16 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
             oauthToken:    resources.ClaudeCodeOAuthToken.value,
             mainModel:     resources.IsambardMainModel.value,
             fallbackModel: resources.IsambardFallbackModel.value,
+            // Session-peers block 5: quota thresholds and the perch ceiling. Every field is an
+            // optional env-var override — left unset, Zod's quotaConfigSchema fills the default.
+            quota:         {
+                pollIntervalMs:      env.get('AGENT_QUOTA_POLL_INTERVAL_MS').asIntPositive(),
+                perchPauseAtPercent: env.get('AGENT_QUOTA_PERCH_PAUSE_AT_PERCENT').asIntPositive(),
+                // asArray()'s own default delimiter is ',' — passing it explicitly only adds a
+                // string literal whose mutant is equivalent (env-var reads the delimiter as
+                // `delimiter || ','`, so an empty one still splits on commas).
+                notifyAtPercents:    env.get('AGENT_QUOTA_NOTIFY_AT_PERCENTS').asArray(),
+            },
         },
         discord: {
             botToken:      resources.DiscordBotToken.value,

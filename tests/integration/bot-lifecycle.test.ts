@@ -58,6 +58,8 @@ describe('Bot Lifecycle Integration', () => {
             oauthToken:    'test-oauth-token-1234567890',
             mainModel:     'sonnet',
             fallbackModel: 'sonnet',
+            // Session-peers block 5: the quotaConfigSchema defaults, verbatim.
+            quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
         };
 
         // Mock Session configuration. P13b: the `mode` flag is gone — the conductor is the only

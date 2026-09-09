@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import { ENVELOPE_KINDS, type EnvelopeMeta, type JournalEntry, type SessionQuery } from '../../../../src/agent/session/types';
+import { ENVELOPE_KINDS, type Envelope, type EnvelopeMeta, type JournalEntry, type SessionQuery } from '../../../../src/agent/session/types';
 import type { SystemEvent } from '../../../../src/agent/types';
 import { FakeQuery } from '../../../helpers/fake-query';
 
@@ -29,8 +29,24 @@ describe('SessionQuery', () => {
 });
 
 describe('ENVELOPE_KINDS', () => {
-    it('lists exactly the 9 envelope kinds, including \'task\' (R2) — an \'each\' table-driven test over an emptied array would silently run zero cases rather than fail, so this pins the full contents directly', () => {
-        expect(ENVELOPE_KINDS).toEqual(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task']);
+    it('lists exactly the 10 envelope kinds, including \'task\' (R2) and \'peer\' (session-peers block 2) — an \'each\' table-driven test over an emptied array would silently run zero cases rather than fail, so this pins the full contents directly', () => {
+        expect(ENVELOPE_KINDS).toEqual(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task', 'peer']);
+    });
+});
+
+describe('Envelope.peer', () => {
+    it('carries the peer\'s reply address and, when the cross-session tag named one, its peer-registry name', () => {
+        const envelope: Envelope = {
+            id:           'p1',
+            kind:         'peer',
+            text:         '[PEER · Izzy-main · 2026-09-09 14:02 PDT]',
+            peer:         { from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' },
+            hostPriority: 'wake',
+            shouldQuery:  true,
+            createdAt:    new Date('2026-09-09T21:02:00Z'),
+        };
+
+        expect(envelope.peer).toEqual({ from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' });
     });
 });
 

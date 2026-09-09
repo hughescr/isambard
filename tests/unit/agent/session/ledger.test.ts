@@ -436,6 +436,20 @@ describe('reduceLedger: sdk_frame result', () => {
         expect(withCost.cost).toEqual({ cumulativeUsd: 0.05, lastTurnUsd: 0.05 });
     });
 
+    it('stamps lastTurnEndedAt with the result frame\'s own `at` when the turn closes', () => {
+        const withCost = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess({ total_cost_usd: 0.05 }), at: T2 }));
+
+        expect(withCost.lastTurnEndedAt).toEqual(T2);
+    });
+
+    it('leaves lastTurnEndedAt untouched for a bare result that closes no turn', () => {
+        const afterTurn = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess({ total_cost_usd: 0.05 }), at: T2 }));
+
+        const ledger = reduceLedger(afterTurn, frozenEvent({ type: 'sdk_frame', frame: frames.bareResult({ total_cost_usd: 0.07 }), at: T3 }));
+
+        expect(ledger.lastTurnEndedAt).toEqual(T2);
+    });
+
     it('closes the turn on any result subtype, including error_during_execution', () => {
         const ledger = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.resultInterrupted({ total_cost_usd: 0.02 }), at: T2 }));
 

@@ -7,8 +7,8 @@ import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { loadPlugins, QuestionRegistry, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, type ConversationConductorResult, type PerchConductorResult } from '@/app';
+import { loadPlugins, QuestionRegistry, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createQuotaNotes, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
@@ -17,7 +17,7 @@ import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, Contact
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type EmbedderLike } from '@/storage';
-import { formatTimeHeader, resolveTimezone } from '@/utils';
+import { resolveTimezone } from '@/utils';
 
 export interface App {
     /**
@@ -289,10 +289,43 @@ export async function createApp(): Promise<App> {
     // notificationBridge.attachConductor() late-binds the real conductor once
     // createConversationConductor resolves (Q7 threads notificationBridge.notify into
     // setupEmail's options).
+    // Session-peers block 4: the process-wide ambient surface — ONE quota poller (block 3) both
+    // session ledgers register with, and one time-header provider per role. Every producer of a
+    // per-turn time header below takes its provider from here, so each turn also carries the
+    // other session's one-line summary and the shared-subscription quota line.
+    //
+    // Two refresh paths feed that poller, and BOTH are needed:
+    //  - the per-`result`-frame refresh the ambience wires into each registered ledger (debounced
+    //    to at most one request per 30s), which only fires while Izzy is taking turns; and
+    //  - the recurring `config.agent.quota.pollIntervalMs` timer, armed in start() and cancelled
+    //    in stop() below. The subscription is shared with Craig's own Claude Code sessions, so
+    //    utilization moves while Izzy is idle and no local `result` frame ever arrives; without
+    //    the recurring poll the ledger's peak would stay stale and the perch quota ceiling
+    //    (block 5) would let a slot start well past `perchPauseAtPercent`.
+    // The usage endpoint's shape is UNVERIFIED (probe P5), so the poll fails closed — a non-OK
+    // status, an unparseable body, or a window whose `utilization` is not the 0-1 fraction the SDK
+    // documents (a percent-shaped 87 is REJECTED, never clamped into a fabricated reading that
+    // would pause perch and fire threshold notes) leaves the last known quota in place, which the
+    // SDK's own `rate_limit_event` frames refresh on every change regardless (probe P4). A refused
+    // window is loud enough for one warn per process, since it means this endpoint contributes
+    // nothing at all until someone looks at it.
+    const ambience = createSessionAmbience({
+        timezone: config.session.timezone,
+        clock:    systemClock,
+        logger,
+        quota:    {
+            fetch:          globalThis.fetch,
+            headers:        () => ({ Authorization: `Bearer ${config.agent.oauthToken}` }),
+            pollIntervalMs: config.agent.quota.pollIntervalMs,
+        },
+    });
+    const conversationTimeHeader = ambience.timeHeaderFor('conversation');
+    const perchTimeHeader = ambience.timeHeaderFor('perch');
+
     const notificationBridge = createNotificationBridge({
         clock:      systemClock,
         timezone:   config.session.timezone,
-        timeHeader: () => formatTimeHeader(config.session.timezone),
+        timeHeader: () => conversationTimeHeader(config.session.timezone),
         logger,
     });
 
@@ -858,6 +891,7 @@ export async function createApp(): Promise<App> {
             channelListProvider: conversationChannelListProvider,
             clock:               systemClock,
             logger,
+            ambience,
         });
         conductorForTaskReader = builtConductor.conductor;
         conversationConductor = builtConductor.conductor;
@@ -906,6 +940,7 @@ export async function createApp(): Promise<App> {
             resumeStore:        perchResumeStore,
             clock:              systemClock,
             logger,
+            ambience,
         });
         perchConductorForTaskReader = builtPerchConductor.conductor;
         perchConductor = builtPerchConductor.conductor;
@@ -936,6 +971,19 @@ export async function createApp(): Promise<App> {
     costCeilingSnapshot && costCeiling.restore(costCeilingSnapshot);
     conversationLedgerStore.subscribe((ledger, event) => costCeiling.record(conversationLedgerStore, ledger, event));
     perchLedgerStore?.subscribe((ledger, event) => costCeiling.record(perchLedgerStore, ledger, event));
+
+    // Session-peers block 5: the same shared-subscription quota block 4 renders on every time
+    // header, read actively — accumulate-only notes at config.agent.quota.notifyAtPercents and on
+    // a window reset (quota-notes.ts), plus the perch ceiling ORed into isCostPaused below. Both
+    // ledgers feed the one instance: they carry the same reading a turn apart, and quota-notes
+    // tracks each window's peak precisely so the staler of the two can never undo the fresher.
+    const quotaNotes = createQuotaNotes({
+        notify:              notificationBridge.notify,
+        notifyAtPercents:    config.agent.quota.notifyAtPercents,
+        perchPauseAtPercent: config.agent.quota.perchPauseAtPercent,
+    });
+    conversationLedgerStore.subscribe(ledger => quotaNotes.record(ledger));
+    perchLedgerStore?.subscribe(ledger => quotaNotes.record(ledger));
 
     // Construct allowlist command handler using the unified PersonAllowlist
     // Stryker disable next-line ObjectLiteral: Composition root — AllowlistCommandHandler is integration wiring
@@ -972,8 +1020,11 @@ export async function createApp(): Promise<App> {
         healthRegistry,
         discordCapability,
         // Q3 / B4: daily cost ceiling predicate — reaches only the conductor-mode perch scheduler
-        // and presence composer (bot.ts); Discord's own turns are never gated by this.
-        isCostPaused:             costCeiling.isPaused,
+        // and presence composer (bot.ts); Discord's own turns are never gated by this. Session-
+        // peers block 5 ORs the quota ceiling into the same predicate, so a nearly-spent five-hour
+        // window pauses perch through the machinery that already exists (scheduler.ts's skip and
+        // presence's `⏸ perch` marker), and self-clears when that window resets.
+        isCostPaused:             () => costCeiling.isPaused() || quotaNotes.isPaused(),
         // Q5 / B1: the shared notification bridge's notify function — a safe no-op until
         // notificationBridge.attachConductor() has run (above). Q6-Q8 wire the actual
         // notification sources; this package only threads the seam through.
@@ -1008,6 +1059,11 @@ export async function createApp(): Promise<App> {
         notificationBridge,
         setWakeTurnDelivery:      conversationSetWakeTurnDelivery,
         setPerchWakeTurnDelivery: perchSetWakeTurnDelivery,
+        // Session-peers block 4: each role's ambient time-header provider, threaded to every
+        // Discord-side producer (the conductor processor, the boot/catch-up envelopes, the
+        // perch-channel envelope and the perch slot envelope).
+        timeHeader:               conversationTimeHeader,
+        perchTimeHeader,
     });
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Discord bot created');
@@ -1180,6 +1236,10 @@ export async function createApp(): Promise<App> {
             // Start saga executor polling loop
             sagaExecutor.start();
 
+            // Session-peers block 3/5: arm the shared subscription-usage poll. Independent of
+            // Discord — quota is spent by Craig's own sessions whether or not Izzy is connected.
+            ambience.quotaPoller.start();
+
             // Q8: start the Bluesky DM poller once safety rails are in place
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
             if(bskySetup) {
@@ -1225,6 +1285,10 @@ export async function createApp(): Promise<App> {
             // Stop outbox drainer and saga executor
             outboxDrainer.stop();
             sagaExecutor.stop();
+
+            // Cancels the pending usage poll so its timer can never fire into a torn-down
+            // process (same reasoning as healthOutageCoalescer.stop() below).
+            ambience.quotaPoller.stop();
 
             // Unsubscribe health listeners
             unsubscribeOutboxDrain();

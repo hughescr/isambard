@@ -147,7 +147,7 @@ describe('Vector feature wiring', () => {
                 ),
                 spyOn(configLoaderModule, 'loadConfig').mockReturnValue({
                     app:     { nodeEnv: 'test', logLevel: 'info', port: 3000 },
-                    agent:   { oauthToken: 'test-oauth-token', mainModel: 'sonnet', fallbackModel: 'sonnet' },
+                    agent:   { oauthToken: 'test-oauth-token', mainModel: 'sonnet', fallbackModel: 'sonnet', quota: { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] } },
                     session: sessionConfig,
                     discord: {
                         botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
@@ -384,7 +384,7 @@ describe('Vector feature wiring', () => {
                 ),
                 spyOn(configLoaderModule, 'loadConfig').mockReturnValue({
                     app:     { nodeEnv: 'test', logLevel: 'info', port: 3000 },
-                    agent:   { oauthToken: 'test-oauth-token', mainModel: 'sonnet', fallbackModel: 'sonnet' },
+                    agent:   { oauthToken: 'test-oauth-token', mainModel: 'sonnet', fallbackModel: 'sonnet', quota: { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] } },
                     session: sessionConfig,
                     discord: {
                         botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',

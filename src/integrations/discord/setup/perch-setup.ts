@@ -7,7 +7,7 @@ import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendEnvelopeResponse } from '../response-sender';
 import {
     type ContextBuilder, type PerchConfig, type PerchScheduler, type PerchDriver, type ActivityLogger,
-    type Clock, type Conductor, type Envelope, type SubmitOptions, type TurnResult,
+    type Clock, type Conductor, type Envelope, type SubmitOptions, type TimeHeaderProvider, type TurnResult,
     createPerchScheduler, createPerchDriver
 } from '@/agent';
 
@@ -31,6 +31,8 @@ interface SetupPerchDriverParams {
     discordCapability?: DiscordCapability
     /** Optional Q3/B4 daily cost ceiling predicate, forwarded to {@link createPerchScheduler}'s deps unchanged. */
     isCostPaused?:      () => boolean
+    /** Session-peers block 4: forwarded to {@link createPerchDriver} unchanged — see its own `PerchDriverDeps.timeHeader` doc. */
+    timeHeader?:        TimeHeaderProvider
 }
 
 /**
@@ -107,7 +109,7 @@ export function setupPerchDriverAndScheduler(params: SetupPerchDriverParams): {
     driver:    PerchDriver
     scheduler: PerchScheduler
 } {
-    const { conductor, perchConfig, clock, contextBuilder, activityLogger, channelRegistry, responseRouter, client, rateLimiter, discordCapability, isCostPaused } = params;
+    const { conductor, perchConfig, clock, contextBuilder, activityLogger, channelRegistry, responseRouter, client, rateLimiter, discordCapability, isCostPaused, timeHeader } = params;
 
     // Stryker disable next-line BlockStatement: composition root — timezone-based hour resolution is not unit-testable with fake timers
     const getCurrentLocalHour = (): number => DateTime.now().setZone(perchConfig.timezone).hour;
@@ -123,6 +125,7 @@ export function setupPerchDriverAndScheduler(params: SetupPerchDriverParams): {
         config:    perchConfig,
         getCurrentLocalHour,
         activityLogger,
+        timeHeader,
         logger,
     });
 

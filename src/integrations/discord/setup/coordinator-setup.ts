@@ -17,7 +17,7 @@ import { sendEnvelopeResponse } from '../response-sender';
 import { createChannelId, type ChannelId, type DiscordMessageContext } from '../types';
 import { createConductorProcessor, type DiscordEnvelopeProvider } from './conductor-processor';
 import {
-    type PlatformImage, type ActivityLogger, type Conductor, type ContextPolicy, type ContextBuilder, type LedgerStore, generateText
+    type PlatformImage, type ActivityLogger, type Conductor, type ContextPolicy, type ContextBuilder, type LedgerStore, type TimeHeaderProvider, generateText
 } from '@/agent';
 import { resolveTimezone } from '@/utils';
 
@@ -174,6 +174,8 @@ interface SetupCoordinatorParams {
      */
     ledgerStore?:          Pick<LedgerStore, 'dispatch'>
     presenceThrottle?:     PresenceThrottle
+    /** Session-peers block 4: forwarded verbatim into `createConductorProcessor` — see its own `CreateConductorProcessorParams.timeHeader` doc. */
+    timeHeader?:           TimeHeaderProvider
 }
 
 /**
@@ -351,6 +353,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
         throttle:       presenceThrottle,
         dynamicStatusGenerator,
         onThinkingContentUpdate,
+        timeHeader:     params.timeHeader,
     }));
 
     return coordinator;

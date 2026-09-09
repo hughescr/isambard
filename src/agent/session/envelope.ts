@@ -7,7 +7,7 @@
  * factory in this codebase already accepts (see `src/integrations/discord/capability.ts`).
  *
  * Builders whose header carries a timestamp (`buildDiscordEnvelope`, `buildPerchEnvelope`,
- * `buildNotificationEnvelope`, `buildCatchupEnvelope`) take `now`/`timezone` and stamp the
+ * `buildNotificationEnvelope`, `buildPeerEnvelope`, `buildCatchupEnvelope`) take `now`/`timezone` and stamp the
  * header via `formatEnvelopeStamp`. The remaining builders (`buildWrapUpEnvelope`,
  * `buildResumeEnvelope`, `buildBootEnvelope`, `buildCompactEnvelope`) carry no stamp in their
  * brief-specified signature, but `Envelope.createdAt` is non-optional — so each of those also
@@ -255,6 +255,51 @@ export function buildNotificationEnvelope(params: BuildNotificationEnvelopeParam
         text:         joinSections([header, timeHeader, text]),
         hostPriority: wake ? 'wake' : 'accumulate',
         shouldQuery:  wake,
+        createdAt:    now,
+    };
+}
+
+/** Inputs to {@link buildPeerEnvelope}. */
+export interface BuildPeerEnvelopeParams {
+    /** The `from` attribute of the SDK's `<cross-session-message>` tag: the raw `uds:/tmp/cc-socks/<pid>.sock` reply address, verified by the block-0 probe (2026-09-09) as a working `SendMessage` `to:` target. */
+    from:       string
+    /** The tag's `from-name` attribute — the peer-registry name. Absent (or empty) when the tag named none, in which case {@link from} stands in everywhere a name would be rendered. */
+    fromName?:  string
+    /** The peer's message body, exactly as it appeared between the tag's open and close lines. */
+    text:       string
+    now:        Date
+    timezone:   string
+    timeHeader: string
+}
+
+/**
+ * Builds a peer-message envelope (session-peers block 2): `[PEER · {fromName} · stamp]`,
+ * followed by the time header, the peer's own text, and one sentence telling Claude how to
+ * answer — `SendMessage` addressed to the same name the header shows.
+ *
+ * Unlike every other builder here, this envelope is never pushed to the SDK: the SDK has
+ * already delivered the peer's raw `<cross-session-message>` prompt and started its own turn
+ * from it by the time the `UserPromptSubmit` hook sees it (probe P3, 2026-09-09). Its text is
+ * the host-side record of that turn — what the ledger, the journal and any turn-settled
+ * consumer see — which is also why the reply instruction names the peer rather than assuming
+ * the raw tag stays legible to a later reader. See
+ * {@link import('./conductor').Conductor.adoptPeerTurn}.
+ * @param params Peer envelope inputs
+ * @returns A `peer`-kind {@link Envelope}
+ */
+export function buildPeerEnvelope(params: BuildPeerEnvelopeParams): Envelope {
+    const { from, fromName, text, now, timezone, timeHeader } = params;
+
+    const name = fromName === undefined || fromName === '' ? from : fromName;
+    const header = `[PEER · ${name} · ${formatEnvelopeStamp(now, timezone)}]`;
+
+    return {
+        id:           crypto.randomUUID(),
+        kind:         'peer',
+        text:         joinSections([header, timeHeader, text, `Reply with SendMessage to ${name}.`]),
+        peer:         { from, ...(fromName === undefined || fromName === '' ? {} : { fromName }) },
+        hostPriority: 'wake',
+        shouldQuery:  true,
         createdAt:    now,
     };
 }

@@ -51,6 +51,17 @@ describe('formatBootBundle — conversation fresh', () => {
         ].join('\n\n'));
     });
 
+    test('renders the ambient time header between the reset notice and the first section', () => {
+        const text = formatBootBundle({ ...baseParts, timeHeader: '## Current Time\n- UTC: now\n- Perch: idle\n- Quota: 5-hour 42%' });
+
+        expect(text).toBe([
+            '[BOOT BUNDLE · conversation · fresh]',
+            'Working memory was reset (compaction or restart); this bundle re-seeds it.',
+            '## Current Time\n- UTC: now\n- Perch: idle\n- Quota: 5-hour 42%',
+            '## Identity\nI am Isambard.',
+        ].join('\n\n'));
+    });
+
     test('section order: identity, current focus, events, task list, channels, background tasks, recently talking to, lost tasks, undelivered', () => {
         const text = formatBootBundle({
             ...baseParts,
@@ -192,6 +203,20 @@ describe('formatBootBundle — conversation resume', () => {
         expect(formatBootBundle(baseParts)).toBe('');
     });
 
+    test('an empty resume stays empty even with a time header — the header is not a section worth waking on', () => {
+        expect(formatBootBundle({ ...baseParts, timeHeader: '## Current Time\n- UTC: now' })).toBe('');
+    });
+
+    test('a non-empty resume still carries the time header', () => {
+        const text = formatBootBundle({ ...baseParts, timeHeader: '## Current Time\n- UTC: now', activeTasks: ['active-1'] });
+
+        expect(text).toBe([
+            '[BOOT BUNDLE · conversation · resume]',
+            '## Current Time\n- UTC: now',
+            '## Background tasks\nactive-1',
+        ].join('\n\n'));
+    });
+
     test('never renders a reset notice, identity, current focus, task list or channels, even when provided', () => {
         const text = formatBootBundle({
             ...baseParts,
@@ -270,6 +295,22 @@ describe('formatBootBundle — perch fresh/compact', () => {
         expect(text).not.toContain('## Background tasks\n');
     });
 
+    test('renders the ambient time header ahead of identity, alongside the perch context\'s own bare header', () => {
+        const text = formatBootBundle({
+            ...baseParts,
+            timeHeader:   '## Current Time\n- UTC: now\n- Conversation: replying in #general',
+            perchContext: '## Current Time\n- 2026-09-04...',
+        });
+
+        expect(text).toBe([
+            '[BOOT BUNDLE · perch · fresh]',
+            'Working memory was reset (compaction or restart); this bundle re-seeds it.',
+            '## Current Time\n- UTC: now\n- Conversation: replying in #general',
+            '## Identity\nI am Isambard.',
+            '## Current Time\n- 2026-09-04...',
+        ].join('\n\n'));
+    });
+
     test('omits task list and perch context sections when not provided', () => {
         const text = formatBootBundle(baseParts);
 
@@ -346,6 +387,20 @@ describe('createBootBundleBuilder — conversation fresh', () => {
         expect(loader).toHaveBeenCalledTimes(1);
         expect(text).toContain('identity text');
         expect(loadCoreIdentity).not.toHaveBeenCalled();
+    });
+
+    test('asks the injected timeHeader provider for the ambient header and renders it in the bundle', async () => {
+        const identityCache = new IdentityCache(jest.fn().mockResolvedValue('identity text'));
+        const contextBuilder = makeContextBuilder();
+        const timeHeader = jest.fn(() => '## Current Time\n- Perch: idle since 14:02\n- Quota: 5-hour 42%');
+        const builder = createBootBundleBuilder({
+            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
+        });
+
+        const text = await builder.build({ ...emptyInput, kind: 'fresh' });
+
+        expect(timeHeader).toHaveBeenCalledTimes(1);
+        expect(text).toContain('## Current Time\n- Perch: idle since 14:02\n- Quota: 5-hour 42%');
     });
 
     test('calls loadHotState(new Date(now())) and loadRecentEventsSince(24h, 50, new Date(now())) when eventsSinceMs is omitted', async () => {
@@ -536,6 +591,19 @@ describe('createBootBundleBuilder — conversation resume', () => {
         expect(text).toBe('');
     });
 
+    test('a non-empty resume carries the ambient header too', async () => {
+        const identityCache = new IdentityCache(jest.fn());
+        const contextBuilder = makeContextBuilder();
+        const timeHeader = jest.fn(() => '## Current Time\n- Perch: idle');
+        const builder = createBootBundleBuilder({
+            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
+        });
+
+        const text = await builder.build({ ...emptyInput, kind: 'resume', activeTasks: ['active-1'] });
+
+        expect(text).toContain('## Current Time\n- Perch: idle');
+    });
+
     test('fetches events via eventsSinceMs and renders them, with no reset notice', async () => {
         const identityCache = new IdentityCache(jest.fn());
         const contextBuilder = makeContextBuilder({
@@ -602,6 +670,20 @@ describe('createBootBundleBuilder — perch fresh/compact', () => {
         expect(text).toContain('## Current Time\n- perch block');
     });
 
+    test('asks the injected timeHeader provider for the ambient header and renders it in the bundle', async () => {
+        const identityCache = new IdentityCache(jest.fn().mockResolvedValue('identity text'));
+        const contextBuilder = makeContextBuilder();
+        const timeHeader = jest.fn(() => '## Current Time\n- Conversation: idle since 14:02\n- Quota: 5-hour 42%');
+        const builder = createBootBundleBuilder({
+            role: 'perch', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
+        });
+
+        const text = await builder.build({ ...emptyInput, kind: 'fresh' });
+
+        expect(timeHeader).toHaveBeenCalledTimes(1);
+        expect(text).toContain('## Current Time\n- Conversation: idle since 14:02\n- Quota: 5-hour 42%');
+    });
+
     test('includes the task list section when the reader returns a summary', async () => {
         const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder();
@@ -644,6 +726,19 @@ describe('createBootBundleBuilder — perch resume', () => {
         expect(taskListReader.buildTaskListSummary).not.toHaveBeenCalled();
         expect(contextBuilder.buildPerchContext).not.toHaveBeenCalled();
         expect(text).toBe('');
+    });
+
+    test('a non-empty perch resume carries the ambient header too', async () => {
+        const identityCache = new IdentityCache(jest.fn());
+        const contextBuilder = makeContextBuilder();
+        const timeHeader = jest.fn(() => '## Current Time\n- Conversation: idle');
+        const builder = createBootBundleBuilder({
+            role: 'perch', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
+        });
+
+        const text = await builder.build({ ...emptyInput, kind: 'resume', activeTasks: ['active-a'] });
+
+        expect(text).toContain('## Current Time\n- Conversation: idle');
     });
 
     test('renders lost tasks/undelivered/active tasks when present', async () => {

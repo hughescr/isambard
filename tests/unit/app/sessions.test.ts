@@ -5,21 +5,22 @@
  * {@link FakeQuery}, {@link FakeClock}, and the P3/P7 in-memory port doubles ({@link FakeJournal},
  * {@link FakeResumeStore}).
  */
-import { afterEach, describe, expect, it, jest } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
 import type { PostToolUseHookInput, UserPromptSubmitHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { FakeClock } from '../../helpers/fake-clock';
 import { makeHealthRegistry } from '../../helpers/fake-health-registry';
 import { FakeJournal } from '../../helpers/fake-journal';
-import { fakeQueryFn } from '../../helpers/fake-query';
+import { fakeQueryFn, type FakeQuery } from '../../helpers/fake-query';
 import { FakeResumeStore } from '../../helpers/fake-resume-store';
 import * as frames from '../../helpers/sdk-frames';
 import { mockLogger } from '../../setup';
-import { DEFAULT_STEP_PERCENT, type ContextBuilder, type Envelope } from '@/agent';
+import { DEFAULT_STEP_PERCENT, createLedgerStore, type ContextBuilder, type Envelope, type QuotaFetch, type QuotaFetchResponse, type TimeHeaderProvider } from '@/agent';
 import type { JournalEntry } from '@/agent/session/types';
 import * as mcpServersModule from '@/app/mcp-servers';
 import type { McpSharedDeps } from '@/app/mcp-servers';
-import { createConversationConductor, createPerchConductor, type CreateConversationConductorParams, type CreatePerchConductorParams } from '@/app/sessions';
+import { createConversationConductor, createPerchConductor, createSessionAmbience, type CreateConversationConductorParams, type CreatePerchConductorParams, type SessionAmbience } from '@/app/sessions';
 import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
+import { formatTimeHeader } from '@/utils';
 
 type MCPServers = ReturnType<typeof mcpServersModule.createMcpServerInstances>;
 
@@ -710,6 +711,38 @@ describe('createConversationConductor', () => {
             expect(h.logger.warn).not.toHaveBeenCalledWith(expect.anything(), 'wake turn settled before delivery was attached');
         });
     });
+
+    describe('session-peers block 2: peer-message hook wiring', () => {
+        const PEER_PROMPT = '<cross-session-message from="uds:/tmp/cc-socks/94548.sock" from-name="Izzy-perch" from-mode="bypass">\nhow is the PR going?\n</cross-session-message>';
+
+        it('registers createPeerMessageHooks alongside the task-launch UserPromptSubmit hook: a cross-session message opens a real peer turn on the live conductor', async () => {
+            const h = build();
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+            const { conductor } = await createConversationConductor(h.params);
+            const openPromise = conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            const matchers = h.instances[0].receivedParams?.options.hooks?.UserPromptSubmit;
+            expect(matchers).toHaveLength(2);
+            const peerHook = matchers?.[1]?.hooks[0];
+
+            await peerHook?.({
+                session_id: 'sess-1', transcript_path: '/tmp/transcript', cwd: '/tmp', hook_event_name: 'UserPromptSubmit', prompt: PEER_PROMPT,
+            }, undefined, { signal: new AbortController().signal });
+            h.instances[0].emit(frames.assistantText('going well'));
+            await flush();
+
+            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'peer' });
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'going well' }));
+            await flush();
+
+            expect(h.journal.byKind('turn_completed').at(-1)).toMatchObject({ kind: 'peer', responseText: 'going well' });
+        });
+    });
 });
 
 function buildPerch(overrides: Partial<CreatePerchConductorParams> = {}) {
@@ -1227,5 +1260,268 @@ describe('createPerchConductor', () => {
 
             expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ envelopeId: expect.any(String) }), 'wake turn settled before delivery was attached');
         });
+    });
+
+    describe('session-peers block 2: peer-message hook wiring', () => {
+        const PEER_PROMPT = '<cross-session-message from="uds:/tmp/cc-socks/94548.sock" from-name="Izzy-main" from-mode="bypass">\nanything worth surfacing?\n</cross-session-message>';
+
+        it('registers createPeerMessageHooks on the perch role too: a cross-session message opens a real peer turn on the live perch conductor', async () => {
+            const h = buildPerch();
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+            const { conductor } = await createPerchConductor(h.params);
+            const openPromise = conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            const matchers = h.instances[0].receivedParams?.options.hooks?.UserPromptSubmit;
+            expect(matchers).toHaveLength(2);
+            const peerHook = matchers?.[1]?.hooks[0];
+
+            await peerHook?.({
+                session_id: 'sess-1', transcript_path: '/tmp/transcript', cwd: '/tmp', hook_event_name: 'UserPromptSubmit', prompt: PEER_PROMPT,
+            }, undefined, { signal: new AbortController().signal });
+            h.instances[0].emit(frames.assistantText('nothing yet'));
+            await flush();
+
+            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'peer' });
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'nothing yet' }));
+            await flush();
+
+            expect(h.journal.byKind('turn_completed').at(-1)).toMatchObject({ kind: 'peer', responseText: 'nothing yet' });
+        });
+    });
+});
+
+/**
+ * Block 4 (docs/plans/session-peers-and-quota.md): the composition root's ambient-line wiring —
+ * ONE quota poller subscribed to both ledgers, and one memoized time-header provider per role
+ * that appends the ambient lines composed from its own ledger and the other role's.
+ */
+describe('createSessionAmbience', () => {
+    const TIMEZONE = 'America/Los_Angeles';
+    /** The shape the poller's parser is built against (block 3's own `unifiedWindows`). */
+    const USAGE_BODY = { five_hour: { utilization: 0.42 }, seven_day: { utilization: 0.61 } };
+
+    function okResponse(body: unknown): QuotaFetchResponse {
+        return { ok: true, status: 200, json: async () => body };
+    }
+
+    function ambienceHarness(overrides: { fetch?: QuotaFetch } = {}) {
+        const clock = new FakeClock(0);
+        const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+        const fetch = jest.fn<QuotaFetch>(overrides.fetch ?? (async () => okResponse(USAGE_BODY)));
+        const ambience = createSessionAmbience({ timezone: TIMEZONE, clock, logger, quota: { fetch } });
+        const conversation = createLedgerStore('conversation', { logger });
+        const perch = createLedgerStore('perch', { logger });
+        return { clock, logger, fetch, ambience, conversation, perch };
+    }
+
+    // formatTimeHeader reads the real clock at millisecond precision, and these tests compare
+    // whole rendered headers — so the system time is pinned rather than raced.
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-09-09T22:07:00Z'));
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+        jest.restoreAllMocks();
+    });
+
+    it('dispatches one poll\'s quota into every registered ledger, including one registered after construction', async () => {
+        const h = ambienceHarness();
+        h.ambience.quotaPoller.start();
+        h.ambience.register(h.conversation);
+        h.ambience.register(h.perch);
+
+        await h.ambience.quotaPoller.poll();
+
+        expect(h.conversation.get().quota).toMatchObject({ fiveHour: { utilization: 42 }, sevenDay: { utilization: 61 }, source: 'poll' });
+        expect(h.perch.get().quota).toMatchObject({ fiveHour: { utilization: 42 }, source: 'poll' });
+    });
+
+    it('polls once when a registered ledger sees a result frame', async () => {
+        const h = ambienceHarness();
+        // app.start() arms the poller before any session takes a turn; a stopped poller
+        // deliberately ignores result frames.
+        h.ambience.quotaPoller.start();
+        h.ambience.register(h.conversation);
+
+        h.conversation.dispatch({ type: 'turn_submitted', envelope: { id: 'e1', kind: 'discord', queuedAt: new Date(0) }, at: new Date(0) });
+        h.conversation.dispatch({ type: 'sdk_frame', frame: frames.resultSuccess({ total_cost_usd: 0.01 }), at: new Date(0) });
+        await flush();
+
+        expect(h.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not poll for a non-result SDK frame, nor for a non-frame ledger event', async () => {
+        const h = ambienceHarness();
+        h.ambience.register(h.conversation);
+
+        h.conversation.dispatch({ type: 'turn_submitted', envelope: { id: 'e1', kind: 'discord', queuedAt: new Date(0) }, at: new Date(0) });
+        h.conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hello'), at: new Date(0) });
+        await flush();
+
+        expect(h.fetch).not.toHaveBeenCalled();
+    });
+
+    it('returns the plain time header for a role whose ledger has not been registered', () => {
+        const h = ambienceHarness();
+
+        expect(h.ambience.timeHeaderFor('conversation')()).toBe(formatTimeHeader());
+    });
+
+    it('passes the caller\'s user timezone straight through to formatTimeHeader', () => {
+        const h = ambienceHarness();
+
+        expect(h.ambience.timeHeaderFor('conversation')('Europe/London')).toBe(formatTimeHeader('Europe/London'));
+    });
+
+    it('appends the other role\'s ambient line to the header, from the other role\'s ledger', () => {
+        const h = ambienceHarness();
+        h.ambience.register(h.conversation);
+        h.ambience.register(h.perch);
+
+        expect(h.ambience.timeHeaderFor('conversation')()).toBe(`${formatTimeHeader()}\n- Perch: idle`);
+        expect(h.ambience.timeHeaderFor('perch')()).toBe(`${formatTimeHeader()}\n- Conversation: idle`);
+    });
+
+    it('appends the quota line, with the shared-subscription note only on the first header that carries one', async () => {
+        const h = ambienceHarness();
+        h.ambience.quotaPoller.start();
+        h.ambience.register(h.conversation);
+        await h.ambience.quotaPoller.poll();
+
+        const first = h.ambience.timeHeaderFor('conversation')();
+        const second = h.ambience.timeHeaderFor('conversation')();
+
+        expect(first).toContain('- Quota: 5-hour 42% · week 61% · shared with Craig\'s own sessions');
+        expect(second).toContain('- Quota: 5-hour 42% · week 61%');
+        expect(second).not.toContain('shared with Craig');
+    });
+
+    it('does not spend the one-time note on a header rendered before any quota is known', async () => {
+        const h = ambienceHarness();
+        h.ambience.quotaPoller.start();
+        h.ambience.register(h.conversation);
+
+        expect(h.ambience.timeHeaderFor('conversation')()).not.toContain('shared with Craig');
+
+        await h.ambience.quotaPoller.poll();
+
+        expect(h.ambience.timeHeaderFor('conversation')()).toContain('shared with Craig\'s own sessions');
+    });
+
+    it('returns the same provider instance for a role every time, so the one-time note is per session, not per producer', () => {
+        const h = ambienceHarness();
+
+        expect(h.ambience.timeHeaderFor('conversation')).toBe(h.ambience.timeHeaderFor('conversation'));
+        expect(h.ambience.timeHeaderFor('perch')).not.toBe(h.ambience.timeHeaderFor('conversation'));
+    });
+});
+
+describe('ambient-line wiring on the conductors', () => {
+    function fakeAmbience(): { ambience: SessionAmbience, provider: ReturnType<typeof jest.fn> } {
+        const provider = jest.fn(() => '## Current Time\n- Perch: idle');
+        const ambience: SessionAmbience = {
+            register:      jest.fn(),
+            timeHeaderFor: jest.fn(() => provider as TimeHeaderProvider),
+            quotaPoller:   { start: jest.fn(), stop: jest.fn(), noteResult: jest.fn(), poll: jest.fn(async () => undefined) },
+        };
+        return { ambience, provider };
+    }
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it('registers the conversation ledger and takes its peer-message time header from the conversation provider', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const { ambience, provider } = fakeAmbience();
+
+        const result = await createConversationConductor({ ...h.params, ambience });
+
+        expect(ambience.register).toHaveBeenCalledWith(result.ledgerStore);
+        expect(ambience.timeHeaderFor).toHaveBeenCalledWith('conversation');
+
+        // The peer hook asks the provider for a fresh header per message, in the session's own timezone.
+        const openPromise = result.conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const matchers = h.instances[0].receivedParams?.options.hooks?.UserPromptSubmit;
+        await matchers?.[1]?.hooks[0]?.({
+            session_id:      'sess-1', transcript_path: '/tmp/t', cwd:             '/tmp', hook_event_name: 'UserPromptSubmit',
+            prompt:          '<cross-session-message from="uds:/tmp/cc-socks/1.sock" from-name="Izzy-perch" from-mode="bypass">\nping\n</cross-session-message>',
+        }, undefined, { signal: new AbortController().signal });
+
+        expect(provider).toHaveBeenCalledWith(DEFAULT_CONFIG.timezone);
+    });
+
+    it('registers the perch ledger and asks for the perch provider', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const { ambience } = fakeAmbience();
+
+        const result = await createPerchConductor({ ...h.params, ambience });
+
+        expect(ambience.register).toHaveBeenCalledWith(result.ledgerStore);
+        expect(ambience.timeHeaderFor).toHaveBeenCalledWith('perch');
+    });
+
+    /** Opens the conductor and fires its SessionStart boot-bundle hook, returning the bundle text. */
+    async function bootBundleText(conductor: { open: () => Promise<unknown> }, instances: FakeQuery[]): Promise<string> {
+        const openPromise = conductor.open();
+        await flush();
+        instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const hookFn = instances[0].receivedParams?.options.hooks?.SessionStart?.[0]?.hooks[0];
+        const result = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+        return (result as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+    }
+
+    it('opens the conversation boot bundle with the ambient header, in the session\'s own timezone', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const { ambience, provider } = fakeAmbience();
+
+        const { conductor } = await createConversationConductor({ ...h.params, ambience });
+        const text = await bootBundleText(conductor, h.instances);
+
+        expect(text).toContain('## Current Time\n- Perch: idle');
+        expect(provider).toHaveBeenCalledWith(DEFAULT_CONFIG.timezone);
+    });
+
+    it('opens the perch boot bundle with the ambient header, in the session\'s own timezone', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const { ambience, provider } = fakeAmbience();
+
+        const { conductor } = await createPerchConductor({ ...h.params, ambience });
+        const text = await bootBundleText(conductor, h.instances);
+
+        expect(text).toContain('## Current Time\n- Perch: idle');
+        expect(provider).toHaveBeenCalledWith(DEFAULT_CONFIG.timezone);
+    });
+
+    it('falls back to the bare time header in the boot bundle when no ambience is wired', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const text = await bootBundleText(conductor, h.instances);
+
+        // Compared structurally rather than against a fresh formatTimeHeader() call: that reads
+        // the real clock at millisecond precision (see the note above createSessionAmbience's
+        // tests), so an exact-text comparison races the header the bundle already rendered.
+        const sections = text.split('\n\n');
+        expect(sections[2]?.startsWith('## Current Time\n- UTC: ')).toBe(true);
+        expect(sections[2]).not.toContain('\n- Perch:');
     });
 });

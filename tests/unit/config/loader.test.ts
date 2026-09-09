@@ -393,6 +393,46 @@ describe.concurrent('loadConfig', () => {
     });
 });
 
+// Session-peers block 5: quota thresholds and the perch ceiling. Sequential (not concurrent)
+// because these mutate process.env.
+describe('loadConfig - Agent Quota Config', () => {
+    afterEach(() => {
+        delete process.env.AGENT_QUOTA_POLL_INTERVAL_MS;
+        delete process.env.AGENT_QUOTA_PERCH_PAUSE_AT_PERCENT;
+        delete process.env.AGENT_QUOTA_NOTIFY_AT_PERCENTS;
+    });
+
+    test('should fall back to the schema defaults when no quota env vars are set', () => {
+        const config = loadConfig(createMockResources());
+
+        expect(config.agent.quota).toEqual({ pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] });
+    });
+
+    test('should load pollIntervalMs from AGENT_QUOTA_POLL_INTERVAL_MS', () => {
+        process.env.AGENT_QUOTA_POLL_INTERVAL_MS = '60000';
+
+        expect(loadConfig(createMockResources()).agent.quota.pollIntervalMs).toBe(60_000);
+    });
+
+    test('should load perchPauseAtPercent from AGENT_QUOTA_PERCH_PAUSE_AT_PERCENT', () => {
+        process.env.AGENT_QUOTA_PERCH_PAUSE_AT_PERCENT = '80';
+
+        expect(loadConfig(createMockResources()).agent.quota.perchPauseAtPercent).toBe(80);
+    });
+
+    test('should load notifyAtPercents from the comma-separated AGENT_QUOTA_NOTIFY_AT_PERCENTS', () => {
+        process.env.AGENT_QUOTA_NOTIFY_AT_PERCENTS = '60,80';
+
+        expect(loadConfig(createMockResources()).agent.quota.notifyAtPercents).toEqual([60, 80]);
+    });
+
+    test('should reject a perchPauseAtPercent above 100', () => {
+        process.env.AGENT_QUOTA_PERCH_PAUSE_AT_PERCENT = '150';
+
+        expect(() => loadConfig(createMockResources())).toThrow(/perchPauseAtPercent|quota/);
+    });
+});
+
 // Perch Config tests run sequentially (not concurrent) because they mutate process.env
 describe('loadConfig - Perch Config', () => {
     afterEach(() => {

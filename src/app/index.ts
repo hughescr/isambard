@@ -8,7 +8,8 @@ export type { McpSharedDeps, McpServerRole, CreateMcpServerInstancesOptions } fr
 export { loadIdentityContext } from './identity-loader';
 export {
     createConversationConductor, type CreateConversationConductorParams, type ConversationConductorResult,
-    createPerchConductor, type CreatePerchConductorParams, type PerchConductorResult
+    createPerchConductor, type CreatePerchConductorParams, type PerchConductorResult,
+    createSessionAmbience, type CreateSessionAmbienceParams, type SessionAmbience
 } from './sessions';
 export {
     registerSignalHandlers,

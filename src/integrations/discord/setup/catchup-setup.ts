@@ -1,7 +1,7 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Message } from 'discord.js';
 import type { DiscordCapability } from '../capability';
-import type { ResponseRouter } from '../channel-registry';
+import { ENVELOPE_KIND_TO_CHANNEL, type ResponseRouter } from '../channel-registry';
 import type { InboxManager } from '../inbox';
 import type { IngressGate } from '../ingress-gate';
 import type { DiscordRateLimiter } from '../rate-limiter';
@@ -9,6 +9,7 @@ import { sendEnvelopeResponse } from '../response-sender';
 import { createChannelId, type ChannelId } from '../types';
 import {
     type PerchConfig, type Conductor, type SessionJournal, type Envelope, type UndeliveredEnvelope, type ContextPolicy,
+    type TimeHeaderProvider,
     computeRecovery, lastKnownAt, buildDiscordEnvelope, buildCatchupEnvelope, runBootSequence
 } from '@/agent';
 import type { ServiceHealthRegistry } from '@/services';
@@ -135,6 +136,13 @@ export async function submitAndDeliverConductorEnvelope(envelope: Envelope, deps
 /** Parameters for {@link submitConductorCatchUp}. */
 export interface SubmitConductorCatchUpParams extends SubmitConductorEnvelopeDeps {
     inboxManager: InboxManager
+    /**
+     * Session-peers block 4: renders the catch-up envelope's time header. The composition root
+     * supplies the conversation role's provider (which appends the ambient other-session/quota
+     * lines); omitted, this falls back to the bare `formatTimeHeader`, exactly as before that
+     * block. Called with no argument — a catch-up has no single user whose zone to render.
+     */
+    timeHeader?:  TimeHeaderProvider
 }
 
 /**
@@ -145,7 +153,7 @@ export interface SubmitConductorCatchUpParams extends SubmitConductorEnvelopeDep
  * @param params See {@link SubmitConductorCatchUpParams}.
  */
 export async function submitConductorCatchUp(params: SubmitConductorCatchUpParams): Promise<void> {
-    const { inboxManager, ...envelopeDeps } = params;
+    const { inboxManager, timeHeader = formatTimeHeader, ...envelopeDeps } = params;
     const overview = inboxManager.getUnreadOverview();
     const timezone = resolveTimezone();
     await submitAndDeliverConductorEnvelope(buildCatchupEnvelope({
@@ -153,7 +161,7 @@ export async function submitConductorCatchUp(params: SubmitConductorCatchUpParam
         channelCount: overview.channels.length,
         now:          new Date(),
         timezone,
-        timeHeader:   formatTimeHeader(),
+        timeHeader:   timeHeader(),
     }), envelopeDeps);
 }
 
@@ -204,6 +212,12 @@ export interface RunConductorInboxInitParams {
      * `recovery.lostTasks` computation, matching pre-R1-fix behaviour exactly.
      */
     bootLostTasks?:        string[]
+    /**
+     * Session-peers block 4: renders the time header of both boot-time envelopes this sequence
+     * builds (each replayed channel's Discord envelope and the merged boot envelope). See
+     * {@link SubmitConductorCatchUpParams.timeHeader}.
+     */
+    timeHeader?:           TimeHeaderProvider
 }
 
 /**
@@ -244,7 +258,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
     const {
         inboxManager, readyClient, perchConfig, ingressGate,
         conversationConductor, journal, responseRouter, rateLimiter, excludeChannelIds, discordCapability,
-        contextPolicy, bootEventsWindowMs, bootLostTasks,
+        contextPolicy, bootEventsWindowMs, bootLostTasks, timeHeader = formatTimeHeader,
     } = params;
 
     const envelopeDeps: SubmitConductorEnvelopeDeps = { conversationConductor, responseRouter, client: readyClient, rateLimiter, discordCapability };
@@ -255,16 +269,44 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
     // before), so this list means "redelivered", not merely "attempted".
     const redeliveredTexts: string[] = [];
 
+    /**
+     * Where a boot-time redelivery should be sent, by the same three-way rule the live wake-turn
+     * delivery path uses (`setup/wake-delivery.ts`'s module doc): the envelope's own channel wins;
+     * failing that, a kind that maps to a well-known channel (`catchup`, `perch`) is left for
+     * {@link sendEnvelopeResponse}'s own `ResponseRouter.resolveEnvelopeTarget` to resolve
+     * (returning `undefined` here); and only when neither applies — a `task` envelope for
+     * background work launched from the perch session, which has no channel at all — is the
+     * `fallback` well-known channel resolved, through the very same
+     * {@link import('../channel-registry').ResponseRouter.routeToFallback} the live path calls.
+     * Before this, that last case reached `resolveEnvelopeTarget` with no `originChannelId` and
+     * raised `InvariantViolationError` on every boot inside the recovery window.
+     *
+     * @param item - The undelivered envelope being redelivered
+     * @param text - The reply text, passed to `routeToFallback` so it sees what is being routed
+     * @returns The channel to send to, or `undefined` to let the well-known resolution run
+     */
+    async function resolveRedeliveryChannel(item: UndeliveredEnvelope, text: string): Promise<ChannelId | undefined> {
+        if(item.channelId) {
+            return createChannelId(item.channelId);
+        }
+        if(ENVELOPE_KIND_TO_CHANNEL[item.envelopeKind]) {
+            return undefined;
+        }
+        const routing = await responseRouter.routeToFallback(text);
+        return routing.targetChannelId;
+    }
+
     async function deliverUndelivered(item: UndeliveredEnvelope): Promise<void> {
         if(item.responseText === undefined) {
             return;
         }
         try {
             await conversationConductor.deliver(item.envelopeId, async () => {
+                const channelId = await resolveRedeliveryChannel(item, item.responseText!);
                 const sendResult = await sendEnvelopeResponse({
                     envelopeId: item.envelopeId,
                     kind:       item.envelopeKind,
-                    channelId:  item.channelId ? createChannelId(item.channelId) : undefined,
+                    channelId,
                     text:       item.responseText!,
                     responseRouter,
                     client:     readyClient,
@@ -274,7 +316,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
                 if(!sendResult.sent && !sendResult.queued) {
                     throw new ConductorEnvelopeSkippedError(`Boot-time undelivered redelivery skipped: ${sendResult.skipReason ?? 'unknown reason'}`);
                 }
-                return { channelId: item.channelId ?? '', messageIds: [] };
+                return { channelId: channelId ?? '', messageIds: [] };
             });
             redeliveredTexts.push(truncateToWordBoundary(item.responseText, REDELIVERED_TEXT_PREVIEW_LENGTH));
         } catch (err) {
@@ -310,7 +352,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
             isDM:        newest.guildId === 'DM',
             now:         new Date(),
             timezone,
-            timeHeader:  formatTimeHeader(),
+            timeHeader:  timeHeader(),
             resumeNote:  REPLAY_CAVEAT,
         });
         await submitAndDeliverConductorEnvelope(envelope, envelopeDeps);
@@ -368,7 +410,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
                 channelCount: overview.channels.length,
                 now:          new Date(),
                 timezone,
-                timeHeader:   formatTimeHeader(),
+                timeHeader:   timeHeader(),
                 eventsDelta,
                 lostTasks,
                 redelivered:  redeliveredTexts,
@@ -488,6 +530,8 @@ interface SetupInboxParams {
     bootEventsWindowMs?:   number
     /** Forwarded verbatim to {@link runConductorInboxInit} — see its own `RunConductorInboxInitParams.bootLostTasks` doc (R1). */
     bootLostTasks?:        string[]
+    /** Forwarded verbatim to {@link runConductorInboxInit} — see its own `RunConductorInboxInitParams.timeHeader` doc (session-peers block 4). */
+    timeHeader?:           TimeHeaderProvider
 }
 
 /**
@@ -515,6 +559,7 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): Promise<void> {
         contextPolicy,
         bootEventsWindowMs,
         bootLostTasks,
+        timeHeader,
     } = params;
 
     async function runInboxInit(): Promise<void> {
@@ -524,7 +569,7 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): Promise<void> {
             await runConductorInboxInit({
                 inboxManager, readyClient, perchConfig, ingressGate,
                 conversationConductor, journal, responseRouter, rateLimiter, excludeChannelIds, discordCapability,
-                contextPolicy, bootEventsWindowMs, bootLostTasks,
+                contextPolicy, bootEventsWindowMs, bootLostTasks, timeHeader,
             });
         } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);

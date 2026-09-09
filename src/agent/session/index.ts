@@ -27,6 +27,7 @@ export { type ActivityPhase, activityPhaseSchema, isActivityPhase, phaseFromFram
 export {
     type Ledger,
     type LedgerEvent,
+    type LedgerQuota,
     type LedgerStore,
     type LedgerStoreDeps,
     type LedgerTask,
@@ -34,10 +35,34 @@ export {
     type LedgerTaskWorkflow,
     type LedgerWorkflowAgent,
     type LedgerWorkflowPhase,
+    type QuotaWindow,
+    type QuotaWindows,
     initialLedger,
     reduceLedger,
-    createLedgerStore
+    createLedgerStore,
+    fileQuotaWindow,
+    hasQuotaWindow,
+    toQuotaWindow
 } from './ledger';
+
+export {
+    QUOTA_LINE_PREFIX,
+    type ComposeAmbientLinesParams,
+    type TimeHeaderProvider,
+    composeAmbientLines,
+    withAmbientLines
+} from './ambient-lines';
+
+export {
+    DEFAULT_QUOTA_POLL_INTERVAL_MS,
+    DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
+    type CreateQuotaPollerParams,
+    type QuotaFetch,
+    type QuotaFetchResponse,
+    type QuotaPoller,
+    createQuotaPoller,
+    parseUsageWindows
+} from './quota-poller';
 
 export {
     buildSessionQueryOptions,
@@ -45,6 +70,7 @@ export {
     buildAllowedTools,
     EXPLICIT_TOOLS,
     EXPLICIT_AGENTS,
+    SESSION_PEER_NAMES,
     type SessionMcpServers,
     type SessionMcpServerName,
     type BuildSessionQueryOptionsParams
@@ -65,6 +91,7 @@ export {
     buildDiscordEnvelope,
     buildPerchEnvelope,
     buildNotificationEnvelope,
+    buildPeerEnvelope,
     buildCatchupEnvelope,
     buildWrapUpEnvelope,
     buildResumeEnvelope,
@@ -74,6 +101,7 @@ export {
     type BuildDiscordEnvelopeParams,
     type BuildPerchEnvelopeParams,
     type BuildNotificationEnvelopeParams,
+    type BuildPeerEnvelopeParams,
     type BuildCatchupEnvelopeParams,
     type BuildWrapUpEnvelopeParams
 } from './envelope';
@@ -207,6 +235,13 @@ export {
     toAgenda,
     type AgendaEntry
 } from './calendar-delta';
+
+export {
+    createQuotaNotes,
+    DEFAULT_QUOTA_NOTIFY_PERCENTS,
+    type QuotaNotes,
+    type CreateQuotaNotesParams
+} from './quota-notes';
 
 export {
     shouldNotifyHealthChange,

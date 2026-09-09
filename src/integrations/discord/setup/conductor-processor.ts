@@ -30,7 +30,7 @@ import { processAttachments, toPlatformImages } from './coordinator-setup';
 import type { ResolvedDiscordNames } from './discord-envelope-provider';
 import {
     buildDiscordEnvelope, buildResumeNote, StreamTracker,
-    type AgendaEntry, type AgentStreamEvent, type BuildDiscordEnvelopeParams, type CalendarDelta, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type LedgerStore, type PlatformImage, type StateTopSetDelta
+    type AgendaEntry, type AgentStreamEvent, type BuildDiscordEnvelopeParams, type CalendarDelta, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type LedgerStore, type PlatformImage, type StateTopSetDelta, type TimeHeaderProvider
 } from '@/agent';
 import { formatCalendarContext } from '@/integrations/caldav';
 import { formatTimeHeader } from '@/utils';
@@ -70,6 +70,12 @@ export interface CreateConductorProcessorParams {
     dynamicStatusGenerator?:  ReturnType<typeof createDynamicStatusGenerator>
     /** Forwarded verbatim to the ledger-sink handler's own `onThinkingContentUpdate` (see `bot.ts`'s `getLastThinkingContent`/`setLastThinkingContent` ring buffer) — omitted means the idle-status generator never sees a last-thinking-content signal in conductor mode. */
     onThinkingContentUpdate?: (content: string) => void
+    /**
+     * Session-peers block 4: renders each turn's time header, called with the author's resolved
+     * timezone. The composition root supplies a provider that appends the ambient
+     * other-session/quota lines; omitted, this falls back to the bare `formatTimeHeader`.
+     */
+    timeHeader?:              TimeHeaderProvider
 }
 
 /** An empty `ProcessResult` for the (unreachable in production — the coordinator never calls a processor with an empty batch) empty-contexts guard. */
@@ -130,6 +136,7 @@ function calendarChangedOrUndefined(delta: CalendarDelta, agendaText: string, ti
 export function createConductorProcessor(params: CreateConductorProcessorParams): MessageProcessor {
     const {
         conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, ledgerStore, throttle, dynamicStatusGenerator, onThinkingContentUpdate,
+        timeHeader = formatTimeHeader,
     } = params;
 
     return async (contexts, resumeContext, abortSignal): Promise<ProcessResult> => {
@@ -208,7 +215,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
             isDM:            input.isDM,
             now,
             timezone,
-            timeHeader:      formatTimeHeader(timezone),
+            timeHeader:      timeHeader(timezone),
             newEvents:       newEvents.length > 0 ? newEvents : undefined,
             stateChanged:    stateChangedOrUndefined(stateTopSetDelta),
             calendarChanged: calendarChangedOrUndefined(calendarDelta, calendarAgendaText, timezone),

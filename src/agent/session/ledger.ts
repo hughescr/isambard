@@ -97,22 +97,66 @@ export interface LedgerTask {
     finishedAt?: Date
 }
 
+/**
+ * One rate-limit window as the ledger holds it. `utilization` is normalised to a 0-100 PERCENT:
+ * both sources report a 0-1 fraction (block-0 probe P4 — the CLI reads the
+ * `anthropic-ratelimit-unified-*-utilization` headers through `n => Math.min(1, n)`), and the
+ * ledger is the place that conversion happens exactly once.
+ */
+export interface QuotaWindow {
+    /** Percent of the window consumed, 0-100. */
+    utilization: number
+    resetsAt?:   Date
+}
+
+/**
+ * The set of rate-limit windows one quota update can carry. Every member is optional: a source
+ * may know only some of them, and {@link reduceLedger} merges per window rather than replacing
+ * the whole set, so a partial update never erases a window another source already established.
+ */
+export interface QuotaWindows {
+    fiveHour?: QuotaWindow
+    sevenDay?: QuotaWindow
+    /**
+     * Weekly per-model windows, keyed by the RAW rate-limit type (`seven_day_opus`,
+     * `seven_day_sonnet`, …) rather than a trimmed model name, so an unrecognised
+     * `seven_day_*` variant the API adds later still lands somewhere lossless.
+     */
+    perModel?: Record<string, QuotaWindow>
+}
+
+/** {@link Ledger.quota}: the last known windows, plus which source produced them and when. */
+export type LedgerQuota = QuotaWindows & {
+    /** `'headers'` for an SDK `rate_limit_event`; `'poll'` for the usage-endpoint poller. */
+    source: 'headers' | 'poll'
+    at:     Date
+};
+
 /** The full session ledger state, folded from a stream of {@link LedgerEvent}s by {@link reduceLedger}. */
 export interface Ledger {
-    role:          SessionRole
-    sessionId?:    string
-    turn:          LedgerTurn | null
-    queued:        { human: number, other: number }
+    role:             SessionRole
+    sessionId?:       string
+    turn:             LedgerTurn | null
+    queued:           { human: number, other: number }
     /** Every task still running, foreground and background alike. */
-    tasks:         LedgerTask[]
+    tasks:            LedgerTask[]
     /** The {@link FINISHED_TASKS_CAP} most recently finished tasks, newest last. */
-    finishedTasks: LedgerTask[]
-    compaction:    'none' | 'compacting'
-    context:       { used: number, window: number, percentage: number, lastCompactionAt?: Date }
-    process:       { rssBytes: number }
-    perch:         { slot?: string, endsAt?: Date }
-    cost:          { cumulativeUsd: number, lastTurnUsd: number }
-    latency:       { bySource: Partial<Record<EnvelopeKind, number>> }
+    finishedTasks:    LedgerTask[]
+    compaction:       'none' | 'compacting'
+    context:          { used: number, window: number, percentage: number, lastCompactionAt?: Date }
+    process:          { rssBytes: number }
+    perch:            { slot?: string, endsAt?: Date }
+    cost:             { cumulativeUsd: number, lastTurnUsd: number }
+    latency:          { bySource: Partial<Record<EnvelopeKind, number>> }
+    /** Subscription rate-limit utilization; absent until the first `rate_limit_event` or poll. */
+    quota?:           LedgerQuota
+    /**
+     * When the last open turn closed (the `result` frame's own `at`), or absent while this
+     * session has never finished a turn on this process. Read by the ambient other-session line
+     * (./ambient-lines.ts) to render `idle since HH:mm`; a bare `result` that closes no turn
+     * never touches it.
+     */
+    lastTurnEndedAt?: Date
 }
 
 /** Every fact the conductor can fold into a {@link Ledger}. Every member carries `at: Date`. */
@@ -141,7 +185,15 @@ export type LedgerEvent
        * 2026-09-06). The digest then rides along every phase change within the turn (see
        * `carryDigest`) until a fresher synopsis replaces it.
        */
-      | { type: 'phase_synopsis', turnId: string, phaseType: ActivityPhase['type'], text: string, at: Date };
+      | { type: 'phase_synopsis', turnId: string, phaseType: ActivityPhase['type'], text: string, at: Date }
+      /**
+       * A quota reading from the usage-endpoint poller
+       * ({@link import('./quota-poller').createQuotaPoller}), already normalised to
+       * {@link QuotaWindow} units. Merged per window into {@link Ledger.quota} with
+       * `source: 'poll'`; the SDK's own `rate_limit_event` frames fold in the same place with
+       * `source: 'headers'`.
+       */
+      | { type: 'quota_polled', quota: QuotaWindows, at: Date };
 
 /** A fresh {@link Ledger} for `role`, with every field at its zero value. */
 export function initialLedger(role: SessionRole): Ledger {
@@ -205,7 +257,9 @@ interface OptionalTaskUsage {
  * and is only updated when a turn was actually open (a bare result with no turn open must not
  * misreport a turn cost — see design doc section 7). Closing the turn also finishes every running
  * FOREGROUND task: a foreground sub-agent blocks its spawning tool call, so it cannot outlive the
- * turn, and an interrupted turn ends without the `tool_result` that would otherwise finish it.
+ * turn, and an interrupted turn ends without the `tool_result` that would otherwise finish it, and
+ * stamps {@link Ledger.lastTurnEndedAt} with this frame's own `at` (a bare result, closing no
+ * turn, leaves it at whatever the last real turn-close set).
  */
 function reduceResultFrame(ledger: Ledger, frame: ResultFrame, at: Date): Ledger {
     const { total_cost_usd: cumulativeUsd } = frame;
@@ -217,7 +271,7 @@ function reduceResultFrame(ledger: Ledger, frame: ResultFrame, at: Date): Ledger
     }
     const lastTurnUsd = Math.max(0, cumulativeUsd - ledger.cost.cumulativeUsd);
     const stopped = stopForegroundTasks(ledger, at);
-    return { ...stopped, turn: null, cost: { cumulativeUsd, lastTurnUsd } };
+    return { ...stopped, turn: null, lastTurnEndedAt: at, cost: { cumulativeUsd, lastTurnUsd } };
 }
 
 /**
@@ -588,6 +642,182 @@ function finishForegroundTask(ledger: Ledger, toolUseId: string, failed: boolean
     return moveToFinished(ledger, { ...current, status: failed ? 'failed' : 'completed', finishedAt: at });
 }
 
+/**
+ * Reads a raw reset stamp as epoch milliseconds. A number is unix SECONDS (block-0 probe P4's
+ * verbatim `rate_limit_event`), not milliseconds; a string is an ISO-8601 instant, accepted
+ * because the usage endpoint's shape is UNVERIFIED (probe P5) and a timestamp is the field most
+ * likely to arrive rendered rather than numeric — without this a parsed poll window would silently
+ * lose its rollover boundary, which is the one field `quota-notes.ts` opens a new window instance
+ * on. Anything unparseable (a garbage string, a non-finite number, a boolean) is no stamp at all.
+ */
+function toResetsAtMs(resetsAt: unknown): number | undefined {
+    if(typeof resetsAt === 'number') {
+        return Number.isFinite(resetsAt) ? resetsAt * 1000 : undefined;
+    }
+    if(typeof resetsAt === 'string') {
+        const parsed = Date.parse(resetsAt);
+        return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+}
+
+/**
+ * Normalises one raw rate-limit window into a {@link QuotaWindow}. Shared by the
+ * `rate_limit_event` fold below and the usage-endpoint poller (./quota-poller.ts) so the unit
+ * conversion lives in exactly one place: `utilization` is a 0-1 fraction scaled to 0-100, and
+ * `resetsAt` is read by {@link toResetsAtMs}. Both arguments are `unknown` because both call sites
+ * read them off a payload the SDK does not declare; a window with no usable utilization is no
+ * window at all.
+ *
+ * A value outside 0-1 is REJECTED rather than clamped. Clamping was a live hazard: the usage
+ * endpoint (UNVERIFIED, probe P5) could plausibly report a percent, and an 87 clamped to 100 is
+ * not a degraded reading but a fabricated one — it would pause perch at `perchPauseAtPercent`,
+ * fire the 75%/90% threshold notes, and leave no trace of having been invented. The one source
+ * whose units ARE verified always delivers a 0-1 fraction (probe P4: the CLI reads the
+ * `anthropic-ratelimit-unified-*-utilization` headers through `n => Math.min(1, n)`), so nothing
+ * legitimate is lost. `NaN` needs no separate test: it satisfies neither comparison.
+ * @param utilization Raw 0-1 utilization fraction
+ * @param resetsAt Raw reset stamp — unix seconds or an ISO-8601 string — when the source carries one
+ * @returns The normalised window, or undefined when `utilization` is missing, unusable or out of range
+ */
+export function toQuotaWindow(utilization: unknown, resetsAt: unknown): QuotaWindow | undefined {
+    if(typeof utilization !== 'number' || !(utilization >= 0 && utilization <= 1)) {
+        return undefined;
+    }
+    const percent = utilization * 100;
+    const resetsAtMs = toResetsAtMs(resetsAt);
+    if(resetsAtMs === undefined) {
+        return { utilization: percent };
+    }
+    return { utilization: percent, resetsAt: new Date(resetsAtMs) };
+}
+
+/**
+ * Files one normalised window into {@link QuotaWindows} under the slot its raw rate-limit type
+ * names: `five_hour` and `seven_day` are the two unified windows, every other `seven_day_*`
+ * variant lands in `perModel` under its raw type, and anything else (`overage`, an unknown
+ * future type) is dropped. Returns `windows` by reference when the type is not one it tracks.
+ */
+export function fileQuotaWindow(windows: QuotaWindows, type: string, window: QuotaWindow): QuotaWindows {
+    if(type === 'five_hour') {
+        return { ...windows, fiveHour: window };
+    }
+    if(type === 'seven_day') {
+        return { ...windows, sevenDay: window };
+    }
+    if(type.startsWith('seven_day_')) {
+        return { ...windows, perModel: { ...windows.perModel, [type]: window } };
+    }
+    return windows;
+}
+
+/** True when `windows` carries at least one window worth folding into the ledger. */
+export function hasQuotaWindow(windows: QuotaWindows): boolean {
+    return windows.fiveHour !== undefined || windows.sevenDay !== undefined || windows.perModel !== undefined;
+}
+
+type RateLimitFrame = Extract<SDKMessage, { type: 'rate_limit_event' }>;
+
+/**
+ * Reads every window a `rate_limit_event` carries. `rate_limit_info.unifiedWindows` is undeclared
+ * in `sdk.d.ts` (so it is read defensively, never cast into an assumed shape) but was present on
+ * every frame the block-0 probe observed and carries BOTH windows, so one frame refreshes the
+ * whole picture. The top-level `rateLimitType`/`utilization`/`resetsAt` names only the window
+ * that tripped the emit, and is applied last so it wins for that one window.
+ */
+function quotaWindowsFromFrame(frame: RateLimitFrame): QuotaWindows {
+    const info = frame.rate_limit_info;
+    let windows: QuotaWindows = {};
+    const unified = readField(info, 'unifiedWindows');
+    if(unified !== null && typeof unified === 'object') {
+        for(const [type, raw] of Object.entries(unified)) {
+            const window = toQuotaWindow(readField(raw, 'utilization'), readField(raw, 'resetsAt'));
+            if(window !== undefined) {
+                windows = fileQuotaWindow(windows, type, window);
+            }
+        }
+    }
+    const { rateLimitType } = info;
+    if(rateLimitType !== undefined) {
+        const window = toQuotaWindow(info.utilization, info.resetsAt);
+        if(window !== undefined) {
+            windows = fileQuotaWindow(windows, rateLimitType, window);
+        }
+    }
+    return windows;
+}
+
+/** Per-model maps merge key by key, so a source that reports only one model keeps the others. */
+function mergePerModel(previous: Record<string, QuotaWindow> | undefined, next: Record<string, QuotaWindow> | undefined): Record<string, QuotaWindow> | undefined {
+    if(previous === undefined) {
+        return next;
+    }
+    return { ...previous, ...next };
+}
+
+/** Two readings of one window are the same reading when both numbers and the rollover stamp agree. */
+function sameQuotaWindow(previous: QuotaWindow | undefined, next: QuotaWindow | undefined): boolean {
+    return previous?.utilization === next?.utilization && previous?.resetsAt?.getTime() === next?.resetsAt?.getTime();
+}
+
+/**
+ * Per-model maps compare key by key. `next` is always the merge of `previous` with whatever the
+ * source carried, so its key set can only GROW — iterating `next`'s keys therefore covers every
+ * key of both, and a window type `previous` never had compares its own (absent) reading against a
+ * real window and fails. No size check is needed, and adding one would be unreachable code.
+ */
+function samePerModel(previous: Record<string, QuotaWindow> | undefined, next: Record<string, QuotaWindow> | undefined): boolean {
+    return Object.keys(next ?? {}).every(key => sameQuotaWindow(previous?.[key], next?.[key]));
+}
+
+/** Whether a merged reading says exactly what the ledger already holds — see {@link reduceQuota}. */
+function sameQuotaReading(previous: LedgerQuota, next: LedgerQuota): boolean {
+    return previous.source === next.source
+      && sameQuotaWindow(previous.fiveHour, next.fiveHour)
+      && sameQuotaWindow(previous.sevenDay, next.sevenDay)
+      && samePerModel(previous.perModel, next.perModel);
+}
+
+/**
+ * Merges `windows` into `ledger.quota` window by window — a source that knows only one window
+ * leaves the others at their last known value — stamping `source` and `at`. Returns `ledger` by
+ * reference when `windows` carries nothing at all, so a frame naming only untracked window types
+ * (or a poll that parsed to nothing) is a no-op rather than a bogus refresh of the timestamp.
+ *
+ * It also returns `ledger` by reference when the merge MOVED nothing: same windows, same rollover
+ * stamps, same source. The poller repeats the same numbers every five minutes and every quota
+ * subscriber (`quota-notes.ts`, presence, the ambient-line providers) is woken by a changed ledger
+ * reference, so re-allocating on an identical reading is pure noise.
+ *
+ * `at` is deliberately NOT bumped for a deduped reading, which is what makes the dedupe a pure
+ * reference test. `ambient-lines.ts` merges the two roles' ledgers by taking, per window, the
+ * reading with the later `quota.at` — and that merge is unaffected here, because a deduped
+ * reading agrees with the value already filed: the losing ledger's stale-looking `at` is attached
+ * to the very number the fresher reading would have written. (The two sources cannot mask each
+ * other either: `source` is part of the comparison, so a poll landing on a headers reading always
+ * refreshes.) The one behaviour that does change is `quota-notes.ts`'s retry of a note the bridge
+ * refused at boot: it now waits for the next reading that actually moved rather than the next
+ * identical repeat — which is the same wait, one poll later, for a note that is `wake: false`
+ * anyway.
+ */
+function reduceQuota(ledger: Ledger, windows: QuotaWindows, source: LedgerQuota['source'], at: Date): Ledger {
+    if(!hasQuotaWindow(windows)) {
+        return ledger;
+    }
+    const previous = ledger.quota;
+    const quota: LedgerQuota = {
+        fiveHour: windows.fiveHour ?? previous?.fiveHour,
+        sevenDay: windows.sevenDay ?? previous?.sevenDay,
+        perModel: mergePerModel(previous?.perModel, windows.perModel),
+        source,
+        at,
+    };
+    if(previous !== undefined && sameQuotaReading(previous, quota)) {
+        return ledger;
+    }
+    return { ...ledger, quota };
+}
+
 /** Frame-type-specific effects that never depend on the open turn: tasks and the compact boundary. */
 function applyFrameSideEffects(ledger: Ledger, frame: SDKMessage, at: Date): Ledger {
     if(frame.type === 'user') {
@@ -607,6 +837,9 @@ function applyFrameSideEffects(ledger: Ledger, frame: SDKMessage, at: Date): Led
     }
     if(frame.type === 'system' && frame.subtype === 'compact_boundary') {
         return { ...ledger, compaction: 'none', context: { ...ledger.context, lastCompactionAt: at } };
+    }
+    if(frame.type === 'rate_limit_event') {
+        return reduceQuota(ledger, quotaWindowsFromFrame(frame), 'headers', at);
     }
     return ledger;
 }
@@ -864,6 +1097,9 @@ export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
         }
         case 'phase_synopsis': {
             return reducePhaseSynopsis(ledger, event);
+        }
+        case 'quota_polled': {
+            return reduceQuota(ledger, event.quota, 'poll', event.at);
         }
     }
 }

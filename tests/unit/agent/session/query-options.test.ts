@@ -6,6 +6,7 @@ import {
     buildAllowedTools,
     EXPLICIT_TOOLS,
     EXPLICIT_AGENTS,
+    SESSION_PEER_NAMES,
     type SessionMcpServers
 } from '../../../../src/agent/session/query-options';
 import type { SessionRole } from '../../../../src/agent/session/types';
@@ -33,6 +34,18 @@ describe('EXPLICIT_TOOLS / EXPLICIT_AGENTS', () => {
 
     test('EXPLICIT_AGENTS defines only general-purpose', () => {
         expect(Object.keys(EXPLICIT_AGENTS)).toEqual(['general-purpose']);
+    });
+});
+
+describe('SESSION_PEER_NAMES', () => {
+    test('names the conversation session Izzy-main and the perch session Izzy-perch', () => {
+        expect(SESSION_PEER_NAMES).toEqual({ conversation: 'Izzy-main', perch: 'Izzy-perch' });
+    });
+
+    test('every name carries the Izzy- prefix the peer rule keys on', () => {
+        for(const name of Object.values(SESSION_PEER_NAMES)) {
+            expect(name.startsWith('Izzy-')).toBe(true);
+        }
     });
 });
 
@@ -103,6 +116,42 @@ describe('buildSessionQueryOptions', () => {
     test('mcp__health__* is absent when no health server is configured', () => {
         const opts = buildSessionQueryOptions(baseParams());
         expect(opts.allowedTools).not.toContain('mcp__health__*');
+    });
+
+    // Block-0 probe, 2026-09-09 (docs/plans/session-peers-and-quota.md "P1"): `Options.title`
+    // sets the persisted session title (and `session_title` on every hook payload) but NEVER
+    // reaches the peer registry — a peer addressed by the title got
+    // `No agent named 'Izzy-probe-B' is reachable`. The only knob that sets the messaging
+    // identity is the `CLAUDE_CODE_SESSION_NAME` env var, so both must be set, to the same name.
+    test.each([
+        ['conversation', 'Izzy-main'],
+        ['perch', 'Izzy-perch'],
+    ] as const)('role=%s titles the session %s', (role, expected) => {
+        const opts = buildSessionQueryOptions(baseParams({ role }));
+        expect(opts.title).toBe(expected);
+    });
+
+    test.each([
+        ['conversation', 'Izzy-main'],
+        ['perch', 'Izzy-perch'],
+    ] as const)('role=%s sets CLAUDE_CODE_SESSION_NAME to %s, the name peers actually address', (role, expected) => {
+        const opts = buildSessionQueryOptions(baseParams({ role }));
+        expect(opts.env.CLAUDE_CODE_SESSION_NAME).toBe(expected);
+    });
+
+    test('title and CLAUDE_CODE_SESSION_NAME are the same string for a role', () => {
+        for(const role of ['conversation', 'perch'] as const) {
+            const opts = buildSessionQueryOptions(baseParams({ role }));
+            expect(opts.env.CLAUDE_CODE_SESSION_NAME).toBe(opts.title);
+            expect(opts.title).toBe(SESSION_PEER_NAMES[role]);
+        }
+    });
+
+    test('setting the session name does not drop the other env entries', () => {
+        const opts = buildSessionQueryOptions(baseParams());
+        expect(opts.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBe('1');
+        expect(opts.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('1');
+        expect(opts.env.ENABLE_TOOL_SEARCH).toBe('auto');
     });
 
     test('has no abortController key', () => {

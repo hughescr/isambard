@@ -45,7 +45,7 @@ import { buildPerchSlotEnvelope, buildPerchWrapUpEnvelope, computeSlotEndsAt } f
 import { getSlotForHour } from './schedule';
 import type { PerchConfig, PerchSlot } from './types';
 import type { ContextBuilder } from '@/agent/context-builder';
-import type { Clock, Conductor, TimerHandle } from '@/agent/session';
+import type { Clock, Conductor, TimeHeaderProvider, TimerHandle } from '@/agent/session';
 import type { ActivityLogger } from '@/storage';
 import { formatTimeHeader } from '@/utils';
 
@@ -68,6 +68,12 @@ export interface PerchDriverDeps {
     /** Current local hour (0-23) — used only to resolve the slot for a pending trigger once the running slot ends. */
     getCurrentLocalHour: () => number
     activityLogger?:     Pick<ActivityLogger, 'log'>
+    /**
+     * Session-peers block 4: renders the slot envelope's time header. The composition root
+     * supplies a provider that appends the ambient other-session/quota lines; omitted, this
+     * falls back to the bare `formatTimeHeader`, exactly as before that block.
+     */
+    timeHeader?:         TimeHeaderProvider
     logger:              Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
 }
 
@@ -90,7 +96,7 @@ export interface PerchDriver {
  * @returns A {@link PerchDriver}.
  */
 export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
-    const { conductor, contextBuilder, clock, config, getCurrentLocalHour, activityLogger, logger } = deps;
+    const { conductor, contextBuilder, clock, config, getCurrentLocalHour, activityLogger, logger, timeHeader = formatTimeHeader } = deps;
     const interruptGraceMinutes = config.interruptGraceMinutes ?? DEFAULT_INTERRUPT_GRACE_MINUTES;
 
     let slotRunning = false;
@@ -197,7 +203,7 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
         }
 
         const envelope = buildPerchSlotEnvelope({
-            slot, now, timezone: config.timezone, endsAt, timeHeader: formatTimeHeader(config.timezone), perchContext,
+            slot, now, timezone: config.timezone, endsAt, timeHeader: timeHeader(config.timezone), perchContext,
         });
         // Captured before conductor.submit() is even called, closing the race the module doc
         // describes: armInterruptTimer's status() check must never see a stale id from a previous

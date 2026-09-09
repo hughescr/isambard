@@ -80,6 +80,8 @@ class FakeConductor implements Conductor {
     open = (): Promise<{ sessionId: string, resumed: boolean }> => Promise.resolve({ sessionId: 'sess-1', resumed: false });
     appendWithoutTurn = (): void => { throw new Error('FakeConductor.appendWithoutTurn is unused by conductor-processor.ts'); };
     adoptWakeTurn = (): void => { throw new Error('FakeConductor.adoptWakeTurn is unused by conductor-processor.ts'); };
+
+    adoptPeerTurn = (): void => { throw new Error('FakeConductor.adoptPeerTurn is unused by conductor-processor.ts'); };
     deliver = (): Promise<never> => Promise.reject(new Error('FakeConductor.deliver is unused by conductor-processor.ts'));
     interruptCurrent = (): Promise<void> => Promise.resolve();
     status = (): ConductorStatus => ({
@@ -868,6 +870,21 @@ describe('createConductorProcessor', () => {
         // Distinguishing check: the server-zone fallback resolveTimezone(undefined) would resolve
         // is asserted NOT to have been passed to resolveTimezone at all in this scenario.
         expect(resolveTimezone).not.toHaveBeenCalledWith(undefined);
+    });
+
+    it('takes the envelope\'s time header from an injected provider, called with the resolved zone (session-peers block 4)', async () => {
+        contextBuilder = makeContextBuilder({ loadUserTimezone: jest.fn(() => Promise.resolve('Europe/London')) });
+        const timeHeader = jest.fn((_userTimezone?: string) => '## Current Time\n- Perch: idle');
+        const ambientProcessor = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, timeHeader,
+        });
+        coordinator.setProcessor(ambientProcessor);
+
+        coordinator.handleMessage(makeContext({ userId: createUserId('user-42') }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(timeHeader).toHaveBeenCalledWith('Europe/London');
+        expect(conductor.submitCalls[0].envelope.text).toContain('- Perch: idle');
     });
 
     it('passes a non-empty user memory block through to buildDiscordEnvelope verbatim', async () => {

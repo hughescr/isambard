@@ -70,6 +70,20 @@ function catchupEnvelope(overrides: Partial<Envelope> = {}): Envelope {
     };
 }
 
+function peerEnvelope(overrides: Partial<Envelope> = {}): Envelope {
+    idCounter += 1;
+    return {
+        id:           `peer-${idCounter}`,
+        kind:         'peer',
+        text:         `[PEER · Izzy-main]\n\npeer text ${idCounter}`,
+        peer:         { from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' },
+        hostPriority: 'wake',
+        shouldQuery:  true,
+        createdAt:    new Date(0),
+        ...overrides,
+    };
+}
+
 function notificationEnvelope(overrides: Partial<Envelope> = {}): Envelope {
     idCounter += 1;
     return {
@@ -2101,6 +2115,55 @@ describe('createConductor', () => {
             expect(h.journal.byKind('turn_completed').at(-1)?.responseText).toBe('second');
         });
 
+        it('the overwritten wake is really gone: the replacement is the one adopted, and the next spontaneous turn afterwards is a bare notification turn rather than a second task turn', async () => {
+            const forget = jest.fn();
+            const h = build({ taskLaunches: { lookup: jest.fn(() => undefined), forget } });
+            await openWith(h);
+
+            h.conductor.adoptWakeTurn({ taskId: 'task-first', toolUseId: 'tool-first', summary: 'first' });
+            h.conductor.adoptWakeTurn({ taskId: 'task-second', toolUseId: 'tool-second', summary: 'second' });
+
+            h.instances[0].emit(frames.assistantText('second'));
+            await flush();
+            expect(forget).toHaveBeenCalledTimes(1);
+            expect(forget).toHaveBeenCalledWith('task-second');
+            h.instances[0].emit(frames.resultSuccess({ result: 'second' }));
+            await flush();
+
+            h.instances[0].emit(frames.assistantText('an unrelated musing'));
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'notification' });
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['task']);
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('replacing a pending wake removes only that wake: a peer message already queued ahead of it still takes the first turn', async () => {
+            const h = build();
+            await openWith(h);
+
+            const envelope = peerEnvelope();
+            h.conductor.adoptPeerTurn(envelope);
+            h.conductor.adoptWakeTurn({ taskId: 'task-first', toolUseId: 'tool-first', summary: 'first' });
+            h.conductor.adoptWakeTurn({ taskId: 'task-second', toolUseId: 'tool-second', summary: 'second' });
+
+            h.instances[0].emit(frames.assistantText('answering the peer'));
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'peer' });
+            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'peer', envelopeId: envelope.id });
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            h.instances[0].emit(frames.assistantText('the background result'));
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['peer', 'task']);
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
         it('a rejecting onWakeTurnSettled is caught and logged, never surfacing as an unhandled rejection', async () => {
             const onWakeTurnSettled = jest.fn(() => Promise.reject(new Error('delivery failed')));
             const h = build({ onWakeTurnSettled });
@@ -2389,6 +2452,309 @@ describe('createConductor', () => {
                 { error: expect.any(Error) },
                 'An adopted wake turn was rejected before it could settle'
             );
+        });
+    });
+
+    describe('adoptPeerTurn() (session-peers block 2: a peer session\'s cross-session message opens its own turn)', () => {
+        it('unit-level end-to-end: the peer envelope opens a peer-kind turn on the next spontaneous assistant frame, journalled and ledgered, with no SDK push', async () => {
+            const h = build();
+            await openWith(h);
+
+            const envelope = peerEnvelope();
+            h.conductor.adoptPeerTurn(envelope);
+            h.instances[0].emit(frames.assistantText('on it'));
+            await flush();
+
+            expect(h.journal.byKind('envelope_submitted')).toEqual([
+                { type: 'envelope_submitted', at: expect.any(Date), envelopeId: envelope.id, kind: 'peer' },
+            ]);
+            expect(h.journal.byKind('envelope_submitted')[0]).not.toHaveProperty('channelId');
+            expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'peer' });
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'peer', channelId: undefined, authorId: undefined });
+            // The SDK already started this turn from the raw <cross-session-message> prompt, so
+            // the host must never push the envelope's own text on top of it.
+            expect(turnPrompts(h.instances[0])).toHaveLength(0);
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'replied' }));
+            await flush();
+
+            expect(h.journal.byKind('turn_completed')).toEqual([
+                { type: 'turn_completed', at: expect.any(Date), envelopeId: envelope.id, kind: 'peer', responseText: 'replied' },
+            ]);
+            expect(h.conductor.status().turn).toBeNull();
+        });
+
+        it('rejects an envelope that is not peer-kind — the adopted turn IS the envelope, so a mis-kinded one would journal and ledger the wrong kind', async () => {
+            const h = build();
+            await openWith(h);
+
+            expect(() => {
+                h.conductor.adoptPeerTurn(discordEnvelope());
+            }).toThrow('Invariant violated in conductor.adoptPeerTurn: called with a non peer-kind envelope');
+            h.instances[0].emit(frames.assistantText('musing'));
+            await flush();
+
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'notification' });
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('a single, fresh adoptPeerTurn() call (no prior pending peer) never logs the overwrite warning', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.conductor.adoptPeerTurn(peerEnvelope());
+
+            expect(h.logger.warn).not.toHaveBeenCalled();
+
+            h.instances[0].emit(frames.assistantText('ok'));
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('a second adoptPeerTurn() before the first is consumed QUEUES it rather than overwriting: each message opens its own turn, oldest first, with no warning', async () => {
+            const h = build();
+            await openWith(h);
+
+            const first = peerEnvelope();
+            const second = peerEnvelope();
+            h.conductor.adoptPeerTurn(first);
+            h.conductor.adoptPeerTurn(second);
+
+            expect(h.logger.warn).not.toHaveBeenCalled();
+
+            h.instances[0].emit(frames.assistantText('answering the first'));
+            await flush();
+            expect(h.journal.byKind('envelope_submitted').map(e => e.envelopeId)).toEqual([first.id]);
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            h.instances[0].emit(frames.assistantText('answering the second'));
+            await flush();
+            expect(h.journal.byKind('envelope_submitted').map(e => e.envelopeId)).toEqual([first.id, second.id]);
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('caps the pending peer queue, dropping the OLDEST unconsumed message with exactly one warning; only peers count against the cap, and the survivors keep their arrival order behind the earlier wake', async () => {
+            const h = build();
+            await openWith(h);
+
+            // A pending wake shares the one ordered queue but is not a peer message, so it must
+            // not count against the peer cap.
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'background work finished' });
+            // One more than the cap, so exactly one message is dropped.
+            const envelopes = Array.from({ length: 9 }, () => peerEnvelope());
+            for(const envelope of envelopes) {
+                h.conductor.adoptPeerTurn(envelope);
+            }
+
+            expect(h.logger.warn).toHaveBeenCalledTimes(1);
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                { dropped: envelopes[0]?.id, next: envelopes[8]?.id, max: 8 },
+                'the pending peer queue is full; dropping the oldest peer message that never got a turn of its own'
+            );
+
+            // One more: the queue is still exactly at the cap, so the next-oldest goes this time.
+            const tenth = peerEnvelope();
+            h.conductor.adoptPeerTurn(tenth);
+
+            expect(h.logger.warn).toHaveBeenCalledTimes(2);
+            expect(h.logger.warn).toHaveBeenLastCalledWith(
+                { dropped: envelopes[1]?.id, next: tenth.id, max: 8 },
+                'the pending peer queue is full; dropping the oldest peer message that never got a turn of its own'
+            );
+
+            // The wake arrived before every peer, so it still takes the first spontaneous turn.
+            h.instances[0].emit(frames.assistantText('the background result'));
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            // Then the survivors, in arrival order, starting from the oldest one still queued.
+            h.instances[0].emit(frames.assistantText('answering the oldest survivor'));
+            await flush();
+            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'peer', envelopeId: envelopes[2]?.id });
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            h.instances[0].emit(frames.assistantText('answering the next one'));
+            await flush();
+            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'peer', envelopeId: envelopes[3]?.id });
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('serves pending adoptions strictly FIFO: a task wake adopted BEFORE a peer message keeps the first spontaneous turn — and its own deferred is the one that settles, so the background work is still delivered', async () => {
+            const onWakeTurnSettled = jest.fn();
+            const h = build({ onWakeTurnSettled });
+            await openWith(h);
+
+            const envelope = peerEnvelope();
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'background work finished' });
+            h.conductor.adoptPeerTurn(envelope);
+
+            h.instances[0].emit(frames.assistantText('reporting the background result'));
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
+            h.instances[0].emit(frames.resultSuccess({ result: 'reported' }));
+            await flush();
+
+            // The wake's buildWakeSettledDeferred ran: a peer-labelled turn here would have used
+            // internalDeferred() instead and lost the background work's result entirely.
+            expect(onWakeTurnSettled).toHaveBeenCalledTimes(1);
+            expect(onWakeTurnSettled).toHaveBeenCalledWith(
+                expect.objectContaining({ kind: 'task', text: 'background work finished' }),
+                expect.objectContaining({ response: 'reported', isError: false })
+            );
+
+            h.instances[0].emit(frames.assistantText('now answering the peer'));
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'peer' });
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['task', 'peer']);
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('serves pending adoptions strictly FIFO the other way round too: a peer message adopted BEFORE a task wake keeps the first turn, and the wake takes the next one with its own deferred', async () => {
+            const onWakeTurnSettled = jest.fn();
+            const h = build({ onWakeTurnSettled });
+            await openWith(h);
+
+            const envelope = peerEnvelope();
+            h.conductor.adoptPeerTurn(envelope);
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'background work finished' });
+
+            h.instances[0].emit(frames.assistantText('answering the peer'));
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'peer' });
+            expect(h.journal.byKind('envelope_submitted').map(e => e.envelopeId)).toEqual([envelope.id]);
+            expect(onWakeTurnSettled).not.toHaveBeenCalled();
+            h.instances[0].emit(frames.resultSuccess({ result: 'answered' }));
+            await flush();
+
+            h.instances[0].emit(frames.assistantText('now the background result'));
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['peer', 'task']);
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'reported' }));
+            await flush();
+
+            expect(onWakeTurnSettled).toHaveBeenCalledWith(
+                expect.objectContaining({ kind: 'task', text: 'background work finished' }),
+                expect.objectContaining({ response: 'reported', isError: false })
+            );
+        });
+
+        it('a pendingPeer that misses its own turn expires after PENDING_WAKE_TTL_MS — a much LATER, unrelated spontaneous turn is not misattributed to it', async () => {
+            const h = build();
+            await openWith(h);
+
+            const envelope = peerEnvelope();
+            h.conductor.adoptPeerTurn(envelope);
+            h.clock.advance(5 * 60 * 1000 + 1);
+            h.instances[0].emit(frames.assistantText('an unrelated later musing'));
+            await flush();
+
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'notification' });
+            expect(h.journal.byKind('envelope_submitted')).toEqual([]);
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                { envelopeId: envelope.id },
+                'a pending peer message expired (PENDING_WAKE_TTL_MS) before it could be adopted; a later spontaneous turn will not be misattributed to it'
+            );
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('the pending-peer expiry shares the wake TTL\'s strict ">" boundary: a frame arriving exactly AT 5 minutes still adopts the peer message', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.conductor.adoptPeerTurn(peerEnvelope());
+            h.clock.advance(5 * 60 * 1000);
+            h.instances[0].emit(frames.assistantText('right at the wire'));
+            await flush();
+
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'peer' });
+            expect(h.logger.warn).not.toHaveBeenCalled();
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('a human envelope arriving during an adopted peer turn is enqueued and arms the human-wait escalation, rather than interrupting immediately like a same-channel discord turn', async () => {
+            const h = build();
+            await openWith(h);
+            h.conductor.adoptPeerTurn(peerEnvelope());
+            h.instances[0].emit(frames.assistantText('answering the peer'));
+            await flush();
+
+            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(0);
+
+            h.clock.advance(10_000);
+            expect(h.instances[0].interruptCalls).toBe(1);
+
+            h.instances[0].resolveInterrupt();
+            h.instances[0].emit(frames.resultInterrupted());
+            await flush();
+            h.instances[0].emit(frames.resultSuccess()); // closes the injected resume turn
+            await flush();
+            h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
+            await humanPromise;
+        });
+
+        it('an interrupted peer turn injects a resume note ahead of the queued human envelope, exactly like an interrupted task turn', async () => {
+            const h = build();
+            await openWith(h);
+            h.conductor.adoptPeerTurn(peerEnvelope());
+            h.instances[0].emit(frames.assistantText('composing a reply to the peer'));
+            await flush();
+
+            const humanEnvelope = discordEnvelope();
+            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.clock.advance(10_000);
+            h.instances[0].resolveInterrupt();
+            h.instances[0].emit(frames.resultInterrupted());
+            await flush();
+
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['peer', 'resume']);
+
+            h.instances[0].emit(frames.resultSuccess()); // closes the resume turn
+            await flush();
+            h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
+            const result = await humanPromise;
+            expect(result.envelopeId).toBe(humanEnvelope.id);
+        });
+
+        it('a transient is_error on an adopted peer turn fails the turn immediately rather than retrying — a retry would push the envelope\'s own rendered text into the SDK queue as a second, unframed user message', async () => {
+            const h = build();
+            await openWith(h);
+
+            const envelope = peerEnvelope();
+            h.conductor.adoptPeerTurn(envelope);
+            h.instances[0].emit(frames.assistantText('partial'));
+            await flush();
+
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'overloaded', api_error_status: 529 }));
+            await flush();
+            h.clock.advance(FAST_RETRY_POLICY.baseDelayMs);
+            await flush();
+
+            expect(turnPrompts(h.instances[0])).toHaveLength(0);
+            expect(h.journal.byKind('turn_failed')).toEqual([
+                { type: 'turn_failed', at: expect.any(Date), envelopeId: envelope.id, kind: 'peer', error: 'overloaded' },
+            ]);
         });
     });
 });

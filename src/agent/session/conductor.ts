@@ -84,9 +84,46 @@ const TURN_RESPONSE_TEXT_CAP = 200_000;
  * indefinitely, so the NEXT genuinely spontaneous notification turn — however much later —
  * misattributes its own reply to the original launch's channel/author. Generous enough (minutes,
  * not seconds) to tolerate real network/model-startup jitter in the legitimate handshake, while
- * still ruling out an unrelated turn hours or days afterward.
+ * still ruling out an unrelated turn hours or days afterward. Governs a pending PEER message
+ * (session-peers block 2) on exactly the same terms and for exactly the same reason.
  */
 const PENDING_WAKE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * How many unconsumed peer messages may wait for a spontaneous turn at once. A peer message only
+ * becomes its own turn when the SDK serves the turn it started, so a burst from a chatty peer can
+ * legitimately queue several; past this many the session is not keeping up and the OLDEST is
+ * dropped with a warning, because holding an unbounded list of adoptions — each of which pins an
+ * envelope and will eventually mislabel a turn — is worse than losing the least relevant one.
+ * Generous relative to any real burst (the peer is a single other session, taking turns of its
+ * own), so hitting it is a signal, not routine.
+ */
+const PENDING_PEER_QUEUE_MAX = 8;
+
+/**
+ * One adoption waiting to be attached to the next spontaneous assistant frame: a background-work
+ * wake (R2) or a peer message (session-peers block 2).
+ *
+ * They share ONE queue, consumed strictly oldest-first, because the SDK serves the turns it starts
+ * in arrival order and the host has no way to tell which turn a given assistant frame belongs to
+ * beyond that ordering. Preferring one kind over the other — as an earlier version preferred a
+ * peer over a wake — mislabels BOTH turns whenever the other kind arrived first: the wake's turn
+ * is journalled as a peer and, worse, never runs `buildWakeSettledDeferred`, so the background
+ * work's result is silently never delivered to the channel that asked for it.
+ */
+interface PendingWakeAdoption {
+    kind:  'wake'
+    wake:  { taskId: string, toolUseId: string, summary: string }
+    setAt: number
+}
+
+interface PendingPeerAdoption {
+    kind:     'peer'
+    envelope: Envelope
+    setAt:    number
+}
+
+type PendingAdoption = PendingWakeAdoption | PendingPeerAdoption;
 
 /** Priority the host queues an envelope at: `'human'` before `'other'` (design section 6). */
 export type SubmitPriority = 'human' | 'other';
@@ -248,6 +285,31 @@ export interface Conductor {
      */
     adoptWakeTurn:                 (input: { taskId: string, toolUseId: string, summary: string }) => void
     /**
+     * Adopts a pending peer-message turn (session-peers block 2): the NEXT spontaneous assistant
+     * frame — the one the SDK's own `<cross-session-message>` delivery produces — opens a real
+     * `peer`-kind turn carrying `envelope` instead of falling through to the bare `notification`
+     * fallback. Takes an already-built {@link Envelope} (see {@link
+     * import('./envelope').buildPeerEnvelope}) rather than the raw `{ from, fromName, text }`
+     * triple because the rendering needs a timezone and a time header, neither of which the
+     * conductor has — the same division of labour `createNotificationBridge` already uses for
+     * `buildNotificationEnvelope`. Throws {@link InvariantViolationError} unless
+     * `envelope.kind === 'peer'`.
+     *
+     * Nothing is ever pushed to the SDK queue for this turn, for the same reason
+     * {@link Conductor.adoptWakeTurn}'s is not: the SDK already started it from the peer's raw
+     * prompt. Unlike a wake, an adopted peer turn has no host-side delivery at all — Claude
+     * answers a peer by calling `SendMessage` itself, which the envelope's own text instructs.
+     *
+     * A peer message that lands while this session is ALREADY mid-turn never reaches here at
+     * all: the SDK folds it into the running turn and fires no `UserPromptSubmit` hook (block-0
+     * probe P3, 2026-09-09), so no new turn exists for the host to adopt and nothing is recorded
+     * — deliberately, rather than reconstructing one from the undeclared `command_lifecycle`
+     * frame, which carries neither the sender nor the text and is also emitted for the host's own
+     * {@link Conductor.appendWithoutTurn} pushes. A second call before the first pending peer
+     * message is consumed overwrites it and logs a warning.
+     */
+    adoptPeerTurn:                 (envelope: Envelope) => void
+    /**
      * Delivers `envelopeId`'s response exactly once (P8): if the delivery guard already knows
      * this id, `send` is skipped entirely; otherwise `send` runs, `response_delivered` is
      * journaled and the journal is flushed (awaiting the write's durability, not just its
@@ -335,14 +397,16 @@ function computeBackoffDelayMs(policy: RetryPolicy, attemptNumber: number): numb
 
 /**
  * True for turn kinds that open with no live human waiting synchronously for them: a spontaneous
- * SDK-initiated turn nobody submitted (`'notification'`) or an adopted background-work wake turn
- * (`'task'`, R2). Human pre-emption and escalation (`routeIncoming`) and interrupted-turn resume-
- * note injection (`injectResumeNoteIfInterruptedBackgroundTurn`) treat both identically — enqueue
- * behind them and arm the human-wait escalation, rather than interrupting immediately the way a
+ * SDK-initiated turn nobody submitted (`'notification'`), an adopted background-work wake turn
+ * (`'task'`, R2), or an adopted peer-message turn (`'peer'`, session-peers block 2 — the peer
+ * waiting on the reply is Izzy's other session, not Craig). Human pre-emption and escalation
+ * (`routeIncoming`) and interrupted-turn resume-note injection
+ * (`injectResumeNoteIfInterruptedBackgroundTurn`) treat all three identically — enqueue behind
+ * them and arm the human-wait escalation, rather than interrupting immediately the way a
  * same-channel `discord` turn is.
  */
 function isBackgroundKind(kind: TurnKind): boolean {
-    return kind === 'notification' || kind === 'task';
+    return kind === 'notification' || kind === 'task' || kind === 'peer';
 }
 
 /**
@@ -376,8 +440,13 @@ export function createConductor(params: CreateConductorParams): Conductor {
     const turnEndedWaiters: (() => void)[] = [];
     let previousTasks = new Map(ledgerStore.get().tasks.map(task => [task.id, task] as const));
     let previousCompaction = ledgerStore.get().compaction;
-    /** Set by {@link adoptWakeTurn}; consumed by the next spontaneous assistant frame {@link onFrame} observes (R2) — `setAt` (clock time) backs the {@link PENDING_WAKE_TTL_MS} staleness check `onFrame` applies before adopting. */
-    let pendingWake: { taskId: string, toolUseId: string, summary: string, setAt: number } | undefined;
+    /**
+     * Adoptions waiting for a spontaneous assistant frame to attach themselves to, OLDEST FIRST —
+     * see {@link PendingAdoption} for why one ordered queue rather than a slot per kind, and
+     * {@link adoptPeerTurn} for the cap. `setAt` (clock time) backs the
+     * {@link PENDING_WAKE_TTL_MS} staleness sweep {@link onFrame} applies before adopting.
+     */
+    let pendingAdoptions: PendingAdoption[] = [];
 
     function now(): Date {
         return new Date(clock.now());
@@ -787,27 +856,105 @@ export function createConductor(params: CreateConductorParams): Conductor {
         taskLaunches?.forget(wake.taskId);
     }
 
+    /**
+     * A wake stays SINGLE-SLOT: a second one before the first is consumed replaces it, exactly as
+     * before, since two wakes racing for one spontaneous turn means the first already missed its
+     * own. The replacement takes a fresh place at the BACK of the queue, so its position still
+     * reflects when it actually arrived relative to any pending peer message.
+     */
     function adoptWakeTurn(input: { taskId: string, toolUseId: string, summary: string }): void {
-        if(pendingWake !== undefined) {
-            logger.warn({ previous: pendingWake, next: input }, 'adoptWakeTurn called again before the previous pending wake turn was consumed; overwriting');
+        const previous = pendingAdoptions.find(entry => entry.kind === 'wake');
+        if(previous !== undefined) {
+            logger.warn({ previous: { ...previous.wake, setAt: previous.setAt }, next: input }, 'adoptWakeTurn called again before the previous pending wake turn was consumed; overwriting');
+            pendingAdoptions = pendingAdoptions.filter(entry => entry !== previous);
         }
-        pendingWake = { ...input, setAt: clock.now() };
+        pendingAdoptions.push({ kind: 'wake', wake: input, setAt: clock.now() });
+    }
+
+    /**
+     * Consumes a pending peer message (session-peers block 2): opens `envelope` as the current
+     * turn exactly like {@link beginAdoptedWakeTurn} — ledger `turn_submitted`, journal
+     * `envelope_submitted`, nothing pushed to the SDK queue, and the item seeded at
+     * `retryPolicy.maxAttempts` so a transient `is_error` fails immediately instead of retrying
+     * through `beginTurn` (which WOULD push the envelope's rendered text as a second, unframed
+     * user message). Its `deferred` is {@link internalDeferred}: no external caller is waiting on
+     * this turn and there is no host-side delivery for it — Claude answers a peer with its own
+     * `SendMessage` call.
+     */
+    function beginAdoptedPeerTurn(envelope: Envelope): void {
+        const at = now();
+        const item: QueuedItem = {
+            envelope, priority: 'other', attempts: retryPolicy.maxAttempts, deferred: internalDeferred(),
+        };
+        currentTurn = {
+            item, kind: 'peer', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+        };
+        ledgerStore.dispatch({ type: 'turn_submitted', envelope: { id: envelope.id, kind: 'peer', queuedAt: at }, at });
+        journal.append({ type: 'envelope_submitted', at, envelopeId: envelope.id, kind: 'peer' });
+    }
+
+    /**
+     * Peer messages queue rather than overwrite: each one is a distinct message that the SDK has
+     * already started a turn for, so dropping the first would erase that message from the ledger
+     * and journal AND attach the second envelope to the first message's turn. Only the
+     * {@link PENDING_PEER_QUEUE_MAX} cap loses one, oldest first, and says so.
+     */
+    function adoptPeerTurn(envelope: Envelope): void {
+        if(envelope.kind !== 'peer') {
+            throw new InvariantViolationError('conductor.adoptPeerTurn', 'called with a non peer-kind envelope — the adopted turn IS this envelope, so its kind is what the ledger and journal record');
+        }
+        const peers = pendingAdoptions.filter((entry): entry is PendingPeerAdoption => entry.kind === 'peer');
+        const overflowing = peers.length >= PENDING_PEER_QUEUE_MAX ? peers[0] : undefined;
+        if(overflowing !== undefined) {
+            pendingAdoptions = pendingAdoptions.filter(entry => entry !== overflowing);
+            logger.warn({ dropped: overflowing.envelope.id, next: envelope.id, max: PENDING_PEER_QUEUE_MAX }, 'the pending peer queue is full; dropping the oldest peer message that never got a turn of its own');
+        }
+        pendingAdoptions.push({ kind: 'peer', envelope, setAt: clock.now() });
+    }
+
+    /** True once a pending adoption set at `setAt` has outlived {@link PENDING_WAKE_TTL_MS} — elapsed time, never a raw sum. */
+    function isPendingAdoptionStale(setAt: number): boolean {
+        return clock.now() - setAt > PENDING_WAKE_TTL_MS;
+    }
+
+    /** The expiry warning for one swept adoption, naming whichever thing was lost. */
+    function warnPendingAdoptionExpired(entry: PendingAdoption): void {
+        if(entry.kind === 'wake') {
+            logger.warn({ pendingWake: { ...entry.wake, setAt: entry.setAt } }, 'a pending wake turn expired (PENDING_WAKE_TTL_MS) before it could be adopted; a later spontaneous turn will not be misattributed to it');
+            return;
+        }
+        logger.warn({ envelopeId: entry.envelope.id }, 'a pending peer message expired (PENDING_WAKE_TTL_MS) before it could be adopted; a later spontaneous turn will not be misattributed to it');
+    }
+
+    /**
+     * Opens the turn a spontaneous assistant frame belongs to, consuming the OLDEST pending
+     * adoption of either kind — see {@link PendingAdoption} for why arrival order is the only
+     * defensible rule — or a bare notification turn when nothing is pending.
+     */
+    function beginSpontaneousTurn(): void {
+        const next = pendingAdoptions.shift();
+        if(next === undefined) {
+            currentTurn = { kind: 'notification', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false };
+            return;
+        }
+        if(next.kind === 'wake') {
+            beginAdoptedWakeTurn(next.wake);
+            return;
+        }
+        beginAdoptedPeerTurn(next.envelope);
     }
 
     function onFrame(frame: SDKMessage): void {
         guard.onFrame(frame);
-        if(pendingWake !== undefined && clock.now() - pendingWake.setAt > PENDING_WAKE_TTL_MS) {
-            logger.warn({ pendingWake }, 'a pending wake turn expired (PENDING_WAKE_TTL_MS) before it could be adopted; a later spontaneous turn will not be misattributed to it');
-            pendingWake = undefined;
-        }
-        if(currentTurn === null && !awaitingTurnEnd && frame.type === 'assistant') {
-            if(pendingWake === undefined) {
-                currentTurn = { kind: 'notification', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false };
-            } else {
-                const wake = pendingWake;
-                pendingWake = undefined;
-                beginAdoptedWakeTurn(wake);
+        pendingAdoptions = pendingAdoptions.filter((entry) => {
+            if(!isPendingAdoptionStale(entry.setAt)) {
+                return true;
             }
+            warnPendingAdoptionExpired(entry);
+            return false;
+        });
+        if(currentTurn === null && !awaitingTurnEnd && frame.type === 'assistant') {
+            beginSpontaneousTurn();
         }
         // boundary cast: AgentStreamEvent is the one-shot path's narrower observability-only view of a stream event; every SDKMessage shape StreamTracker.update switches on (system/task_started, assistant) is a subset of AgentStreamEvent's fields, matching the identical cast already documented in ./session.ts
         currentTurn?.tracker.update(frame as unknown as AgentStreamEvent);
@@ -1232,7 +1379,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     return {
-        open, submit, appendWithoutTurn, adoptWakeTurn, deliver, interruptCurrent, subscribeTurn, status, shutdown,
+        open, submit, appendWithoutTurn, adoptWakeTurn, adoptPeerTurn, deliver, interruptCurrent, subscribeTurn, status, shutdown,
         getCompactionThresholdPercent: () => guard.getThresholdPercent(),
         setCompactionThresholdPercent: (percent: number) => { guard.setThresholdPercent(percent); },
     };

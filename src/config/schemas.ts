@@ -12,6 +12,22 @@ export const appConfigSchema = z.object({
     port:     z.coerce.number().int().positive(),
 });
 
+/**
+ * Subscription-quota thresholds and the perch ceiling (session-peers block 5,
+ * `docs/plans/session-peers-and-quota.md`). Percents are 0-100, matching
+ * `src/agent/session/ledger.ts`'s `QuotaWindow.utilization` (the SDK's 0-1 fraction is
+ * normalised once, in the ledger). `notifyAtPercents` is coerced per element so the loader can
+ * hand it the comma-separated env-var form verbatim.
+ */
+export const quotaConfigSchema = z.object({
+    /** Gap between background polls of the usage endpoint (`quota-poller.ts`). */
+    pollIntervalMs:      z.number().int().positive().default(300_000),
+    /** Five-hour utilization at which perch stops taking scheduled turns; the pause self-clears when the window resets. */
+    perchPauseAtPercent: z.number().int().positive().max(100).default(90),
+    /** Utilizations at which a window earns an accumulate-only note (`quota-notes.ts`). */
+    notifyAtPercents:    z.array(z.coerce.number().int().positive().max(100)).default([75, 90]),
+});
+
 // Agent config: OAuth token for Claude Agent SDK
 export const agentConfigSchema = z.object({
     oauthToken:    z.string().min(1),
@@ -21,6 +37,7 @@ export const agentConfigSchema = z.object({
     // placeholder default in sst/secrets.ts.
     // Stryker disable next-line StringLiteral: Default fallback model value is configuration
     fallbackModel: z.string().min(1).default('sonnet'),
+    quota:         quotaConfigSchema.default(quotaConfigSchema.parse({})),
 });
 
 // Email config

@@ -210,6 +210,34 @@ describe('submitConductorCatchUp', () => {
 
         expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'catchup' }), { priority: 'other' });
     });
+
+    test('renders the catch-up envelope\'s time header with formatTimeHeader by default', async () => {
+        const conductor = makeFakeConductor();
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }] })) });
+
+        await submitConductorCatchUp({
+            inboxManager: inboxManager as never, conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never,
+        });
+
+        const [defaultEnvelope] = conductor.submit.mock.calls[0] as unknown as [{ text: string }];
+        expect(defaultEnvelope.text).toContain('## Current Time');
+    });
+
+    test('takes the catch-up envelope\'s time header from an injected provider, called with no user zone (session-peers block 4)', async () => {
+        const conductor = makeFakeConductor();
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }] })) });
+        const timeHeader = mock((_userTimezone?: string) => 'AMBIENT-HEADER\n- Perch: idle');
+
+        await submitConductorCatchUp({
+            inboxManager: inboxManager as never, conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never, timeHeader,
+        });
+
+        expect(timeHeader).toHaveBeenCalledWith();
+        const [ambientEnvelope] = conductor.submit.mock.calls[0] as unknown as [{ text: string }];
+        expect(ambientEnvelope.text).toContain('- Perch: idle');
+    });
 });
 
 describe('runConductorInboxInit', () => {
@@ -288,6 +316,81 @@ describe('runConductorInboxInit', () => {
         expect(conductor.deliver).toHaveBeenCalledWith('env-undelivered', expect.any(Function));
         expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({
             envelopeId: 'env-undelivered', kind: 'discord', channelId: 'chan-1', text: 'a stale reply',
+        }));
+    });
+
+    /**
+     * A background task launched from the perch session carries no origin channel, and boot-time
+     * redelivery used to hand its `'task'` envelope straight to `sendEnvelopeResponse`, where
+     * `ResponseRouter.resolveEnvelopeTarget` raised `InvariantViolationError` for every restart
+     * inside the recovery window. The live delivery path (`setup/wake-delivery.ts`) already routes
+     * exactly this case to the fallback channel; boot now resolves it the same way, through the
+     * same `ResponseRouter.routeToFallback`.
+     */
+    test('a channel-less task envelope is redelivered to the fallback channel rather than raising the routing invariant', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const routeToFallback = mock(async () => ({ targetChannelId: 'fallback-chan', shouldSend: true, content: 'a stale reply', isFallback: true }));
+        let deliveredTarget: unknown;
+        const conductor = makeFakeConductor({
+            deliver: mock(async (_envelopeId: string, send: () => Promise<unknown>) => {
+                deliveredTarget = await send();
+                return { delivered: true };
+            }),
+        });
+        const journal = makeFakeJournal({
+            readSince: mock(async () => [
+                { type: 'envelope_submitted', at: 0, envelopeId: 'env-task', kind: 'task' },
+                { type: 'turn_completed', at: 1, envelopeId: 'env-task', responseText: 'a stale reply' },
+            ]),
+        });
+
+        await runConductorInboxInit(conductorParams({
+            conversationConductor: conductor as never,
+            journal,
+            responseRouter:        { routeToFallback } as never,
+        }));
+
+        expect(routeToFallback).toHaveBeenCalledWith('a stale reply');
+        expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({
+            envelopeId: 'env-task', kind: 'task', channelId: 'fallback-chan', text: 'a stale reply',
+        }));
+        // The delivery guard records the channel actually written to, not an empty string
+        expect(deliveredTarget).toEqual({ channelId: 'fallback-chan', messageIds: [] });
+    });
+
+    test('a task envelope that kept its own channel is redelivered there, never consulting the fallback', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const routeToFallback = mock(async () => ({ targetChannelId: 'fallback-chan', shouldSend: true, content: '', isFallback: true }));
+        const journal = makeFakeJournal({
+            readSince: mock(async () => [
+                { type: 'envelope_submitted', at: 0, envelopeId: 'env-task', kind: 'task', channelId: 'chan-7' },
+                { type: 'turn_completed', at: 1, envelopeId: 'env-task', responseText: 'a stale reply' },
+            ]),
+        });
+
+        await runConductorInboxInit(conductorParams({ journal, responseRouter: { routeToFallback } as never }));
+
+        expect(routeToFallback).not.toHaveBeenCalled();
+        expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({
+            envelopeId: 'env-task', kind: 'task', channelId: 'chan-7',
+        }));
+    });
+
+    test('a channel-less catchup envelope still resolves through its well-known channel, never the fallback', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const routeToFallback = mock(async () => ({ targetChannelId: 'fallback-chan', shouldSend: true, content: '', isFallback: true }));
+        const journal = makeFakeJournal({
+            readSince: mock(async () => [
+                { type: 'envelope_submitted', at: 0, envelopeId: 'env-catchup', kind: 'catchup' },
+                { type: 'turn_completed', at: 1, envelopeId: 'env-catchup', responseText: 'a stale reply' },
+            ]),
+        });
+
+        await runConductorInboxInit(conductorParams({ journal, responseRouter: { routeToFallback } as never }));
+
+        expect(routeToFallback).not.toHaveBeenCalled();
+        expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({
+            envelopeId: 'env-catchup', kind: 'catchup', channelId: undefined,
         }));
     });
 
@@ -393,6 +496,27 @@ describe('runConductorInboxInit', () => {
 
         const discordSubmissions = conductor.submit.mock.calls.filter(([envelope]: [{ kind: string }]) => envelope.kind === 'discord');
         expect(discordSubmissions).toHaveLength(2);
+    });
+
+    test('renders both boot envelopes\' time headers through an injected provider (session-peers block 4)', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const conductor = makeFakeConductor();
+        const inboxManager = makeFakeInboxManager({
+            getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'chan-1' }] })),
+            replayUnhandled:   mock(async () => [
+                { id: '100', channelId: 'chan-1', channelName: 'general', guildId: 'guild-1', author: 'alice', content: 'hi', timestamp: new Date(0).toISOString(), isRead: false },
+            ]),
+        });
+        const timeHeader = mock((_userTimezone?: string) => 'AMBIENT-HEADER\n- Perch: idle');
+
+        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never, timeHeader }));
+
+        const kinds = new Map<string, string>(
+            (conductor.submit.mock.calls as unknown as [{ kind: string, text: string }][]).map(([envelope]) => [envelope.kind, envelope.text])
+        );
+        expect(kinds.get('discord')).toContain('- Perch: idle');
+        expect(kinds.get('catchup')).toContain('- Perch: idle');
+        expect(timeHeader).toHaveBeenCalledWith();
     });
 
     test('the replay envelope\'s authorId is the real Discord user id (a snowflake), not the display name', async () => {

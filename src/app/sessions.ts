@@ -28,6 +28,7 @@ import {
     buildSessionQueryOptions,
     buildSessionSystemPrompt,
     computeRecovery,
+    createAgentNamingHooks,
     createBootBundleBuilder,
     createBootBundleHooks,
     createCompactionHooks,
@@ -36,12 +37,17 @@ import {
     createConductor,
     createContextPolicy,
     createLedgerStore,
+    createPeerMessageHooks,
+    createQuotaPoller,
     createSessionLifecycleHooks,
     createTaskLaunchHooks,
     createTaskLaunchRegistry,
     createTaskTrackingHooks,
+    composeAmbientLines,
     mergeHookMaps,
     taskLaunchEntries,
+    withAmbientLines,
+    QUOTA_LINE_PREFIX,
     type BootKind,
     type Clock,
     type CompactionSink,
@@ -49,9 +55,13 @@ import {
     type Conductor,
     type ContextPolicy,
     type CreateBootBundleBuilderParams,
+    type CreateQuotaPollerParams,
     type Envelope,
     type LedgerStore,
+    type QuotaPoller,
     type ResumeStore,
+    type SessionRole,
+    type TimeHeaderProvider,
     type SessionJournal,
     type SessionMcpServers,
     type SessionQueryFn,
@@ -61,6 +71,7 @@ import {
 } from '@/agent';
 import { type SessionConfig, loadRetryConfig  } from '@/config';
 import type { ServiceHealthRegistry } from '@/services';
+import { formatTimeHeader } from '@/utils';
 
 /** The subset of `IdentityCache` the system prompt and boot bundle depend on. */
 type IdentitySource = CreateBootBundleBuilderParams['identityCache'];
@@ -138,6 +149,119 @@ async function loadBootRecovery(
     }
 }
 
+/** Dependencies for {@link createSessionAmbience}. */
+export interface CreateSessionAmbienceParams {
+    /** The zone every ambient wall-clock stamp is rendered in — `config.session.timezone`. */
+    timezone: string
+    clock:    Clock
+    /** `warn` is the quota poller's one loud path: a usage endpoint answering in unexpected units. */
+    logger:   Pick<Logger, 'debug' | 'warn'>
+    /**
+     * Everything {@link createQuotaPoller} needs beyond the ledgers registered here: the
+     * injected `fetch`, and optionally the usage endpoint's URL, its per-poll `headers` factory
+     * and the poll interval. Required (rather than defaulted to the global `fetch`) so the
+     * process's one real network dependency is named at the composition root, not hidden here.
+     */
+    quota:    Omit<CreateQuotaPollerParams, 'clock' | 'logger' | 'ledgers'>
+}
+
+/**
+ * The process-wide ambient surface both session roles share (session-peers block 4): one quota
+ * poller feeding both ledgers, and one time-header provider per role.
+ */
+export interface SessionAmbience {
+    /**
+     * Registers a role's ledger store, keyed by the role the store itself carries. Registration
+     * does three things: the ledger becomes readable as "the other session" by the OTHER role's
+     * time-header provider, it becomes a dispatch target for the shared quota poller, and its
+     * `result` frames drive {@link QuotaPoller.noteResult} so a busy session refreshes promptly.
+     */
+    register:      (ledgerStore: LedgerStore) => void
+    /**
+     * The memoized {@link TimeHeaderProvider} for `role` — the same function object on every
+     * call, so the one-time "shared with Craig's own sessions" note is spent once per session
+     * rather than once per producer that asks for a header.
+     */
+    timeHeaderFor: (role: SessionRole) => TimeHeaderProvider
+    /** The single poller both ledgers are subscribed to; the caller owns `start`/`stop`. */
+    quotaPoller:   QuotaPoller
+}
+
+/** The other role, for the ambient other-session line. */
+function otherRole(role: SessionRole): SessionRole {
+    return role === 'conversation' ? 'perch' : 'conversation';
+}
+
+/**
+ * Builds the shared ambient surface (session-peers block 4). ONE {@link createQuotaPoller} is
+ * built here and handed the live registration array, so a ledger registered after construction
+ * (perch is built after conversation, and only when enabled) is still a dispatch target — the
+ * poller iterates that array at poll time rather than copying it.
+ *
+ * Each role's provider renders `formatTimeHeader` VERBATIM (`src/utils/time.ts` stays pure and
+ * ledger-unaware) and appends the lines `composeAmbientLines` builds from that role's own ledger
+ * and the other role's. Before a role's ledger is registered there is nothing ambient to say, so
+ * the provider degrades to the bare header.
+ * @param params See {@link CreateSessionAmbienceParams}.
+ * @returns A {@link SessionAmbience}.
+ */
+export function createSessionAmbience(params: CreateSessionAmbienceParams): SessionAmbience {
+    const { timezone, clock, logger, quota } = params;
+
+    const ledgers = new Map<SessionRole, LedgerStore>();
+    // Handed to the poller by reference — see this function's doc for why it must stay live.
+    const quotaTargets: LedgerStore[] = [];
+    const quotaPoller = createQuotaPoller({ ...quota, clock, logger, ledgers: quotaTargets });
+    const providers = new Map<SessionRole, TimeHeaderProvider>();
+
+    /** One role's provider, holding that role's own one-time-note latch. */
+    function buildProvider(role: SessionRole): TimeHeaderProvider {
+        let noteShown = false;
+        return (userTimezone?: string): string => {
+            const header = formatTimeHeader(userTimezone);
+            const self = ledgers.get(role)?.get();
+            if(self === undefined) {
+                return header;
+            }
+            const lines = composeAmbientLines({
+                self,
+                other:           ledgers.get(otherRole(role))?.get(),
+                now:             new Date(clock.now()),
+                timezone,
+                sharedQuotaNote: !noteShown,
+            });
+            // Spent only when a quota line actually rendered: a header built before the first
+            // rate_limit_event or poll must not burn the one-time note on nothing.
+            if(lines.some(line => line.startsWith(QUOTA_LINE_PREFIX))) {
+                noteShown = true;
+            }
+            return withAmbientLines(header, lines);
+        };
+    }
+
+    return {
+        register(ledgerStore: LedgerStore): void {
+            ledgers.set(ledgerStore.get().role, ledgerStore);
+            quotaTargets.push(ledgerStore);
+            ledgerStore.subscribe((_ledger, event) => {
+                if(event.type === 'sdk_frame' && event.frame.type === 'result') {
+                    quotaPoller.noteResult();
+                }
+            });
+        },
+        timeHeaderFor(role: SessionRole): TimeHeaderProvider {
+            const existing = providers.get(role);
+            if(existing !== undefined) {
+                return existing;
+            }
+            const provider = buildProvider(role);
+            providers.set(role, provider);
+            return provider;
+        },
+        quotaPoller,
+    };
+}
+
 /** Dependencies and configuration for {@link createConversationConductor}. */
 export interface CreateConversationConductorParams {
     config:              SessionConfig
@@ -159,6 +283,13 @@ export interface CreateConversationConductorParams {
     channelListProvider: () => Promise<string | undefined>
     clock:               Clock
     logger:              Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    /**
+     * Session-peers block 4: the process-wide ambient surface. When given, this conductor's
+     * ledger is registered with it (so the OTHER role's turns can see this one, and the shared
+     * quota poller can dispatch into it) and every time header this module produces comes from
+     * `ambience.timeHeaderFor(role)` — the bare `formatTimeHeader(config.timezone)` otherwise.
+     */
+    ambience?:           SessionAmbience
 }
 
 /** What {@link createConversationConductor} returns. */
@@ -205,8 +336,13 @@ export interface ConversationConductorResult {
 export async function createConversationConductor(params: CreateConversationConductorParams): Promise<ConversationConductorResult> {
     const {
         config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, healthRegistry,
-        identityCache, taskListReader, journal, resumeStore, channelListProvider, clock, logger,
+        identityCache, taskListReader, journal, resumeStore, channelListProvider, clock, logger, ambience,
     } = params;
+
+    // Session-peers block 4: every time header this role produces — here (the peer-message hook)
+    // and at every other producer the composition root wires — comes from this one provider, so
+    // the ambient other-session/quota lines ride along on every turn.
+    const timeHeader: TimeHeaderProvider = ambience?.timeHeaderFor('conversation') ?? formatTimeHeader;
 
     // R1: see ConversationConductorResult.bootLostTasks's own doc for why this MUST be read here
     // — before conductor.open() is ever called by this function's caller — rather than lazily
@@ -242,13 +378,20 @@ export async function createConversationConductor(params: CreateConversationCond
     const systemPrompt = buildSessionSystemPrompt({ role: 'conversation', identity });
 
     const ledgerStore = createLedgerStore('conversation', { logger });
+    ambience?.register(ledgerStore);
     const contextPolicy = createContextPolicy({
         now: () => clock.now(),
         contextBuilder,
         healthRegistry,
     });
     const bootBundleBuilder = createBootBundleBuilder({
-        role: 'conversation', identityCache, contextBuilder, taskListReader, channelListProvider, now: () => clock.now(), bootEventsWindowMs: config.bootEventsWindowMs,
+        role:               'conversation',
+        identityCache, contextBuilder, taskListReader, channelListProvider,
+        now:                () => clock.now(),
+        bootEventsWindowMs: config.bootEventsWindowMs,
+        // Session-peers block 4: a boot turn opens with the same ambient header every other
+        // envelope carries, rather than with no time context at all.
+        timeHeader:         () => timeHeader(config.timezone),
     });
 
     // Bounded, most-recent-first, de-duplicated record of who Izzy has recently been talking to
@@ -349,6 +492,12 @@ export async function createConversationConductor(params: CreateConversationCond
         adoptWakeTurn: (input) => { conductorRef?.adoptWakeTurn(input); },
     };
 
+    // Session-peers block 2: the same late-bound-conductor pattern, for the UserPromptSubmit hook
+    // that adopts an inbound `<cross-session-message>` as a `peer`-kind turn.
+    const peerMessageConductor: Pick<Conductor, 'adoptPeerTurn'> = {
+        adoptPeerTurn: (envelope) => { conductorRef?.adoptPeerTurn(envelope); },
+    };
+
     // R2: late-bound the same way — the Discord client/responseRouter a delivery function needs
     // do not exist until `bot.ts`'s `clientReady` calls the returned `setWakeTurnDelivery`. Before
     // that, a settled wake turn is logged and dropped rather than silently lost with no trace.
@@ -369,7 +518,11 @@ export async function createConversationConductor(params: CreateConversationCond
         createCompactionHooks(compactionSink),
         createSessionLifecycleHooks({}),
         createTaskTrackingHooks(),
-        createTaskLaunchHooks({ registry: taskLaunchRegistry, conductor: taskLaunchConductor, logger, clock })
+        createTaskLaunchHooks({ registry: taskLaunchRegistry, conductor: taskLaunchConductor, logger, clock }),
+        createPeerMessageHooks({
+            conductor: peerMessageConductor, timezone: config.timezone, timeHeader: () => timeHeader(config.timezone), clock, logger,
+        }),
+        createAgentNamingHooks({ logger })
     );
 
     function buildOptions(resume?: string): Options {
@@ -461,6 +614,13 @@ export interface CreatePerchConductorParams {
     resumeStore:         ResumeStore
     clock:               Clock
     logger:              Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    /**
+     * Session-peers block 4: the process-wide ambient surface. When given, this conductor's
+     * ledger is registered with it (so the OTHER role's turns can see this one, and the shared
+     * quota poller can dispatch into it) and every time header this module produces comes from
+     * `ambience.timeHeaderFor(role)` — the bare `formatTimeHeader(config.timezone)` otherwise.
+     */
+    ambience?:           SessionAmbience
 }
 
 /** What {@link createPerchConductor} returns. */
@@ -513,8 +673,11 @@ export interface PerchConductorResult {
  */
 export async function createPerchConductor(params: CreatePerchConductorParams): Promise<PerchConductorResult> {
     const {
-        config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, identityCache, taskListReader, journal, resumeStore, clock, logger,
+        config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, identityCache, taskListReader, journal, resumeStore, clock, logger, ambience,
     } = params;
+
+    // Session-peers block 4: see createConversationConductor's identical provider comment.
+    const timeHeader: TimeHeaderProvider = ambience?.timeHeaderFor('perch') ?? formatTimeHeader;
 
     // R2: seeded here (before open()), for the same reason createConversationConductor's own
     // bootTaskLaunches read is — see that function's identical comment. Also reused by
@@ -545,8 +708,14 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     const systemPrompt = buildSessionSystemPrompt({ role: 'perch', identity });
 
     const ledgerStore = createLedgerStore('perch', { logger });
+    ambience?.register(ledgerStore);
     const bootBundleBuilder = createBootBundleBuilder({
-        role: 'perch', identityCache, contextBuilder, taskListReader, now: () => clock.now(), bootEventsWindowMs: config.bootEventsWindowMs,
+        role:               'perch',
+        identityCache, contextBuilder, taskListReader,
+        now:                () => clock.now(),
+        bootEventsWindowMs: config.bootEventsWindowMs,
+        // Session-peers block 4: see createConversationConductor's identical comment.
+        timeHeader:         () => timeHeader(config.timezone),
     });
 
     /**
@@ -613,6 +782,11 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         adoptWakeTurn: (input) => { conductorRef?.adoptWakeTurn(input); },
     };
 
+    // Session-peers block 2: see createConversationConductor's identical pass-through.
+    const peerMessageConductor: Pick<Conductor, 'adoptPeerTurn'> = {
+        adoptPeerTurn: (envelope) => { conductorRef?.adoptPeerTurn(envelope); },
+    };
+
     // R2: late-bound the same way as createConversationConductor's own onWakeTurnSettled, with
     // one difference (the Q12 perch decision, see PerchConductorResult.setWakeTurnDelivery's own
     // doc): the envelope handed to `fn` always has `kind` rewritten to `'perch'`, so it routes to
@@ -635,7 +809,11 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         createCompactionHooks(compactionSink),
         createSessionLifecycleHooks({}),
         createTaskTrackingHooks(),
-        createTaskLaunchHooks({ registry: taskLaunchRegistry, conductor: taskLaunchConductor, logger, clock })
+        createTaskLaunchHooks({ registry: taskLaunchRegistry, conductor: taskLaunchConductor, logger, clock }),
+        createPeerMessageHooks({
+            conductor: peerMessageConductor, timezone: config.timezone, timeHeader: () => timeHeader(config.timezone), clock, logger,
+        }),
+        createAgentNamingHooks({ logger })
     );
 
     function buildOptions(resume?: string): Options {

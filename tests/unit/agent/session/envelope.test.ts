@@ -4,6 +4,7 @@ import {
     buildDiscordEnvelope,
     buildPerchEnvelope,
     buildNotificationEnvelope,
+    buildPeerEnvelope,
     buildCatchupEnvelope,
     buildWrapUpEnvelope,
     buildResumeEnvelope,
@@ -485,6 +486,45 @@ describe('buildNotificationEnvelope', () => {
         expect(waking.hostPriority).toBe('wake');
         expect(quiet.shouldQuery).toBe(false);
         expect(quiet.hostPriority).toBe('accumulate');
+    });
+});
+
+describe('buildPeerEnvelope', () => {
+    test('renders the peer header, timeHeader, the peer text and a reply instruction naming the peer', () => {
+        const envelope = buildPeerEnvelope({
+            from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main', text: 'MIDTURN-PING-CHARLIE-3', now, timezone, timeHeader,
+        });
+
+        const header = '[PEER · Izzy-main · 2026-09-04 14:07 PT]';
+        expect(envelope.text).toBe(`${header}\n\n${timeHeader}\n\nMIDTURN-PING-CHARLIE-3\n\nReply with SendMessage to Izzy-main.`);
+        expect(envelope.kind).toBe('peer');
+        expect(envelope.peer).toEqual({ from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' });
+        expect(envelope.hostPriority).toBe('wake');
+        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.createdAt).toBe(now);
+        expect(envelope.id).not.toBe(buildPeerEnvelope({
+            from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main', text: 'MIDTURN-PING-CHARLIE-3', now, timezone, timeHeader,
+        }).id);
+    });
+
+    test('falls back to the raw uds: reply address in both the header and the reply instruction when the tag named no peer, and omits `fromName` from `peer` entirely', () => {
+        const envelope = buildPeerEnvelope({
+            from: 'uds:/tmp/cc-socks/94548.sock', text: 'anonymous ping', now, timezone, timeHeader,
+        });
+
+        expect(envelope.text).toContain('[PEER · uds:/tmp/cc-socks/94548.sock · 2026-09-04 14:07 PT]');
+        expect(envelope.text).toContain('Reply with SendMessage to uds:/tmp/cc-socks/94548.sock.');
+        expect(envelope.peer).toEqual({ from: 'uds:/tmp/cc-socks/94548.sock' });
+        expect(envelope.peer).not.toHaveProperty('fromName');
+    });
+
+    test('an empty fromName is treated as absent — the raw address is used rather than an empty name', () => {
+        const envelope = buildPeerEnvelope({
+            from: 'uds:/tmp/cc-socks/94548.sock', fromName: '', text: 'ping', now, timezone, timeHeader,
+        });
+
+        expect(envelope.text).toContain('[PEER · uds:/tmp/cc-socks/94548.sock · 2026-09-04 14:07 PT]');
+        expect(envelope.peer).toEqual({ from: 'uds:/tmp/cc-socks/94548.sock' });
     });
 });
 

@@ -29,7 +29,7 @@ import { setupConductorPresence } from './setup/presence-setup';
 import { createWakeTurnDelivery } from './setup/wake-delivery';
 import { setupTaskBoard } from './task-board/setup';
 import { createChannelId, createUserId, type ChannelId } from './types';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type Envelope, type TurnResult  } from '@/agent';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type Envelope, type TimeHeaderProvider, type TurnResult  } from '@/agent';
 import { DEFAULT_TASK_BOARD_CONFIG, type DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
@@ -300,6 +300,18 @@ export interface DiscordBotOptions {
      * the test runner.
      */
     exit?: (code: number) => void
+
+    /**
+     * Session-peers block 4: the conversation session's ambient time-header provider
+     * (`SessionAmbience.timeHeaderFor('conversation')`, built in `src/app/sessions.ts`). Every
+     * conversation-side envelope this file's setups build renders its time header through it, so
+     * each turn also carries the other session's one-line summary and the shared quota line.
+     * Omitted, each producer falls back to the bare `formatTimeHeader`.
+     */
+    timeHeader?: TimeHeaderProvider
+
+    /** The perch session's own provider — the perch-channel and slot envelopes' counterpart of {@link CreateDiscordBotOptions.timeHeader}. */
+    perchTimeHeader?: TimeHeaderProvider
 }
 
 /**
@@ -807,7 +819,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             function perchRoutingDeps(): PerchRoutingDeps | undefined {
                 return conductorOpened && perchConductorOpened && perchConductor
                     ? {
-                        conductor: perchConductor, responseRouter, client: readyClient, rateLimiter, discordCapability, contextBuilder,
+                        conductor:  perchConductor, responseRouter, client:     readyClient, rateLimiter, discordCapability, contextBuilder,
+                        timeHeader: options.perchTimeHeader,
                     }
                     : undefined;
             }
@@ -996,6 +1009,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     rateLimiter,
                     discordCapability,
                     isCostPaused: options.isCostPaused,
+                    timeHeader:   options.perchTimeHeader,
                 });
                 perchDriver = perchSetup.driver;
                 perchScheduler = perchSetup.scheduler;
@@ -1051,6 +1065,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     // synopses onto the SAME ledger/throttle presence composes from.
                     ledgerStore,
                     presenceThrottle,
+                    timeHeader:              options.timeHeader,
                 });
 
                 // Register message handler AFTER channel registry is initialized and coordinator is created
@@ -1118,6 +1133,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     contextPolicy,
                     bootEventsWindowMs,
                     bootLostTasks,
+                    timeHeader:            options.timeHeader,
                 });
             }
             // Stryker restore BlockStatement
@@ -1220,6 +1236,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         client,
                         rateLimiter,
                         discordCapability,
+                        timeHeader:     options.timeHeader,
                     });
                 }
             } catch (err) {

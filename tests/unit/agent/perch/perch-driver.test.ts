@@ -167,6 +167,24 @@ describe('createPerchDriver', () => {
         expect(activityLogger.log).toHaveBeenCalledWith(expect.objectContaining({ type: 'perch-start' }));
     });
 
+    test('renders the slot envelope\'s time header with formatTimeHeader and the perch timezone by default', () => {
+        const driver = createPerchDriver(deps);
+
+        driver.runSlot('afternoon');
+
+        expect(conductor.submissions[0].envelope.text).toContain('## Current Time');
+    });
+
+    test('takes the slot envelope\'s time header from an injected provider, called with the perch timezone (session-peers block 4)', () => {
+        const timeHeader = mock((_tz?: string) => 'AMBIENT-HEADER\n- Perch: idle');
+        const driver = createPerchDriver({ ...deps, timeHeader });
+
+        driver.runSlot('afternoon');
+
+        expect(timeHeader).toHaveBeenCalledWith(makeConfig().timezone);
+        expect(conductor.submissions[0].envelope.text).toContain('- Perch: idle');
+    });
+
     test('submits the wrap-up envelope exactly at endsAt - wrapUpTimeoutMinutes while the slot turn is still running, at priority \'human\'', async () => {
         const driver = createPerchDriver(deps);
         driver.runSlot('afternoon');

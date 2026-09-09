@@ -26,6 +26,15 @@
  * `resume`, only lost tasks/undelivered/active tasks — no identity, task list or perch context
  * fetch at all.
  *
+ * Session-peers block 4: every non-empty bundle opens with the role's ambient time header (the
+ * injected `timeHeader` provider — `ambience.timeHeaderFor(role)` at the composition root), so a
+ * boot turn carries the same time / other-session / quota block every other envelope does. It is
+ * rendered ahead of the body but is NOT one of the sections the empty-`resume` test consults, so
+ * a resume with nothing to report still renders `''` rather than waking the session with a clock.
+ * The perch `fresh`/`compact` bundle consequently carries the header twice — once ambient, once
+ * as the bare `formatTimeHeader()` that leads `buildPerchContext`'s own block — exactly as the
+ * perch SLOT envelope already does; `buildPerchContext` stays ledger-unaware by design.
+ *
  * Design decision (folded gap, "cross-platform history has no home"): the boot bundle does NOT
  * carry a cross-platform-history section. History is tool-only in the long-lived session —
  * `getPersonContext` covers it on demand, so there is nothing for the bundle to pre-seed.
@@ -70,6 +79,14 @@ export interface CreateBootBundleBuilderParams {
     channelListProvider?: () => Promise<string | undefined>
     /** Millisecond clock, e.g. `() => clock.now()`. */
     now:                  () => number
+    /**
+     * Session-peers block 4: the role's ambient time-header provider
+     * (`ambience.timeHeaderFor(role)`, already bound to the session's timezone by the composition
+     * root). Called once per `build()`, so a boot bundle opens with the same "where am I in time,
+     * what is the other session doing, how much quota is left" block every other envelope carries.
+     * Omitted leaves the bundle with no header at all, exactly as before block 4.
+     */
+    timeHeader?:          () => string
     /** Rolling window for the `fresh` conversation "Events" section when `eventsSinceMs` is not given. Defaults to 24h. */
     bootEventsWindowMs?:  number
     /** Max events fetched for that section. Defaults to 50. */
@@ -106,6 +123,12 @@ export interface BootBundleBuilder {
 export interface BootBundleParts {
     role:             'conversation' | 'perch'
     kind:             BootKind
+    /**
+     * The ambient time header (session-peers block 4), rendered verbatim ahead of every other
+     * section. Deliberately NOT one of the sections the empty-`resume` check consults: a header
+     * is true of every moment, so a resume with nothing else to say still renders `''`.
+     */
+    timeHeader?:      string
     /** Conversation: fresh/compact only. Perch: fresh/compact only. Omitted (no `## Identity` section) for `resume` on either role. */
     identity?:        string
     /** Conversation only; fresh/compact only. */
@@ -218,6 +241,7 @@ export function formatBootBundle(parts: BootBundleParts): string {
     const sections: (string | undefined)[] = [
         `[BOOT BUNDLE · ${parts.role} · ${parts.kind}]`,
         parts.kind === 'resume' ? undefined : RESET_NOTICE,
+        parts.timeHeader,
         ...bodySections,
     ];
 
@@ -263,19 +287,22 @@ async function loadEventsSection(
  */
 export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): BootBundleBuilder {
     const {
-        role, identityCache, contextBuilder, taskListReader, channelListProvider, now,
+        role, identityCache, contextBuilder, taskListReader, channelListProvider, now, timeHeader,
         bootEventsWindowMs = 24 * 60 * 60 * 1000, bootEventsLimit = 50,
     } = params;
 
     return {
         async build(input: BuildBootBundleInput): Promise<string> {
             const { kind, eventsSinceMs, lostTasks, undelivered, recentUsers, activeTasks } = input;
+            // Read once per build, before any await, so every branch renders the same stamp and
+            // the ambient lines describe the moment the bundle was composed.
+            const header = timeHeader?.();
 
             if(role === 'perch') {
                 if(kind === 'resume') {
                     // No identity/task-list/perch-context fetch at all for a perch resume --
                     // none of it is rendered, so there is nothing worth the round trip.
-                    return formatBootBundle({ role: 'perch', kind, recentUsers, lostTasks, undelivered, activeTasks });
+                    return formatBootBundle({ role: 'perch', kind, timeHeader: header, recentUsers, lostTasks, undelivered, activeTasks });
                 }
 
                 // Independent fetches (identity/task-list/perch-context depend on none of each
@@ -287,7 +314,7 @@ export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): 
                 ]);
 
                 return formatBootBundle({
-                    role: 'perch', kind, identity, taskListSummary, perchContext, recentUsers, lostTasks, undelivered, activeTasks,
+                    role: 'perch', kind, timeHeader: header, identity, taskListSummary, perchContext, recentUsers, lostTasks, undelivered, activeTasks,
                 });
             }
 
@@ -295,7 +322,7 @@ export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): 
                 // Only the events section needs a fetch for a conversation resume; identity,
                 // state and the task list were not lost, so they are not re-fetched.
                 const events = await loadEventsSection(contextBuilder, kind, eventsSinceMs, bootEventsWindowMs, bootEventsLimit, now);
-                return formatBootBundle({ role: 'conversation', kind, events, recentUsers, lostTasks, undelivered, activeTasks });
+                return formatBootBundle({ role: 'conversation', kind, timeHeader: header, events, recentUsers, lostTasks, undelivered, activeTasks });
             }
 
             // Same reasoning as the perch branch: five independent round trips, gathered
@@ -310,7 +337,7 @@ export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): 
             ]);
 
             return formatBootBundle({
-                role: 'conversation', kind, identity, currentFocus, events, taskListSummary, channelList, recentUsers, lostTasks, undelivered, activeTasks,
+                role: 'conversation', kind, timeHeader: header, identity, currentFocus, events, taskListSummary, channelList, recentUsers, lostTasks, undelivered, activeTasks,
             });
         },
     };
