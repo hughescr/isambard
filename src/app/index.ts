@@ -16,3 +16,10 @@ export {
     type RegisterSignalHandlersParams,
     type CreateDiscordRecoveryHandlerParams
 } from './lifecycle';
+export {
+    registerHotReloadInstance,
+    stopPreviousHotReloadInstance,
+    HOT_RELOAD_KEY,
+    type HotReloadInstance,
+    type HotReloadLogger
+} from './hot-reload-guard';

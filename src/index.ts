@@ -8,7 +8,7 @@ import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
 import { loadPlugins, QuestionRegistry, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, type ConversationConductorResult, type PerchConductorResult } from '@/app';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
@@ -1389,6 +1389,13 @@ if(import.meta.main) {
 
     logger.info('Isambard starting...');
 
+    // bun --hot re-runs this whole module on a file change WITHOUT firing import.meta.hot.dispose
+    // (import.meta.hot is undefined under Bun 1.4.2's --hot; see src/app/hot-reload-guard.ts), so
+    // the previous evaluation's bot would otherwise keep running beside this one. globalThis
+    // survives the reload: stop whatever the last evaluation parked there before building anything.
+    const hotReloadHost = globalThis as unknown as Record<string, unknown>;
+    await stopPreviousHotReloadInstance(hotReloadHost, logger);
+
     // Register process-level error boundaries to capture unhandled errors.
     // Capture registration so we can remove handlers on hot reload (prevents duplicate handlers).
     const errorBoundaryRegistration = registerErrorBoundaries(logger);
@@ -1412,13 +1419,10 @@ if(import.meta.main) {
         process.exit(1);
     }
 
-    // Start the application
-    await app.start();
-
     // P10: SIGINT/SIGTERM handling extracted to src/app/lifecycle.ts's registerSignalHandlers,
-    // tested in isolation there — this is thin wiring only. `unregisterSignalHandlers` is used
-    // below by the bun --hot cleanup so a hot reload never leaves a stale pair of listeners
-    // registered alongside the fresh pair the next module evaluation installs.
+    // tested in isolation there — this is thin wiring only. Registered before start() so the
+    // hot-reload teardown below can hold `unregisterSignalHandlers` from the moment it is parked;
+    // app.stop() is idempotent, so a signal during startup is safe.
     const unregisterSignalHandlers = registerSignalHandlers({
         proc:       process,
         stop:       () => app.stop(),
@@ -1429,7 +1433,24 @@ if(import.meta.main) {
         exit:       code => process.exit(code),
     });
 
-    // Hot reload cleanup for bun --hot
+    // Park this instance's teardown for the NEXT hot reload BEFORE starting, so a reload that
+    // lands mid-startup (two file changes in one deploy did exactly that on 2026-09-09) still
+    // finds a handle: its stop waits for our start to settle, then tears everything down.
+    const started = app.start();
+    registerHotReloadInstance(hotReloadHost, {
+        stop: async () => {
+            await started.catch((err: unknown) => {
+                logger.warn({ err, msg: 'Hot reload: previous start had failed; tearing down anyway' });
+            });
+            errorBoundaryRegistration.unregister();
+            unregisterSignalHandlers();
+            await app.stop();
+        },
+    });
+    await started;
+
+    // Kept for a Bun that does define import.meta.hot under --hot: then dispose fires first and
+    // the globalThis handle above becomes a harmless second stop (app.stop() is idempotent).
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: import.meta.hot is only available when running with bun --hot
     if(import.meta.hot) {
         import.meta.hot.dispose(async () => {
