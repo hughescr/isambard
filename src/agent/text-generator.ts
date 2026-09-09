@@ -2,6 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
+import { logger } from '@hughescr/logger';
 import removeMarkdown from 'remove-markdown';
 
 /**
@@ -80,6 +81,11 @@ interface TextGeneratorOptions {
      * sentinel element) for cross-session prompt caching.
      */
     systemPrompt?:    string | string[]
+    /**
+     * Short call-site label (e.g. `'idle-status'`) included in the warning logged whenever a
+     * generation produces no text. Purely diagnostic — never sent to the model.
+     */
+    label?:           string
 }
 
 /**
@@ -154,6 +160,43 @@ function buildAbortController(options?: TextGeneratorOptions): AbortController {
 }
 
 /**
+ * Which of the two abort sources wired into the internal controller by
+ * {@link buildAbortController} ended this call. The caller's own controller is the only source
+ * other than our deadline, so a caller signal that has fired means the caller cancelled and
+ * anything else means the deadline did.
+ *
+ * @param callerSignal - The caller's own abort signal, when one was supplied
+ * @returns `'aborted'` for a caller cancellation, `'timeout'` for our own deadline
+ */
+function abortReason(callerSignal: AbortSignal | undefined): string {
+    return callerSignal?.aborted ? 'aborted' : 'timeout';
+}
+
+/**
+ * Warns that a generation produced nothing.
+ *
+ * Every caller already treats `''` as "no text this time" and degrades gracefully, so the empty
+ * return stays; what did not exist before was any record that the call had failed at all. A
+ * 16-second boot-time Haiku call silently swallowed by the 15s deadline surfaced only as a
+ * Discord status rendered with an empty body.
+ *
+ * @param reason - `'timeout'`, `'aborted'` (logged at debug, see below), or the SDK result subtype that was not `'success'`
+ * @param startedAt - `Date.now()` as of the start of this call
+ * @param options - The caller's options, read for its diagnostic {@link TextGeneratorOptions.label}
+ */
+function warnEmptyResult(reason: string | undefined, startedAt: number, options?: TextGeneratorOptions): void {
+    // A caller cancellation is routine — the dynamic status generator aborts an in-flight call on
+    // every phase change (cancel-and-replace) — so it is recorded at debug, not warn.
+    const log = reason === 'aborted' ? logger.debug.bind(logger) : logger.warn.bind(logger);
+    log({
+        reason,
+        elapsedMs: Date.now() - startedAt,
+        label:     options?.label,
+        msg:       'Text generation produced no text',
+    });
+}
+
+/**
  * Shared implementation: calls the V1 SDK query(), and extracts text.
  *
  * @param prompt - The fully-assembled prompt string to send to the LLM
@@ -166,6 +209,8 @@ async function executePrompt(
     options?: TextGeneratorOptions
 ): Promise<string> {
     const controller = buildAbortController(options);
+    const callerSignal = options?.abortController?.signal;
+    const startedAt = Date.now();
 
     try {
         let resultText = '';
@@ -195,10 +240,9 @@ async function executePrompt(
         }) as unknown as AsyncIterable<QueryEvent>;
         for await (const event of events) {
             resultText += extractTextFromEvent(event);
-            // Stryker disable next-line BlockStatement: Equivalent mutant — skipping the result-event handler means the loop runs to completion anyway; non-success subtypes yield no assistant text so resultText is '' either way
             if(event.type === 'result') {
-                // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant — non-success generators yield no assistant text, so resultText.trim() === '' either way; the early return is semantic clarity for production resilience
                 if(event.subtype !== 'success') {
+                    warnEmptyResult(event.subtype, startedAt, options);
                     return ''; // Non-success result — discard any partial text
                 }
                 // Capture canonical result text as fallback in case no assistant events were streamed
@@ -210,6 +254,7 @@ async function executePrompt(
 
         // Guard: if aborted during iteration, discard result
         if(controller.signal.aborted) {
+            warnEmptyResult(abortReason(callerSignal), startedAt, options);
             return '';
         }
 
@@ -224,6 +269,7 @@ async function executePrompt(
     } catch (error) {
         // If aborted (by timeout or caller), return empty string
         if(controller.signal.aborted) {
+            warnEmptyResult(abortReason(callerSignal), startedAt, options);
             return '';
         }
         throw error;
@@ -244,6 +290,7 @@ async function executePrompt(
  * @param options.stripMarkdown - If true, strips markdown formatting from result
  * @param options.abortController - Optional AbortController for cancellation
  * @param options.timeoutMs - Hard timeout in ms (default 15000, 0 to disable)
+ * @param options.label - Short call-site label included in the empty-result warning
  * @returns Generated text, trimmed of whitespace, or empty string on abort/error
  */
 export async function generateText(

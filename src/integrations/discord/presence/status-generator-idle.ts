@@ -48,6 +48,7 @@ export interface IdleStatusGeneratorDeps {
     logger: {
         debug: (message: unknown, ...args: unknown[]) => void
         info:  (message: unknown, ...args: unknown[]) => void
+        warn:  (message: unknown, ...args: unknown[]) => void
         error: (message: unknown, ...args: unknown[]) => void
     }
     /** Discord activity type (e.g., ActivityType.Custom) */
@@ -124,6 +125,23 @@ const USER_PROMPT_WITHOUT_CONTEXT = 'Status text (first person, under 50 chars):
 
 /** Discord's custom-status length limit, in UTF-16 code units (`.length`). */
 const PRESENCE_BUDGET = 128;
+
+/**
+ * The status text used when a generation produced nothing and there is no previous status to keep
+ * showing. Matches the text of the hardcoded `'💤 Idle'` thrown-error fallback below, so the two
+ * degraded paths look the same to anyone reading the presence.
+ */
+const DEFAULT_IDLE_TEXT = 'Idle';
+
+/**
+ * Deadline for the idle-status Haiku call, overriding `text-generator`'s 15s default.
+ *
+ * A boot-time call measured at ~16s was cut off by that default and returned `''`, which this
+ * module then composed and applied as a status with no body. The generation is entirely
+ * best-effort and nothing waits on it, so waiting twice as long costs nothing and removes the
+ * most common source of empty results.
+ */
+const IDLE_GENERATION_TIMEOUT_MS = 30_000;
 
 /** The result of composing one idle-status render: the final name, and the digest actually used (if any). */
 interface ComposedIdleStatus {
@@ -265,6 +283,30 @@ export function createIdleStatusGenerator(
         return { systemPrompt, userPrompt };
     }
 
+    /**
+     * The text to actually compose into the status.
+     *
+     * An empty generation (the deadline firing, an abort, or a model that returned nothing) must
+     * never be applied: composing it produced a status that was all prefix and no thought. Instead
+     * the last status this generator produced keeps standing — the same "refuse it rather than
+     * cache it" stance {@link import('./status-generator-dynamic').rejectSynopsis} takes for a
+     * response it would not want to show, reached here by keeping the previous value rather than
+     * by returning null (this generator has no caller-side skip to return into: it must produce an
+     * activity every time).
+     *
+     * @param rawText - The trimmed generated text
+     * @returns `rawText` when it has content, else the cached previous status, else {@link DEFAULT_IDLE_TEXT}
+     */
+    function resolveIdleText(rawText: string): string {
+        if(rawText !== '') {
+            return rawText;
+        }
+        const previous = getPreviousStatus?.();
+        const fallback = previous !== undefined && previous.trim() !== '' ? previous : DEFAULT_IDLE_TEXT;
+        logger.warn({ usedPreviousStatus: fallback === previous }, 'Idle status generation produced no text');
+        return fallback;
+    }
+
     return {
         // Stryker disable StringLiteral,ObjectLiteral: Prompt template building and logging for status generation
         async generate(options?: IdleStatusOptions): Promise<ActivitiesOptions> {
@@ -277,9 +319,9 @@ export function createIdleStatusGenerator(
                     ? await buildLiveSignalsPrompts(identity)
                     : await buildLegacyPrompts(identity);
 
-                const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true });
+                const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true, timeoutMs: IDLE_GENERATION_TIMEOUT_MS, label: 'idle-status' });
                 // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
-                const rawText = text.trim();
+                const rawText = resolveIdleText(text.trim());
 
                 const { name: finalStatus, digestText } = options?.prefix === undefined
                     ? composeDefaultIdleStatus(rawText)

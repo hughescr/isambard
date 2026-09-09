@@ -1,10 +1,11 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest, spyOn } from 'bun:test';
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { generateText, generateTextWithSystemPrompt } from '../../../src/agent/text-generator';
 // Import the shared mocks from setup.ts (already registered via mock.module in preload)
 import {
     mockQuery,
     mockFsPromises,
+    mockLogger,
     mockGenerateText,
     mockGenerateTextWithSystemPrompt,
     originalGenerateText,
@@ -682,5 +683,112 @@ describe('generateTextWithSystemPrompt', () => {
             // String form is not filtered — passed through as-is
             expect(callArgs.prompt).toBe(`System:\n${stringWithSentinel}\n\nUser:\nUser`);
         });
+    });
+});
+
+/**
+ * A boot-time Haiku call that ran ~1s past the 15s deadline was swallowed as `''` with no log at
+ * all, so the only visible symptom was a Discord status that rendered as a bare prefix. The empty
+ * return is deliberate (every caller already treats `''` as "nothing this time"); the silence was
+ * not.
+ */
+describe('empty-result diagnostics', () => {
+    beforeEach(() => {
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
+
+        mockQuery.mockReset();
+        mockQuery.mockImplementation(() => makeQueryGenerator('Hello'));
+
+        mockFsPromises.mkdtemp.mockClear();
+        mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => `${prefix}mock1`);
+
+        mockLogger.warn.mockClear();
+        mockLogger.debug.mockClear();
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+        resetMockFs();
+        mockLogger.warn.mockClear();
+        mockLogger.debug.mockClear();
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
+    });
+
+    test('warns with the SDK result subtype (and no label when none was given) when the query ends non-success', async () => {
+        mockQuery.mockImplementation(() => makeQueryGenerator('', 'error_during_execution'));
+
+        const result = await generateText('Test prompt');
+
+        expect(result).toBe('');
+        expect(mockLogger.warn).toHaveBeenCalledWith({
+            reason:    'error_during_execution',
+            elapsedMs: expect.any(Number) as unknown as number,
+            label:     undefined,
+            msg:       'Text generation produced no text',
+        });
+    });
+
+    test('reports the elapsed time between the call starting and the warning', async () => {
+        // Date.now is pinned rather than advanced with a real clock: the assertion is on the
+        // subtraction, not on any wall-clock duration.
+        let nowValue = 1000;
+        spyOn(Date, 'now').mockImplementation(() => nowValue);
+        mockQuery.mockImplementation(() => makeQueryGenerator('', 'error_during_execution'));
+
+        const pending = generateText('Test prompt', { timeoutMs: 0 });
+        nowValue = 1250;
+
+        expect(await pending).toBe('');
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ elapsedMs: 250 }));
+    });
+
+    test('does not warn when the query succeeds', async () => {
+        const result = await generateText('Test prompt', { timeoutMs: 0 });
+
+        expect(result).toBe('Hello');
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+    });
+
+    test('logs at debug with reason "aborted" and the caller-supplied label when the caller aborts (generator throws)', async () => {
+        const callerController = new AbortController();
+        mockQuery.mockImplementation(makeAbortAwareMockQuery());
+
+        const pending = generateText('Test prompt', { abortController: callerController, timeoutMs: 0, label: 'idle-status' });
+        callerController.abort();
+
+        expect(await pending).toBe('');
+        expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+            reason: 'aborted',
+            label:  'idle-status',
+        }));
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+    });
+
+    test('logs at debug with reason "aborted" when the caller aborted but the generator completed normally', async () => {
+        const callerController = new AbortController();
+        callerController.abort();
+
+        const result = await generateText('Test prompt', { abortController: callerController, timeoutMs: 0 });
+
+        expect(result).toBe('');
+        expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({ reason: 'aborted' }));
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+    });
+
+    test('warns with reason "timeout" when the internal deadline fires with no caller controller', async () => {
+        // The deadline is AbortSignal.timeout, which fake timers cannot drive; 1ms is the
+        // smallest real deadline that still distinguishes the timeout path from a caller abort.
+        mockQuery.mockImplementation(makeAbortAwareMockQuery());
+
+        const result = await generateText('Test prompt', { timeoutMs: 1 });
+
+        expect(result).toBe('');
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ reason: 'timeout' }));
     });
 });

@@ -9,6 +9,7 @@ describe('IdleStatusGenerator', () => {
     const mockLogger: IdleStatusGeneratorDeps['logger'] = {
         debug: mock(() => undefined),
         info:  mock(() => undefined),
+        warn:  mock(() => undefined),
         error: mock(() => undefined),
     };
 
@@ -21,6 +22,7 @@ describe('IdleStatusGenerator', () => {
         (mockLogger.debug as ReturnType<typeof mock>).mockClear();
         (mockLogger.error as ReturnType<typeof mock>).mockClear();
         (mockLogger.info as ReturnType<typeof mock>).mockClear();
+        (mockLogger.warn as ReturnType<typeof mock>).mockClear();
     });
 
     describe('generate', () => {
@@ -39,7 +41,7 @@ describe('IdleStatusGenerator', () => {
             expect(userPrompt).toContain('Status text (first person, under 50 chars):');
         });
 
-        test('should pass stripMarkdown: true option to generateTextWithSystemPrompt', async () => {
+        test('should pass stripMarkdown, the 30s idle deadline, and a diagnostic label to generateTextWithSystemPrompt', async () => {
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
                 activityType:    ActivityType.Custom,
@@ -51,7 +53,7 @@ describe('IdleStatusGenerator', () => {
             expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledWith(
                 expect.any(String),  // system prompt
                 expect.any(String),  // user prompt
-                { stripMarkdown: true }  // options - this kills the mutant
+                { stripMarkdown: true, timeoutMs: 30_000, label: 'idle-status' }  // options - this kills the mutant
             );
         });
 
@@ -192,7 +194,118 @@ describe('IdleStatusGenerator', () => {
             expect(systemPromptArg).toContain(testIdentityContext);
         });
 
-        test('should handle empty string response from generateTextWithSystemPrompt', async () => {
+        /**
+         * A generation that comes back empty (the 15s default deadline firing on a slow boot-time
+         * Haiku call was the observed cause) used to be composed and applied verbatim, so Discord
+         * showed a prefix with nothing after it. An empty generation now keeps the last good status
+         * instead, and says so — mirroring `status-generator-dynamic.ts`'s own refusal to cache a
+         * response it would not want to show.
+         */
+        describe('empty generation', () => {
+            test('reuses the cached previous status rather than applying an empty one', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(''));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => 'Still chewing on that trace',
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Still chewing on that trace');
+                expect(mockLogger.warn).toHaveBeenCalledWith(
+                    { usedPreviousStatus: true },
+                    'Idle status generation produced no text'
+                );
+            });
+
+            test('falls back to the built-in idle text, and says it did not reuse anything, when nothing is cached', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(''));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => undefined,
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Idle');
+                expect(mockLogger.warn).toHaveBeenCalledWith(
+                    { usedPreviousStatus: false },
+                    'Idle status generation produced no text'
+                );
+            });
+
+            test('treats a blank cached status as nothing to reuse', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(''));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => '   ',
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Idle');
+                expect(mockLogger.warn).toHaveBeenCalledWith(
+                    { usedPreviousStatus: false },
+                    'Idle status generation produced no text'
+                );
+            });
+
+            test('a whitespace-only generation is empty too', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('   \n  '));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => 'Still chewing on that trace',
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Still chewing on that trace');
+            });
+
+            test('keeps the composed P11 prefix and appends the reused status', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(''));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => 'Still chewing on that trace',
+                });
+
+                const result = await generator.generate({ prefix: '💤 2 tasks' });
+
+                expect(result.name).toBe('💤 2 tasks • Still chewing on that trace');
+            });
+
+            test('does not warn when the generation produced text', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Chasing a loose thread'));
+
+                const generator = createIdleStatusGenerator({
+                    logger:          mockLogger,
+                    activityType:    ActivityType.Custom,
+                    identityContext: () => Promise.resolve('Test identity'),
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Chasing a loose thread');
+                expect(mockLogger.warn).not.toHaveBeenCalled();
+            });
+        });
+
+        test('should never apply an empty generation — falls back to the built-in idle text', async () => {
             mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(''));
 
             const generator = createIdleStatusGenerator({
@@ -203,7 +316,7 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            expect(result.name).toBe('💤 ');
+            expect(result.name).toBe('💤 Idle');
             expect(result.type).toBe(ActivityType.Custom);
         });
 
@@ -232,6 +345,7 @@ describe('IdleStatusGenerator', () => {
                 debug: mock(() => undefined),
                 error: mock(() => undefined),
                 info:  mock(() => undefined),
+                warn:  mock(() => undefined),
             };
 
             const generator = createIdleStatusGenerator({
@@ -256,6 +370,7 @@ describe('IdleStatusGenerator', () => {
                 debug: mock(() => undefined),
                 error: mock(() => undefined),
                 info:  mock(() => undefined),
+                warn:  mock(() => undefined),
             };
 
             const generator = createIdleStatusGenerator({
@@ -625,6 +740,7 @@ describe('IdleStatusGenerator', () => {
                 debug: mock(() => undefined),
                 error: mock(() => undefined),
                 info:  mock(() => undefined),
+                warn:  mock(() => undefined),
             };
 
             const generator = createIdleStatusGenerator({
