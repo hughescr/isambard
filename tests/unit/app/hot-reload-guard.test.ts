@@ -53,6 +53,18 @@ describe('stopPreviousHotReloadInstance', () => {
         expect(logger.warn).toHaveBeenCalledWith({ error: 'boom', msg: 'Hot reload: previous instance failed to stop cleanly' });
     });
 
+    test.each([
+        ['null', null],
+        ['a string', 'stop'],
+        ['a number', 7],
+        ['an object without stop', {}],
+    ])('ignores a slot holding %s', async (_label, value) => {
+        const host: Record<string, unknown> = { [HOT_RELOAD_KEY]: value };
+
+        expect(await stopPreviousHotReloadInstance(host, makeLogger())).toBe(false);
+        expect(HOT_RELOAD_KEY in host).toBe(false);
+    });
+
     test('ignores a slot value that is not a handle', async () => {
         const host: Record<string, unknown> = { [HOT_RELOAD_KEY]: { stop: 'not a function' } };
         const logger = makeLogger();
@@ -72,6 +84,12 @@ describe('stopPreviousHotReloadInstance', () => {
         expect(host[HOT_RELOAD_KEY]).toBeUndefined();
         expect(await stopPreviousHotReloadInstance(host, makeLogger(), 'custom')).toBe(true);
         expect(stop).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('HOT_RELOAD_KEY', () => {
+    test('is the documented globalThis slot name', () => {
+        expect(HOT_RELOAD_KEY).toBe('__isambardHotReloadInstance');
     });
 });
 
