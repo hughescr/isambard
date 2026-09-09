@@ -29,6 +29,11 @@ export {
     type LedgerEvent,
     type LedgerStore,
     type LedgerStoreDeps,
+    type LedgerTask,
+    type LedgerTaskProgress,
+    type LedgerTaskWorkflow,
+    type LedgerWorkflowAgent,
+    type LedgerWorkflowPhase,
     initialLedger,
     reduceLedger,
     createLedgerStore

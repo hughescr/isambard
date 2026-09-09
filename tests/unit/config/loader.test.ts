@@ -299,6 +299,22 @@ describe.concurrent('loadConfig', () => {
         });
     });
 
+    describe('Task Board Config Defaults', () => {
+        test('includes default task board config in discord config with exact values', () => {
+            const resources = createMockResources();
+            const config = loadConfig(resources);
+
+            const taskBoard = config.discord.taskBoard!;
+            expect(taskBoard.enabled).toBe(true);
+            expect(taskBoard.editIntervalMs).toBe(3000);
+            expect(taskBoard.refreshIntervalMs).toBe(10_000);
+
+            expect(taskBoard.editIntervalMs).toBeGreaterThan(0);
+            expect(taskBoard.editIntervalMs).toBeLessThan(taskBoard.refreshIntervalMs);
+            expect(taskBoard.refreshIntervalMs).toBeLessThan(60_000);
+        });
+    });
+
     describe('Type Coercion', () => {
         test('should coerce string ports to numbers', () => {
             const resources = createMockResources({

@@ -22,7 +22,7 @@ function openTurn(overrides: Partial<Ledger['turn']> = {}): NonNullable<Ledger['
 }
 
 function task(kind: string, id: string): Ledger['tasks'][number] {
-    return { id, taskType: kind, kind: kind as Ledger['tasks'][number]['kind'], description: 'x', startedAt: new Date(0) };
+    return { id, taskType: kind, kind: kind as Ledger['tasks'][number]['kind'], description: 'x', background: true, startedAt: new Date(0), status: 'running' };
 }
 
 describe('presence-view', () => {

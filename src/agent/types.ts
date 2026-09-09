@@ -194,6 +194,8 @@ export interface SystemEvent {
     is_backgrounded?: boolean
     /** Subagent type for Task-tool subagents — present on task_started */
     subagent_type?:   string
+    /** `meta.name` from the workflow script — present on task_started when task_type is 'local_workflow' */
+    workflow_name?:   string
     /** Full live background-task set (REPLACE semantics) — present on background_tasks_changed */
     tasks?:           { task_id: string, task_type: string, description: string, ambient?: boolean }[]
     /** Housekeeping/ambient task, hidden from user-facing activity indicators */

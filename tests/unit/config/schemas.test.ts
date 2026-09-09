@@ -12,7 +12,9 @@ import {
     reconciliationConfigSchema,
     vectorIndexConfigSchema,
     idleSignalsConfigSchema,
-    sessionConfigSchema
+    sessionConfigSchema,
+    TaskBoardConfigSchema,
+    DEFAULT_TASK_BOARD_CONFIG
 } from '@/config/schemas';
 import { createGuildId } from '@/integrations/discord/types';
 import { resolveTimezone } from '@/utils/time';
@@ -310,6 +312,37 @@ describe('discordConfigSchema', () => {
         }
     });
 
+    test('should accept a task board config and apply its defaults', () => {
+        const result = discordConfigSchema.safeParse({
+            botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
+            applicationId: '123456789012345678',
+            homeGuildId:   createGuildId('home-guild-123'),
+            taskBoard:     {},
+        });
+
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.taskBoard).toEqual({
+                enabled:           true,
+                editIntervalMs:    3000,
+                refreshIntervalMs: 10_000,
+            });
+        }
+    });
+
+    test('should leave taskBoard undefined when it is not provided', () => {
+        const result = discordConfigSchema.safeParse({
+            botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
+            applicationId: '123456789012345678',
+            homeGuildId:   createGuildId('home-guild-123'),
+        });
+
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.taskBoard).toBeUndefined();
+        }
+    });
+
     test('should apply presence defaults when presence is provided without values', () => {
         const configWithEmptyPresence = {
             botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
@@ -327,6 +360,64 @@ describe('discordConfigSchema', () => {
                 idleRefreshIntervalMs: 300_000, // default
             });
         }
+    });
+});
+
+describe('TaskBoardConfigSchema', () => {
+    test('applies every default when given an empty object', () => {
+        const result = TaskBoardConfigSchema.safeParse({});
+
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data).toEqual({
+                enabled:           true,
+                editIntervalMs:    3000,
+                refreshIntervalMs: 10_000,
+            });
+        }
+    });
+
+    test('accepts explicit values', () => {
+        const result = TaskBoardConfigSchema.safeParse({
+            enabled:           false,
+            editIntervalMs:    500,
+            refreshIntervalMs: 2500,
+        });
+
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data).toEqual({
+                enabled:           false,
+                editIntervalMs:    500,
+                refreshIntervalMs: 2500,
+            });
+        }
+    });
+
+    test('rejects a non-boolean enabled', () => {
+        expect(TaskBoardConfigSchema.safeParse({ enabled: 'yes' }).success).toBe(false);
+    });
+
+    test('rejects a zero or negative editIntervalMs', () => {
+        expect(TaskBoardConfigSchema.safeParse({ editIntervalMs: 0 }).success).toBe(false);
+        expect(TaskBoardConfigSchema.safeParse({ editIntervalMs: -1 }).success).toBe(false);
+    });
+
+    test('rejects a fractional editIntervalMs', () => {
+        expect(TaskBoardConfigSchema.safeParse({ editIntervalMs: 1.5 }).success).toBe(false);
+    });
+
+    test('rejects a zero or negative refreshIntervalMs', () => {
+        expect(TaskBoardConfigSchema.safeParse({ refreshIntervalMs: 0 }).success).toBe(false);
+        expect(TaskBoardConfigSchema.safeParse({ refreshIntervalMs: -1 }).success).toBe(false);
+    });
+
+    test('rejects a fractional refreshIntervalMs', () => {
+        expect(TaskBoardConfigSchema.safeParse({ refreshIntervalMs: 2.5 }).success).toBe(false);
+    });
+
+    test('DEFAULT_TASK_BOARD_CONFIG matches the schema defaults', () => {
+        expect(DEFAULT_TASK_BOARD_CONFIG).toEqual(TaskBoardConfigSchema.parse({}));
     });
 });
 

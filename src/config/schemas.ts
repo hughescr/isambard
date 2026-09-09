@@ -116,6 +116,39 @@ export const DEFAULT_INBOX_CONFIG: InboxConfig = {
     maxCatchUpAgeDays:  7,
 };
 
+/**
+ * Task board configuration — the live-edited Discord embed that mirrors the sub-agents,
+ * workflows and background shell commands one turn launched (see `docs/plans/task-board.md`).
+ */
+export const TaskBoardConfigSchema = z.object({
+    /** Whether the board is posted at all; disabling it leaves the ledger tracking untouched. */
+    enabled: z.boolean().default(true),
+
+    /**
+     * Trailing-edge throttle window between edits of one board's message. The last state always
+     * lands: an edit inside the window is deferred, not dropped.
+     */
+    editIntervalMs: z.number().int().positive().default(3000),
+
+    /**
+     * How often the board is re-composed while any board is still running, so elapsed times and
+     * the footer clock advance even when no ledger event has arrived.
+     */
+    refreshIntervalMs: z.number().int().positive().default(10_000),
+});
+
+export type TaskBoardConfig = z.infer<typeof TaskBoardConfigSchema>;
+
+/**
+ * Default task board configuration — the composition root's fallback when `discord.taskBoard`
+ * is absent from the loaded config.
+ */
+export const DEFAULT_TASK_BOARD_CONFIG: TaskBoardConfig = {
+    enabled:           true,
+    editIntervalMs:    3000,
+    refreshIntervalMs: 10_000,
+};
+
 // Discord config
 export const discordConfigSchema = z.object({
     botToken:      z.string().min(1),
@@ -123,6 +156,7 @@ export const discordConfigSchema = z.object({
     homeGuildId:   guildIdSchema,
     presence:      PresenceConfigSchema.optional(),
     inbox:         inboxConfigSchema.optional(),
+    taskBoard:     TaskBoardConfigSchema.optional(),
 });
 
 // Browser config

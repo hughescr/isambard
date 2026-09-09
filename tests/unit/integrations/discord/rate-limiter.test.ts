@@ -453,3 +453,162 @@ describe('new DiscordRateLimiter', () => {
         limiter.stop();
     });
 });
+
+describe('DiscordRateLimiter embed payloads', () => {
+    test('sendPayloadToChannel sends an embeds payload through the channel queue', async () => {
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock().mockResolvedValue({ id: 'msg-1' }),
+        } as unknown as TextChannel;
+
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
+
+        const result = await limiter.sendPayloadToChannel(mockChannel, { embeds: [] });
+
+        expect(mockChannel.send).toHaveBeenCalledWith({ embeds: [] });
+        expect(result.id).toBe('msg-1');
+
+        limiter.stop();
+    });
+
+    test('sendPayloadToChannel queues behind an earlier send to the same channel', async () => {
+        const order: string[] = [];
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock(async (arg: unknown) => {
+                order.push(typeof arg === 'string' ? arg : 'payload');
+                return { id: 'msg' };
+            }),
+        } as unknown as TextChannel;
+
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
+
+        const first = limiter.sendToChannel(mockChannel, 'text');
+        const second = limiter.sendPayloadToChannel(mockChannel, { embeds: [] });
+        await Promise.all([first, second]);
+
+        expect(order).toEqual(['text', 'payload']);
+
+        limiter.stop();
+    });
+
+    test('sendPayloadToChannel logs queueing and sending with the channel id', async () => {
+        const mockLogger = { debug: mock() };
+        const mockChannel = {
+            id:   'channel-9',
+            send: mock().mockResolvedValue({ id: 'msg-1' }),
+        } as unknown as TextChannel;
+
+        const limiter = new DiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+        await limiter.sendPayloadToChannel(mockChannel, { embeds: [] });
+
+        const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>][];
+        const queueing = debugCalls.filter(call => call[0].msg === 'Queueing payload send to channel');
+        const sending = debugCalls.filter(call => call[0].msg === 'Sending payload to channel');
+
+        expect(queueing).toHaveLength(1);
+        expect(queueing[0][0].channelId).toBe('channel-9');
+        expect(sending).toHaveLength(1);
+        expect(sending[0][0].channelId).toBe('channel-9');
+
+        limiter.stop();
+    });
+
+    test('sendPayloadToChannel works without a logger', async () => {
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock().mockResolvedValue({ id: 'msg-1' }),
+        } as unknown as TextChannel;
+
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
+        const result = await limiter.sendPayloadToChannel(mockChannel, { embeds: [] });
+
+        expect(result.id).toBe('msg-1');
+        limiter.stop();
+    });
+
+    test('editMessage edits through the queue for the message channel', async () => {
+        const mockMessage = {
+            id:        'msg-original',
+            channelId: 'channel-1',
+            edit:      mock().mockResolvedValue({ id: 'msg-edited' }),
+        } as unknown as Message;
+
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
+
+        const result = await limiter.editMessage(mockMessage, { embeds: [] });
+
+        expect(mockMessage.edit).toHaveBeenCalledWith({ embeds: [] });
+        expect(result.id).toBe('msg-edited');
+
+        limiter.stop();
+    });
+
+    test('editMessage queues behind an earlier send to the same channel', async () => {
+        const order: string[] = [];
+        const mockChannel = {
+            id:   'channel-1',
+            send: mock(async () => {
+                order.push('send');
+                return { id: 'msg' };
+            }),
+        } as unknown as TextChannel;
+        const mockMessage = {
+            id:        'msg-original',
+            channelId: 'channel-1',
+            edit:      mock(async () => {
+                order.push('edit');
+                return { id: 'msg-edited' };
+            }),
+        } as unknown as Message;
+
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
+
+        const first = limiter.sendToChannel(mockChannel, 'text');
+        const second = limiter.editMessage(mockMessage, { embeds: [] });
+        await Promise.all([first, second]);
+
+        expect(order).toEqual(['send', 'edit']);
+
+        limiter.stop();
+    });
+
+    test('editMessage logs queueing and editing with the message and channel ids', async () => {
+        const mockLogger = { debug: mock() };
+        const mockMessage = {
+            id:        'msg-original',
+            channelId: 'channel-7',
+            edit:      mock().mockResolvedValue({ id: 'msg-edited' }),
+        } as unknown as Message;
+
+        const limiter = new DiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
+        await limiter.editMessage(mockMessage, { embeds: [] });
+
+        const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>][];
+        const queueing = debugCalls.filter(call => call[0].msg === 'Queueing edit of message');
+        const editing = debugCalls.filter(call => call[0].msg === 'Editing message');
+
+        expect(queueing).toHaveLength(1);
+        expect(queueing[0][0].messageId).toBe('msg-original');
+        expect(queueing[0][0].channelId).toBe('channel-7');
+        expect(editing).toHaveLength(1);
+        expect(editing[0][0].messageId).toBe('msg-original');
+        expect(editing[0][0].channelId).toBe('channel-7');
+
+        limiter.stop();
+    });
+
+    test('editMessage works without a logger', async () => {
+        const mockMessage = {
+            id:        'msg-original',
+            channelId: 'channel-1',
+            edit:      mock().mockResolvedValue({ id: 'msg-edited' }),
+        } as unknown as Message;
+
+        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
+        const result = await limiter.editMessage(mockMessage, { embeds: [] });
+
+        expect(result.id).toBe('msg-edited');
+        limiter.stop();
+    });
+});

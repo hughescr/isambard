@@ -15,7 +15,7 @@
  * - Graceful cleanup: stop() allows in-flight requests to complete
  */
 
-import type { TextChannel, Message } from 'discord.js';
+import type { TextChannel, Message, MessageCreateOptions, MessageEditOptions } from 'discord.js';
 import pLimit from 'p-limit';
 
 /** Function type for concurrency limiting (p-limit signature) */
@@ -87,6 +87,60 @@ export class DiscordRateLimiter {
                 channelId,
             });
             return channel.send(content);
+        });
+    }
+
+    /**
+     * Send a structured payload (embeds, components, files) to a Discord channel with rate
+     * limiting. The string-content overload lives in {@link sendToChannel}; this is the same
+     * per-channel queue, so a payload send and a text send to one channel stay ordered.
+     *
+     * @param channel The Discord text channel
+     * @param payload The message payload (e.g. `{ embeds: [embed] }`)
+     * @returns The sent Discord message
+     */
+    async sendPayloadToChannel(channel: TextChannel, payload: MessageCreateOptions): Promise<Message> {
+        const channelId = channel.id;
+
+        this.logger?.debug({
+            msg: 'Queueing payload send to channel',
+            channelId,
+        });
+
+        return this.queueChannelOperation(channelId, async () => {
+            this.logger?.debug({
+                msg: 'Sending payload to channel',
+                channelId,
+            });
+            return channel.send(payload);
+        });
+    }
+
+    /**
+     * Edit an existing Discord message with rate limiting. Edits are queued on the message's
+     * channel, exactly like sends, so a burst of live-embed edits cannot outrun the channel's
+     * own send queue.
+     *
+     * @param message The message to edit
+     * @param payload The new message payload (e.g. `{ embeds: [embed] }`)
+     * @returns The edited Discord message
+     */
+    async editMessage(message: Message, payload: MessageEditOptions): Promise<Message> {
+        const channelId = message.channelId;
+
+        this.logger?.debug({
+            msg:       'Queueing edit of message',
+            channelId,
+            messageId: message.id,
+        });
+
+        return this.queueChannelOperation(channelId, async () => {
+            this.logger?.debug({
+                msg:       'Editing message',
+                channelId,
+                messageId: message.id,
+            });
+            return message.edit(payload);
         });
     }
 

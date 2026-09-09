@@ -27,11 +27,13 @@ import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupH
 import { setupPerchDriverAndScheduler } from './setup/perch-setup';
 import { setupConductorPresence } from './setup/presence-setup';
 import { createWakeTurnDelivery } from './setup/wake-delivery';
+import { setupTaskBoard } from './task-board/setup';
 import { createChannelId, createUserId, type ChannelId } from './types';
 import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type Envelope, type TurnResult  } from '@/agent';
-import type { DiscordConfig } from '@/config';
+import { DEFAULT_TASK_BOARD_CONFIG, type DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
+import { resolveTimezone } from '@/utils';
 
 /**
  * Global state for Discord client to survive Bun hot reload.
@@ -416,6 +418,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
     // Torn down (if presence was ever set up) on stop().
     let unsubscribeLedgerPresence: (() => void) | undefined;
+    // Torn down (if the live task board was ever set up) on stop().
+    let stopTaskBoard: (() => void) | undefined;
     // P11: the ONE process-wide throttle shared by presence-setup's conductor branch and the
     // ledger-sink stream handler wired per turn by conductor-processor.ts (design doc section 8:
     // "at most one non-idle presence update per 12s"). Built once, only in conductor mode.
@@ -956,6 +960,27 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 dynamicStatusGenerator = conductorPresence.dynamicStatusGenerators[0];
             }
 
+            // Live task board: one system-posted embed per (channel, turn) mirroring the
+            // sub-agents, workflows and background shell commands that turn launched. Gated on the
+            // same conductor-opened condition as presence (it composes from the same ledgers) and
+            // on the config flag, which only an explicit `enabled: false` turns off.
+            if(conductorOpened && ledgerStore && config.taskBoard?.enabled !== false) {
+                const taskBoard = setupTaskBoard({
+                    readyClient,
+                    rateLimiter,
+                    // Stryker disable next-line ArrayDeclaration: equivalent — see the identical narrowing-only fallback on setupConductorPresence's `ledgers` above.
+                    ledgers:  conductorLedgers ?? [ledgerStore],
+                    config:   config.taskBoard ?? DEFAULT_TASK_BOARD_CONFIG,
+                    // The bot receives no zone of its own; perch's configured zone is the only one
+                    // reachable here, and it is the same IANA zone the rest of Izzy schedules in.
+                    // With perch disabled there is no configured zone at all, so fall back to the
+                    // host zone the config loader itself defaults every other `timezone` to.
+                    timeZone: options.perchConfig?.timezone ?? resolveTimezone(),
+                    logger,
+                });
+                stopTaskBoard = taskBoard.stop;
+            }
+
             // Create the perch driver+scheduler once the perch conductor has successfully opened.
             // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
             if(perchConductorOpened && perchConductor && options.perchConfig?.enabled) {
@@ -1148,6 +1173,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             questionRegistry.stop();
             if(unsubscribeLedgerPresence) {
                 unsubscribeLedgerPresence();
+            }
+            if(stopTaskBoard) {
+                stopTaskBoard();
             }
             unsubscribeToolTracking();
             unsubscribeChannelTracking();

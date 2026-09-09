@@ -4,8 +4,9 @@
  * Date that happens to equal SENTINEL proves the reducer read the clock instead of the event.
  */
 import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
-import type { SDKPartialAssistantMessage, SDKToolProgressMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SDKPartialAssistantMessage, SDKToolProgressMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import * as frames from '../../../helpers/sdk-frames';
+import { mockLogger } from '../../../setup';
 import {
     type Ledger,
     type LedgerEvent,
@@ -22,10 +23,12 @@ const T3 = new Date('2026-09-04T12:00:02Z');
 beforeEach(() => {
     jest.useFakeTimers();
     jest.setSystemTime(SENTINEL);
+    mockLogger.debug.mockClear();
 });
 
 afterEach(() => {
     jest.useRealTimers();
+    mockLogger.debug.mockClear();
 });
 
 /** Recursively freezes an object graph so mutation shows up as a thrown TypeError in strict mode. */
@@ -51,16 +54,17 @@ function frozenEvent(event: LedgerEvent): LedgerEvent {
 describe('initialLedger', () => {
     it('sets role and an all-zero empty state', () => {
         expect(initialLedger('conversation')).toEqual({
-            role:       'conversation',
-            turn:       null,
-            queued:     { human: 0, other: 0 },
-            tasks:      [],
-            compaction: 'none',
-            context:    { used: 0, window: 0, percentage: 0 },
-            process:    { rssBytes: 0 },
-            perch:      {},
-            cost:       { cumulativeUsd: 0, lastTurnUsd: 0 },
-            latency:    { bySource: {} },
+            role:          'conversation',
+            turn:          null,
+            queued:        { human: 0, other: 0 },
+            tasks:         [],
+            finishedTasks: [],
+            compaction:    'none',
+            context:       { used: 0, window: 0, percentage: 0 },
+            process:       { rssBytes: 0 },
+            perch:         {},
+            cost:          { cumulativeUsd: 0, lastTurnUsd: 0 },
+            latency:       { bySource: {} },
         });
     });
 
@@ -483,6 +487,36 @@ describe('reduceLedger: sdk_frame result', () => {
 
         expect(ledger).toBe(afterTurn);
     });
+
+    // A foreground sub-agent cannot outlive the turn that launched it: an interrupted turn ends
+    // without the `tool_result` that would normally finish it, so the result frame does it here.
+    it('stops every running foreground task when the turn closes, leaving background tasks running', () => {
+        const withForeground = startTask(openTurn(), { task_id: 'fg-1', is_backgrounded: false, description: 'foreground work' }, T1);
+        const withBoth = startTask(withForeground, { task_id: 'bg-1', is_backgrounded: true, description: 'background work' }, T1);
+
+        const ledger = reduceLedger(withBoth, frozenEvent({ type: 'sdk_frame', frame: frames.resultInterrupted({ total_cost_usd: 0.02 }), at: T2 }));
+
+        expect(ledger.tasks).toMatchObject([{ id: 'bg-1', status: 'running' }]);
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'fg-1', status: 'stopped', finishedAt: T2 }]);
+    });
+
+    it('keeps tasks and finishedTasks by reference when the closing turn had no foreground task', () => {
+        const withBackground = startTask(openTurn(), { task_id: 'bg-1' }, T1);
+
+        const ledger = reduceLedger(withBackground, frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess({ total_cost_usd: 0.05 }), at: T2 }));
+
+        expect(ledger.tasks).toBe(withBackground.tasks);
+        expect(ledger.finishedTasks).toBe(withBackground.finishedTasks);
+    });
+
+    it('leaves a running foreground task alone for a bare result that closes no turn', () => {
+        const withForeground = startTask(initialLedger('conversation'), { task_id: 'fg-1', is_backgrounded: false }, T1);
+
+        const ledger = reduceLedger(withForeground, frozenEvent({ type: 'sdk_frame', frame: frames.bareResult({ total_cost_usd: 0.07 }), at: T2 }));
+
+        expect(ledger.tasks).toMatchObject([{ id: 'fg-1', status: 'running' }]);
+        expect(ledger.finishedTasks).toEqual([]);
+    });
 });
 
 describe('reduceLedger: interrupt_requested', () => {
@@ -503,7 +537,29 @@ describe('reduceLedger: interrupt_requested', () => {
     });
 });
 
-describe('reduceLedger: background tasks', () => {
+/** Folds a `task_started` frame built from `overrides` into `ledger`. */
+function startTask(ledger: Ledger, overrides: Parameters<typeof frames.taskStarted>[0], at: Date): Ledger {
+    return reduceLedger(ledger, frozenEvent({ type: 'sdk_frame', at, frame: frames.taskStarted(overrides) }));
+}
+
+/** A `user` frame carrying one `tool_result` block — the SDK's end-of-foreground-task signal. */
+function toolResult(toolUseId: string, isError?: boolean): SDKUserMessage {
+    return {
+        type:               'user',
+        message:            { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'done', is_error: isError }] },
+        parent_tool_use_id: null,
+    };
+}
+
+/**
+ * A `task_progress` frame carrying `workflow_progress` — a field the CLI emits on every workflow
+ * progress frame but the SDK `.d.ts` does not declare, hence `Object.assign` rather than a literal.
+ */
+function workflowProgress(taskId: string, entries: unknown): SDKMessage {
+    return Object.assign(frames.taskProgress({ task_id: taskId }), { workflow_progress: entries });
+}
+
+describe('reduceLedger: tasks', () => {
     it.each([
         ['local_agent', 'subagent'],
         ['local_workflow', 'workflow'],
@@ -512,85 +568,467 @@ describe('reduceLedger: background tasks', () => {
         ['local_monitor', 'monitor'],
         ['something_else', 'other'],
     ] as const)('task_started maps task_type %s to kind %s', (taskType, kind) => {
-        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({
-            type:  'sdk_frame', at:    T1,
-            frame: frames.taskStarted({ task_id: 'task-1', task_type: taskType, description: 'do a thing' }),
-        }));
+        const ledger = startTask(initialLedger('conversation'), { task_id: 'task-1', task_type: taskType, description: 'do a thing' }, T1);
 
-        expect(ledger.tasks).toEqual([{ id: 'task-1', taskType, kind, description: 'do a thing', startedAt: T1 }]);
+        expect(ledger.tasks).toMatchObject([{ id: 'task-1', taskType, kind, description: 'do a thing', startedAt: T1 }]);
+    });
+
+    it('task_started records the whole task: tool_use_id, label, background, running status', () => {
+        const ledger = startTask(initialLedger('conversation'), {
+            task_id: 'task-1', tool_use_id: 'toolu-1', task_type: 'local_agent', subagent_type: 'sonnet-high', description: 'do a thing',
+        }, T1);
+
+        expect(ledger.tasks).toEqual([{
+            id:          'task-1',
+            toolUseId:   'toolu-1',
+            taskType:    'local_agent',
+            kind:        'subagent',
+            description: 'do a thing',
+            label:       'sonnet-high',
+            background:  true,
+            channelId:   undefined,
+            turnId:      undefined,
+            startedAt:   T1,
+            progress:    undefined,
+            workflow:    undefined,
+            status:      'running',
+            finishedAt:  undefined,
+        }]);
+        expect(ledger.finishedTasks).toEqual([]);
     });
 
     it('task_started with no task_type defaults taskType to \'unknown\' and kind to \'other\'', () => {
-        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({
-            type:  'sdk_frame', at:    T1,
-            frame: frames.taskStarted({ task_id: 'task-1', task_type: undefined, description: 'do a thing' }),
-        }));
+        const ledger = startTask(initialLedger('conversation'), { task_id: 'task-1', task_type: undefined, description: 'do a thing' }, T1);
 
-        expect(ledger.tasks).toEqual([{ id: 'task-1', taskType: 'unknown', kind: 'other', description: 'do a thing', startedAt: T1 }]);
+        expect(ledger.tasks).toMatchObject([{ id: 'task-1', taskType: 'unknown', kind: 'other', description: 'do a thing', startedAt: T1 }]);
     });
 
-    it('does not add a foreground task (is_backgrounded false)', () => {
-        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({
-            type:  'sdk_frame', at:    T1,
-            frame: frames.taskStarted({ task_id: 'task-1', is_backgrounded: false }),
+    it('task_started stamps channelId and turnId from the open turn', () => {
+        const opened = reduceLedger(initialLedger('conversation'), frozenEvent({
+            type: 'turn_submitted', at: T1, envelope: envelope({ id: 'turn-7', channelId: 'chan-9' }),
         }));
 
-        expect(ledger.tasks).toEqual([]);
+        const ledger = startTask(opened, { task_id: 'task-1' }, T2);
+
+        expect(ledger.tasks[0]?.turnId).toBe('turn-7');
+        expect(ledger.tasks[0]?.channelId).toBe('chan-9');
+    });
+
+    it('task_started leaves channelId and turnId unset when no turn is open', () => {
+        const ledger = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+
+        expect(ledger.tasks[0]?.turnId).toBeUndefined();
+        expect(ledger.tasks[0]?.channelId).toBeUndefined();
+    });
+
+    it.each([
+        ['local_workflow', 'plan-review', undefined, 'plan-review'],
+        ['local_agent', undefined, 'gpt-terra-high', 'gpt-terra-high'],
+        ['local_bash', 'plan-review', 'gpt-terra-high', undefined],
+    ] as const)('task_started on %s labels from workflow_name/subagent_type', (taskType, workflowName, subagentType, label) => {
+        const ledger = startTask(initialLedger('conversation'), {
+            task_id: 'task-1', task_type: taskType, workflow_name: workflowName, subagent_type: subagentType,
+        }, T1);
+
+        expect(ledger.tasks[0]?.label).toBe(label);
+    });
+
+    it('tracks a foreground task (is_backgrounded false) with background false', () => {
+        const ledger = startTask(initialLedger('conversation'), { task_id: 'task-1', is_backgrounded: false }, T1);
+
+        expect(ledger.tasks).toMatchObject([{ id: 'task-1', background: false, status: 'running' }]);
+    });
+
+    it('treats a task_started with no is_backgrounded as foreground', () => {
+        const ledger = startTask(initialLedger('conversation'), { task_id: 'task-1', is_backgrounded: undefined }, T1);
+
+        expect(ledger.tasks).toMatchObject([{ id: 'task-1', background: false }]);
     });
 
     it('does not add an ambient task', () => {
-        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({
-            type:  'sdk_frame', at:    T1,
-            frame: frames.taskStarted({ task_id: 'task-1', ambient: true }),
-        }));
+        const ledger = startTask(initialLedger('conversation'), { task_id: 'task-1', ambient: true }, T1);
 
         expect(ledger.tasks).toEqual([]);
     });
 
     it('is idempotent (same reference) on a duplicate task_started', () => {
-        const started = reduceLedger(initialLedger('conversation'), frozenEvent({
-            type:  'sdk_frame', at:    T1,
-            frame: frames.taskStarted({ task_id: 'task-1' }),
-        }));
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
 
-        const again = reduceLedger(started, frozenEvent({
-            type:  'sdk_frame', at:    T2,
-            frame: frames.taskStarted({ task_id: 'task-1' }),
-        }));
+        const again = startTask(started, { task_id: 'task-1' }, T2);
 
         expect(again).toBe(started);
     });
 
-    it.each(['completed', 'failed', 'stopped'] as const)('task_notification with status %s removes the task', (status) => {
-        const started = reduceLedger(initialLedger('conversation'), frozenEvent({
+    // The two frames race: `background_tasks_changed` can create the entry first, with only what
+    // that payload carries. The later `task_started` fills the rest in rather than being dropped.
+    it('task_started enriches an entry background_tasks_changed created first, overwriting nothing already set', () => {
+        const created = reduceLedger(initialLedger('conversation'), frozenEvent({
             type:  'sdk_frame', at:    T1,
-            frame: frames.taskStarted({ task_id: 'task-1' }),
+            frame: frames.backgroundTasksChanged([
+                { task_id: 'task-1', task_type: 'local_agent', description: 'not this one' },
+                { task_id: 'task-2', task_type: 'local_agent', description: 'from the payload' },
+            ]),
+        }));
+        expect(created.tasks[1]).toMatchObject({ id: 'task-2', background: true });
+        expect(created.tasks[1]?.toolUseId).toBeUndefined();
+        expect(created.tasks[1]?.label).toBeUndefined();
+
+        const ledger = startTask(created, {
+            task_id:         'task-2',
+            tool_use_id:     'toolu-1',
+            task_type:       'local_agent',
+            subagent_type:   'sonnet-high',
+            description:     'from the start frame',
+            is_backgrounded: false,
+        }, T2);
+
+        expect(ledger.tasks).toHaveLength(2);
+        expect(ledger.tasks[0]).toBe(created.tasks[0]);
+        expect(ledger.tasks[1]).toMatchObject({
+            id:          'task-2',
+            toolUseId:   'toolu-1',
+            label:       'sonnet-high',
+            description: 'from the payload',
+            startedAt:   T1,
+            background:  false,
+            status:      'running',
+        });
+    });
+
+    it('task_started fills the channel and turn of an entry created outside a turn', () => {
+        const created = reduceLedger(initialLedger('conversation'), frozenEvent({
+            type:  'sdk_frame', at:    T1,
+            frame: frames.backgroundTasksChanged([{ task_id: 'task-1', task_type: 'local_agent', description: 'from the payload' }]),
+        }));
+        expect(created.tasks[0]?.channelId).toBeUndefined();
+
+        const opened = reduceLedger(created, frozenEvent({
+            type: 'turn_submitted', at: T2, envelope: envelope({ id: 'turn-7', channelId: 'chan-9' }),
+        }));
+        const ledger = startTask(opened, { task_id: 'task-1' }, T3);
+
+        expect(ledger.tasks[0]).toMatchObject({ channelId: 'chan-9', turnId: 'turn-7' });
+    });
+
+    it('task_started never moves a tracked task onto the currently open turn', () => {
+        const firstTurn = reduceLedger(initialLedger('conversation'), frozenEvent({
+            type: 'turn_submitted', at: T1, envelope: envelope({ id: 'turn-7', channelId: 'chan-9' }),
+        }));
+        const started = startTask(firstTurn, { task_id: 'task-1' }, T1);
+        const secondTurn = reduceLedger(started, frozenEvent({
+            type: 'turn_submitted', at: T2, envelope: envelope({ id: 'turn-8', channelId: 'chan-4' }),
         }));
 
+        const ledger = startTask(secondTurn, { task_id: 'task-1' }, T3);
+
+        expect(ledger.tasks[0]).toMatchObject({ channelId: 'chan-9', turnId: 'turn-7' });
+    });
+
+    it.each(['completed', 'failed', 'stopped'] as const)('task_notification with status %s moves the task to finishedTasks', (status) => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+
         const ledger = reduceLedger(started, frozenEvent({
-            type:  'sdk_frame', at:    T2,
-            frame: frames.taskNotification(status, { task_id: 'task-1' }),
+            type: 'sdk_frame', at: T2, frame: frames.taskNotification(status, { task_id: 'task-1', usage: undefined }),
         }));
 
         expect(ledger.tasks).toEqual([]);
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'task-1', status, finishedAt: T2 }]);
     });
 
-    it('is idempotent (same reference) on a duplicate task_notification', () => {
+    it('task_notification with no status treats the task as completed', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({
+            type: 'sdk_frame', at: T2, frame: frames.taskNotification('completed', { task_id: 'task-1', status: undefined }),
+        }));
+
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'task-1', status: 'completed' }]);
+    });
+
+    it('task_notification merges its final usage into progress, keeping the last summary', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+        const progressed = reduceLedger(started, frozenEvent({
+            type: 'sdk_frame', at: T2, frame: frames.taskProgress({ task_id: 'task-1', summary: 'Halfway', usage: { total_tokens: 10, tool_uses: 1, duration_ms: 5 } }),
+        }));
+
+        const ledger = reduceLedger(progressed, frozenEvent({
+            type:  'sdk_frame', at:    T3,
+            frame: frames.taskNotification('completed', { task_id: 'task-1', usage: { total_tokens: 99, tool_uses: 7, duration_ms: 500 } }),
+        }));
+
+        expect(ledger.finishedTasks[0]?.progress).toEqual({ summary: 'Halfway', lastToolName: 'Bash', totalTokens: 99, toolUses: 7, durationMs: 500, at: T3 });
+    });
+
+    it('task_notification with no usage keeps the progress recorded so far', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+        const progressed = reduceLedger(started, frozenEvent({
+            type: 'sdk_frame', at: T2, frame: frames.taskProgress({ task_id: 'task-1', summary: 'Halfway', usage: { total_tokens: 10, tool_uses: 1, duration_ms: 5 } }),
+        }));
+
+        const ledger = reduceLedger(progressed, frozenEvent({
+            type: 'sdk_frame', at: T3, frame: frames.taskNotification('completed', { task_id: 'task-1', usage: undefined }),
+        }));
+
+        expect(ledger.finishedTasks[0]?.progress).toEqual({ summary: 'Halfway', lastToolName: 'Bash', totalTokens: 10, toolUses: 1, durationMs: 5, at: T2 });
+    });
+
+    it('task_notification finishes only the task it names', () => {
+        const first = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+        const both = startTask(first, { task_id: 'task-2' }, T1);
+
+        const ledger = reduceLedger(both, frozenEvent({
+            type: 'sdk_frame', at: T2, frame: frames.taskNotification('failed', { task_id: 'task-2' }),
+        }));
+
+        expect(ledger.tasks).toMatchObject([{ id: 'task-1', status: 'running' }]);
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'task-2', status: 'failed' }]);
+    });
+
+    // `background_tasks_changed` can drop a task from the payload a tick before its
+    // `task_notification` arrives; the notification then corrects the finished row in place.
+    it('task_notification corrects a task background_tasks_changed already finished, keeping its finishedAt', () => {
+        const both = startTask(startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1), { task_id: 'task-2' }, T1);
+        const progressed = reduceLedger(both, frozenEvent({
+            type:  'sdk_frame', at:    T2,
+            frame: frames.taskProgress({ task_id: 'task-2', summary: 'Halfway', usage: { total_tokens: 10, tool_uses: 1, duration_ms: 5 } }),
+        }));
+        const vanished = reduceLedger(progressed, frozenEvent({ type: 'sdk_frame', at: T2, frame: frames.backgroundTasksChanged([]) }));
+        expect(vanished.finishedTasks).toMatchObject([{ id: 'task-1', status: 'stopped' }, { id: 'task-2', status: 'stopped' }]);
+
+        const ledger = reduceLedger(vanished, frozenEvent({
+            type:  'sdk_frame', at:    T3,
+            frame: frames.taskNotification('failed', { task_id: 'task-2', usage: { total_tokens: 99, tool_uses: 7, duration_ms: 500 } }),
+        }));
+
+        expect(ledger.tasks).toEqual([]);
+        expect(ledger.finishedTasks).toHaveLength(2);
+        expect(ledger.finishedTasks[0]).toBe(vanished.finishedTasks[0]);
+        expect(ledger.finishedTasks[1]).toMatchObject({ id: 'task-2', status: 'failed', finishedAt: T2 });
+        expect(ledger.finishedTasks[1]?.progress).toEqual({ summary: 'Halfway', lastToolName: 'Bash', totalTokens: 99, toolUses: 7, durationMs: 500, at: T3 });
+    });
+
+    it('task_notification for an id in neither list leaves the finished ones alone (same reference)', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+        const vanished = reduceLedger(started, frozenEvent({ type: 'sdk_frame', at: T2, frame: frames.backgroundTasksChanged([]) }));
+
+        const ledger = reduceLedger(vanished, frozenEvent({
+            type: 'sdk_frame', at: T3, frame: frames.taskNotification('failed', { task_id: 'ghost' }),
+        }));
+
+        expect(ledger).toBe(vanished);
+    });
+
+    it('task_notification with no usage leaves an already-finished task\'s progress as it was', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+        const progressed = reduceLedger(started, frozenEvent({
+            type:  'sdk_frame', at:    T2,
+            frame: frames.taskProgress({ task_id: 'task-1', summary: 'Halfway', usage: { total_tokens: 10, tool_uses: 1, duration_ms: 5 } }),
+        }));
+        const vanished = reduceLedger(progressed, frozenEvent({ type: 'sdk_frame', at: T2, frame: frames.backgroundTasksChanged([]) }));
+
+        const ledger = reduceLedger(vanished, frozenEvent({
+            type: 'sdk_frame', at: T3, frame: frames.taskNotification('completed', { task_id: 'task-1', usage: undefined }),
+        }));
+
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'task-1', status: 'completed', finishedAt: T2 }]);
+        expect(ledger.finishedTasks[0]?.progress).toEqual({ summary: 'Halfway', lastToolName: 'Bash', totalTokens: 10, toolUses: 1, durationMs: 5, at: T2 });
+    });
+
+    it('is idempotent (same reference) on a task_notification for an unknown id', () => {
         const ledger = initialLedger('conversation');
 
         const next = reduceLedger(ledger, frozenEvent({
-            type:  'sdk_frame', at:    T1,
-            frame: frames.taskNotification('completed', { task_id: 'unknown-task' }),
+            type: 'sdk_frame', at: T1, frame: frames.taskNotification('completed', { task_id: 'unknown-task' }),
         }));
 
         expect(next).toBe(ledger);
     });
 
-    it('background_tasks_changed replaces wholesale, drops ambient entries, keeps startedAt for known ids and stamps at for new ids', () => {
-        const started = reduceLedger(initialLedger('conversation'), frozenEvent({
-            type:  'sdk_frame', at:    T1,
-            frame: frames.taskStarted({ task_id: 'task-1', task_type: 'local_agent' }),
+    it('finishedTasks keeps only the 20 most recent, newest last', () => {
+        let ledger = initialLedger('conversation');
+        for(let index = 0; index < 21; index++) {
+            ledger = startTask(ledger, { task_id: `task-${index}` }, T1);
+            ledger = reduceLedger(ledger, frozenEvent({
+                type: 'sdk_frame', at: T2, frame: frames.taskNotification('completed', { task_id: `task-${index}` }),
+            }));
+        }
+
+        expect(ledger.finishedTasks).toHaveLength(20);
+        expect(ledger.finishedTasks[0]?.id).toBe('task-1');
+        expect(ledger.finishedTasks[19]?.id).toBe('task-20');
+    });
+
+    it('task_progress records summary, last tool and usage on a running task', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({
+            type:  'sdk_frame', at:    T2,
+            frame: frames.taskProgress({ task_id: 'task-1', summary: 'Reading files', last_tool_name: 'Read', usage: { total_tokens: 120, tool_uses: 3, duration_ms: 900 } }),
         }));
+
+        expect(ledger.tasks[0]?.progress).toEqual({ summary: 'Reading files', lastToolName: 'Read', totalTokens: 120, toolUses: 3, durationMs: 900, at: T2 });
+    });
+
+    it('task_progress with no usage records the summary and leaves the usage numbers unset', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({
+            type: 'sdk_frame', at: T2, frame: frames.taskProgress({ task_id: 'task-1', summary: 'Thinking', last_tool_name: undefined, usage: undefined }),
+        }));
+
+        expect(ledger.tasks[0]?.progress).toEqual({ summary: 'Thinking', lastToolName: undefined, totalTokens: undefined, toolUses: undefined, durationMs: undefined, at: T2 });
+    });
+
+    it('task_progress only touches the task it names', () => {
+        const first = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+        const both = startTask(first, { task_id: 'task-2' }, T1);
+
+        const ledger = reduceLedger(both, frozenEvent({
+            type: 'sdk_frame', at: T2, frame: frames.taskProgress({ task_id: 'task-2', summary: 'Only mine' }),
+        }));
+
+        expect(ledger.tasks[0]?.progress).toBeUndefined();
+        expect(ledger.tasks[1]?.progress?.summary).toBe('Only mine');
+    });
+
+    it('task_progress for an unknown task id is ignored (same reference, never creates a task)', () => {
+        const ledger = initialLedger('conversation');
+
+        const next = reduceLedger(ledger, frozenEvent({
+            type: 'sdk_frame', at: T1, frame: frames.taskProgress({ task_id: 'ghost' }),
+        }));
+
+        expect(next).toBe(ledger);
+    });
+
+    it('task_progress parses workflow_progress into phases and agents, mapping states and ignoring workflow_log', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', task_type: 'local_workflow' }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({
+            type:  'sdk_frame', at:    T2,
+            frame: workflowProgress('task-1', [
+                { type: 'workflow_phase', index: 0, title: 'Plan', kind: 'sequential' },
+                { type: 'workflow_phase', index: 1, title: 'Build', kind: 'parallel' },
+                { type: 'workflow_agent', index: 0, label: 'planner', phaseIndex: 0, state: 'done', tokens: 100, toolCalls: 3 },
+                { type: 'workflow_agent', index: 1, label: 'builder', phaseIndex: 1, state: 'start', tokens: 50, toolCalls: 1 },
+                { type: 'workflow_agent', index: 2, label: 'checker', phaseIndex: 1, state: 'error', tokens: 5, toolCalls: 0 },
+                { type: 'workflow_log', message: 'ignored' },
+            ]),
+        }));
+
+        expect(ledger.tasks[0]?.workflow).toEqual({
+            phases: [{ index: 0, title: 'Plan' }, { index: 1, title: 'Build' }],
+            agents: [
+                { index: 0, label: 'planner', phaseIndex: 0, state: 'done', tokens: 100, toolCalls: 3 },
+                { index: 1, label: 'builder', phaseIndex: 1, state: 'running', tokens: 50, toolCalls: 1 },
+                { index: 2, label: 'checker', phaseIndex: 1, state: 'error', tokens: 5, toolCalls: 0 },
+            ],
+        });
+    });
+
+    it('task_progress keys workflow phases and agents by index, so a later entry replaces an earlier one', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', task_type: 'local_workflow' }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({
+            type:  'sdk_frame', at:    T2,
+            frame: workflowProgress('task-1', [
+                { type: 'workflow_phase', index: 0, title: 'Plan' },
+                { type: 'workflow_phase', index: 0, title: 'Plan (renamed)' },
+                { type: 'workflow_agent', index: 0, label: 'planner', phaseIndex: 0, state: 'start', tokens: 1, toolCalls: 0 },
+                { type: 'workflow_agent', index: 0, label: 'planner', phaseIndex: 0, state: 'done', tokens: 9, toolCalls: 2 },
+            ]),
+        }));
+
+        expect(ledger.tasks[0]?.workflow).toEqual({
+            phases: [{ index: 0, title: 'Plan (renamed)' }],
+            agents: [{ index: 0, label: 'planner', phaseIndex: 0, state: 'done', tokens: 9, toolCalls: 2 }],
+        });
+    });
+
+    // An entry with no usable `index` cannot be keyed, and defaulting it to 0 silently overwrote
+    // the real phase/agent 0. Everything else about an entry may still be defaulted.
+    it('task_progress skips workflow_progress entries with no finite index and defaults their other fields', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', task_type: 'local_workflow' }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({
+            type:  'sdk_frame', at:    T2,
+            frame: workflowProgress('task-1', [
+                null,
+                undefined,
+                'not an entry',
+                42,
+                { notype: true },
+                { type: 'workflow_phase', index: 0, title: 'Plan' },
+                { type: 'workflow_agent', index: 0, label: 'planner', phaseIndex: 0, state: 'done', tokens: 5, toolCalls: 2 },
+                { type: 'workflow_phase', index: 1, title: 7 },
+                { type: 'workflow_agent', index: 1, state: 'who knows', tokens: 'lots' },
+                { type: 'workflow_phase', title: 'no index' },
+                { type: 'workflow_agent', label: 'no index' },
+                { type: 'workflow_phase', index: 'nope' },
+                { type: 'workflow_agent', index: Number.NaN },
+                { type: 'workflow_phase', index: Number.POSITIVE_INFINITY },
+                { type: 'workflow_agent', index: Number.NEGATIVE_INFINITY },
+            ]),
+        }));
+
+        expect(ledger.tasks[0]?.workflow).toEqual({
+            phases: [{ index: 0, title: 'Plan' }, { index: 1, title: '' }],
+            agents: [
+                { index: 0, label: 'planner', phaseIndex: 0, state: 'done', tokens: 5, toolCalls: 2 },
+                { index: 1, label: '', phaseIndex: 0, state: 'running', tokens: 0, toolCalls: 0 },
+            ],
+        });
+    });
+
+    it('task_progress with a non-array workflow_progress leaves workflow unset', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', task_type: 'local_workflow' }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({
+            type: 'sdk_frame', at: T2, frame: workflowProgress('task-1', { phases: [] }),
+        }));
+
+        expect(ledger.tasks[0]?.workflow).toBeUndefined();
+        expect(ledger.tasks[0]?.progress?.at).toBe(T2);
+    });
+
+    it('task_progress with no workflow_progress at all keeps the workflow parsed from an earlier frame', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', task_type: 'local_workflow' }, T1);
+        const withWorkflow = reduceLedger(started, frozenEvent({
+            type:  'sdk_frame', at:    T2,
+            frame: workflowProgress('task-1', [{ type: 'workflow_phase', index: 0, title: 'Plan' }]),
+        }));
+
+        const ledger = reduceLedger(withWorkflow, frozenEvent({
+            type: 'sdk_frame', at: T3, frame: frames.taskProgress({ task_id: 'task-1' }),
+        }));
+
+        expect(ledger.tasks[0]?.workflow).toEqual({ phases: [{ index: 0, title: 'Plan' }], agents: [] });
+    });
+
+    it('logs the raw frame at debug level once per task id, the first time a workflow_progress array arrives', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', task_type: 'local_workflow' }, T1);
+        // The two frames differ so the assertion below pins WHICH frame was logged, not merely that
+        // exactly one was: logging the second frame instead of the first is a different bug.
+        const first = workflowProgress('task-1', [{ type: 'workflow_phase', index: 0, title: 'Plan' }]);
+        const second = workflowProgress('task-1', [{ type: 'workflow_phase', index: 0, title: 'Build' }]);
+
+        const once = reduceLedger(started, frozenEvent({ type: 'sdk_frame', at: T2, frame: first }));
+        reduceLedger(once, frozenEvent({ type: 'sdk_frame', at: T3, frame: second }));
+
+        expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+        expect(mockLogger.debug).toHaveBeenCalledWith({ taskId: 'task-1', frame: first }, 'Ledger: first workflow_progress frame for a task');
+    });
+
+    it('does not log for a task_progress frame with no workflow_progress', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+
+        reduceLedger(started, frozenEvent({ type: 'sdk_frame', at: T2, frame: frames.taskProgress({ task_id: 'task-1' }) }));
+
+        expect(mockLogger.debug).not.toHaveBeenCalled();
+    });
+
+    it('background_tasks_changed replaces the background set, drops ambient entries, keeps startedAt for known ids and stamps at for new ids', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', task_type: 'local_agent' }, T1);
 
         const ledger = reduceLedger(started, frozenEvent({
             type:  'sdk_frame', at:    T3,
@@ -601,21 +1039,68 @@ describe('reduceLedger: background tasks', () => {
             ]),
         }));
 
-        expect(ledger.tasks).toEqual([
-            { id: 'task-1', taskType: 'local_agent', kind: 'subagent', description: 'still running', startedAt: T1 },
-            { id: 'task-2', taskType: 'local_bash', kind: 'shell', description: 'new task', startedAt: T3 },
+        expect(ledger.tasks).toMatchObject([
+            { id: 'task-1', taskType: 'local_agent', kind: 'subagent', description: 'still running', startedAt: T1, background: true, status: 'running' },
+            { id: 'task-2', taskType: 'local_bash', kind: 'shell', description: 'new task', startedAt: T3, background: true, status: 'running' },
         ]);
     });
 
-    it('task_lost removes the task', () => {
-        const started = reduceLedger(initialLedger('conversation'), frozenEvent({
-            type:  'sdk_frame', at:    T1,
-            frame: frames.taskStarted({ task_id: 'task-1' }),
+    it('background_tasks_changed leaves foreground tasks alone', () => {
+        const withForeground = startTask(initialLedger('conversation'), { task_id: 'fg-1', is_backgrounded: false, description: 'foreground work' }, T1);
+        const withBoth = startTask(withForeground, { task_id: 'bg-1', description: 'background work' }, T1);
+
+        const ledger = reduceLedger(withBoth, frozenEvent({
+            type:  'sdk_frame', at:    T3,
+            frame: frames.backgroundTasksChanged([{ task_id: 'bg-1', task_type: 'local_agent', description: 'background work' }]),
         }));
+
+        expect(ledger.tasks.map(task => task.id)).toEqual(['fg-1', 'bg-1']);
+        expect(ledger.tasks[0]).toBe(withBoth.tasks[0]);
+        expect(ledger.finishedTasks).toEqual([]);
+    });
+
+    it('background_tasks_changed backgrounds a foreground task that shows up in the payload', () => {
+        const withForeground = startTask(initialLedger('conversation'), { task_id: 'fg-1', is_backgrounded: false, description: 'moved to background' }, T1);
+
+        const ledger = reduceLedger(withForeground, frozenEvent({
+            type:  'sdk_frame', at:    T2,
+            frame: frames.backgroundTasksChanged([{ task_id: 'fg-1', task_type: 'local_agent', description: 'moved to background' }]),
+        }));
+
+        expect(ledger.tasks).toMatchObject([{ id: 'fg-1', background: true, startedAt: T1 }]);
+    });
+
+    // Changed from the pre-task-board behaviour: a background task that vanishes from the payload
+    // with no task_notification used to be dropped silently; the board needs the finished row, so
+    // it is now moved to finishedTasks as 'stopped'.
+    it('background_tasks_changed stops a background task that vanished without a notification', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({
+            type: 'sdk_frame', at: T3, frame: frames.backgroundTasksChanged([]),
+        }));
+
+        expect(ledger.tasks).toEqual([]);
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'task-1', status: 'stopped', finishedAt: T3 }]);
+    });
+
+    it('task_lost moves the task to finishedTasks as stopped', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
 
         const ledger = reduceLedger(started, frozenEvent({ type: 'task_lost', taskId: 'task-1', at: T2 }));
 
         expect(ledger.tasks).toEqual([]);
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'task-1', status: 'stopped', finishedAt: T2 }]);
+    });
+
+    it('task_lost stops only the task it names', () => {
+        const first = startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1);
+        const both = startTask(first, { task_id: 'task-2' }, T1);
+
+        const ledger = reduceLedger(both, frozenEvent({ type: 'task_lost', taskId: 'task-2', at: T2 }));
+
+        expect(ledger.tasks).toMatchObject([{ id: 'task-1', status: 'running' }]);
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'task-2', status: 'stopped' }]);
     });
 
     it('task_lost on an unknown id is a no-op (same reference)', () => {
@@ -624,6 +1109,91 @@ describe('reduceLedger: background tasks', () => {
         const next = reduceLedger(ledger, frozenEvent({ type: 'task_lost', taskId: 'unknown', at: T1 }));
 
         expect(next).toBe(ledger);
+    });
+
+    it('a tool_result for a running foreground task finishes it as completed', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', tool_use_id: 'toolu-1', is_backgrounded: false }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({ type: 'sdk_frame', at: T2, frame: toolResult('toolu-1') }));
+
+        expect(ledger.tasks).toEqual([]);
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'task-1', status: 'completed', finishedAt: T2 }]);
+    });
+
+    it('a tool_result with is_error true finishes the foreground task as failed', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', tool_use_id: 'toolu-1', is_backgrounded: false }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({ type: 'sdk_frame', at: T2, frame: toolResult('toolu-1', true) }));
+
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'task-1', status: 'failed', finishedAt: T2 }]);
+    });
+
+    it('a tool_result never finishes a background task with the same tool_use_id', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', tool_use_id: 'toolu-1', is_backgrounded: true }, T1);
+
+        const ledger = reduceLedger(started, frozenEvent({ type: 'sdk_frame', at: T2, frame: toolResult('toolu-1') }));
+
+        expect(ledger.tasks).toMatchObject([{ id: 'task-1', status: 'running' }]);
+        expect(ledger.finishedTasks).toEqual([]);
+    });
+
+    it('a tool_result for an unknown tool_use_id is a no-op (same reference)', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', tool_use_id: 'toolu-1', is_backgrounded: false }, T1);
+
+        const next = reduceLedger(started, frozenEvent({ type: 'sdk_frame', at: T2, frame: toolResult('toolu-other') }));
+
+        expect(next).toBe(started);
+    });
+
+    it('a tool_result finishes only the task it names, leaving other foreground tasks running', () => {
+        const first = startTask(initialLedger('conversation'), { task_id: 'task-1', tool_use_id: 'toolu-1', is_backgrounded: false }, T1);
+        const both = startTask(first, { task_id: 'task-2', tool_use_id: 'toolu-2', is_backgrounded: false }, T1);
+
+        const ledger = reduceLedger(both, frozenEvent({ type: 'sdk_frame', at: T2, frame: toolResult('toolu-2') }));
+
+        expect(ledger.tasks).toMatchObject([{ id: 'task-1', status: 'running' }]);
+        expect(ledger.finishedTasks).toMatchObject([{ id: 'task-2', status: 'completed' }]);
+    });
+
+    it('a block that is not a tool_result never finishes a task, not even one launched with no tool_use_id', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', tool_use_id: undefined, is_backgrounded: false }, T1);
+        const frame: SDKUserMessage = {
+            type:               'user',
+            message:            { role: 'user', content: [{ type: 'text', text: 'no tool results here' }] },
+            parent_tool_use_id: null,
+        };
+
+        const next = reduceLedger(started, frozenEvent({ type: 'sdk_frame', at: T2, frame }));
+
+        expect(next).toBe(started);
+    });
+
+    it('a user frame with string content is a no-op (same reference)', () => {
+        const started = startTask(initialLedger('conversation'), { task_id: 'task-1', tool_use_id: 'toolu-1', is_backgrounded: false }, T1);
+        const frame: SDKUserMessage = { type: 'user', message: { role: 'user', content: 'just text' }, parent_tool_use_id: null };
+
+        const next = reduceLedger(started, frozenEvent({ type: 'sdk_frame', at: T2, frame }));
+
+        expect(next).toBe(started);
+    });
+
+    it('a user frame finishes every foreground task its tool_result blocks name', () => {
+        const first = startTask(initialLedger('conversation'), { task_id: 'task-1', tool_use_id: 'toolu-1', is_backgrounded: false }, T1);
+        const both = startTask(first, { task_id: 'task-2', tool_use_id: 'toolu-2', is_backgrounded: false }, T1);
+        const frame: SDKUserMessage = {
+            type:    'user',
+            message: { role:    'user', content: [
+                { type: 'text', text: 'here you go' },
+                { type: 'tool_result', tool_use_id: 'toolu-1', content: 'ok' },
+                { type: 'tool_result', tool_use_id: 'toolu-2', content: 'boom', is_error: true },
+            ] },
+            parent_tool_use_id: null,
+        };
+
+        const ledger = reduceLedger(both, frozenEvent({ type: 'sdk_frame', at: T2, frame }));
+
+        expect(ledger.tasks).toEqual([]);
+        expect(ledger.finishedTasks.map(task => [task.id, task.status])).toEqual([['task-1', 'completed'], ['task-2', 'failed']]);
     });
 });
 
@@ -745,21 +1315,46 @@ describe('reduceLedger: context, process, phase, session', () => {
         expect(ledger.turn?.phase).toEqual({ type: 'responding', startedAt: T2 });
     });
 
-    it('session_opened sets sessionId, empties tasks and resets cost.cumulativeUsd', () => {
-        const withState = reduceLedger(
-            reduceLedger(initialLedger('conversation'), frozenEvent({
-                type: 'sdk_frame', at: T1, frame: frames.taskStarted({ task_id: 'task-1' }),
-            })),
-            frozenEvent({ type: 'sdk_frame', at: T2, frame: frames.resultSuccess({ total_cost_usd: 0.09 }) })
+    // A new session id means the old session's tasks can never report again; they are stopped
+    // rather than dropped, so the board still shows how the interrupted work ended.
+    it('session_opened sets sessionId, stops every running task and resets cost.cumulativeUsd', () => {
+        const withTasks = startTask(
+            startTask(initialLedger('conversation'), { task_id: 'fg-1', is_backgrounded: false }, T1),
+            { task_id: 'bg-1', is_backgrounded: true }, T1
         );
-        expect(withState.tasks).toHaveLength(1);
+        const withState = reduceLedger(withTasks, frozenEvent({ type: 'sdk_frame', at: T2, frame: frames.resultSuccess({ total_cost_usd: 0.09 }) }));
+        expect(withState.tasks).toHaveLength(2);
         expect(withState.cost.cumulativeUsd).toBeCloseTo(0.09);
 
         const ledger = reduceLedger(withState, frozenEvent({ type: 'session_opened', sessionId: 'sess-2', at: T3 }));
 
         expect(ledger.sessionId).toBe('sess-2');
         expect(ledger.tasks).toEqual([]);
+        expect(ledger.finishedTasks).toMatchObject([
+            { id: 'fg-1', status: 'stopped', finishedAt: T3 },
+            { id: 'bg-1', status: 'stopped', finishedAt: T3 },
+        ]);
         expect(ledger.cost.cumulativeUsd).toBe(0);
+    });
+
+    it('session_opened resets a non-zero cumulative cost even when the sessionId has not changed', () => {
+        const opened = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'session_opened', sessionId: 'sess-1', at: T1 }));
+        const withCost = reduceLedger(opened, frozenEvent({ type: 'sdk_frame', at: T2, frame: frames.bareResult({ total_cost_usd: 0.09 }) }));
+        expect(withCost.tasks).toEqual([]);
+        expect(withCost.cost.cumulativeUsd).toBeCloseTo(0.09);
+
+        const ledger = reduceLedger(withCost, frozenEvent({ type: 'session_opened', sessionId: 'sess-1', at: T3 }));
+
+        expect(ledger.cost.cumulativeUsd).toBe(0);
+    });
+
+    it('session_opened keeps finishedTasks by reference when nothing was running', () => {
+        const opened = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'session_opened', sessionId: 'sess-1', at: T1 }));
+
+        const ledger = reduceLedger(opened, frozenEvent({ type: 'session_opened', sessionId: 'sess-2', at: T2 }));
+
+        expect(ledger.sessionId).toBe('sess-2');
+        expect(ledger.finishedTasks).toBe(opened.finishedTasks);
     });
 
     it('session_opened is a no-op (same reference) when sessionId is unchanged and there is nothing to reset', () => {

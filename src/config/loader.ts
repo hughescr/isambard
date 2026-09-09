@@ -74,6 +74,15 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
                     activityLogEnabled:       true,
                 },
             },
+            // Live task board: edits are throttled to one per 3s per board (trailing edge, so the
+            // last state always lands), and a 10s re-compose keeps elapsed times moving while
+            // something is still running.
+            // Stryker disable next-line ObjectLiteral: Default config values tested via loader unit tests
+            taskBoard: {
+                enabled:           true,
+                editIntervalMs:    3000,
+                refreshIntervalMs: 10_000,
+            },
         },
         perch: env.get('PERCH_ENABLED').default('true').asBool()
             ? {

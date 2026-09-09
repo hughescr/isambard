@@ -68,16 +68,17 @@ describe('createCompactionThresholdTuner', () => {
 
     function baseLedger(lastCompactionAt?: Date): Ledger {
         return {
-            role:       'conversation',
-            turn:       null,
-            queued:     { human: 0, other: 0 },
-            tasks:      [],
-            compaction: 'none',
-            context:    { used: 0, window: 0, percentage: 0, lastCompactionAt },
-            process:    { rssBytes: 0 },
-            perch:      {},
-            cost:       { cumulativeUsd: 0, lastTurnUsd: 0 },
-            latency:    { bySource: {} },
+            role:          'conversation',
+            turn:          null,
+            queued:        { human: 0, other: 0 },
+            tasks:         [],
+            finishedTasks: [],
+            compaction:    'none',
+            context:       { used: 0, window: 0, percentage: 0, lastCompactionAt },
+            process:       { rssBytes: 0 },
+            perch:         {},
+            cost:          { cumulativeUsd: 0, lastTurnUsd: 0 },
+            latency:       { bySource: {} },
         };
     }
 

@@ -4,7 +4,7 @@ import * as loggerModule from '@hughescr/logger';
 import { MessageFlags, type Client } from 'discord.js';
 import * as agentModule from '@/agent';
 import type { Conductor, LedgerStore } from '@/agent';
-import type { DiscordConfig } from '@/config/schemas';
+import { DEFAULT_TASK_BOARD_CONFIG, type DiscordConfig } from '@/config/schemas';
 import type { AllowlistCommandHandler } from '@/integrations/discord/allowlist-commands';
 import { createDiscordBot, type DiscordBotOptions } from '@/integrations/discord/bot';
 import * as channelRegistryModule from '@/integrations/discord/channel-registry/discovery';
@@ -24,7 +24,9 @@ import * as eventHandlerSetupModule from '@/integrations/discord/setup/event-han
 import * as perchSetupModule from '@/integrations/discord/setup/perch-setup';
 import * as presenceSetupModule from '@/integrations/discord/setup/presence-setup';
 import * as wakeDeliveryModule from '@/integrations/discord/setup/wake-delivery';
+import * as taskBoardSetupModule from '@/integrations/discord/task-board/setup';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
+import { resolveTimezone } from '@/utils';
 
 /** Flushes enough microtask ticks for a chained promise sequence to settle. */
 async function flushMicrotasks(): Promise<void> {
@@ -114,14 +116,15 @@ describe('createDiscordBot', () => {
     /**
      * `emit` is test-only (not part of `LedgerStore`): it invokes every listener `subscribe()`
      * was ever called with, letting a test simulate a ledger change without a real
-     * `createLedgerStore` reducer. `unsubscribe` (P14: bot.ts's own ring-buffer mirror is now the
-     * ONLY subscriber a real ledger store has — the legacy ledger-shim subscriber was removed) is
-     * returned to every `subscribe()` call.
+     * `createLedgerStore` reducer. `unsubscribe` (bot.ts's own ring-buffer mirror, plus the
+     * presence and task-board setups — the legacy ledger-shim subscriber was removed in P14) is
+     * returned to every `subscribe()` call. `finishedTasks` is present because the task board
+     * composes over it on every tick.
      */
     function makeFakeLedgerStore(sessionId: string | undefined = 'ledger-sess-1', unsubscribe: ReturnType<typeof mock> = mock(() => undefined)) {
         const listeners = new Set<(ledger: unknown, event?: unknown) => void>();
         return {
-            get:       mock(() => ({ sessionId, tasks: [] })),
+            get:       mock(() => ({ sessionId, tasks: [], finishedTasks: [] })),
             dispatch:  mock(() => undefined),
             subscribe: mock((l: (ledger: unknown, event?: unknown) => void) => {
                 listeners.add(l);
@@ -1311,11 +1314,11 @@ describe('createDiscordBot', () => {
             await triggerReady(client);
             await bot.stop();
 
-            // Both the tool-tracking and channel-tracking ring buffers unsubscribe from the same
-            // underlying ledger subscription, so the fake's unsubscribe fires twice — after
-            // conductor.shutdown either way.
-            expect(callOrder).toEqual(['coordinator.stop', 'conductor.shutdown', 'ring-buffer unsubscribe', 'ring-buffer unsubscribe']);
-            expect(ledgerUnsubscribe).toHaveBeenCalledTimes(2);
+            // The tool-tracking ring buffer, the channel-tracking ring buffer and the task board
+            // all subscribe to the same underlying ledger store, so the fake's shared unsubscribe
+            // fires three times — after conductor.shutdown in every case.
+            expect(callOrder).toEqual(['coordinator.stop', 'conductor.shutdown', 'ring-buffer unsubscribe', 'ring-buffer unsubscribe', 'ring-buffer unsubscribe']);
+            expect(ledgerUnsubscribe).toHaveBeenCalledTimes(3);
         });
 
         test('stop() calls the ingress gate\'s stop() (P10, gate.stop -> shutdown.run)', async () => {
@@ -1844,6 +1847,103 @@ describe('createDiscordBot', () => {
 
                     expect(context).toBe('User: First message\nIzzy: Second reply');
                 });
+            });
+        });
+
+        describe('Live task board (block 2)', () => {
+            /** Spies setupTaskBoard and returns the stub `stop` it hands back to bot.ts. */
+            function stubTaskBoard(): { spy: ReturnType<typeof spyOn>, stop: ReturnType<typeof mock> } {
+                const stop = mock(() => undefined);
+                const spy = spyOn(taskBoardSetupModule, 'setupTaskBoard').mockReturnValue({ stop });
+                spies.push(spy);
+                return { spy, stop };
+            }
+
+            test('wires it with both conductor ledgers, the configured knobs and perch\'s time zone', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { spy } = stubTaskBoard();
+
+                const deps = conductorDeps({ ledgerStore: makeFakeLedgerStore(), perchLedgerStore: makeFakeLedgerStore('perch-sess-1') });
+
+                createDiscordBot({
+                    config:          { ...mockConfig, taskBoard: { enabled: true, editIntervalMs: 250, refreshIntervalMs: 750 } },
+                    channelRegistry: mockChannelRegistry,
+                    perchConfig:     { enabled: true, timezone: 'Pacific/Auckland', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2 },
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                expect(spy).toHaveBeenCalledTimes(1);
+                const call = spy.mock.calls[0]?.[0] as { ledgers?: readonly unknown[], config?: unknown, timeZone?: unknown, logger?: unknown } | undefined;
+                expect(call?.ledgers).toHaveLength(2);
+                expect(call?.config).toEqual({ enabled: true, editIntervalMs: 250, refreshIntervalMs: 750 });
+                expect(call?.timeZone).toBe('Pacific/Auckland');
+                expect(call?.logger).toBe(loggerModule.logger);
+            });
+
+            test('falls back to the default config and the host time zone when neither is configured', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { spy } = stubTaskBoard();
+
+                const deps = conductorDeps({ ledgerStore: makeFakeLedgerStore() });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                const call = spy.mock.calls[0]?.[0] as { ledgers?: readonly unknown[], config?: unknown, timeZone?: unknown } | undefined;
+                expect(call?.ledgers).toHaveLength(1);
+                expect(call?.config).toEqual(DEFAULT_TASK_BOARD_CONFIG);
+                expect(call?.timeZone).toBe(resolveTimezone());
+            });
+
+            test('is never wired when taskBoard.enabled is false', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { spy } = stubTaskBoard();
+
+                const deps = conductorDeps({ ledgerStore: makeFakeLedgerStore() });
+
+                createDiscordBot({
+                    config:          { ...mockConfig, taskBoard: { enabled: false, editIntervalMs: 3000, refreshIntervalMs: 10_000 } },
+                    channelRegistry: mockChannelRegistry,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                expect(spy).not.toHaveBeenCalled();
+            });
+
+            test('stop() stops the task board', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { stop } = stubTaskBoard();
+
+                const deps = conductorDeps({ ledgerStore: makeFakeLedgerStore() });
+
+                const bot = createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+                expect(stop).not.toHaveBeenCalled();
+
+                await bot.stop();
+                expect(stop).toHaveBeenCalledTimes(1);
             });
         });
 
