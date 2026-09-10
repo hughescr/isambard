@@ -11,13 +11,12 @@ import type { DiscordCapability } from '../capability';
 import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry';
 import type { InboxManager } from '../inbox';
 import { MessageCoordinator } from '../message-coordinator';
-import { type createDynamicStatusGenerator, type PresenceThrottle } from '../presence';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendEnvelopeResponse } from '../response-sender';
 import { createChannelId, type ChannelId, type DiscordMessageContext } from '../types';
 import { createConductorProcessor, type DiscordEnvelopeProvider } from './conductor-processor';
 import {
-    type PlatformImage, type ActivityLogger, type Conductor, type ContextPolicy, type ContextBuilder, type LedgerStore, type TimeHeaderProvider, generateText
+    type PlatformImage, type ActivityLogger, type Conductor, type ContextPolicy, type ContextBuilder, type TimeHeaderProvider, generateText
 } from '@/agent';
 import { resolveTimezone } from '@/utils';
 
@@ -132,23 +131,21 @@ class ResponseNotSentError extends Error {}
  * Parameters for setting up coordinator integration.
  */
 interface SetupCoordinatorParams {
-    dynamicStatusGenerator:   ReturnType<typeof createDynamicStatusGenerator> | undefined
-    responseRouter:           ResponseRouter
-    rateLimiter:              DiscordRateLimiter
-    readyClient:              Client
-    channelRegistry:          ChannelRegistryManager
-    onThinkingContentUpdate?: (content: string) => void
-    setLastSessionId?:        (sessionId: string | undefined) => void
-    addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
+    responseRouter:     ResponseRouter
+    rateLimiter:        DiscordRateLimiter
+    readyClient:        Client
+    channelRegistry:    ChannelRegistryManager
+    setLastSessionId?:  (sessionId: string | undefined) => void
+    addRecentMessage?:  (content: string, author: 'user' | 'izzy') => void
     /** Push a channel into the recent-channels ring buffer on successful response send. */
-    addRecentChannel?:        (channelId: ChannelId) => void
-    activityLogger?:          ActivityLogger
-    discordCapability?:       DiscordCapability
+    addRecentChannel?:  (channelId: ChannelId) => void
+    activityLogger?:    ActivityLogger
+    discordCapability?: DiscordCapability
     /**
      * Advances each channel's HANDLED watermark (`recordHandled`) once a batch's envelope has
      * finished being handled (sent, `@@NO_RESPONSE@@` skip, or outbox-queued).
      */
-    inboxManager?:            InboxManager
+    inboxManager?:      InboxManager
 
     /**
      * The long-lived conversation conductor: the coordinator's processor is always
@@ -166,14 +163,6 @@ interface SetupCoordinatorParams {
     envelopeProvider:      DiscordEnvelopeProvider
     /** `createConductorProcessor`'s own timezone dependency. */
     contextBuilder?:       Pick<ContextBuilder, 'loadUserTimezone' | 'loadUserMemories'>
-    /**
-     * Forwarded verbatim into `createConductorProcessor`'s own `ledgerStore`/`throttle` (paired
-     * with `dynamicStatusGenerator` above) so every conductor turn also overlays synopses onto the
-     * conversation ledger — see that module's own doc. Omitted entirely, the conductor behaves
-     * with a `StreamTracker` only, no ledger writes.
-     */
-    ledgerStore?:          Pick<LedgerStore, 'dispatch'>
-    presenceThrottle?:     PresenceThrottle
     /** Session-peers block 4: forwarded verbatim into `createConductorProcessor` — see its own `CreateConductorProcessorParams.timeHeader` doc. */
     timeHeader?:           TimeHeaderProvider
 }
@@ -242,8 +231,6 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
     const {
         responseRouter, rateLimiter, readyClient,
         conversationConductor, contextPolicy, envelopeProvider, contextBuilder, inboxManager,
-        ledgerStore, presenceThrottle, dynamicStatusGenerator,
-        onThinkingContentUpdate,
     } = params;
 
     const coordinator = new MessageCoordinator({
@@ -349,10 +336,6 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
         contextBuilder: contextBuilder!,
         resolveTimezone,
         logger,
-        ledgerStore,
-        throttle:       presenceThrottle,
-        dynamicStatusGenerator,
-        onThinkingContentUpdate,
         timeHeader:     params.timeHeader,
     }));
 

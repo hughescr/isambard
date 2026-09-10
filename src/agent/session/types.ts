@@ -72,6 +72,8 @@ export interface EnvelopeMeta {
     kind:       EnvelopeKind
     queuedAt:   Date
     channelId?: string
+    /** The submitting {@link Envelope.synopsisSeed}, carried through to `LedgerTurn.seed` so the presence synopsis attachment can seed a generation without reaching back for the envelope. */
+    seed?:      string
     perch?: {
         slot:   string
         endsAt: Date
@@ -80,20 +82,20 @@ export interface EnvelopeMeta {
 
 /** A unit of host-driven work submitted to a session's input queue. */
 export interface Envelope {
-    id:           string
-    kind:         EnvelopeKind
-    text:         string
+    id:            string
+    kind:          EnvelopeKind
+    text:          string
     /**
      * Widened to {@link PlatformImage} (rather than pre-encoded `string[]`) because
      * `toSdkUserMessage` (P6, ./envelope.ts) feeds this straight into
      * `buildMultimodalContent`, which needs each image's media type and base64 data — a plain
      * string array would force a lossy re-encoding step for no benefit.
      */
-    images?:      PlatformImage[]
-    channelId?:   string
-    authorId?:    string
+    images?:       PlatformImage[]
+    channelId?:    string
+    authorId?:     string
     /** Present only for envelopes that originated from a human message (currently: discord). */
-    origin?:      { kind: 'human' }
+    origin?:       { kind: 'human' }
     /**
      * Present only on `peer`-kind envelopes (session-peers block 2): the sender of a
      * `<cross-session-message>` prompt the SDK delivered from another Claude Code process on
@@ -101,7 +103,7 @@ export interface Envelope {
      * a working `SendMessage` `to:` target by the block-0 probe, 2026-09-09); `fromName` is the
      * peer-registry name the tag carried, absent when the tag named none.
      */
-    peer?:        { from: string, fromName?: string }
+    peer?:         { from: string, fromName?: string }
     /**
      * How the host queues/escalates this envelope: `'human'` interrupts promptly (a direct
      * message), `'wake'` escalates after a wait (perch, catch-up, resume, a waking
@@ -109,9 +111,21 @@ export interface Envelope {
      * non-waking notification). Renamed from the prior 2-way `priority` field (plan amendment
      * A1 extension) — confirmed unread by any consumer before the rename.
      */
-    hostPriority: 'human' | 'wake' | 'accumulate'
-    shouldQuery:  boolean
-    createdAt:    Date
+    hostPriority:  'human' | 'wake' | 'accumulate'
+    shouldQuery:   boolean
+    createdAt:     Date
+    /**
+     * Header-free, capped (see `SYNOPSIS_SEED_CAP` in ./envelope.ts) content for the Discord
+     * presence synopsis generator, carried onto `LedgerTurn.seed` via {@link EnvelopeMeta.seed}.
+     *
+     * Deliberately NOT {@link text}: every stamped builder opens `text` with a `[KIND · stamp]`
+     * header plus the time header plus the ambient quota lines, and the generator only reads the
+     * first `SYNOPSIS_SEED_CAP` characters of what it is given (`presence/status-generator-dynamic.ts`
+     * imports that same constant from ./envelope.ts rather than declaring a second cap of its
+     * own) — seeding from `text` would feed Haiku nothing but chrome. Absent for `boot` (opens no turn at all) and `compact` (the text is the literal
+     * `/compact`, and the ledger already renders a `compacting` phase of its own).
+     */
+    synopsisSeed?: string
 }
 
 /**

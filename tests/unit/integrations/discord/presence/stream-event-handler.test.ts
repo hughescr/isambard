@@ -94,7 +94,7 @@ describe('createLedgerStreamEventHandler', () => {
             dynamicStatusGenerator: mockDynamicStatusGenerator,
             logger:                 { error: mock(() => undefined) },
             userMessage:            'Test message',
-            thinkingSynopsis:       'Pre-generated thinking synopsis',
+            thinkingSynopsis:       Promise.resolve('Pre-generated thinking synopsis'),
         };
     });
 
@@ -154,11 +154,12 @@ describe('createLedgerStreamEventHandler', () => {
         }
     });
 
-    it('falls back to the pre-generated thinkingSynopsis on the first thinking transition (no context yet to regenerate from)', () => {
+    it('falls back to the pre-generated thinkingSynopsis on the first thinking transition (no context yet to regenerate from)', async () => {
         const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
 
         // No delta.text and no prior thinking content/tool history: newPhase 'thinking', nothing to regenerate from.
         onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+        await flushPromises();
 
         expect(sink.dispatch).toHaveBeenCalledWith({
             type: 'phase_synopsis', turnId: 'turn-1', phaseType: 'thinking', text: 'Pre-generated thinking synopsis', at: expect.any(Date),
@@ -333,6 +334,58 @@ describe('createLedgerStreamEventHandler', () => {
         expect(sink.dispatch).toHaveBeenCalledWith(expect.objectContaining({ phaseType: 'using_tool', text: 'Generated synopsis' }));
     });
 
+    it('a result frame clears the per-task summary dedupe map, so the same summary regenerates on the next turn', async () => {
+        const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+        const progress = {
+            type: 'system', subtype: 'task_progress', task_id: 't1', summary: 'still working',
+        } as unknown as AgentStreamEvent;
+
+        onStreamEvent(progress);
+        await flushPromises();
+        expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(1);
+
+        // Without the result case's `lastSummaryByTask.clear()`, the identical summary below
+        // dedupes against the first one and never regenerates.
+        onStreamEvent({ type: 'result' } as unknown as AgentStreamEvent);
+        onStreamEvent(progress);
+        await flushPromises();
+
+        expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(2);
+    });
+
+    it('a result frame drops the latest sub-agent summary so a later tool synopsis does not carry it', async () => {
+        const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+        onStreamEvent({
+            type: 'system', subtype: 'task_progress', task_id: 't1', summary: 'sub-agent said this',
+        } as unknown as AgentStreamEvent);
+        await flushPromises();
+        (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockClear();
+
+        onStreamEvent({ type: 'result' } as unknown as AgentStreamEvent);
+        onStreamEvent({
+            type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+        } as unknown as AgentStreamEvent);
+        await flushPromises();
+
+        expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({ subagentSummary: undefined }));
+    });
+
+    it('accumulates response text across frames, so a later synopsis carries it', async () => {
+        const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+        onStreamEvent({ type: 'assistant', delta: { text: 'part one ' } } as unknown as AgentStreamEvent);
+        await flushPromises();
+        (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockClear();
+
+        onStreamEvent({
+            type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+        } as unknown as AgentStreamEvent);
+        await flushPromises();
+
+        expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({ accumulatedText: 'part one ' }));
+    });
+
     it('dedupes a task_progress with no task_id against one with an explicit empty-string task_id (pins the "" fallback)', async () => {
         const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
 
@@ -360,18 +413,133 @@ describe('createLedgerStreamEventHandler', () => {
         // where generation was skipped, so the turn's first synopsis ("Audit trail…") overwrote
         // two fresher digests minutes later — and each overwrite reached Discord immediately via
         // presence-setup's digestJustArrived bypass.
-        it('falls back on only the FIRST thinking transition, never a later one', () => {
+        it('falls back on only the FIRST thinking transition, never a later one', async () => {
             throttle.shouldUpdate = mock(() => false);
             const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
 
             // Thinking transition #1: nothing to regenerate from, throttle closed -> fallback.
             onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
             expect(sink.dispatch).toHaveBeenCalledTimes(1);
 
             // A tool, then back to thinking: the throttle is still closed, so this transition
             // would have re-dispatched the same stale text.
             onStreamEvent({ type: 'tool_progress', tool_name: 'Read' } as unknown as AgentStreamEvent);
             onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(sink.dispatch).toHaveBeenCalledTimes(1);
+        });
+
+        it('a seed resolving AFTER the first thinking transition still dispatches once it settles', async () => {
+            throttle.shouldUpdate = mock(() => false);
+            let resolveSeed!: (value: string | undefined) => void;
+            const thinkingSynopsis = new Promise<string | undefined>((resolve) => {
+                resolveSeed = resolve;
+            });
+            const { onStreamEvent } = createLedgerStreamEventHandler({ ...baseDeps, thinkingSynopsis });
+
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
+            expect(sink.dispatch).not.toHaveBeenCalled();
+
+            resolveSeed('Late seed');
+            await flushPromises();
+
+            expect(sink.dispatch).toHaveBeenCalledWith(expect.objectContaining({ phaseType: 'thinking', text: 'Late seed' }));
+        });
+
+        it('a seed resolving to undefined dispatches nothing', async () => {
+            throttle.shouldUpdate = mock(() => false);
+            const { onStreamEvent } = createLedgerStreamEventHandler({ ...baseDeps, thinkingSynopsis: Promise.resolve(undefined) });
+
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(sink.dispatch).not.toHaveBeenCalled();
+        });
+
+        it('a rejecting seed dispatches nothing and raises no unhandled rejection', async () => {
+            throttle.shouldUpdate = mock(() => false);
+            const { onStreamEvent } = createLedgerStreamEventHandler({ ...baseDeps, thinkingSynopsis: Promise.reject(new Error('seed generation failed')) });
+
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(sink.dispatch).not.toHaveBeenCalled();
+        });
+
+        it('complete() before the seed settles suppresses its dispatch', async () => {
+            throttle.shouldUpdate = mock(() => false);
+            let resolveSeed!: (value: string | undefined) => void;
+            const thinkingSynopsis = new Promise<string | undefined>((resolve) => {
+                resolveSeed = resolve;
+            });
+            const { onStreamEvent, complete } = createLedgerStreamEventHandler({ ...baseDeps, thinkingSynopsis });
+
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
+            complete();
+            resolveSeed('Too late');
+            await flushPromises();
+
+            expect(sink.dispatch).not.toHaveBeenCalled();
+        });
+
+        it('a fresher live synopsis dispatched first caps the seed at zero further dispatches', async () => {
+            let resolveSeed!: (value: string | undefined) => void;
+            const thinkingSynopsis = new Promise<string | undefined>((resolve) => {
+                resolveSeed = resolve;
+            });
+            let shouldUpdateCalls = 0;
+            throttle.shouldUpdate = mock(() => {
+                shouldUpdateCalls += 1;
+                return shouldUpdateCalls === 1;
+            });
+            const { onStreamEvent } = createLedgerStreamEventHandler({ ...baseDeps, thinkingSynopsis });
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+            expect(sink.dispatch).toHaveBeenCalledTimes(1);
+
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
+            resolveSeed('Stale seed');
+            await flushPromises();
+
+            expect(sink.dispatch).toHaveBeenCalledTimes(1);
+            expect(sink.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ text: 'Stale seed' }));
+        });
+
+        it('primeThinkingSynopsis dispatches the seed at CONSTRUCTION, with no stream event at all', async () => {
+            // An adopted turn (turn-synopsis.ts attaching to a turn that is already open) may
+            // never see another `thinking` transition — its next frame can be the `result` that
+            // closes it — so the seed has to go out without waiting for one.
+            createLedgerStreamEventHandler({ ...baseDeps, primeThinkingSynopsis: true });
+            await flushPromises();
+
+            expect(sink.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+                turnId: 'turn-1', phaseType: 'thinking', text: 'Pre-generated thinking synopsis',
+            }));
+        });
+
+        it('without primeThinkingSynopsis, construction alone dispatches nothing', async () => {
+            createLedgerStreamEventHandler(baseDeps);
+            await flushPromises();
+
+            expect(sink.dispatch).not.toHaveBeenCalled();
+        });
+
+        it('a primed seed is still capped at one dispatch when a thinking transition follows', async () => {
+            throttle.shouldUpdate = mock(() => false);
+            const { onStreamEvent } = createLedgerStreamEventHandler({ ...baseDeps, primeThinkingSynopsis: true });
+            await flushPromises();
+            expect(sink.dispatch).toHaveBeenCalledTimes(1);
+
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
 
             expect(sink.dispatch).toHaveBeenCalledTimes(1);
         });
@@ -568,12 +736,13 @@ describe('createLedgerStreamEventHandler', () => {
             }));
         });
 
-        it('still treats a text block with empty text as thinking', () => {
+        it('still treats a text block with empty text as thinking', async () => {
             const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
 
             onStreamEvent({
                 type: 'assistant', message: { content: [{ type: 'text', text: '' }] },
             } as unknown as AgentStreamEvent);
+            await flushPromises();
 
             expect(sink.dispatch).toHaveBeenCalledWith(expect.objectContaining({
                 phaseType: 'thinking', text: 'Pre-generated thinking synopsis',

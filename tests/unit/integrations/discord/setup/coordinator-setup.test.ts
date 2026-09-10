@@ -13,7 +13,6 @@ import type { ChannelRegistryManager } from '@/integrations/discord/channel-regi
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
 import type { MessageCoordinatorConfig, MessageProcessor } from '@/integrations/discord/message-coordinator';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
-import * as conductorProcessorModule from '@/integrations/discord/setup/conductor-processor';
 import { setupCoordinatorIntegration } from '@/integrations/discord/setup/coordinator-setup';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext } from '@/integrations/discord/types';
 
@@ -65,13 +64,12 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
 
     function makeConductorParams(overrides: Record<string, unknown> = {}) {
         return {
-            presenceManager:        undefined,
-            dynamicStatusGenerator: undefined,
-            responseRouter:         makeMockResponseRouter(),
-            rateLimiter:            makeMockRateLimiter(),
-            readyClient:            makeMockClient(),
-            channelRegistry:        makeMockChannelRegistry(),
-            conversationConductor:  {
+            presenceManager:       undefined,
+            responseRouter:        makeMockResponseRouter(),
+            rateLimiter:           makeMockRateLimiter(),
+            readyClient:           makeMockClient(),
+            channelRegistry:       makeMockChannelRegistry(),
+            conversationConductor: {
                 submit: mock(() => Promise.resolve({
                     envelopeId: 'env-1', response: 'ok', wasInterrupted: false, partialWork: { thinking: '', text: '', pendingToolUse: null }, sessionId: 'sess-1', isError: false, contextUsagePercent: 0,
                 })),
@@ -151,64 +149,6 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         setupCoordinatorIntegration(params);
 
         expect(capturedProcessor).toBeDefined();
-    });
-
-    test('P11: forwards ledgerStore/presenceThrottle/dynamicStatusGenerator into createConductorProcessor when provided', () => {
-        const createConductorProcessorSpy = spyOn(conductorProcessorModule, 'createConductorProcessor');
-        spies.push(
-            createConductorProcessorSpy,
-            // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
-            spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
-                setProcessor: mock(() => undefined),
-                stop:         mock(() => undefined),
-            } as unknown as messageCoordinatorModule.MessageCoordinator))
-        );
-
-        const ledgerStore = { dispatch: mock(() => undefined) };
-        const presenceThrottle = { shouldUpdate: mock(() => true), record: mock(() => undefined) };
-        const dynamicStatusGenerator = { generateSynopsis: mock(() => Promise.resolve(null)), generateCatchUpSynopsis: mock(() => Promise.resolve(null)) };
-        const params = makeConductorParams({ ledgerStore, presenceThrottle, dynamicStatusGenerator });
-
-        setupCoordinatorIntegration(params);
-
-        expect(createConductorProcessorSpy).toHaveBeenCalledWith(expect.objectContaining({ ledgerStore, throttle: presenceThrottle, dynamicStatusGenerator }));
-    });
-
-    test('P11: forwards onThinkingContentUpdate into createConductorProcessor when provided', () => {
-        const createConductorProcessorSpy = spyOn(conductorProcessorModule, 'createConductorProcessor');
-        spies.push(
-            createConductorProcessorSpy,
-            // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
-            spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
-                setProcessor: mock(() => undefined),
-                stop:         mock(() => undefined),
-            } as unknown as messageCoordinatorModule.MessageCoordinator))
-        );
-
-        const onThinkingContentUpdate = mock(() => undefined);
-        const params = makeConductorParams({ onThinkingContentUpdate });
-
-        setupCoordinatorIntegration(params);
-
-        expect(createConductorProcessorSpy).toHaveBeenCalledWith(expect.objectContaining({ onThinkingContentUpdate }));
-    });
-
-    test('P11: omits ledgerStore/throttle from createConductorProcessor when not provided (backward compatible)', () => {
-        const createConductorProcessorSpy = spyOn(conductorProcessorModule, 'createConductorProcessor');
-        spies.push(
-            createConductorProcessorSpy,
-            // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
-            spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
-                setProcessor: mock(() => undefined),
-                stop:         mock(() => undefined),
-            } as unknown as messageCoordinatorModule.MessageCoordinator))
-        );
-
-        setupCoordinatorIntegration(makeConductorParams());
-
-        const call = createConductorProcessorSpy.mock.calls[0]?.[0] as { ledgerStore?: unknown, throttle?: unknown } | undefined;
-        expect(call?.ledgerStore).toBeUndefined();
-        expect(call?.throttle).toBeUndefined();
     });
 
     test('the selected processor actually routes through conductor.submit when invoked', async () => {

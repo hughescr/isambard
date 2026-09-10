@@ -8,7 +8,7 @@
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import { getToolDescription, type SynopsisContext } from './types.js';
-import { generateTextWithSystemPrompt } from '@/agent';
+import { generateTextWithSystemPrompt, SYNOPSIS_SEED_CAP } from '@/agent';
 import { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils';
 
 /**
@@ -43,7 +43,6 @@ interface DynamicStatusGeneratorDeps {
  */
 const CLOSING_ASK = "Izzy's status line right now (first person, under 40 characters, nothing else):";
 
-const MAX_USER_MESSAGE_LENGTH = 200;
 const MAX_ACCUMULATED_TEXT_LENGTH = 150;
 const MAX_TOOL_INPUT_LENGTH = 200;
 const MAX_THINKING_CONTENT_LENGTH = 500;
@@ -179,7 +178,11 @@ function buildUserPrompt(context: SynopsisContext, previousStatus: string | null
     const sections: string[] = [];
 
     if(userMessage) {
-        sections.push(`## Question being answered\n${userMessage.slice(0, MAX_USER_MESSAGE_LENGTH)}`);
+        // SYNOPSIS_SEED_CAP, shared with the agent layer's `toSynopsisSeed`, is the ONE cap on
+        // this section: `turn-synopsis.ts` builds every `userMessage` from `LedgerTurn.seed`,
+        // which was already sliced to that width when the envelope was built. A second local
+        // constant here could only ever drift into being unreachable.
+        sections.push(`## Question being answered\n${userMessage.slice(0, SYNOPSIS_SEED_CAP)}`);
     }
 
     if(thinkingContent) {

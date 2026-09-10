@@ -697,3 +697,117 @@ describe('toSdkUserMessage', () => {
         expect('priority' in sdkMessage).toBe(false);
     });
 });
+
+describe('synopsisSeed', () => {
+    test('buildDiscordEnvelope seeds from the raw message contents, never the header', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:    [makeMessage({ content: 'first line' }), makeMessage({ content: 'second line' })],
+            authorId:    'author-1',
+            authorName:  'craig',
+            channelId:   'chan-1',
+            channelName: 'general',
+            isDM:        false,
+            now,
+            timezone,
+            timeHeader,
+        });
+
+        expect(envelope.synopsisSeed).toBe('first line\nsecond line');
+        expect(envelope.synopsisSeed?.startsWith('[DISCORD')).toBe(false);
+    });
+
+    test('buildPerchEnvelope seeds from the slot hint', () => {
+        const envelope = buildPerchEnvelope({
+            slotName:        'morning',
+            now,
+            timezone,
+            endsAt:          new Date('2026-09-04T23:07:00Z'),
+            suggestionLevel: 2,
+            slotHint:        'Review the overnight inbox',
+            perchContext:    'context body',
+            timeHeader,
+        });
+
+        expect(envelope.synopsisSeed).toBe('Review the overnight inbox');
+    });
+
+    test('buildNotificationEnvelope seeds from the raw notification text', () => {
+        const envelope = buildNotificationEnvelope({
+            source: 'email', text: 'A new invoice arrived', now, timezone, timeHeader, wake: true,
+        });
+
+        expect(envelope.synopsisSeed).toBe('A new invoice arrived');
+        expect(envelope.synopsisSeed?.startsWith('[NOTIFICATION')).toBe(false);
+    });
+
+    test('buildPeerEnvelope seeds from `fromName: text` when a name is present', () => {
+        const envelope = buildPeerEnvelope({
+            from: 'uds:/tmp/cc-socks/1.sock', fromName: 'Izzy-perch', text: 'can you take this?', now, timezone, timeHeader,
+        });
+
+        expect(envelope.synopsisSeed).toBe('Izzy-perch: can you take this?');
+    });
+
+    test('buildPeerEnvelope falls back to `from` when fromName is empty or absent', () => {
+        const empty = buildPeerEnvelope({
+            from: 'uds:/sock', fromName: '', text: 'hi', now, timezone, timeHeader,
+        });
+        const absent = buildPeerEnvelope({
+            from: 'uds:/sock', text: 'hi', now, timezone, timeHeader,
+        });
+
+        expect(empty.synopsisSeed).toBe('uds:/sock: hi');
+        expect(absent.synopsisSeed).toBe('uds:/sock: hi');
+    });
+
+    test('buildCatchupEnvelope seeds from the body sections with header and timeHeader stripped', () => {
+        const envelope = buildCatchupEnvelope({
+            channelCount: 2, now, timezone, timeHeader, eventsDelta: ['an event'], lostTasks: ['a task'], redelivered: ['a reply'],
+        });
+
+        expect(envelope.synopsisSeed).toBe('## Events while you were away\nan event\n\n## Background tasks lost at restart\na task\n\n## Replies redelivered for you\na reply');
+        expect(envelope.text).toBe(`[CATCH-UP · 2026-09-04 14:07 PT]\n\n${timeHeader}\n\n${envelope.synopsisSeed!}`);
+    });
+
+    test('buildCatchupEnvelope with no sections at all seeds undefined', () => {
+        const envelope = buildCatchupEnvelope({ channelCount: 2, now, timezone, timeHeader });
+
+        expect(envelope.synopsisSeed).toBeUndefined();
+    });
+
+    test('buildWrapUpEnvelope seeds from the instruction line', () => {
+        const envelope = buildWrapUpEnvelope({ minutesLeft: 5, now });
+
+        expect(envelope.synopsisSeed).toBe('Wrap up your current work now; the perch slot is ending.');
+    });
+
+    test('buildResumeEnvelope seeds from the note', () => {
+        const envelope = buildResumeEnvelope('resume note body', now);
+
+        expect(envelope.synopsisSeed).toBe('resume note body');
+    });
+
+    test('buildBootEnvelope and buildCompactEnvelope carry no seed', () => {
+        expect(buildBootEnvelope('boot bundle', now).synopsisSeed).toBeUndefined();
+        expect(buildCompactEnvelope(now).synopsisSeed).toBeUndefined();
+    });
+
+    test('a source longer than the cap is sliced to exactly 200 characters', () => {
+        const long = 'x'.repeat(250);
+
+        const envelope = buildResumeEnvelope(long, now);
+
+        expect(envelope.synopsisSeed).toBe('x'.repeat(200));
+        expect(envelope.synopsisSeed).toHaveLength(200);
+    });
+
+    test('a source of exactly the cap length is kept whole', () => {
+        const exact = 'y'.repeat(200);
+
+        expect(buildResumeEnvelope(exact, now).synopsisSeed).toBe(exact);
+    });
+
+    test('an empty source yields undefined rather than an empty string', () => {
+        expect(buildResumeEnvelope('', now).synopsisSeed).toBeUndefined();
+    });
+});

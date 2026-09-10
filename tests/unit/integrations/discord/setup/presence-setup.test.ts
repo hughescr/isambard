@@ -88,7 +88,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
             getPreviousStatus,
@@ -105,13 +105,138 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
             // No getPreviousStatus
         });
 
         expect(capturedIdleDeps?.getPreviousStatus).toBeUndefined();
+    });
+
+    describe('attachSynopsis (one synopsis attachment per (ledger, conductor) pair)', () => {
+        function makeConductor() {
+            return { subscribeTurn: mock(() => mock(() => undefined)) };
+        }
+
+        test('attaches once per session, pairing each ledger with ITS OWN conductor and dynamic-status generator', () => {
+            const conversation = makeConversationLedger();
+            const perch = createLedgerStore('perch', { logger: { error: mock() } });
+            const convConductor = makeConductor();
+            const perchConductor = makeConductor();
+            const generators = [
+                { generateSynopsis: mock(async () => null), generateCatchUpSynopsis: mock(async () => null) },
+                { generateSynopsis: mock(async () => null), generateCatchUpSynopsis: mock(async () => null) },
+            ];
+            let created = -1;
+            const createDynamicGenerator = mock(() => {
+                created += 1;
+                return generators[created];
+            });
+            const attachSynopsis = mock(() => mock(() => undefined));
+            const throttle = throttleAlways();
+
+            const result = setupConductorPresence({
+                identityContext:  'Test identity',
+                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+                readyClient:      makeMockClient(),
+                sessions:         [{ ledger: conversation, conductor: convConductor }, { ledger: perch, conductor: perchConductor }],
+                throttle,
+                getRecentContext: () => Promise.resolve(undefined),
+                createDynamicGenerator,
+                attachSynopsis,
+            });
+
+            expect(attachSynopsis).toHaveBeenCalledTimes(2);
+            expect(attachSynopsis).toHaveBeenNthCalledWith(1, expect.objectContaining({
+                conductor: convConductor, ledgerStore: conversation, throttle, dynamicStatusGenerator: result.dynamicStatusGenerators[0],
+            }));
+            // The P14 cross-session defect this pins: the perch ledger must get generators[1].
+            expect(attachSynopsis).toHaveBeenNthCalledWith(2, expect.objectContaining({
+                conductor: perchConductor, ledgerStore: perch, throttle, dynamicStatusGenerator: result.dynamicStatusGenerators[1],
+            }));
+            expect(result.dynamicStatusGenerators[1]).not.toBe(result.dynamicStatusGenerators[0]);
+        });
+
+        test('forwards onThinkingContentUpdate to every attachment', () => {
+            const conversation = makeConversationLedger();
+            const onThinkingContentUpdate = mock(() => undefined);
+            const attachSynopsis = mock(() => mock(() => undefined));
+
+            setupConductorPresence({
+                identityContext:  'Test identity',
+                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+                readyClient:      makeMockClient(),
+                sessions:         [{ ledger: conversation, conductor: makeConductor() }],
+                throttle:         throttleAlways(),
+                getRecentContext: () => Promise.resolve(undefined),
+                onThinkingContentUpdate,
+                attachSynopsis,
+            });
+
+            expect(attachSynopsis).toHaveBeenCalledWith(expect.objectContaining({ onThinkingContentUpdate }));
+        });
+
+        test('a session with no conductor of its own attaches nothing', () => {
+            const conversation = makeConversationLedger();
+            const perch = createLedgerStore('perch', { logger: { error: mock() } });
+            const attachSynopsis = mock(() => mock(() => undefined));
+
+            setupConductorPresence({
+                identityContext:  'Test identity',
+                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+                readyClient:      makeMockClient(),
+                sessions:         [{ ledger: conversation, conductor: makeConductor() }, { ledger: perch }],
+                throttle:         throttleAlways(),
+                getRecentContext: () => Promise.resolve(undefined),
+                attachSynopsis,
+            });
+
+            expect(attachSynopsis).toHaveBeenCalledTimes(1);
+        });
+
+        test('no conductors at all attaches nothing', () => {
+            const conversation = makeConversationLedger();
+            const attachSynopsis = mock(() => mock(() => undefined));
+
+            setupConductorPresence({
+                identityContext:  'Test identity',
+                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+                readyClient:      makeMockClient(),
+                sessions:         [{ ledger: conversation }],
+                throttle:         throttleAlways(),
+                getRecentContext: () => Promise.resolve(undefined),
+                attachSynopsis,
+            });
+
+            expect(attachSynopsis).not.toHaveBeenCalled();
+        });
+
+        test('unsubscribeLedgers runs every detach alongside the ledger unsubscribes', () => {
+            const conversation = makeConversationLedger();
+            const perch = createLedgerStore('perch', { logger: { error: mock() } });
+            const detaches = [mock(() => undefined), mock(() => undefined)];
+            let detachIndex = -1;
+            const attachSynopsis = mock(() => {
+                detachIndex += 1;
+                return detaches[detachIndex];
+            });
+
+            const { unsubscribeLedgers } = setupConductorPresence({
+                identityContext:  'Test identity',
+                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+                readyClient:      makeMockClient(),
+                sessions:         [{ ledger: conversation, conductor: makeConductor() }, { ledger: perch, conductor: makeConductor() }],
+                throttle:         throttleAlways(),
+                getRecentContext: () => Promise.resolve(undefined),
+                attachSynopsis,
+            });
+
+            unsubscribeLedgers();
+
+            expect(detaches[0]).toHaveBeenCalledTimes(1);
+            expect(detaches[1]).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe('createDynamicGenerator (P14: per-ledger instances)', () => {
@@ -127,7 +252,7 @@ describe('setupConductorPresence', () => {
                 identityContext:  'Test identity',
                 presenceConfig:   MINIMAL_PRESENCE_CONFIG,
                 readyClient:      makeMockClient(),
-                ledgers:          [conversation, perch],
+                sessions:         [{ ledger: conversation }, { ledger: perch }],
                 throttle:         throttleAlways(),
                 getRecentContext: () => Promise.resolve(undefined),
                 createDynamicGenerator,
@@ -149,7 +274,7 @@ describe('setupConductorPresence', () => {
                 identityContext:  'Test identity',
                 presenceConfig:   MINIMAL_PRESENCE_CONFIG,
                 readyClient:      makeMockClient(),
-                ledgers:          [conversation],
+                sessions:         [{ ledger: conversation }],
                 throttle:         throttleAlways(),
                 getRecentContext: () => Promise.resolve(undefined),
                 createDynamicGenerator,
@@ -171,7 +296,7 @@ describe('setupConductorPresence', () => {
                 identityContext:  'Test identity',
                 presenceConfig:   MINIMAL_PRESENCE_CONFIG,
                 readyClient:      makeMockClient(),
-                ledgers:          [conversation, perch],
+                sessions:         [{ ledger: conversation }, { ledger: perch }],
                 throttle:         throttleAlways(),
                 getRecentContext: () => Promise.resolve(undefined),
                 createDynamicGenerator,
@@ -187,7 +312,7 @@ describe('setupConductorPresence', () => {
                 identityContext:  'Test identity',
                 presenceConfig:   MINIMAL_PRESENCE_CONFIG,
                 readyClient:      makeMockClient(),
-                ledgers:          [conversation],
+                sessions:         [{ ledger: conversation }],
                 throttle:         throttleAlways(),
                 getRecentContext: () => Promise.resolve(undefined),
                 // No createDynamicGenerator override
@@ -205,7 +330,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -221,7 +346,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -243,7 +368,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -258,7 +383,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -278,7 +403,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -294,7 +419,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
             isCostPaused:     () => true,
@@ -312,7 +437,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
             isCostPaused:     () => paused,
@@ -336,7 +461,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
             isCostPaused:     () => paused,
@@ -358,7 +483,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -376,7 +501,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -400,7 +525,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -469,7 +594,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -505,7 +630,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -541,7 +666,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -567,7 +692,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -601,7 +726,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -632,7 +757,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -654,7 +779,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            ledgers:          [conversation],
+            sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });

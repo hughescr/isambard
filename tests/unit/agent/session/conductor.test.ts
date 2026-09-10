@@ -1970,6 +1970,141 @@ describe('createConductor', () => {
             await flush();
             expect(received).toEqual([]);
         });
+
+        it('reports \'none\' for a frame observed while no turn is open at all', async () => {
+            const h = build();
+            await openWith(h);
+            const received: string[] = [];
+            h.conductor.subscribeTurn((turnId) => {
+                received.push(turnId);
+            });
+
+            // A non-assistant frame opens no turn, so subscribers see the no-turn sentinel.
+            h.instances[0].emit(frames.hookStarted());
+            await flush();
+
+            expect(received).toEqual(['none']);
+        });
+
+        it('a bare spontaneous turn reports the ledger turn\'s own minted id, never the literal kind', async () => {
+            const h = build();
+            await openWith(h);
+            const observed: { turnId: string, ledgerTurnId: string }[] = [];
+            h.conductor.subscribeTurn((turnId) => {
+                // Read from INSIDE the callback: this is simultaneously the proof that the ledger
+                // turn already exists by the time subscribers are notified of the first frame.
+                observed.push({ turnId, ledgerTurnId: h.ledgerStore.get().turn?.id ?? 'no ledger turn open' });
+            });
+
+            h.instances[0].emit(frames.assistantText('an unsolicited musing'));
+            await flush();
+
+            const first = observed[0];
+            expect(first.turnId).toMatch(/^notification-\d+$/);
+            expect(first.turnId).not.toBe('notification');
+            expect(first.turnId).toBe(first.ledgerTurnId);
+        });
+    });
+
+    describe('synopsis seeds reach the ledger turn', () => {
+        it('a submitted envelope carries its synopsisSeed onto the ledger turn', async () => {
+            const h = build();
+            await openWith(h);
+
+            void h.conductor.submit(discordEnvelope({ synopsisSeed: 'fix the presence bug' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            expect(h.ledgerStore.get().turn?.seed).toBe('fix the presence bug');
+        });
+
+        it('an adopted wake turn seeds from the wake summary, capped', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'z'.repeat(250) });
+            h.instances[0].emit(frames.assistantText('woken'));
+            await flush();
+
+            expect(h.ledgerStore.get().turn?.seed).toBe('z'.repeat(200));
+        });
+
+        it('an adopted peer turn seeds from the peer envelope\'s own synopsisSeed', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.conductor.adoptPeerTurn(peerEnvelope({ synopsisSeed: 'Izzy-main: take a look' }));
+            h.instances[0].emit(frames.assistantText('sure'));
+            await flush();
+
+            expect(h.ledgerStore.get().turn?.seed).toBe('Izzy-main: take a look');
+        });
+
+        it('a frame inside the awaitingTurnEnd window opens the ledger turn BEFORE subscribers are notified, so a presence handler keyed on the ledger never misses that frame', async () => {
+            const h = build();
+            await openWith(h);
+            const deferredUsage = h.instances[0].deferContextUsage();
+            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            // Subscribers run BEFORE the sdk_frame dispatch, so a ledger turn opened only by
+            // `reduceAssistantFrame`'s null-turn fallback would still be absent right here — and
+            // the presence handler, which is created from the ledger turn, would miss this frame
+            // entirely. For the common one-assistant-frame-then-result shape that means no
+            // synopsis is ever generated and Discord stays generic for the turn's whole life.
+            const ledgerTurnAtNotify: (string | undefined)[] = [];
+            h.conductor.subscribeTurn(() => {
+                ledgerTurnAtNotify.push(h.ledgerStore.get().turn?.id);
+            });
+            h.instances[0].emit(frames.assistantText('racing the compaction decision'));
+            await flush();
+
+            expect(ledgerTurnAtNotify[0]).toMatch(/^notification-\d+$/);
+            // Still exactly one turn, with the frame's own phase applied to it by the sdk_frame
+            // dispatch that follows — not a second turn, and not a phaseless one.
+            expect(h.ledgerStore.get().turn?.id).toBe(ledgerTurnAtNotify[0]);
+            expect(h.ledgerStore.get().turn?.phase).not.toBeNull();
+
+            deferredUsage.resolve(frames.contextUsage({ percentage: 10 }));
+            await flush();
+            await priorResult;
+        });
+
+        it('the awaitingTurnEnd window: the ledger keeps the turn its own frame opened, while turnIdFor reports the newer minted id', async () => {
+            const h = build();
+            await openWith(h);
+            const deferredUsage = h.instances[0].deferContextUsage();
+            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            // A frame inside the awaitingTurnEnd window: the conductor declines to open a turn,
+            // so the ledger's own null-turn fallback opens one instead.
+            h.instances[0].emit(frames.assistantText('racing the compaction decision'));
+            await flush();
+            const ledgerOpenedId = h.ledgerStore.get().turn?.id;
+            expect(ledgerOpenedId).toMatch(/^notification-\d+$/);
+            expect(h.conductor.status().turn).toBeNull();
+
+            deferredUsage.resolve(frames.contextUsage({ percentage: 10 }));
+            await flush();
+            await priorResult;
+
+            const observed: string[] = [];
+            h.conductor.subscribeTurn((turnId) => {
+                observed.push(turnId);
+            });
+            h.clock.advance(5000);
+            h.instances[0].emit(frames.assistantText('a later musing'));
+            await flush();
+
+            // The conductor minted a fresher id; the ledger kept the turn it already had, and
+            // presence reads the LEDGER's id — so the skew is inert, not a dropped synopsis.
+            expect(observed[0]).not.toBe(ledgerOpenedId);
+            expect(h.ledgerStore.get().turn?.id).toBe(ledgerOpenedId);
+        });
     });
 
     it('is_error retry uses classifyClaudeError by default (no classifyError override needed)', async () => {

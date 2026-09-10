@@ -31,7 +31,8 @@ import {
     buildBootEnvelope,
     buildCompactEnvelope,
     buildResumeEnvelope,
-    toSdkUserMessage
+    toSdkUserMessage,
+    toSynopsisSeed
 } from './envelope';
 import { InputQueue } from './input-queue';
 import { createInterruptFlag } from './interrupt-flag';
@@ -99,6 +100,19 @@ const PENDING_WAKE_TTL_MS = 5 * 60 * 1000;
  * own), so hitting it is a signal, not routine.
  */
 const PENDING_PEER_QUEUE_MAX = 8;
+
+/**
+ * The id a bare (envelope-less) notification turn is known by, in BOTH the conductor's
+ * `currentTurn` and the ledger's turn. One expression so the two can never drift: presence
+ * matches every `phase_synopsis` against the LEDGER's id, and a mismatch is a silent drop —
+ * `turnIdFor` reporting the literal `'notification'` while the ledger held `notification-<ms>`
+ * is exactly how spontaneous turns lost their synopsis before.
+ * @param at The instant the turn opened
+ * @returns The turn id
+ */
+function bareNotificationTurnId(at: Date): string {
+    return `notification-${at.getTime()}`;
+}
 
 /**
  * One adoption waiting to be attached to the next spontaneous assistant frame: a background-work
@@ -361,6 +375,15 @@ interface QueuedItem {
 
 /** The one turn currently running against the session, if any. */
 interface ActiveTurn {
+    /**
+     * This turn's identity, minted here and reported by {@link turnIdFor} to every
+     * `subscribeTurn` subscriber: the submitting envelope's id, or a synthesized
+     * `notification-<ms>` for a bare spontaneous turn. The same id is dispatched to the ledger
+     * (`turn_submitted`, or `spontaneous_turn_opened`) BEFORE subscribers are notified, so a
+     * subscriber that keys off `ledger.turn.id` — the presence synopsis attachment — is already
+     * live for this turn's first frame.
+     */
+    id:                 string
     /** `undefined` for a spontaneous SDK-initiated turn nobody submitted. */
     item?:              QueuedItem
     kind:               TurnKind
@@ -472,8 +495,14 @@ export function createConductor(params: CreateConductorParams): Conductor {
         });
     }
 
+    /**
+     * The id reported to `subscribeTurn`/`onTurnFrame` subscribers. Reads {@link ActiveTurn.id}
+     * — never the kind — so a bare spontaneous turn reports the same `notification-<ms>` the
+     * ledger holds, rather than the literal `'notification'` that no `phase_synopsis` could ever
+     * match.
+     */
     function turnIdFor(turn: ActiveTurn | null): string {
-        return turn?.item?.envelope.id ?? turn?.kind ?? 'none';
+        return turn?.id ?? 'none';
     }
 
     function notifyTurnSubscribers(frame: SDKMessage): void {
@@ -598,9 +627,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
         const at = now();
         currentTurn = {
-            item, kind: item.envelope.kind, channelId: item.envelope.channelId, authorId: item.envelope.authorId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+            id: item.envelope.id, item, kind: item.envelope.kind, channelId: item.envelope.channelId, authorId: item.envelope.authorId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
         };
-        const meta: EnvelopeMeta = { id: item.envelope.id, kind: item.envelope.kind, queuedAt: at, channelId: item.envelope.channelId };
+        const meta: EnvelopeMeta = {
+            id: item.envelope.id, kind: item.envelope.kind, queuedAt: at, channelId: item.envelope.channelId, seed: item.envelope.synopsisSeed,
+        };
         ledgerStore.dispatch({ type: 'turn_submitted', envelope: meta, at });
         journal.append({
             type: 'envelope_submitted', at, envelopeId: item.envelope.id, kind: item.envelope.kind, ...(item.envelope.channelId === undefined ? {} : { channelId: item.envelope.channelId }),
@@ -841,14 +872,17 @@ export function createConductor(params: CreateConductorParams): Conductor {
             hostPriority: 'wake',
             shouldQuery:  true,
             createdAt:    at,
+            synopsisSeed: toSynopsisSeed(wake.summary),
         };
         const item: QueuedItem = {
             envelope, priority: 'other', attempts: retryPolicy.maxAttempts, deferred: buildWakeSettledDeferred(envelope),
         };
         currentTurn = {
-            item, kind: 'task', channelId: envelope.channelId, authorId: envelope.authorId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+            id: envelope.id, item, kind: 'task', channelId: envelope.channelId, authorId: envelope.authorId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
         };
-        const meta: EnvelopeMeta = { id: envelope.id, kind: envelope.kind, queuedAt: at, channelId: envelope.channelId };
+        const meta: EnvelopeMeta = {
+            id: envelope.id, kind: envelope.kind, queuedAt: at, channelId: envelope.channelId, seed: envelope.synopsisSeed,
+        };
         ledgerStore.dispatch({ type: 'turn_submitted', envelope: meta, at });
         journal.append({
             type: 'envelope_submitted', at, envelopeId: envelope.id, kind: envelope.kind, ...(envelope.channelId === undefined ? {} : { channelId: envelope.channelId }),
@@ -887,9 +921,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
             envelope, priority: 'other', attempts: retryPolicy.maxAttempts, deferred: internalDeferred(),
         };
         currentTurn = {
-            item, kind: 'peer', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+            id: envelope.id, item, kind: 'peer', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
         };
-        ledgerStore.dispatch({ type: 'turn_submitted', envelope: { id: envelope.id, kind: 'peer', queuedAt: at }, at });
+        ledgerStore.dispatch({
+            type: 'turn_submitted', envelope: { id: envelope.id, kind: 'peer', queuedAt: at, seed: envelope.synopsisSeed }, at,
+        });
         journal.append({ type: 'envelope_submitted', at, envelopeId: envelope.id, kind: 'peer' });
     }
 
@@ -934,7 +970,16 @@ export function createConductor(params: CreateConductorParams): Conductor {
     function beginSpontaneousTurn(): void {
         const next = pendingAdoptions.shift();
         if(next === undefined) {
-            currentTurn = { kind: 'notification', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false };
+            const at = now();
+            const turnId = bareNotificationTurnId(at);
+            currentTurn = {
+                id: turnId, kind: 'notification', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+            };
+            // Dispatched here — still inside onFrame, BEFORE notifyTurnSubscribers — so the
+            // presence synopsis attachment (which opens a handler from the ledger's turn) is live
+            // for this turn's very first frame, and every `phase_synopsis` it dispatches carries
+            // the id `reducePhaseSynopsis` compares against. Do not move it after the notify.
+            ledgerStore.dispatch({ type: 'spontaneous_turn_opened', turnId, at });
             return;
         }
         if(next.kind === 'wake') {
@@ -953,8 +998,21 @@ export function createConductor(params: CreateConductorParams): Conductor {
             warnPendingAdoptionExpired(entry);
             return false;
         });
-        if(currentTurn === null && !awaitingTurnEnd && frame.type === 'assistant') {
-            beginSpontaneousTurn();
+        if(currentTurn === null && frame.type === 'assistant') {
+            if(awaitingTurnEnd) {
+                // The conductor must NOT claim `currentTurn` here — a `/compact` turn may be
+                // moments from taking it (see afterResult). The LEDGER has no such constraint,
+                // and presence keys its synopsis handler off the ledger's turn, so open that
+                // turn NOW, before notifyTurnSubscribers, rather than a frame later via the
+                // sdk_frame dispatch below. Without this a turn whose only assistant frame lands
+                // in this window never gets a handler at all and stays generic for its whole
+                // life. `reduceSpontaneousTurnOpened` no-ops when a turn is already open, so the
+                // dispatch is safe even though this branch cannot see the ledger's state.
+                const at = now();
+                ledgerStore.dispatch({ type: 'spontaneous_turn_opened', turnId: bareNotificationTurnId(at), at });
+            } else {
+                beginSpontaneousTurn();
+            }
         }
         // boundary cast: AgentStreamEvent is the one-shot path's narrower observability-only view of a stream event; every SDKMessage shape StreamTracker.update switches on (system/task_started, assistant) is a subset of AgentStreamEvent's fields, matching the identical cast already documented in ./session.ts
         currentTurn?.tracker.update(frame as unknown as AgentStreamEvent);

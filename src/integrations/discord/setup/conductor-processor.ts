@@ -6,7 +6,10 @@
  * existing debounce/withdraw/interrupt contract at message-coordinator.ts is preserved
  * unmodified), and maps the settled `TurnResult` back onto `ProcessResult` — a REAL
  * `StreamTracker`, subscribed to just this turn's frames via `conductor.subscribeTurn`, so an
- * interrupted turn's partial work is captured. The coordinator's own resume-context handling
+ * interrupted turn's partial work is captured. It wires NO presence synopsis handler: that moved
+ * to `presence/turn-synopsis.ts`, attached once per (ledger, conductor) pair inside
+ * `setupConductorPresence`, so every turn kind gets one — not only a human Discord envelope.
+ * The coordinator's own resume-context handling
  * (message-coordinator.ts) turns that captured progress into a `ResumeContext` on the NEXT
  * processor call; this module renders its `partialWork` into a `[RESUME NOTE]` block (via
  * `buildResumeNote`) on the resubmitted envelope, so the interruption's progress still reaches
@@ -24,13 +27,12 @@ import type { Logger } from '@hughescr/logger';
 import { DateTime } from 'luxon';
 import { addAttachmentInfoToContexts } from '../attachments';
 import type { MessageProcessor, ProcessResult } from '../message-coordinator';
-import { buildLedgerThinkingSynopsis, createLedgerStreamEventHandler, type createDynamicStatusGenerator, type PresenceThrottle } from '../presence';
 import type { DiscordMessageContext } from '../types';
 import { processAttachments, toPlatformImages } from './coordinator-setup';
 import type { ResolvedDiscordNames } from './discord-envelope-provider';
 import {
     buildDiscordEnvelope, buildResumeNote, StreamTracker,
-    type AgendaEntry, type AgentStreamEvent, type BuildDiscordEnvelopeParams, type CalendarDelta, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type LedgerStore, type PlatformImage, type StateTopSetDelta, type TimeHeaderProvider
+    type AgendaEntry, type AgentStreamEvent, type BuildDiscordEnvelopeParams, type CalendarDelta, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type PlatformImage, type StateTopSetDelta, type TimeHeaderProvider
 } from '@/agent';
 import { formatCalendarContext } from '@/integrations/caldav';
 import { formatTimeHeader } from '@/utils';
@@ -49,33 +51,20 @@ export interface DiscordEnvelopeProvider {
 
 /** Dependencies for {@link createConductorProcessor}. */
 export interface CreateConductorProcessorParams {
-    conductor:                Conductor
-    contextPolicy:            ContextPolicy
-    envelopeProvider:         DiscordEnvelopeProvider
+    conductor:        Conductor
+    contextPolicy:    ContextPolicy
+    envelopeProvider: DiscordEnvelopeProvider
     /** Only the two members this processor needs: the author's stored timezone, and their `[About this user]` memory block text. */
-    contextBuilder:           Pick<ContextBuilder, 'loadUserTimezone' | 'loadUserMemories'>
+    contextBuilder:   Pick<ContextBuilder, 'loadUserTimezone' | 'loadUserMemories'>
     /** Resolves a possibly-`undefined` stored timezone to a definite IANA zone — injected so tests do not depend on the server's real timezone or `src/utils/time.ts`'s `DateTime.local()` fallback. */
-    resolveTimezone:          (userTimezone?: string) => string
-    logger:                   Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
-    /**
-     * P11: when provided together with {@link throttle}, every turn also gets a
-     * `createLedgerStreamEventHandler` overlaying synopses onto this ledger (design doc section
-     * 8) — `dispatch` is the only member it needs. Omitted entirely, the processor behaves exactly
-     * as before P11 (a plain `StreamTracker`, no ledger writes).
-     */
-    ledgerStore?:             Pick<LedgerStore, 'dispatch'>
-    /** The one process-wide throttle shared with `presence-setup.ts`'s conductor branch. Required alongside `ledgerStore` for the ledger-sink wiring to activate. */
-    throttle?:                PresenceThrottle
-    /** Optional LLM-based synopsis generator for the ledger-sink handler; omitted means no synopsis is ever generated (the ledger's base phase still reaches the composer via `sdk_frame`). */
-    dynamicStatusGenerator?:  ReturnType<typeof createDynamicStatusGenerator>
-    /** Forwarded verbatim to the ledger-sink handler's own `onThinkingContentUpdate` (see `bot.ts`'s `getLastThinkingContent`/`setLastThinkingContent` ring buffer) — omitted means the idle-status generator never sees a last-thinking-content signal in conductor mode. */
-    onThinkingContentUpdate?: (content: string) => void
+    resolveTimezone:  (userTimezone?: string) => string
+    logger:           Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
     /**
      * Session-peers block 4: renders each turn's time header, called with the author's resolved
      * timezone. The composition root supplies a provider that appends the ambient
      * other-session/quota lines; omitted, this falls back to the bare `formatTimeHeader`.
      */
-    timeHeader?:              TimeHeaderProvider
+    timeHeader?:      TimeHeaderProvider
 }
 
 /** An empty `ProcessResult` for the (unreachable in production — the coordinator never calls a processor with an empty batch) empty-contexts guard. */
@@ -135,7 +124,7 @@ function calendarChangedOrUndefined(delta: CalendarDelta, agendaText: string, ti
  */
 export function createConductorProcessor(params: CreateConductorProcessorParams): MessageProcessor {
     const {
-        conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, ledgerStore, throttle, dynamicStatusGenerator, onThinkingContentUpdate,
+        conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
         timeHeader = formatTimeHeader,
     } = params;
 
@@ -150,15 +139,6 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         const enrichedContexts = addAttachmentInfoToContexts(contexts, contentAdditions);
         const platformImages = toPlatformImages(images);
 
-        // P11: pre-generated alongside the other independent I/O below (never on its own await) so
-        // the first `thinking` phase of the turn — before any accumulated content or tool history
-        // exists for handleThinkingTransition to regenerate from — still carries a synopsis instead
-        // of falling through to nothing (the same throttle-gated pattern `buildLedgerThinkingSynopsis`
-        // itself uses, since the conductor path has no separate state manager to peek).
-        const thinkingSynopsisPromise = ledgerStore && throttle
-            ? buildLedgerThinkingSynopsis(dynamicStatusGenerator, throttle, first.content)
-            : Promise.resolve(undefined);
-
         // Gap 1/4 (timezone): every envelope stamp and time header uses the AUTHOR's own zone —
         // resolveTimezone's fallback (server zone) only kicks in when nothing is stored for them.
         // Resolved BEFORE the Promise.all below (rather than alongside it, as loadUserTimezone
@@ -167,7 +147,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         const storedTimezone = await contextBuilder.loadUserTimezone(first.userId);
         const timezone = resolveTimezone(storedTimezone);
 
-        const [names, channelList, newEvents, stateTopSetDelta, calendarDelta, thinkingSynopsis, memoryBlock] = await Promise.all([
+        const [names, channelList, newEvents, stateTopSetDelta, calendarDelta, memoryBlock] = await Promise.all([
             envelopeProvider.resolveNames(first),
             envelopeProvider.channelList(),
             contextPolicy.eventsDelta(),
@@ -179,7 +159,6 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
                 logger.warn({ err }, 'calendarDelta failed; envelope sent without a calendar section this turn');
                 return EMPTY_CALENDAR_DELTA;
             }),
-            thinkingSynopsisPromise,
             // R1: the memory block is loaded on every message (one query, as the one-shot path
             // always did) — the fingerprint decision below, not the query itself, gates injection.
             contextBuilder.loadUserMemories(first.userId),
@@ -231,17 +210,9 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         // requires one on every ProcessResult, and reads it to capture partial work on an
         // interrupted turn for the next submit's resume context).
         const streamTracker = new StreamTracker();
-        // P11: overlays synopses onto the ledger for this turn's own id — only when the caller
-        // wired both ledgerStore and throttle (see CreateConductorProcessorParams's doc).
-        const ledgerHandler = ledgerStore && throttle
-            ? createLedgerStreamEventHandler({
-                turnId: envelope.id, sink: ledgerStore, throttle, dynamicStatusGenerator, logger, userMessage: input.content, thinkingSynopsis, onThinkingContentUpdate,
-            })
-            : undefined;
         const unsubscribe = conductor.subscribeTurn((turnId, frame) => {
             if(turnId === envelope.id) {
                 streamTracker.update(frame as AgentStreamEvent);
-                ledgerHandler?.onStreamEvent(frame as AgentStreamEvent);
             }
         });
 
@@ -252,7 +223,6 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
             });
         } finally {
             unsubscribe();
-            ledgerHandler?.complete();
         }
 
         logger.info({

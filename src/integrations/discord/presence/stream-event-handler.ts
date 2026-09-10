@@ -45,8 +45,27 @@ export interface CreateLedgerStreamEventHandlerDeps {
         error: (obj: Record<string, unknown> | string, message?: string) => void
     }
     userMessage:              string
-    /** A synopsis already resolved (via {@link buildThinkingSynopsis}) before this handler was created, used for the very first `thinking` phase when there is not yet enough context to generate a fresh one. */
-    thinkingSynopsis?:        string
+    /**
+     * A synopsis generation started (via {@link buildLedgerThinkingSynopsis}) at the moment this
+     * handler's turn opened, used for the very first `thinking` phase when there is not yet
+     * enough context to generate a fresh one. A PROMISE rather than a resolved string because
+     * generation now starts at turn-open rather than before submit: awaiting it first would
+     * leave the turn's opening frames unhandled, so a slow Haiku call must instead be able to
+     * land on a `thinking` phase that has already passed. Resolving to `undefined`, or
+     * rejecting, simply means no seed — the ledger's own base phase already reached the composer.
+     */
+    thinkingSynopsis?:        Promise<string | undefined>
+    /**
+     * Dispatch {@link thinkingSynopsis} as soon as it settles instead of waiting for a `thinking`
+     * transition to ask for it. Set ONLY by `turn-synopsis.ts` when it ADOPTS a turn that was
+     * already open at attach time: such a turn has already emitted the frames this handler would
+     * otherwise have learned its phase from, and its next frame may be the `result` that closes
+     * it — in which case nothing would ever reach {@link handleThinkingTransition} and the seed
+     * would be generated, paid for, and thrown away. Still subject to every ordinary guard
+     * (`completed`, a resolved `undefined`, and `anySynopsisDispatched`), so priming never
+     * produces a second dispatch and never overwrites something fresher.
+     */
+    primeThinkingSynopsis?:   boolean
     onThinkingContentUpdate?: (content: string) => void
 }
 
@@ -116,7 +135,7 @@ export async function buildLedgerThinkingSynopsis(
  */
 
 export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHandlerDeps): LedgerStreamEventHandler {
-    const { turnId, sink, throttle, dynamicStatusGenerator, userMessage, thinkingSynopsis, onThinkingContentUpdate } = deps;
+    const { turnId, sink, throttle, dynamicStatusGenerator, userMessage, thinkingSynopsis, primeThinkingSynopsis, onThinkingContentUpdate } = deps;
 
     let currentPhase: 'thinking' | 'using_tool' | 'responding' | null = null;
     let lastToolName: string | undefined;
@@ -210,6 +229,30 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
     };
 
     /**
+     * Awaits the pre-started {@link CreateLedgerStreamEventHandlerDeps.thinkingSynopsis} and
+     * dispatches it as the `thinking` digest, unless the turn has since completed, the generation
+     * yielded nothing, or something fresher already went out. `dispatchSynopsis` sets
+     * `anySynopsisDispatched` synchronously, so two settlements racing here cannot both dispatch.
+     *
+     * No `thinkingSynopsis === undefined` fast path: `await undefined` is `undefined`, which the
+     * `text === undefined` guard below already handles, so such a guard would be an equivalent
+     * mutant rather than behaviour.
+     */
+    function dispatchPreGeneratedThinkingSynopsis(): void {
+        void (async () => {
+            try {
+                const text = await thinkingSynopsis;
+                if(completed || text === undefined || anySynopsisDispatched) {
+                    return;
+                }
+                dispatchSynopsis('thinking', text);
+            } catch{
+                // No seed to fall back on — the ledger's base phase already reached the composer.
+            }
+        })();
+    }
+
+    /**
      * Handles the transition into the `thinking` phase: generates a fresh synopsis when there is
      * context worth generating from (accumulated thinking content or prior tool history),
      * otherwise falls back to the pre-generated `thinkingSynopsis` (itself already a resolved
@@ -240,14 +283,11 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
                     }
                     dispatchSynopsis('thinking', synopsis);
                 } catch{
-                    if(completed || thinkingSynopsis === undefined || anySynopsisDispatched) {
-                        return;
-                    }
-                    dispatchSynopsis('thinking', thinkingSynopsis);
+                    dispatchPreGeneratedThinkingSynopsis();
                 }
             })();
-        } else if(thinkingSynopsis !== undefined && !anySynopsisDispatched) {
-            dispatchSynopsis('thinking', thinkingSynopsis);
+        } else {
+            dispatchPreGeneratedThinkingSynopsis();
         }
     }
 
@@ -298,6 +338,7 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
                 // on the same frame.
                 // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty-string delta must fall through to the frame's text blocks, which ?? would not do
                 const responseText = event.delta?.text || completeText;
+                // Stryker disable next-line ConditionalExpression: `if(true)` is an equivalent mutant — `responseText` is always a string (`event.delta?.text || completeText`, and `completeText` is initialised to ''), so the guarded body degenerates to `accumulatedText = (accumulatedText + '').slice(-200)`, which is the identity on an already-capped string. Only the `if(false)` variant is observable, and a test kills it.
                 if(responseText) {
                     accumulatedText = (accumulatedText + responseText).slice(-200);
                 }
@@ -365,6 +406,12 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
     const complete = (): void => {
         completed = true;
     };
+
+    // See `primeThinkingSynopsis`'s own doc: an ADOPTED turn cannot rely on a future `thinking`
+    // transition to ask for the seed, so it asks for it here, at construction.
+    if(primeThinkingSynopsis) {
+        dispatchPreGeneratedThinkingSynopsis();
+    }
 
     return {
         onStreamEvent,

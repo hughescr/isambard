@@ -214,6 +214,59 @@ describe('reduceLedger: sdk_frame assistant + latency', () => {
     });
 });
 
+describe('reduceLedger: spontaneous_turn_opened', () => {
+    it('opens a notification turn carrying the conductor-minted id, with no queuedAt or envelopeId', () => {
+        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'spontaneous_turn_opened', turnId: 'notification-1000', at: T1 }));
+
+        expect(ledger.turn).toEqual({
+            id: 'notification-1000', kind: 'notification', startedAt: T1, phase: null, interrupting: false,
+        });
+    });
+
+    it('returns the ledger by reference when a turn is already open (the awaitingTurnEnd id-skew window)', () => {
+        const open = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T1 }));
+
+        const ledger = reduceLedger(open, frozenEvent({ type: 'spontaneous_turn_opened', turnId: 'notification-2000', at: T2 }));
+
+        expect(ledger).toBe(open);
+        expect(ledger.turn?.id).toBe('env-1');
+    });
+
+    it('a following assistant frame sets the phase on that same turn rather than opening a second one', () => {
+        const opened = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'spontaneous_turn_opened', turnId: 'notification-1000', at: T1 }));
+
+        const ledger = reduceLedger(opened, frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('unsolicited'), at: T2 }));
+
+        expect(ledger.turn?.id).toBe('notification-1000');
+        expect(ledger.turn?.startedAt).toBe(T1);
+        expect(ledger.turn?.phase).toEqual({ type: 'responding', startedAt: T2 });
+    });
+
+    it('a phase_synopsis carrying that same id lands on the turn', () => {
+        const opened = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'spontaneous_turn_opened', turnId: 'notification-1000', at: T1 }));
+
+        const ledger = reduceLedger(opened, frozenEvent({
+            type: 'phase_synopsis', turnId: 'notification-1000', phaseType: 'thinking', text: 'checking the inbox', at: T2,
+        }));
+
+        expect(ledger.turn?.phase).toEqual({ type: 'thinking', startedAt: T2, generatedStatus: 'checking the inbox' });
+    });
+});
+
+describe('reduceLedger: turn_submitted seed', () => {
+    it('carries envelope.seed onto turn.seed', () => {
+        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope({ seed: 'do the thing' }), at: T1 }));
+
+        expect(ledger.turn?.seed).toBe('do the thing');
+    });
+
+    it('leaves turn.seed undefined when the envelope carries none', () => {
+        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T1 }));
+
+        expect(ledger.turn?.seed).toBeUndefined();
+    });
+});
+
 describe('reduceLedger: phase_synopsis', () => {
     function openTurn(): Ledger {
         return reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T1 }));

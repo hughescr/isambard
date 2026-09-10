@@ -33,6 +33,28 @@ function joinSections(sections: (string | undefined)[]): string {
     return sections.filter(Boolean).join('\n\n');
 }
 
+/**
+ * How many characters of {@link Envelope.synopsisSeed} are kept — and, via this export, the ONE
+ * cap on the Discord synopsis generator's "Question being answered" section too
+ * (`src/integrations/discord/presence/status-generator-dynamic.ts` imports this rather than
+ * declaring its own). Anything past it would be carried around and then thrown away.
+ *
+ * It lives in the agent layer, not the Discord one, because the agent layer may not import from
+ * `src/integrations/**` while the reverse is allowed.
+ */
+export const SYNOPSIS_SEED_CAP = 200;
+
+/**
+ * Caps a would-be {@link Envelope.synopsisSeed} at {@link SYNOPSIS_SEED_CAP}, collapsing an
+ * empty (or absent) source to `undefined` so a seedless envelope is distinguishable from one
+ * seeded with `''`.
+ * @param text Header-free seed content, or `undefined`
+ * @returns The capped seed, or `undefined` when there is nothing to seed from
+ */
+export function toSynopsisSeed(text: string | undefined): string | undefined {
+    return text ? text.slice(0, SYNOPSIS_SEED_CAP) : undefined;
+}
+
 /** Renders a bracketed body section, or `undefined` when there is nothing to show. */
 function renderSection(title: string, body: string | undefined): string | undefined {
     return body ? `[${title}]\n${body}` : undefined;
@@ -151,6 +173,7 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Envelo
     const channelSegment = formatDiscordChannelSegment(isDM, channelName, guildName);
     const header = `[DISCORD ${channelSegment} · ${stamp} · @${authorName}]`;
 
+    const messageText = messages.map(message => message.content).join('\n');
     const text = joinSections([
         header,
         timeHeader,
@@ -179,6 +202,7 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Envelo
         hostPriority: 'human',
         shouldQuery:  true,
         createdAt:    now,
+        synopsisSeed: toSynopsisSeed(messageText),
     };
 }
 
@@ -223,6 +247,7 @@ export function buildPerchEnvelope(params: BuildPerchEnvelopeParams): Envelope {
         hostPriority: 'wake',
         shouldQuery:  true,
         createdAt:    now,
+        synopsisSeed: toSynopsisSeed(slotHint),
     };
 }
 
@@ -256,6 +281,7 @@ export function buildNotificationEnvelope(params: BuildNotificationEnvelopeParam
         hostPriority: wake ? 'wake' : 'accumulate',
         shouldQuery:  wake,
         createdAt:    now,
+        synopsisSeed: toSynopsisSeed(text),
     };
 }
 
@@ -301,6 +327,7 @@ export function buildPeerEnvelope(params: BuildPeerEnvelopeParams): Envelope {
         hostPriority: 'wake',
         shouldQuery:  true,
         createdAt:    now,
+        synopsisSeed: toSynopsisSeed(`${name}: ${text}`),
     };
 }
 
@@ -344,14 +371,15 @@ export function buildCatchupEnvelope(params: BuildCatchupEnvelopeParams): Envelo
     const hasUnread = (unreadCount ?? 0) > 0;
     const shouldQuery = hasUnread || (lostTasks?.length ?? 0) > 0;
 
-    const text = joinSections([
-        header,
-        timeHeader,
+    // The seed is exactly the body — header and time header stripped — so `text` and
+    // `synopsisSeed` read from one expression rather than drifting apart.
+    const body = joinSections([
         hasUnread ? buildCatchupText({ unreadCount: unreadCount ?? 0, channelCount }) : undefined,
         renderCatchupListSection('Events while you were away', eventsDelta),
         renderCatchupListSection('Background tasks lost at restart', lostTasks),
         renderCatchupListSection('Replies redelivered for you', redelivered),
     ]);
+    const text = joinSections([header, timeHeader, body]);
 
     return {
         id:           crypto.randomUUID(),
@@ -360,6 +388,7 @@ export function buildCatchupEnvelope(params: BuildCatchupEnvelopeParams): Envelo
         hostPriority: shouldQuery ? 'wake' : 'accumulate',
         shouldQuery,
         createdAt:    now,
+        synopsisSeed: toSynopsisSeed(body),
     };
 }
 
@@ -387,6 +416,7 @@ export function buildWrapUpEnvelope(params: BuildWrapUpEnvelopeParams): Envelope
         hostPriority: 'wake',
         shouldQuery:  true,
         createdAt:    now,
+        synopsisSeed: toSynopsisSeed(instruction),
     };
 }
 
@@ -404,6 +434,7 @@ export function buildResumeEnvelope(note: string, now: Date): Envelope {
         hostPriority: 'wake',
         shouldQuery:  true,
         createdAt:    now,
+        synopsisSeed: toSynopsisSeed(note),
     };
 }
 

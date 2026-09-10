@@ -35,6 +35,8 @@ export {
     type StreamEventHandler
 } from './stream-event-handler.js';
 
+export { attachTurnSynopsis, type AttachTurnSynopsisDeps } from './turn-synopsis.js';
+
 // P11: presence composed from the conversation and perch ledgers
 export {
     composePresence,

@@ -13,7 +13,6 @@ import { createInteractionHandler } from './interactions';
 import type { MessageCoordinator } from './message-coordinator';
 import {
     createPresenceThrottle,
-    type DynamicStatusGenerator,
     type PresenceManager
 } from './presence';
 import { DiscordRateLimiter } from './rate-limiter';
@@ -25,7 +24,7 @@ import { channelListProvider, resolveNames as resolveEnvelopeNames, toEnvelopeIn
 import type { EmailSetupResult } from './setup/email-setup';
 import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
 import { setupPerchDriverAndScheduler } from './setup/perch-setup';
-import { setupConductorPresence } from './setup/presence-setup';
+import { setupConductorPresence, type ConductorPresenceSession } from './setup/presence-setup';
 import { createWakeTurnDelivery } from './setup/wake-delivery';
 import { setupTaskBoard } from './task-board/setup';
 import { createChannelId, createUserId, type ChannelId } from './types';
@@ -679,13 +678,24 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // contributing nothing rather than something wrong). When `ledgerStore` itself is absent (no
     // conductor configured at all — e.g. a minimal test setup), both ring buffers simply see no
     // activity; there is no fallback source to subscribe to instead.
-    function buildConductorLedgers(): readonly LedgerStore[] | undefined {
+    function buildConductorSessions(): readonly ConductorPresenceSession[] | undefined {
         if(!ledgerStore) {
             return undefined;
         }
-        return perchLedgerStore ? [ledgerStore, perchLedgerStore] : [ledgerStore];
+        return perchLedgerStore
+            ? [{ ledger: ledgerStore, conductor: conversationConductor }, { ledger: perchLedgerStore, conductor: perchConductor }]
+            : [{ ledger: ledgerStore, conductor: conversationConductor }];
     }
-    const conductorLedgers: readonly LedgerStore[] | undefined = buildConductorLedgers();
+    /**
+     * The sessions presence composes from: each ledger carried TOGETHER with the conductor that
+     * writes it, so no pairing can drift (see `ConductorPresenceSession`'s own doc for what a
+     * mis-pairing would silently break). `conductor` is left possibly-`undefined` rather than
+     * asserting `conversationConductor!`: `setupConductorPresence` attaches nothing for a session
+     * with no conductor, and that ledger still composes.
+     */
+    const conductorSessions: readonly ConductorPresenceSession[] | undefined = buildConductorSessions();
+    /** Just the ledgers of {@link conductorSessions}, for the consumers that compose from ledgers alone (ring buffers, task board). Derived, never rebuilt, so it cannot fall out of step with the sessions above. */
+    const conductorLedgers: readonly LedgerStore[] | undefined = conductorSessions?.map(session => session.ledger);
     // Stryker disable BlockStatement: Composition root — ring-buffer subscriptions are integration-wiring, not unit-testable
     let unsubscribeToolTracking: () => void = () => undefined;
     let unsubscribeChannelTracking: () => void = () => undefined;
@@ -715,12 +725,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         unsubscribeChannelTracking = unsubscribeAll;
     }
     // Stryker restore BlockStatement
-
-    // P14: no longer created here — `setupConductorPresence` creates one instance PER LEDGER
-    // (conversation, perch), each with its own cooldown/cache/in-flight state, and this variable
-    // is set from its result once presence is set up below (before setupCoordinatorIntegration
-    // needs it).
-    let dynamicStatusGenerator: DynamicStatusGenerator | undefined;
 
     // Idempotency guard: track whether clientReady setup has run.
     // The handler is registered with .on() (not .once()) so reconnects fire it again,
@@ -925,11 +929,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // Stryker restore all
 
             // Setup presence manager once the conductor has actually opened (open() SUCCEEDED, not
-            // merely requested) — IMPORTANT: must happen before coordinator.setProcessor so
-            // dynamicStatusGenerator is available in onStreamEvent. There is no fallback presence
-            // path any more (P13b removed the one-shot agent; P14 removed the legacy state-machine
-            // bridged `setupPresence`): a conductor that never opens simply runs with no presence
-            // at all.
+            // merely requested). Presence setup now also OWNS synopsis attachment for every turn
+            // (presence/turn-synopsis.ts, one attachment per (ledger, conductor) pair) — the
+            // message processor wires none, so nothing here feeds it any more. There is no
+            // fallback presence path (P13b removed the one-shot agent; P14 removed the legacy
+            // state-machine bridged `setupPresence`): a conductor that never opens simply runs
+            // with no presence at all.
             if(identityContext && config.presence && conductorOpened && presenceThrottle && ledgerStore) {
                 // Stryker disable next-line BlockStatement: composition root callback
                 const getRecentContext = async (): Promise<string | undefined> => {
@@ -945,32 +950,28 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 // exactly what that composition does.
                 const conductorPresence = setupConductorPresence({
                     identityContext,
-                    presenceConfig: config.presence,
+                    presenceConfig:          config.presence,
                     readyClient,
-                    getTaskContext: () => taskListReader.buildTaskListSummary(),
+                    getTaskContext:          () => taskListReader.buildTaskListSummary(),
                     getRecentContext,
                     contextBuilder,
                     getLastThinkingContent,
                     identityCache,
-                    getLiveSignals: liveSignals ? () => liveSignals.snapshot() : undefined,
+                    getLiveSignals:          liveSignals ? () => liveSignals.snapshot() : undefined,
                     getPreviousStatus,
                     setPreviousStatus,
-                    // Stryker disable next-line ArrayDeclaration: equivalent — buildConductorLedgers() (above) returns undefined iff `!ledgerStore`, and this `if` already requires `ledgerStore` truthy, so `conductorLedgers` can never be undefined here; the `?? [ledgerStore]` exists only to satisfy TypeScript's narrowing, not to handle a reachable branch.
-                    ledgers:        conductorLedgers ?? [ledgerStore],
-                    throttle:       presenceThrottle,
+                    // Stryker disable next-line ArrayDeclaration: equivalent — buildConductorSessions() (above) returns undefined iff `!ledgerStore`, and this `if` already requires `ledgerStore` truthy, so `conductorSessions` can never be undefined here; the `??` fallback exists only to satisfy TypeScript's narrowing, not to handle a reachable branch.
+                    sessions:                conductorSessions ?? [{ ledger: ledgerStore, conductor: conversationConductor }],
+                    throttle:                presenceThrottle,
+                    onThinkingContentUpdate: setLastThinkingContent,
                     // Q3/B4: only forward the predicate when perch is actually enabled — the
                     // `⏸ perch` marker asserts a pause that has a subject; with perch off, no
                     // scheduler was ever going to run, so nothing is paused regardless of what
                     // isCostPaused() reports (finding: the marker rendered even with perch off).
-                    isCostPaused:   options.perchConfig?.enabled ? options.isCostPaused : undefined,
+                    isCostPaused:            options.perchConfig?.enabled ? options.isCostPaused : undefined,
                 });
                 presenceManager = conductorPresence.presenceManager;
                 unsubscribeLedgerPresence = conductorPresence.unsubscribeLedgers;
-                // P14: the conversation session's own per-instance generator — the first entry,
-                // matching buildConductorLedgers()'s [ledgerStore, perchLedgerStore] ordering —
-                // feeds setupCoordinatorIntegration below so every conductor turn overlays
-                // synopses from an instance no other session's calls can abort or gate.
-                dynamicStatusGenerator = conductorPresence.dynamicStatusGenerators[0];
             }
 
             // Live task board: one system-posted embed per (channel, turn) mirroring the
@@ -981,15 +982,27 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 const taskBoard = setupTaskBoard({
                     readyClient,
                     rateLimiter,
-                    // Stryker disable next-line ArrayDeclaration: equivalent — see the identical narrowing-only fallback on setupConductorPresence's `ledgers` above.
-                    ledgers:  conductorLedgers ?? [ledgerStore],
-                    config:   config.taskBoard ?? DEFAULT_TASK_BOARD_CONFIG,
+                    // Stryker disable next-line ArrayDeclaration: equivalent — see the identical narrowing-only fallback on setupConductorPresence's `sessions` above.
+                    ledgers:                  conductorLedgers ?? [ledgerStore],
+                    config:                   config.taskBoard ?? DEFAULT_TASK_BOARD_CONFIG,
                     // The bot receives no zone of its own; perch's configured zone is the only one
                     // reachable here, and it is the same IANA zone the rest of Izzy schedules in.
                     // With perch disabled there is no configured zone at all, so fall back to the
                     // host zone the config loader itself defaults every other `timezone` to.
-                    timeZone: options.perchConfig?.timezone ?? resolveTimezone(),
+                    timeZone:                 options.perchConfig?.timezone ?? resolveTimezone(),
                     logger,
+                    // A conversation-session task launched from a turn with no channel (a bare
+                    // notification turn, or a wake whose launch record was lost) boards in the
+                    // `fallback` well-known channel — the same place wake delivery sends such a
+                    // turn's reply. Perch launches stay boardless: their reply routes to the perch
+                    // channel by kind, and a perch board there is out of scope (docs/plans/task-board.md).
+                    resolveFallbackChannelId: async (role: string): Promise<string | undefined> => {
+                        if(role !== 'conversation') {
+                            return undefined;
+                        }
+                        const fallback = await channelRegistry.getWellKnownChannel('fallback');
+                        return fallback?.channelId;
+                    },
                 });
                 stopTaskBoard = taskBoard.stop;
             }
@@ -1045,27 +1058,21 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 };
 
                 coordinator = setupCoordinatorIntegration({
-                    dynamicStatusGenerator,
                     responseRouter,
                     rateLimiter,
                     readyClient,
                     channelRegistry,
-                    onThinkingContentUpdate: setLastThinkingContent,
                     setLastSessionId,
                     addRecentMessage,
                     addRecentChannel,
                     activityLogger,
                     discordCapability,
-                    conversationConductor:   conversationConductor!,
-                    contextPolicy:           contextPolicy!,
+                    conversationConductor: conversationConductor!,
+                    contextPolicy:         contextPolicy!,
                     envelopeProvider,
                     contextBuilder,
                     inboxManager,
-                    // Shared with presence-setup's conductor branch so every turn overlays
-                    // synopses onto the SAME ledger/throttle presence composes from.
-                    ledgerStore,
-                    presenceThrottle,
-                    timeHeader:              options.timeHeader,
+                    timeHeader:            options.timeHeader,
                 });
 
                 // Register message handler AFTER channel registry is initialized and coordinator is created

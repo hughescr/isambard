@@ -1,6 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { ActivityType, type Client  } from 'discord.js';
 import {
+    attachTurnSynopsis,
     composePresence,
     createActiveStatusGenerator,
     createDynamicStatusGenerator,
@@ -10,7 +11,7 @@ import {
     type PresenceThrottle,
     type PresenceView
 } from '../presence';
-import { IdentityCache, type ContextBuilder, type LedgerStore, type Signal } from '@/agent';
+import { IdentityCache, type Conductor, type ContextBuilder, type LedgerStore, type Signal } from '@/agent';
 import type { DiscordConfig } from '@/config';
 
 /** Return type of {@link createDynamicStatusGenerator} — one per session ledger (P14). */
@@ -42,14 +43,35 @@ function digestOf(view: PresenceView): string | undefined {
     return 'generatedStatus' in view.phase ? view.phase.generatedStatus : undefined;
 }
 
+/**
+ * One session presence composes from: its ledger and, when the session has a live conductor, that
+ * conductor. Passing the two TOGETHER is the point — a ledger paired with another session's
+ * conductor would subscribe to one session's frames while dispatching `phase_synopsis` events
+ * carrying the other's turn ids, which `reducePhaseSynopsis`'s exact-id guard drops in silence
+ * (the very bug `turn-synopsis.ts` exists to fix), and would hand that session another session's
+ * per-instance status generator (the P14 cross-session abort/cooldown defect). Two index-aligned
+ * arrays could express that mistake; this shape cannot.
+ */
+export interface ConductorPresenceSession {
+    /** The session ledger to compose presence from. */
+    ledger:     LedgerStore
+    /**
+     * The conductor that writes {@link ledger}. Present entries get one {@link attachTurnSynopsis}
+     * attachment, which is what gives EVERY turn kind — not just a human Discord message — a Haiku
+     * synopsis overlaid on presence. Omitted (a ledger with no live conductor) attaches nothing,
+     * and that ledger still contributes to the composed view.
+     */
+    conductor?: Pick<Conductor, 'subscribeTurn'>
+}
+
 /** Result of {@link setupConductorPresence}. */
 export interface ConductorPresenceSetupResult {
     /** Presence manager for Discord status updates. */
     presenceManager:         PresenceManager
-    /** Stops mirroring every ledger in `ledgers` into `presenceManager`. */
+    /** Stops mirroring every session's ledger into `presenceManager`, and detaches every synopsis attachment. */
     unsubscribeLedgers:      () => void
     /**
-     * One dynamic-status-generator instance per entry in the `ledgers` param, in the same order
+     * One dynamic-status-generator instance per entry in the `sessions` param, in the same order
      * (conventionally `[conversation, perch]`) — each with its own cooldown/cache/in-flight state
      * (P14). Callers wire the entry for a given session's turns (e.g. the conversation entry into
      * `createConductorProcessor`'s own `dynamicStatusGenerator` dep).
@@ -68,51 +90,62 @@ export interface ConductorPresenceSetupResult {
  * `composePresence`/`planPresenceUpdate` (already measured at 100% mutation coverage on their
  * own); this function's own body is just the plumbing that calls them and applies the result.
  * @param params Construction inputs (status generators, identity cache, live-signals/task-context
- * callbacks), plus the ledgers to compose from and the shared `PresenceThrottle` instance.
+ * callbacks), plus the sessions to compose from and the shared `PresenceThrottle` instance.
  * @returns See {@link ConductorPresenceSetupResult}.
  */
 export function setupConductorPresence(params: {
-    identityContext:         string
-    presenceConfig:          NonNullable<DiscordConfig['presence']>
-    readyClient:             Client
-    /** The session ledgers to compose from — conventionally `[conversationLedger, perchLedger]` (P12: perch's own real conductor ledger, when present; design doc section 8: conversation wins when both are live). */
-    ledgers:                 readonly LedgerStore[]
+    identityContext:          string
+    presenceConfig:           NonNullable<DiscordConfig['presence']>
+    readyClient:              Client
+    /**
+     * The sessions to compose from, each pairing a ledger with its OWN conductor — conventionally
+     * `[conversation, perch]` (P12: perch's own real conductor ledger, when present; design doc
+     * section 8: conversation wins when both are live). See {@link ConductorPresenceSession} for
+     * why the pair travels as one object rather than as two index-aligned arrays.
+     */
+    sessions:                 readonly ConductorPresenceSession[]
     /** The one process-wide throttle shared with the ledger-sink stream handler (P11). */
-    throttle:                PresenceThrottle
+    throttle:                 PresenceThrottle
+    /** Forwarded verbatim to every synopsis attachment (see `bot.ts`'s last-thinking-content ring buffer). */
+    onThinkingContentUpdate?: (content: string) => void
+    /** Test seam: the synopsis attachment factory, defaulting to the real {@link attachTurnSynopsis}. */
+    attachSynopsis?:          typeof attachTurnSynopsis
     /**
      * P14: injectable dynamic-status-generator factory, defaulting to the real
-     * {@link createDynamicStatusGenerator}. Called once PER LEDGER (in `ledgers` order) so each
+     * {@link createDynamicStatusGenerator}. Called once PER SESSION (in `sessions` order) so each
      * session gets its own cooldown/cache/in-flight-controller instance — a single shared
      * instance let one session's Haiku call abort the other's and let one session's cooldown gate
      * the other's synopsis (status-generator-dynamic.ts now keeps that state in the closure
      * returned by this factory, not at module scope). See {@link ConductorPresenceSetupResult.dynamicStatusGenerators}.
      */
-    createDynamicGenerator?: typeof createDynamicStatusGenerator
-    getTaskContext?:         () => Promise<string | undefined>
-    getRecentContext:        () => Promise<string | undefined>
-    contextBuilder?:         ContextBuilder
-    getLastThinkingContent?: () => string | undefined
+    createDynamicGenerator?:  typeof createDynamicStatusGenerator
+    getTaskContext?:          () => Promise<string | undefined>
+    getRecentContext:         () => Promise<string | undefined>
+    contextBuilder?:          ContextBuilder
+    getLastThinkingContent?:  () => string | undefined
     /** Pre-built write-through identity cache. When provided, replaces the inline loader. */
-    identityCache?:          IdentityCache
+    identityCache?:           IdentityCache
     /** Optional live-signals snapshot callback. */
-    getLiveSignals?:         () => Promise<Signal[]>
+    getLiveSignals?:          () => Promise<Signal[]>
     /** Getter for the last idle status text (anti-rut). */
-    getPreviousStatus?:      () => string | undefined
+    getPreviousStatus?:       () => string | undefined
     /** Setter for persisting the last idle status text (anti-rut). */
-    setPreviousStatus?:      (text: string) => void
+    setPreviousStatus?:       (text: string) => void
     /**
      * Optional Q3/B4 daily cost ceiling predicate: `tick()` re-reads it on every compose (never
      * cached), so a pause taken or cleared mid-run is reflected on the very next ledger event —
      * rendered as a `⏸ perch` marker in the composed prefix (see `composePresence`'s own doc).
      */
-    isCostPaused?:           () => boolean
+    isCostPaused?:            () => boolean
 }): ConductorPresenceSetupResult {
     const {
         identityContext,
         presenceConfig,
         readyClient,
-        ledgers,
+        sessions,
         throttle,
+        onThinkingContentUpdate,
+        attachSynopsis = attachTurnSynopsis,
         createDynamicGenerator = createDynamicStatusGenerator,
         getTaskContext,
         getRecentContext,
@@ -125,9 +158,34 @@ export function setupConductorPresence(params: {
         isCostPaused,
     } = params;
 
-    // P14: one instance per ledger — see this param's own doc for why sharing one instance across
-    // sessions is a defect, not an optimisation.
-    const dynamicStatusGenerators: DynamicStatusGenerator[] = ledgers.map(() => createDynamicGenerator({ identityContext }));
+    // P14: one generator instance per session — see ConductorPresenceSession's own doc for why
+    // sharing one instance across sessions is a defect, not an optimisation. Attaching it to the
+    // session object here is what keeps a session's ledger, conductor and generator together from
+    // this point on: nothing below indexes one collection with another's position.
+    const attachedSessions = sessions.map(session => ({
+        ...session,
+        dynamicStatusGenerator: createDynamicGenerator({ identityContext }),
+    }));
+    const ledgers: readonly LedgerStore[] = attachedSessions.map(session => session.ledger);
+    const dynamicStatusGenerators: DynamicStatusGenerator[] = attachedSessions.map(session => session.dynamicStatusGenerator);
+
+    // The ONE place a presence synopsis handler is attached (see presence/turn-synopsis.ts):
+    // once per session, so every turn kind that session opens — human, bare notification, task
+    // wake, peer, catch-up, perch, wrapup, resume — gets a Haiku digest instead of the ledger's
+    // bare base phase.
+    const detachSynopses = attachedSessions.flatMap(({ ledger, conductor, dynamicStatusGenerator }) => {
+        if(conductor === undefined) {
+            return [];
+        }
+        return [attachSynopsis({
+            conductor,
+            ledgerStore: ledger,
+            throttle,
+            dynamicStatusGenerator,
+            logger,
+            onThinkingContentUpdate,
+        })];
+    });
 
     const activeStatusGenerator = createActiveStatusGenerator({
         activityType: ActivityType.Custom,
@@ -256,7 +314,7 @@ export function setupConductorPresence(params: {
         presenceManager,
         dynamicStatusGenerators,
         unsubscribeLedgers: (): void => {
-            for(const unsubscribe of unsubscribes) {
+            for(const unsubscribe of [...unsubscribes, ...detachSynopses]) {
                 unsubscribe();
             }
             if(idleSettleTimer !== null) {

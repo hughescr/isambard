@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { mockGenerateTextWithSystemPrompt, mockLogger, originalGenerateTextWithSystemPrompt } from '../../../../setup';
+import { SYNOPSIS_SEED_CAP } from '@/agent';
 import {
     createDynamicStatusGenerator,
     rejectSynopsis,
@@ -590,12 +591,16 @@ describe('DynamicStatusGenerator', () => {
                 expect(user).toContain('## Question being answered\nHow do I implement authentication?');
             });
 
-            it('should truncate the user message to the first 200 characters', async () => {
+            // Pinned to SYNOPSIS_SEED_CAP, not to a second local 200: `turn-synopsis.ts` is the
+            // only source of `userMessage` in the codebase and it passes the ALREADY-capped
+            // `LedgerTurn.seed`, so a divergent local cap here would be silently unreachable —
+            // raising it to give Haiku more context would change nothing at all.
+            it('should truncate the user message to the first SYNOPSIS_SEED_CAP characters', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
-                const longMessage = `${'q'.repeat(200)}TAIL9x7z`;
+                const longMessage = `${'q'.repeat(SYNOPSIS_SEED_CAP)}TAIL9x7z`;
                 const context: SynopsisContext = {
                     phase:       'thinking',
                     userMessage: longMessage,
@@ -604,7 +609,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
-                expect(user).toContain(`## Question being answered\n${'q'.repeat(200)}\n\n## Doing right now`);
+                expect(user).toContain(`## Question being answered\n${'q'.repeat(SYNOPSIS_SEED_CAP)}\n\n## Doing right now`);
                 expect(user).not.toContain('TAIL9x7z');
             });
 

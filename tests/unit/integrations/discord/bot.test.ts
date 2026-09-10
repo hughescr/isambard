@@ -16,7 +16,6 @@ import * as ingressGateModule from '@/integrations/discord/ingress-gate';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import type { PresenceManager } from '@/integrations/discord/presence/manager';
-import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
 import * as catchupSetupModule from '@/integrations/discord/setup/catchup-setup';
 import * as coordinatorSetupModule from '@/integrations/discord/setup/coordinator-setup';
 import type { EmailSetupResult } from '@/integrations/discord/setup/email-setup';
@@ -542,30 +541,23 @@ describe('createDiscordBot', () => {
             expect(setupConductorPresenceSpy).toHaveBeenCalled();
         });
 
-        test('P14: feeds setupConductorPresence().dynamicStatusGenerators[0] into setupCoordinatorIntegration\'s dynamicStatusGenerator', async () => {
+        test('setupCoordinatorIntegration is no longer given the presence-synopsis wiring (it moved to presence setup)', async () => {
             const client = makeMockClientForConductor();
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            let capturedParams: object | undefined;
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(client),
+                spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
+                    presenceManager:         { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers:      mock(() => undefined),
+                    dynamicStatusGenerators: [],
+                }),
+                spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params) => {
+                    capturedParams = params;
+                    return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
+                })
+            );
 
-            const mockPresenceManager = { start: mock(() => undefined), stop: mock(() => undefined) };
-            const conversationGenerator = { generateSynopsis: mock(() => Promise.resolve(null)) };
-            const perchGenerator = { generateSynopsis: mock(() => Promise.resolve(null)) };
-            spies.push(spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                presenceManager:         mockPresenceManager as unknown as PresenceManager,
-                unsubscribeLedgers:      mock(() => undefined),
-                // Ordering matters: buildConductorLedgers() yields [ledgerStore, perchLedgerStore],
-                // so index 0 here is the CONVERSATION session's own generator, distinct from a
-                // perch-session generator at index 1.
-                dynamicStatusGenerators: [conversationGenerator, perchGenerator] as DynamicStatusGenerator[],
-            }));
-
-            let capturedGenerator: DynamicStatusGenerator | undefined;
-            spies.push(spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: { dynamicStatusGenerator?: DynamicStatusGenerator }) => {
-                capturedGenerator = params.dynamicStatusGenerator;
-                return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
-            }));
-
-            const ledgerStore = makeFakeLedgerStore();
-            const deps = conductorDeps({ ledgerStore });
+            const deps = conductorDeps({ ledgerStore: makeFakeLedgerStore() });
 
             createDiscordBot({
                 config:          presenceConfig(),
@@ -576,7 +568,82 @@ describe('createDiscordBot', () => {
 
             await triggerReady(client);
 
-            expect(capturedGenerator).toBe(conversationGenerator as unknown as DynamicStatusGenerator);
+            expect(capturedParams).toBeDefined();
+            expect(capturedParams).not.toHaveProperty('ledgerStore');
+            expect(capturedParams).not.toHaveProperty('presenceThrottle');
+            expect(capturedParams).not.toHaveProperty('dynamicStatusGenerator');
+            expect(capturedParams).not.toHaveProperty('onThinkingContentUpdate');
+        });
+
+        test('setupConductorPresence receives one session per ledger, each carrying its own conductor, plus onThinkingContentUpdate', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
+                presenceManager:         { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
+                unsubscribeLedgers:      mock(() => undefined),
+                dynamicStatusGenerators: [],
+            });
+            spies.push(setupConductorPresenceSpy);
+
+            const conversationConductor = makeFakeConductor();
+            const deps = conductorDeps({ conversationConductor, ledgerStore: makeFakeLedgerStore() });
+
+            createDiscordBot({
+                config:          presenceConfig(),
+                channelRegistry: mockChannelRegistry,
+                identityContext: 'Test identity',
+                ...deps,
+            });
+
+            await triggerReady(client);
+
+            const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { sessions?: readonly { ledger?: unknown, conductor?: unknown }[], onThinkingContentUpdate?: unknown } | undefined;
+            expect(call?.sessions).toHaveLength(1);
+            expect(call?.sessions?.[0]?.ledger).toBe(deps.ledgerStore);
+            expect(call?.sessions?.[0]?.conductor).toBe(conversationConductor);
+            expect(typeof call?.onThinkingContentUpdate).toBe('function');
+        });
+
+        test('the sessions array pairs the perch ledger with the perch conductor exactly when a perch ledger is present', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
+                presenceManager:         { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
+                unsubscribeLedgers:      mock(() => undefined),
+                dynamicStatusGenerators: [],
+            });
+            spies.push(setupConductorPresenceSpy);
+
+            const conversationConductor = makeFakeConductor();
+            const perchConductor = makeFakeConductor();
+            const deps = conductorDeps({
+                conversationConductor,
+                ledgerStore:      makeFakeLedgerStore(),
+                perchConductor,
+                perchLedgerStore: makeFakeLedgerStore('perch-sess-1'),
+                perchJournal:     { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
+            });
+
+            createDiscordBot({
+                config:          presenceConfig(),
+                channelRegistry: mockChannelRegistry,
+                identityContext: 'Test identity',
+                ...deps,
+            });
+
+            await triggerReady(client);
+
+            const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { sessions?: readonly { ledger?: unknown, conductor?: unknown }[] } | undefined;
+            // Each pair travels as ONE object, so the perch ledger can never be handed the
+            // conversation conductor (or generator) by an index slip — see ConductorPresenceSession.
+            expect(call?.sessions).toEqual([
+                { ledger: deps.ledgerStore, conductor: conversationConductor },
+                { ledger: deps.perchLedgerStore, conductor: perchConductor },
+            ]);
         });
 
         test('should NOT create presence manager when identityContext is missing', async () => {
@@ -1631,8 +1698,8 @@ describe('createDiscordBot', () => {
                 await triggerReady(client);
 
                 expect(setupConductorPresenceSpy).toHaveBeenCalledTimes(1);
-                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { ledgers?: readonly unknown[] } | undefined;
-                expect(call?.ledgers).toHaveLength(2);
+                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { sessions?: readonly unknown[] } | undefined;
+                expect(call?.sessions).toHaveLength(2);
             });
 
             test('composes from [ledgerStore] alone (length 1) when no perch conductor/ledger is configured', async () => {
@@ -1659,8 +1726,8 @@ describe('createDiscordBot', () => {
 
                 await triggerReady(client);
 
-                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { ledgers?: readonly unknown[] } | undefined;
-                expect(call?.ledgers).toHaveLength(1);
+                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { sessions?: readonly unknown[] } | undefined;
+                expect(call?.sessions).toHaveLength(1);
             });
 
             test('P14: calls setupConductorPresence with no botStateManager param — the legacy bridge no longer exists', async () => {
@@ -1882,6 +1949,52 @@ describe('createDiscordBot', () => {
                 expect(call?.config).toEqual({ enabled: true, editIntervalMs: 250, refreshIntervalMs: 750 });
                 expect(call?.timeZone).toBe('Pacific/Auckland');
                 expect(call?.logger).toBe(loggerModule.logger);
+            });
+
+            test('resolves the conversation fallback board channel from the fallback well-known channel, and none for perch', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { spy } = stubTaskBoard();
+                const getWellKnownChannel = mock(async () => ({ channelId: 'fallback-chan' }));
+
+                const deps = conductorDeps({ ledgerStore: makeFakeLedgerStore() });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: { ...mockChannelRegistry, getWellKnownChannel } as unknown as typeof mockChannelRegistry,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                const call = spy.mock.calls[0]?.[0] as { resolveFallbackChannelId?: (role: string) => Promise<string | undefined> } | undefined;
+                expect(call?.resolveFallbackChannelId).toBeDefined();
+                await expect(call?.resolveFallbackChannelId?.('conversation')).resolves.toBe('fallback-chan');
+                expect(getWellKnownChannel).toHaveBeenCalledWith('fallback');
+                const lookupsBeforePerch = getWellKnownChannel.mock.calls.length;
+                await expect(call?.resolveFallbackChannelId?.('perch')).resolves.toBeUndefined();
+                expect(getWellKnownChannel).toHaveBeenCalledTimes(lookupsBeforePerch);
+            });
+
+            test('the conversation fallback board channel is undefined when no fallback well-known channel is registered', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { spy } = stubTaskBoard();
+
+                const deps = conductorDeps({ ledgerStore: makeFakeLedgerStore() });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: { ...mockChannelRegistry, getWellKnownChannel: mock(async () => null) } as unknown as typeof mockChannelRegistry,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                const call = spy.mock.calls[0]?.[0] as { resolveFallbackChannelId?: (role: string) => Promise<string | undefined> } | undefined;
+                await expect(call?.resolveFallbackChannelId?.('conversation')).resolves.toBeUndefined();
             });
 
             test('falls back to the default config and the host time zone when neither is configured', async () => {

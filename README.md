@@ -273,7 +273,7 @@ src/
 │   │   ├── contact-commands.ts      # Contact management Discord slash commands
 │   │   ├── history-provider.ts      # Discord history provider for cross-platform context
 │   │   ├── setup/                   # Bot initialization setup modules
-│   │   │   ├── presence-setup.ts          # Presence manager, status generators, BotStateManager subscriptions
+│   │   │   ├── presence-setup.ts          # Presence manager, per-session status generators, ledger subscriptions + synopsis attachment
 │   │   │   ├── perch-setup.ts             # Perch conductor driver + scheduler configuration
 │   │   │   ├── catchup-setup.ts           # Inbox init and conductor catch-up envelope submission
 │   │   │   ├── coordinator-setup.ts       # MessageCoordinator wiring to the conversation conductor
@@ -281,14 +281,12 @@ src/
 │   │   │   ├── event-handler-setup.ts     # Channel registry init, message processing, cleanup handlers
 │   │   │   ├── email-setup.ts             # Email MCP server init and WildDuck SSE listener lifecycle
 │   │   │   └── bsky-setup.ts                # Bluesky integration setup and approval callbacks
-│   │   ├── state/                   # Legacy BotStateManager (P14 retires this whole directory)
-│   │   │   ├── types.ts                  # OperationalMode, ActivityPhase, BotState, BotStateManager interface
-│   │   │   ├── manager.ts                # BotStateManagerImpl: state machine with transitions + subscriber notifications
-│   │   │   ├── transitions.ts            # Valid state transition table, isValidTransition
-│   │   │   └── ledger-shim.ts            # Mirrors the conductor's ledger onto BotStateManager (conductor mode)
 │   │   ├── presence/                # Dynamic status updates reflecting agent activity
+│   │   │   ├── index.ts                    # Barrel: the module's named exports
 │   │   │   ├── types.ts                    # PresencePhase types (idle, thinking, responding, tool-use)
 │   │   │   ├── manager.ts                  # PresenceManager: debouncing and rate limiting
+│   │   │   ├── presence-view.ts            # composePresence: the ledger -> presence-line projection + PresenceThrottle
+│   │   │   ├── turn-synopsis.ts            # attachTurnSynopsis: THE ONE place a synopsis handler is attached to a turn
 │   │   │   ├── stream-event-handler.ts     # Stream event handler for presence with synopsis generation
 │   │   │   ├── status-generator-active.ts  # Status text for active phases
 │   │   │   ├── status-generator-idle.ts    # LLM-powered idle status text

@@ -34,6 +34,8 @@ export interface LedgerTurn {
     phase:         ActivityPhase | null
     firstTokenAt?: Date
     interrupting:  boolean
+    /** The submitting envelope's {@link import('./types').Envelope.synopsisSeed} — header-free, capped content the Discord presence synopsis attachment (`presence/turn-synopsis.ts`) seeds its first Haiku generation from. Absent for a spontaneously-opened notification turn (no envelope exists) and for a seedless envelope. */
+    seed?:         string
 }
 
 /** The latest `task_progress` payload for a task, plus the final `usage` a `task_notification` carries. */
@@ -174,6 +176,15 @@ export type LedgerEvent
       | { type: 'session_opened', sessionId: string, at: Date }
       | { type: 'phase_changed', phase: ActivityPhase | null, at: Date }
       /**
+       * A bare spontaneous turn the conductor just opened (`conductor.ts`'s
+       * `beginSpontaneousTurn`), dispatched BEFORE it notifies turn subscribers so the presence
+       * synopsis attachment already has a handler — carrying the conductor's own turn id — by the
+       * time the first frame arrives. The conductor is the sole minter of that id; `turnId` is
+       * what every later `phase_synopsis` for this turn must match. Ignored (ledger returned by
+       * reference) when a turn is already open.
+       */
+      | { type: 'spontaneous_turn_opened', turnId: string, at: Date }
+      /**
        * A synopsis generated for the currently-open turn (`presence/stream-event-handler.ts`'s
        * `createLedgerStreamEventHandler`). Applied as `turn.phase.generatedStatus` when `turnId`
        * matches `turn.id`; dropped when it does not (design doc section 8) — a synopsis resolving
@@ -296,6 +307,14 @@ function stopForegroundTasks(ledger: Ledger, at: Date): Ledger {
  * open, the first assistant frame stamps `firstTokenAt` and, when the turn carries a `queuedAt`,
  * the queue-to-first-token latency for its `kind`. Every assistant frame also updates
  * `turn.phase` via {@link phaseFromFrame}.
+ *
+ * The null-turn branch is now a defensive backstop rather than a routine path: `conductor.ts`
+ * dispatches `spontaneous_turn_opened` before an assistant frame reaches this reducer for BOTH
+ * ways a turn can start unbidden — the ordinary spontaneous open, and a frame landing in the
+ * `awaitingTurnEnd` window where the conductor declines to claim `currentTurn`. Do not delete
+ * it: a ledger fed frames by anything that does not observe that protocol (a future driver, a
+ * replay) would otherwise silently drop the whole turn, and the phase it mints here is what
+ * keeps presence honest in that case.
  */
 function reduceAssistantFrame(ledger: Ledger, frame: AssistantFrame, at: Date): Ledger {
     if(ledger.turn === null) {
@@ -883,6 +902,20 @@ function reduceEnvelopeQueued(ledger: Ledger, kind: EnvelopeKind): Ledger {
     return { ...ledger, queued };
 }
 
+/**
+ * Opens the bare notification turn the conductor just minted an id for. Returns `ledger` by
+ * reference when a turn is already open: the conductor's one-turn-in-flight invariant makes that
+ * unreachable in the ordinary path, but a frame that arrived during `awaitingTurnEnd` can have
+ * opened a turn through {@link reduceAssistantFrame} already — in which case the ledger's turn
+ * (which presence reads) stays authoritative and the conductor's newer id is simply unused.
+ */
+function reduceSpontaneousTurnOpened(ledger: Ledger, turnId: string, at: Date): Ledger {
+    if(ledger.turn !== null) {
+        return ledger;
+    }
+    return { ...ledger, turn: { id: turnId, kind: 'notification', startedAt: at, phase: null, interrupting: false } };
+}
+
 function reduceTurnSubmitted(ledger: Ledger, envelope: EnvelopeMeta, at: Date): Ledger {
     const queued = isHumanKind(envelope.kind)
         ? { ...ledger.queued, human: Math.max(0, ledger.queued.human - 1) }
@@ -896,6 +929,7 @@ function reduceTurnSubmitted(ledger: Ledger, envelope: EnvelopeMeta, at: Date): 
         channelId:    envelope.channelId,
         phase:        null,
         interrupting: false,
+        seed:         envelope.seed,
     };
     const perch = envelope.kind === 'perch' && envelope.perch !== undefined
         ? { slot: envelope.perch.slot, endsAt: envelope.perch.endsAt }
@@ -1057,6 +1091,7 @@ function reducePhaseSynopsis(ledger: Ledger, event: Extract<LedgerEvent, { type:
  * Folds one {@link LedgerEvent} into `ledger`, pure and clock-free: `event.at` is the only source
  * of time. Returns `ledger` itself, by reference, when the event changes nothing.
  */
+// eslint-disable-next-line complexity -- an exhaustive switch over LedgerEvent's discriminated union where every arm is a single delegating call; the metric here counts the union's member count, not branching logic
 export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
     switch(event.type) {
         case 'sdk_frame': {
@@ -1094,6 +1129,9 @@ export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
         }
         case 'phase_changed': {
             return reducePhaseChanged(ledger, event.phase);
+        }
+        case 'spontaneous_turn_opened': {
+            return reduceSpontaneousTurnOpened(ledger, event.turnId, event.at);
         }
         case 'phase_synopsis': {
             return reducePhaseSynopsis(ledger, event);
