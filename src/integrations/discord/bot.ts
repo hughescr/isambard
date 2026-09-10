@@ -28,7 +28,7 @@ import { setupConductorPresence, type ConductorPresenceSession } from './setup/p
 import { createWakeTurnDelivery } from './setup/wake-delivery';
 import { setupTaskBoard } from './task-board/setup';
 import { createChannelId, createUserId, type ChannelId } from './types';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type Envelope, type TimeHeaderProvider, type TurnResult  } from '@/agent';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type Envelope, type TimeHeaderProvider, type PerchSlotHooks, type TurnResult  } from '@/agent';
 import { DEFAULT_TASK_BOARD_CONFIG, type DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
@@ -311,6 +311,13 @@ export interface DiscordBotOptions {
 
     /** The perch session's own provider — the perch-channel and slot envelopes' counterpart of {@link CreateDiscordBotOptions.timeHeader}. */
     perchTimeHeader?: TimeHeaderProvider
+
+    /**
+     * Slot-boundary callbacks for the perch driver (`createPerchConductor`'s own `slotHooks`),
+     * forwarded to `setupPerchDriverAndScheduler` unchanged. Without them a perch identity-change
+     * reopen would have no slot boundary to wait for and would never fire.
+     */
+    perchSlotHooks?: PerchSlotHooks
 }
 
 /**
@@ -1023,6 +1030,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     discordCapability,
                     isCostPaused: options.isCostPaused,
                     timeHeader:   options.perchTimeHeader,
+                    slotHooks:    options.perchSlotHooks,
                 });
                 perchDriver = perchSetup.driver;
                 perchScheduler = perchSetup.scheduler;

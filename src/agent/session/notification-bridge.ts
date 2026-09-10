@@ -165,13 +165,15 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
         if(dedupeSeen.has(dedupeKey)) {
             return true;
         }
-        rememberKey(dedupeKey);
 
         const envelope = buildNotificationEnvelope({
             source, text, now: at ?? new Date(clock.now()), timezone, timeHeader: timeHeader(), wake,
         });
 
         if(wake) {
+            // Burned up front on this path: `submit()` opens a real turn and the conductor owns
+            // the envelope from here, so a later failure is a failed turn, not a lost hand-off.
+            rememberKey(dedupeKey);
             void (async (): Promise<void> => {
                 let result: TurnResult;
                 try {
@@ -189,13 +191,26 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
                     logger.warn({ err, source, dedupeKey }, 'Failed to deliver a wake notification\'s reply');
                 }
             })();
-        } else {
-            try {
-                conductor.appendWithoutTurn(envelope);
-            } catch (err) {
-                logger.warn({ err, source, dedupeKey }, 'Failed to append accumulate notification');
-            }
+            return true;
         }
+
+        // Accumulate-only: the key is burned ONLY once the conductor has actually taken the
+        // envelope (queued on the live session, or held in its reopen buffer). Burning it on a
+        // refusal would leave the source believing this occurrence was handled while nothing was
+        // ever appended — and a source with its own stable key (a health outage's key is stable
+        // for the whole epoch) would then never retry it.
+        let accepted: boolean;
+        try {
+            accepted = conductor.appendWithoutTurn(envelope);
+        } catch (err) {
+            logger.warn({ err, source, dedupeKey }, 'Failed to append accumulate notification');
+            return false;
+        }
+        if(!accepted) {
+            logger.debug({ source, dedupeKey }, 'Conductor did not accept an accumulate notification; leaving the dedupe key unburned for a retry');
+            return false;
+        }
+        rememberKey(dedupeKey);
         return true;
     }
 

@@ -6,7 +6,7 @@ import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendEnvelopeResponse } from '../response-sender';
 import {
-    type ContextBuilder, type PerchConfig, type PerchScheduler, type PerchDriver, type ActivityLogger,
+    type ContextBuilder, type PerchConfig, type PerchScheduler, type PerchDriver, type PerchSlotHooks, type ActivityLogger,
     type Clock, type Conductor, type Envelope, type SubmitOptions, type TimeHeaderProvider, type TurnResult,
     createPerchScheduler, createPerchDriver
 } from '@/agent';
@@ -33,6 +33,8 @@ interface SetupPerchDriverParams {
     isCostPaused?:      () => boolean
     /** Session-peers block 4: forwarded to {@link createPerchDriver} unchanged — see its own `PerchDriverDeps.timeHeader` doc. */
     timeHeader?:        TimeHeaderProvider
+    /** Slot-boundary callbacks, forwarded to {@link createPerchDriver} unchanged — see `PerchSlotHooks`. Supplied by `createPerchConductor`, so an identity-driven system-prompt reopen waits for the open slot to end. */
+    slotHooks?:         PerchSlotHooks
 }
 
 /**
@@ -109,7 +111,7 @@ export function setupPerchDriverAndScheduler(params: SetupPerchDriverParams): {
     driver:    PerchDriver
     scheduler: PerchScheduler
 } {
-    const { conductor, perchConfig, clock, contextBuilder, activityLogger, channelRegistry, responseRouter, client, rateLimiter, discordCapability, isCostPaused, timeHeader } = params;
+    const { conductor, perchConfig, clock, contextBuilder, activityLogger, channelRegistry, responseRouter, client, rateLimiter, discordCapability, isCostPaused, timeHeader, slotHooks } = params;
 
     // Stryker disable next-line BlockStatement: composition root — timezone-based hour resolution is not unit-testable with fake timers
     const getCurrentLocalHour = (): number => DateTime.now().setZone(perchConfig.timezone).hour;
@@ -126,6 +128,7 @@ export function setupPerchDriverAndScheduler(params: SetupPerchDriverParams): {
         getCurrentLocalHour,
         activityLogger,
         timeHeader,
+        slotHooks,
         logger,
     });
 

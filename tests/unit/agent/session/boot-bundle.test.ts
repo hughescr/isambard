@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, jest, test } from 'bun:test';
-import { IdentityCache } from '@/agent/identity-cache';
 import {
     createBootBundleBuilder,
     formatBootBundle,
@@ -34,7 +33,6 @@ describe('formatBootBundle — conversation fresh', () => {
     const baseParts: BootBundleParts = {
         role:        'conversation',
         kind:        'fresh',
-        identity:    'I am Isambard.',
         recentUsers: [],
         lostTasks:   [],
         undelivered: [],
@@ -47,22 +45,20 @@ describe('formatBootBundle — conversation fresh', () => {
         expect(text).toBe([
             '[BOOT BUNDLE · conversation · fresh]',
             'Working memory was reset (compaction or restart); this bundle re-seeds it.',
-            '## Identity\nI am Isambard.',
         ].join('\n\n'));
     });
 
     test('renders the ambient time header between the reset notice and the first section', () => {
-        const text = formatBootBundle({ ...baseParts, timeHeader: '## Current Time\n- UTC: now\n- Perch: idle\n- Quota: 5-hour 42%' });
+        const text = formatBootBundle({ ...baseParts, timeHeader: '## Current Time\n- UTC: now\n- Perch: idle\n- Quota: 5-hour 42% used' });
 
         expect(text).toBe([
             '[BOOT BUNDLE · conversation · fresh]',
             'Working memory was reset (compaction or restart); this bundle re-seeds it.',
-            '## Current Time\n- UTC: now\n- Perch: idle\n- Quota: 5-hour 42%',
-            '## Identity\nI am Isambard.',
+            '## Current Time\n- UTC: now\n- Perch: idle\n- Quota: 5-hour 42% used',
         ].join('\n\n'));
     });
 
-    test('section order: identity, current focus, events, task list, channels, background tasks, recently talking to, lost tasks, undelivered', () => {
+    test('section order: current focus, events, task list, channels, background tasks, recently talking to, lost tasks, undelivered — and never an identity section, which now lives in the system prompt', () => {
         const text = formatBootBundle({
             ...baseParts,
             currentFocus:    'Working on P6.',
@@ -75,8 +71,8 @@ describe('formatBootBundle — conversation fresh', () => {
             undelivered:     ['envelope-1'],
         });
 
+        expect(text).not.toContain('## Identity');
         const indices = [
-            '## Identity',
             '## Current focus',
             '## Events (last 24h)',
             '## Task list',
@@ -146,14 +142,13 @@ describe('formatBootBundle — conversation compact', () => {
     const baseParts: BootBundleParts = {
         role:        'conversation',
         kind:        'compact',
-        identity:    'I am Isambard.',
         recentUsers: [],
         lostTasks:   [],
         undelivered: [],
         activeTasks: [],
     };
 
-    test('exact text: header, reset notice, identity, current focus, events, task list, active tasks', () => {
+    test('exact text: header, reset notice, current focus, events, task list, active tasks — no identity section', () => {
         const text = formatBootBundle({
             ...baseParts,
             currentFocus:    'Working on P6.',
@@ -165,7 +160,6 @@ describe('formatBootBundle — conversation compact', () => {
         expect(text).toBe([
             '[BOOT BUNDLE · conversation · compact]',
             'Working memory was reset (compaction or restart); this bundle re-seeds it.',
-            '## Identity\nI am Isambard.',
             '## Current focus\nWorking on P6.',
             '## Events since you last knew\n- /events/1 (5m ago): did a thing',
             '## Task list\nWorking on: refactor',
@@ -217,10 +211,9 @@ describe('formatBootBundle — conversation resume', () => {
         ].join('\n\n'));
     });
 
-    test('never renders a reset notice, identity, current focus, task list or channels, even when provided', () => {
+    test('never renders a reset notice, current focus, task list or channels, even when provided', () => {
         const text = formatBootBundle({
             ...baseParts,
-            identity:        'I am Isambard.',
             currentFocus:    'Working on P6.',
             taskListSummary: 'Working on: refactor',
             channelList:     '#general',
@@ -229,7 +222,6 @@ describe('formatBootBundle — conversation resume', () => {
         });
 
         expect(text).not.toContain('Working memory was reset');
-        expect(text).not.toContain('## Identity');
         expect(text).not.toContain('## Current focus');
         expect(text).not.toContain('## Task list');
         expect(text).not.toContain('## Channels');
@@ -263,14 +255,13 @@ describe('formatBootBundle — perch fresh/compact', () => {
     const baseParts: BootBundleParts = {
         role:        'perch',
         kind:        'fresh',
-        identity:    'I am Isambard.',
         recentUsers: [],
         lostTasks:   [],
         undelivered: [],
         activeTasks: [],
     };
 
-    test('order: header, reset notice, identity, task list, perch context, lost, undelivered — no channels/recently-talking-to/background-tasks', () => {
+    test('order: header, reset notice, task list, perch context, lost, undelivered — no identity/channels/recently-talking-to/background-tasks', () => {
         const text = formatBootBundle({
             ...baseParts,
             taskListSummary: 'Working on: perch task',
@@ -284,18 +275,18 @@ describe('formatBootBundle — perch fresh/compact', () => {
         expect(text).toBe([
             '[BOOT BUNDLE · perch · fresh]',
             'Working memory was reset (compaction or restart); this bundle re-seeds it.',
-            '## Identity\nI am Isambard.',
             '## Task list\nWorking on: perch task',
             '## Current Time\n- 2026-09-04...',
             '## Background tasks lost at restart\nlost-a',
             '## Envelopes without a delivered response\nundelivered-a',
         ].join('\n\n'));
+        expect(text).not.toContain('## Identity');
         expect(text).not.toContain('## Channels');
         expect(text).not.toContain('## Recently talking to');
         expect(text).not.toContain('## Background tasks\n');
     });
 
-    test('renders the ambient time header ahead of identity, alongside the perch context\'s own bare header', () => {
+    test('renders the ambient time header ahead of the body, alongside the perch context\'s own bare header', () => {
         const text = formatBootBundle({
             ...baseParts,
             timeHeader:   '## Current Time\n- UTC: now\n- Conversation: replying in #general',
@@ -306,7 +297,6 @@ describe('formatBootBundle — perch fresh/compact', () => {
             '[BOOT BUNDLE · perch · fresh]',
             'Working memory was reset (compaction or restart); this bundle re-seeds it.',
             '## Current Time\n- UTC: now\n- Conversation: replying in #general',
-            '## Identity\nI am Isambard.',
             '## Current Time\n- 2026-09-04...',
         ].join('\n\n'));
     });
@@ -317,7 +307,6 @@ describe('formatBootBundle — perch fresh/compact', () => {
         expect(text).toBe([
             '[BOOT BUNDLE · perch · fresh]',
             'Working memory was reset (compaction or restart); this bundle re-seeds it.',
-            '## Identity\nI am Isambard.',
         ].join('\n\n'));
     });
 
@@ -327,7 +316,6 @@ describe('formatBootBundle — perch fresh/compact', () => {
         expect(text).toBe([
             '[BOOT BUNDLE · perch · compact]',
             'Working memory was reset (compaction or restart); this bundle re-seeds it.',
-            '## Identity\nI am Isambard.',
             '## Task list\nWorking on: perch task',
         ].join('\n\n'));
     });
@@ -347,13 +335,12 @@ describe('formatBootBundle — perch resume', () => {
         expect(formatBootBundle(baseParts)).toBe('');
     });
 
-    test('never renders identity, task list or perch context, even when provided', () => {
+    test('never renders task list or perch context, even when provided', () => {
         const text = formatBootBundle({
-            ...baseParts, identity: 'I am Isambard.', taskListSummary: 'Working on: perch task', perchContext: '## Current Time\n- x', lostTasks: ['lost-1'],
+            ...baseParts, taskListSummary: 'Working on: perch task', perchContext: '## Current Time\n- x', lostTasks: ['lost-1'],
         });
 
         expect(text).not.toContain('Working memory was reset');
-        expect(text).not.toContain('## Identity');
         expect(text).not.toContain('## Task list');
         expect(text).not.toContain('## Current Time');
     });
@@ -373,41 +360,37 @@ describe('formatBootBundle — perch resume', () => {
 });
 
 describe('createBootBundleBuilder — conversation fresh', () => {
-    test('reads identity through identityCache.get(); never touches loadCoreIdentity', async () => {
-        const loader = jest.fn().mockResolvedValue('identity text');
-        const identityCache = new IdentityCache(loader);
+    test('renders no identity section at all — identity now lives in the session system prompt, so the bundle never fetches or re-seeds it', async () => {
         const loadCoreIdentity = jest.fn();
         const contextBuilder = { ...makeContextBuilder(), loadCoreIdentity };
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader('summary'), now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'fresh' });
 
-        expect(loader).toHaveBeenCalledTimes(1);
-        expect(text).toContain('identity text');
+        expect(text).not.toContain('## Identity');
+        expect(text).toContain('## Task list\nsummary');
         expect(loadCoreIdentity).not.toHaveBeenCalled();
     });
 
     test('asks the injected timeHeader provider for the ambient header and renders it in the bundle', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue('identity text'));
         const contextBuilder = makeContextBuilder();
-        const timeHeader = jest.fn(() => '## Current Time\n- Perch: idle since 14:02\n- Quota: 5-hour 42%');
+        const timeHeader = jest.fn(() => '## Current Time\n- Perch: idle since 14:02\n- Quota: 5-hour 42% used');
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'fresh' });
 
         expect(timeHeader).toHaveBeenCalledTimes(1);
-        expect(text).toContain('## Current Time\n- Perch: idle since 14:02\n- Quota: 5-hour 42%');
+        expect(text).toContain('## Current Time\n- Perch: idle since 14:02\n- Quota: 5-hour 42% used');
     });
 
     test('calls loadHotState(new Date(now())) and loadRecentEventsSince(24h, 50, new Date(now())) when eventsSinceMs is omitted', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder();
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         await builder.build({ ...emptyInput, kind: 'fresh' });
@@ -417,10 +400,9 @@ describe('createBootBundleBuilder — conversation fresh', () => {
     });
 
     test('respects custom bootEventsWindowMs/bootEventsLimit', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder();
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW, bootEventsWindowMs: 1000, bootEventsLimit: 5,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW, bootEventsWindowMs: 1000, bootEventsLimit: 5,
         });
 
         await builder.build({ ...emptyInput, kind: 'fresh' });
@@ -429,10 +411,9 @@ describe('createBootBundleBuilder — conversation fresh', () => {
     });
 
     test('a given eventsSinceMs overrides bootEventsWindowMs even for fresh', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder();
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         await builder.build({ ...emptyInput, kind: 'fresh', eventsSinceMs: NOW() - 5000 });
@@ -441,14 +422,13 @@ describe('createBootBundleBuilder — conversation fresh', () => {
     });
 
     test('formats loadRecentEventsSince results with formatMemoryPreview into the events section', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder({
             loadRecentEventsSince: jest.fn().mockResolvedValue([
                 { path: '/events/1', content: 'deployed the thing', contentType: 'text/plain', metadata: {}, createdAt: T0.toISOString(), updatedAt: T0.toISOString() },
             ]),
         });
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'fresh' });
@@ -459,11 +439,10 @@ describe('createBootBundleBuilder — conversation fresh', () => {
     });
 
     test('calls channelListProvider and includes its text when present', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder();
         const channelListProvider = jest.fn().mockResolvedValue('#general, #random');
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), channelListProvider, now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), channelListProvider, now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'fresh' });
@@ -473,10 +452,9 @@ describe('createBootBundleBuilder — conversation fresh', () => {
     });
 
     test('passes lostTasks/undelivered/recentUsers/activeTasks through to the rendered text', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder();
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({
@@ -492,12 +470,11 @@ describe('createBootBundleBuilder — conversation fresh', () => {
 });
 
 describe('createBootBundleBuilder — conversation compact', () => {
-    test('fetches identity/state/task-list/events but never the channel list', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue('identity text'));
+    test('fetches state/task-list/events but never identity or the channel list', async () => {
         const contextBuilder = makeContextBuilder();
         const channelListProvider = jest.fn().mockResolvedValue('#general');
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader('summary'), channelListProvider, now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader('summary'), channelListProvider, now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'compact', eventsSinceMs: NOW() - 2000 });
@@ -505,16 +482,15 @@ describe('createBootBundleBuilder — conversation compact', () => {
         expect(channelListProvider).not.toHaveBeenCalled();
         expect(contextBuilder.loadHotState).toHaveBeenCalledWith(new Date(NOW()));
         expect(contextBuilder.loadRecentEventsSince).toHaveBeenCalledWith(2000, 50, new Date(NOW()));
-        expect(text).toContain('## Identity\nidentity text');
+        expect(text).not.toContain('## Identity');
         expect(text).toContain('## Task list\nsummary');
         expect(text).not.toContain('## Channels');
     });
 
     test('omits the events section when loadRecentEventsSince resolves with zero items, even though eventsSinceMs was given', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder({ loadRecentEventsSince: jest.fn().mockResolvedValue([]) });
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'compact', eventsSinceMs: NOW() - 2000 });
@@ -524,7 +500,6 @@ describe('createBootBundleBuilder — conversation compact', () => {
     });
 
     test('joins multiple rendered event previews with a newline between them', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder({
             loadRecentEventsSince: jest.fn().mockResolvedValue([
                 { path: '/events/1', content: 'first thing', contentType: 'text/plain', metadata: {}, createdAt: T0.toISOString(), updatedAt: T0.toISOString() },
@@ -532,7 +507,7 @@ describe('createBootBundleBuilder — conversation compact', () => {
             ]),
         });
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'compact', eventsSinceMs: NOW() - 2000 });
@@ -541,10 +516,9 @@ describe('createBootBundleBuilder — conversation compact', () => {
     });
 
     test('omits the events section and fetches no events when eventsSinceMs is not given', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder();
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'compact' });
@@ -554,10 +528,9 @@ describe('createBootBundleBuilder — conversation compact', () => {
     });
 
     test('lostTasks/undelivered/recentUsers passed to build() never appear in a compact bundle', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue('identity text'));
         const contextBuilder = makeContextBuilder();
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({
@@ -572,19 +545,16 @@ describe('createBootBundleBuilder — conversation compact', () => {
 });
 
 describe('createBootBundleBuilder — conversation resume', () => {
-    test('never fetches identity, task list, hot state or the channel list', async () => {
-        const identityLoader = jest.fn().mockResolvedValue('identity text');
-        const identityCache = new IdentityCache(identityLoader);
+    test('never fetches the task list, hot state or the channel list', async () => {
         const contextBuilder = makeContextBuilder();
         const taskListReader = makeTaskListReader('summary');
         const channelListProvider = jest.fn().mockResolvedValue('#general');
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader, channelListProvider, now: NOW,
+            role: 'conversation', contextBuilder, taskListReader, channelListProvider, now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'resume' });
 
-        expect(identityLoader).not.toHaveBeenCalled();
         expect(taskListReader.buildTaskListSummary).not.toHaveBeenCalled();
         expect(contextBuilder.loadHotState).not.toHaveBeenCalled();
         expect(channelListProvider).not.toHaveBeenCalled();
@@ -592,11 +562,10 @@ describe('createBootBundleBuilder — conversation resume', () => {
     });
 
     test('a non-empty resume carries the ambient header too', async () => {
-        const identityCache = new IdentityCache(jest.fn());
         const contextBuilder = makeContextBuilder();
         const timeHeader = jest.fn(() => '## Current Time\n- Perch: idle');
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'resume', activeTasks: ['active-1'] });
@@ -605,14 +574,13 @@ describe('createBootBundleBuilder — conversation resume', () => {
     });
 
     test('fetches events via eventsSinceMs and renders them, with no reset notice', async () => {
-        const identityCache = new IdentityCache(jest.fn());
         const contextBuilder = makeContextBuilder({
             loadRecentEventsSince: jest.fn().mockResolvedValue([
                 { path: '/events/1', content: 'deployed the thing', contentType: 'text/plain', metadata: {}, createdAt: T0.toISOString(), updatedAt: T0.toISOString() },
             ]),
         });
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'resume', eventsSinceMs: NOW() - 3000 });
@@ -623,10 +591,9 @@ describe('createBootBundleBuilder — conversation resume', () => {
     });
 
     test('renders \'\' when eventsSinceMs is omitted and there is nothing else to report', async () => {
-        const identityCache = new IdentityCache(jest.fn());
         const contextBuilder = makeContextBuilder();
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'resume' });
@@ -636,10 +603,9 @@ describe('createBootBundleBuilder — conversation resume', () => {
     });
 
     test('renders lost tasks/undelivered/active tasks even with no events mark', async () => {
-        const identityCache = new IdentityCache(jest.fn());
         const contextBuilder = makeContextBuilder();
         const builder = createBootBundleBuilder({
-            role: 'conversation', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({
@@ -652,11 +618,10 @@ describe('createBootBundleBuilder — conversation resume', () => {
 
 describe('createBootBundleBuilder — perch fresh/compact', () => {
     test('calls buildPerchContext(new Date(now())) exactly once; never loadHotState/loadRecentEventsSince; omits channels and never calls channelListProvider', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue('identity text'));
         const contextBuilder = makeContextBuilder({ buildPerchContext: jest.fn().mockResolvedValue('## Current Time\n- perch block') });
         const channelListProvider = jest.fn().mockResolvedValue('#general');
         const builder = createBootBundleBuilder({
-            role: 'perch', identityCache, contextBuilder, taskListReader: makeTaskListReader(), channelListProvider, now: NOW,
+            role: 'perch', contextBuilder, taskListReader: makeTaskListReader(), channelListProvider, now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'fresh' });
@@ -671,24 +636,22 @@ describe('createBootBundleBuilder — perch fresh/compact', () => {
     });
 
     test('asks the injected timeHeader provider for the ambient header and renders it in the bundle', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue('identity text'));
         const contextBuilder = makeContextBuilder();
-        const timeHeader = jest.fn(() => '## Current Time\n- Conversation: idle since 14:02\n- Quota: 5-hour 42%');
+        const timeHeader = jest.fn(() => '## Current Time\n- Conversation: idle since 14:02\n- Quota: 5-hour 42% used');
         const builder = createBootBundleBuilder({
-            role: 'perch', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
+            role: 'perch', contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'fresh' });
 
         expect(timeHeader).toHaveBeenCalledTimes(1);
-        expect(text).toContain('## Current Time\n- Conversation: idle since 14:02\n- Quota: 5-hour 42%');
+        expect(text).toContain('## Current Time\n- Conversation: idle since 14:02\n- Quota: 5-hour 42% used');
     });
 
     test('includes the task list section when the reader returns a summary', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue(''));
         const contextBuilder = makeContextBuilder();
         const builder = createBootBundleBuilder({
-            role: 'perch', identityCache, contextBuilder, taskListReader: makeTaskListReader('Working on: perch stuff'), now: NOW,
+            role: 'perch', contextBuilder, taskListReader: makeTaskListReader('Working on: perch stuff'), now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'fresh' });
@@ -696,11 +659,24 @@ describe('createBootBundleBuilder — perch fresh/compact', () => {
         expect(text).toContain('## Task list\nWorking on: perch stuff');
     });
 
-    test('compact behaves exactly like fresh', async () => {
-        const identityCache = new IdentityCache(jest.fn().mockResolvedValue('identity text'));
+    test('renders no identity section for fresh or compact — identity now lives in the perch system prompt', async () => {
         const contextBuilder = makeContextBuilder({ buildPerchContext: jest.fn().mockResolvedValue('## Current Time\n- perch block') });
         const builder = createBootBundleBuilder({
-            role: 'perch', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'perch', contextBuilder, taskListReader: makeTaskListReader('Working on: perch stuff'), now: NOW,
+        });
+
+        const fresh = await builder.build({ ...emptyInput, kind: 'fresh' });
+        const compact = await builder.build({ ...emptyInput, kind: 'compact' });
+
+        expect(fresh).not.toContain('## Identity');
+        expect(compact).not.toContain('## Identity');
+        expect(fresh).toContain('## Task list\nWorking on: perch stuff');
+    });
+
+    test('compact behaves exactly like fresh', async () => {
+        const contextBuilder = makeContextBuilder({ buildPerchContext: jest.fn().mockResolvedValue('## Current Time\n- perch block') });
+        const builder = createBootBundleBuilder({
+            role: 'perch', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'compact' });
@@ -711,29 +687,25 @@ describe('createBootBundleBuilder — perch fresh/compact', () => {
 });
 
 describe('createBootBundleBuilder — perch resume', () => {
-    test('never fetches identity, task list or perch context', async () => {
-        const identityLoader = jest.fn().mockResolvedValue('identity text');
-        const identityCache = new IdentityCache(identityLoader);
+    test('never fetches the task list or perch context', async () => {
         const contextBuilder = makeContextBuilder();
         const taskListReader = makeTaskListReader('summary');
         const builder = createBootBundleBuilder({
-            role: 'perch', identityCache, contextBuilder, taskListReader, now: NOW,
+            role: 'perch', contextBuilder, taskListReader, now: NOW,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'resume' });
 
-        expect(identityLoader).not.toHaveBeenCalled();
         expect(taskListReader.buildTaskListSummary).not.toHaveBeenCalled();
         expect(contextBuilder.buildPerchContext).not.toHaveBeenCalled();
         expect(text).toBe('');
     });
 
     test('a non-empty perch resume carries the ambient header too', async () => {
-        const identityCache = new IdentityCache(jest.fn());
         const contextBuilder = makeContextBuilder();
         const timeHeader = jest.fn(() => '## Current Time\n- Conversation: idle');
         const builder = createBootBundleBuilder({
-            role: 'perch', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
+            role: 'perch', contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
         });
 
         const text = await builder.build({ ...emptyInput, kind: 'resume', activeTasks: ['active-a'] });
@@ -742,10 +714,9 @@ describe('createBootBundleBuilder — perch resume', () => {
     });
 
     test('renders lost tasks/undelivered/active tasks when present', async () => {
-        const identityCache = new IdentityCache(jest.fn());
         const contextBuilder = makeContextBuilder();
         const builder = createBootBundleBuilder({
-            role: 'perch', identityCache, contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+            role: 'perch', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
         const text = await builder.build({

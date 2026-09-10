@@ -913,6 +913,9 @@ export async function createApp(): Promise<App> {
     let perchJournal: SessionJournal | undefined;
     // R2: the perch conductor's own equivalent of conversationSetWakeTurnDelivery above.
     let perchSetWakeTurnDelivery: PerchConductorResult['setWakeTurnDelivery'] | undefined;
+    // Pure pass-through to bot.ts's perch setup: the perch conductor owns the deferral policy
+    // (see createPerchConductor), this only hands the driver its boundary callbacks.
+    let perchSlotHooks: PerchConductorResult['slotHooks'] | undefined;
     if(config.perch?.enabled) {
         // eslint-disable-next-line prefer-const -- assigned once, immediately after createPerchConductor resolves; the taskListReader closure below must reference the finished conductor, which cannot exist before this call returns
         let perchConductorForTaskReader: Conductor | undefined;
@@ -946,6 +949,7 @@ export async function createApp(): Promise<App> {
         perchConductor = builtPerchConductor.conductor;
         perchLedgerStore = builtPerchConductor.ledgerStore;
         perchSetWakeTurnDelivery = builtPerchConductor.setWakeTurnDelivery;
+        perchSlotHooks = builtPerchConductor.slotHooks;
     }
     // Stryker restore all
 
@@ -1064,6 +1068,7 @@ export async function createApp(): Promise<App> {
         // perch-channel envelope and the perch slot envelope).
         timeHeader:               conversationTimeHeader,
         perchTimeHeader,
+        perchSlotHooks,
     });
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Discord bot created');

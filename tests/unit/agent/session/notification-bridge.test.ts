@@ -20,12 +20,12 @@ function fakeStatus(opened: boolean): ConductorStatus {
 /** A fake conductor exposing only the surface the bridge depends on. `opened` defaults to `true` (a fully-open conductor); pass `false` to model one that is attached but has not finished `open()` yet. */
 function createFakeConductor(opened = true): Pick<Conductor, 'submit' | 'appendWithoutTurn' | 'status'> & {
     submit:            Mock<(envelope: Envelope, options: SubmitOptions) => Promise<TurnResult>>
-    appendWithoutTurn: Mock<(envelope: Envelope) => void>
+    appendWithoutTurn: Mock<(envelope: Envelope) => boolean>
     status:            Mock<() => ConductorStatus>
 } {
     return {
         submit:            mock((_envelope: Envelope, _options: SubmitOptions) => Promise.resolve({} as TurnResult)),
-        appendWithoutTurn: mock((_envelope: Envelope) => {}),
+        appendWithoutTurn: mock((_envelope: Envelope) => true),
         status:            mock(() => fakeStatus(opened)),
     };
 }
@@ -77,6 +77,23 @@ describe('createNotificationBridge', () => {
         expect(options.priority).toBe('other');
         expect(envelope.hostPriority).toBe('wake');
         expect(envelope.shouldQuery).toBe(true);
+    });
+
+    test('wake:true burns the dedupe key eagerly, before conductor.submit() has resolved', () => {
+        let resolveSubmit!: (result: TurnResult) => void;
+        conductor.submit.mockImplementationOnce(() => new Promise<TurnResult>((resolve) => {
+            resolveSubmit = resolve;
+        }));
+
+        bridge.notify(baseParams({ wake: true, dedupeKey: 'wake-dupe' }));
+        // A second call with the same key, issued while the first submit() is still pending,
+        // must already see the key as burned rather than submitting a second time.
+        const second = bridge.notify(baseParams({ wake: true, dedupeKey: 'wake-dupe' }));
+
+        expect(second).toBe(true);
+        expect(conductor.submit).toHaveBeenCalledTimes(1);
+
+        resolveSubmit({ response: null, outcome: undefined } as TurnResult);
     });
 
     test('wake:false appends via conductor.appendWithoutTurn, never submit', () => {
@@ -170,15 +187,43 @@ describe('createNotificationBridge', () => {
         );
     });
 
-    test('a throwing conductor.appendWithoutTurn is caught and logged, never thrown out of notify()', () => {
+    test('a wake:false notify the conductor could not accept returns false and does NOT burn the dedupe key', () => {
+        conductor.appendWithoutTurn.mockImplementationOnce(() => false);
+
+        expect(bridge.notify(baseParams({ wake: false, dedupeKey: 'retry-key' }))).toBe(false);
+        expect(logger.debug).toHaveBeenCalledWith(
+            { source: 'test-source', dedupeKey: 'retry-key' },
+            'Conductor did not accept an accumulate notification; leaving the dedupe key unburned for a retry'
+        );
+
+        // The same key retried later must actually be delivered: a burned key would drop this
+        // notification permanently, since the source has already forgotten this occurrence.
+        expect(bridge.notify(baseParams({ wake: false, dedupeKey: 'retry-key' }))).toBe(true);
+        expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(2);
+    });
+
+    test('a wake:false notify accepted into the conductor\'s reopen buffer returns true and burns the key once', () => {
+        expect(bridge.notify(baseParams({ wake: false, dedupeKey: 'buffered-key' }))).toBe(true);
+        expect(bridge.notify(baseParams({ wake: false, dedupeKey: 'buffered-key' }))).toBe(true);
+
+        expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(1);
+    });
+
+    test('a throwing conductor.appendWithoutTurn is caught and logged, never thrown out of notify(), and returns false without burning the dedupe key', () => {
         conductor.appendWithoutTurn.mockImplementationOnce(() => {
             throw new Error('append boom');
         });
 
+        let delivered: boolean | undefined;
         expect(() => {
-            bridge.notify(baseParams({ wake: false, dedupeKey: 'throw-key' }));
+            delivered = bridge.notify(baseParams({ wake: false, dedupeKey: 'throw-key' }));
         }).not.toThrow();
+        expect(delivered).toBe(false);
         expect(logger.warn).toHaveBeenCalled();
+
+        // The dedupe key must not have been burned: a retry with the same key tries again.
+        bridge.notify(baseParams({ wake: false, dedupeKey: 'throw-key' }));
+        expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(2);
     });
 
     test('notify() before attachConductor() logs at debug and drops, without calling submit/appendWithoutTurn, and returns false', () => {

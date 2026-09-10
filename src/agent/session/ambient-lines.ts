@@ -8,8 +8,8 @@
  *    the OTHER role's ledger: its open turn, that turn's phase (and the LLM-generated phase
  *    digest riding on it), its running tasks, and — for a live perch slot turn — the slot fields
  *    the perch envelope's {@link import('./types').EnvelopeMeta} put on `Ledger.perch`.
- * 2. **How much of the Claude Max subscription is spent** — `Quota: 5-hour 42% (resets 14:00) ·
- *    week 61% (resets Thu 09:00)`, from `Ledger.quota` (block 3: SDK `rate_limit_event` frames
+ * 2. **How much of the Claude Max subscription is spent** — `Quota: 5-hour 42% used (resets 14:00) ·
+ *    week 61% used (resets Thu 09:00)`, from `Ledger.quota` (block 3: SDK `rate_limit_event` frames
  *    primarily, the usage poller secondarily), merged PER WINDOW across both ledgers by their
  *    `quota.at` stamps — see {@link freshestWindow}. Omitted entirely while nothing is known.
  *
@@ -148,7 +148,7 @@ function otherSessionLine(other: Ledger, now: Date, timezone: string): string {
 
 /** `42%`, or `42% (resets 14:00)` when the source told us when the window rolls over. */
 function renderWindow(window: QuotaWindow, now: Date, timezone: string): string {
-    const percent = `${Math.round(window.utilization)}%`;
+    const percent = `${Math.round(window.utilization)}% used`;
     return window.resetsAt === undefined ? percent : `${percent} (resets ${formatStamp(window.resetsAt, now, timezone)})`;
 }
 

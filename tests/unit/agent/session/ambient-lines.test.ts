@@ -169,7 +169,7 @@ describe('composeAmbientLines: the quota line', () => {
     it('renders both windows with their reset stamps', () => {
         const self = ledger('conversation', { quota: QUOTA });
 
-        expect(compose({ self })).toEqual(['Quota: 5-hour 42% (resets 15:00) · week 61% (resets Thu 09:00)']);
+        expect(compose({ self })).toEqual(['Quota: 5-hour 42% used (resets 15:00) · week 61% used (resets Thu 09:00)']);
     });
 
     it('omits the quota line entirely when no window is known', () => {
@@ -185,19 +185,19 @@ describe('composeAmbientLines: the quota line', () => {
     it('renders a window with no reset stamp as a bare percentage', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 42 }, source: 'headers', at: NOW } });
 
-        expect(compose({ self })).toEqual(['Quota: 5-hour 42%']);
+        expect(compose({ self })).toEqual(['Quota: 5-hour 42% used']);
     });
 
     it('renders the weekly window alone when the five-hour window is unknown', () => {
         const self = ledger('conversation', { quota: { sevenDay: { utilization: 61 }, source: 'headers', at: NOW } });
 
-        expect(compose({ self })).toEqual(['Quota: week 61%']);
+        expect(compose({ self })).toEqual(['Quota: week 61% used']);
     });
 
     it('rounds utilization to whole percent', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 42.5 }, sevenDay: { utilization: 61.4 }, source: 'headers', at: NOW } });
 
-        expect(compose({ self })).toEqual(['Quota: 5-hour 43% · week 61%']);
+        expect(compose({ self })).toEqual(['Quota: 5-hour 43% used · week 61% used']);
     });
 
     it('falls back to the other session\'s quota when this session has seen none', () => {
@@ -205,7 +205,7 @@ describe('composeAmbientLines: the quota line', () => {
 
         expect(compose({ other })).toEqual([
             'Perch: idle',
-            'Quota: 5-hour 42% (resets 15:00) · week 61% (resets Thu 09:00)',
+            'Quota: 5-hour 42% used (resets 15:00) · week 61% used (resets Thu 09:00)',
         ]);
     });
 
@@ -213,7 +213,7 @@ describe('composeAmbientLines: the quota line', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 7 }, sevenDay: { utilization: 8 }, source: 'headers', at: NOW } });
         const other = ledger('perch', { quota: QUOTA });
 
-        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: 5-hour 7% · week 8%']);
+        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: 5-hour 7% used · week 8% used']);
     });
 
     it('takes the other session\'s reading of a window when it is the newer of the two', () => {
@@ -222,7 +222,7 @@ describe('composeAmbientLines: the quota line', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 20 }, source: 'headers', at: TODAY_1402 } });
         const other = ledger('perch', { quota: { fiveHour: { utilization: 80 }, sevenDay: { utilization: 70 }, source: 'headers', at: NOW } });
 
-        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: 5-hour 80% · week 70%']);
+        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: 5-hour 80% used · week 70% used']);
     });
 
     it('keeps this session\'s reading of a window the newer ledger does not carry at all', () => {
@@ -231,21 +231,21 @@ describe('composeAmbientLines: the quota line', () => {
         const self = ledger('conversation', { quota: { sevenDay: { utilization: 61, resetsAt: THU_0900 }, source: 'headers', at: TODAY_1402 } });
         const other = ledger('perch', { quota: { fiveHour: { utilization: 80 }, source: 'headers', at: NOW } });
 
-        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: 5-hour 80% · week 61% (resets Thu 09:00)']);
+        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: 5-hour 80% used · week 61% used (resets Thu 09:00)']);
     });
 
     it('keeps this session\'s reading of every window when it is the newer ledger', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 20 }, source: 'headers', at: NOW } });
         const other = ledger('perch', { quota: { fiveHour: { utilization: 80 }, sevenDay: { utilization: 70 }, source: 'headers', at: TODAY_1402 } });
 
-        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: 5-hour 20% · week 70%']);
+        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: 5-hour 20% used · week 70% used']);
     });
 
     it('appends the shared-subscription note when asked for it', () => {
         const self = ledger('conversation', { quota: QUOTA });
 
         expect(compose({ self, sharedQuotaNote: true })).toEqual([
-            'Quota: 5-hour 42% (resets 15:00) · week 61% (resets Thu 09:00) · shared with Craig\'s own sessions',
+            'Quota: 5-hour 42% used (resets 15:00) · week 61% used (resets Thu 09:00) · shared with Craig\'s own sessions',
         ]);
     });
 
@@ -266,7 +266,7 @@ describe('withAmbientLines', () => {
     });
 
     it('appends each line as one more bullet under the header', () => {
-        expect(withAmbientLines('## Current Time\n- UTC: now', ['Perch: idle', 'Quota: 5-hour 42%']))
-            .toBe('## Current Time\n- UTC: now\n- Perch: idle\n- Quota: 5-hour 42%');
+        expect(withAmbientLines('## Current Time\n- UTC: now', ['Perch: idle', 'Quota: 5-hour 42% used']))
+            .toBe('## Current Time\n- UTC: now\n- Perch: idle\n- Quota: 5-hour 42% used');
     });
 });

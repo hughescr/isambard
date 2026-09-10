@@ -22,6 +22,7 @@ export {
 export {
     type PerchDriver,
     type PerchDriverDeps,
+    type PerchSlotHooks,
     type RunSlotOutcome,
     createPerchDriver
 } from './perch-driver';

@@ -125,4 +125,33 @@ describe('InputQueue', () => {
         expect(result.value).toEqual(message);
         expect(result.value?.shouldQuery).toBe(false);
     });
+
+    test('takePending() returns the queued-but-undrained messages, in order, and empties the queue', () => {
+        const queue = new InputQueue();
+        queue.push(userMessage('a'));
+        // eslint-disable-next-line unicorn/prefer-single-call -- InputQueue.push takes exactly one message; this isn't Array#push, so there's no multi-arg call to consolidate into
+        queue.push(userMessage('b'));
+
+        const taken = queue.takePending();
+
+        expect(taken).toEqual([userMessage('a'), userMessage('b')]);
+        expect(queue.size()).toBe(0);
+        expect(queue.takePending()).toEqual([]);
+    });
+
+    test('takePending() on a queue nothing was ever pushed to returns an empty array', () => {
+        expect(new InputQueue().takePending()).toEqual([]);
+    });
+
+    test('a message the consumer already drained is never returned by takePending()', async () => {
+        const queue = new InputQueue();
+        queue.push(userMessage('drained'));
+        // eslint-disable-next-line unicorn/prefer-single-call -- InputQueue.push takes exactly one message; this isn't Array#push, so there's no multi-arg call to consolidate into
+        queue.push(userMessage('still queued'));
+
+        const iterator = queue[Symbol.asyncIterator]();
+        await iterator.next();
+
+        expect(queue.takePending()).toEqual([userMessage('still queued')]);
+    });
 });

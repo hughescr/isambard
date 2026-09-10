@@ -121,7 +121,7 @@ time header) and one data source (the session ledgers).
   - other-session line: `Perch: idle since 14:02` / `Perch: slot "reflection" until 15:00,
     working on <digest>, 1 workflow running` / `Conversation: replying in #general` — from the
     other ledger's turn, phase digest, tasks, and (for perch) the envelope's slot fields.
-  - quota line: `Quota: 5-hour 42% (resets 14:00) · week 61% (resets Thu 09:00)`; omitted when
+  - quota line: `Quota: 5-hour 42% used (resets 14:00) · week 61% used (resets Thu 09:00)`; omitted when
     no quota is known; adds `· shared with Craig's own sessions` only the first time after boot.
     **Amended (review, 2026-09-09):** each window is taken from whichever of the two ledgers holds
     the FRESHER reading of it (`LedgerQuota.at`; a tie goes to `self`), rather than preferring

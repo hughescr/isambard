@@ -174,13 +174,30 @@ export class FakeQuery implements SessionQuery {
     }
 }
 
+/** Options for {@link fakeQueryFn}. */
+export interface FakeQueryFnOptions {
+    /**
+     * Whether the instance created by call number `index` (0-based) drains its prompt iterable
+     * into {@link FakeQuery.consumedPrompts}. Defaults to draining every instance, which is what
+     * the real SDK effectively does — it reads eagerly from the streaming prompt.
+     *
+     * Set it to `false` for an instance whose queue must be left UNREAD, so a test can model the
+     * only state in which the conductor's reopen carry-over is observable: a message pushed onto
+     * a session's queue that the SDK had not yet read when the handle died. With every instance
+     * draining, `InputQueue.takePending()` is always empty by the time a reopen runs and the
+     * carry-over path is unreachable from a conductor-level test.
+     */
+    drainPrompts?: (index: number) => boolean
+}
+
 /** Build a {@link SessionQueryFn} double: every call constructs and records a fresh {@link FakeQuery}. */
-export function fakeQueryFn(): { queryFn: SessionQueryFn, instances: FakeQuery[] } {
+export function fakeQueryFn(options: FakeQueryFnOptions = {}): { queryFn: SessionQueryFn, instances: FakeQuery[] } {
+    const { drainPrompts = () => true } = options;
     const instances: FakeQuery[] = [];
     const queryFn: SessionQueryFn = (params) => {
         const instance = new FakeQuery();
         instance.receivedParams = params;
-        instance.capturePromptDone = instance.capturePrompt(params.prompt);
+        instance.capturePromptDone = drainPrompts(instances.length) ? instance.capturePrompt(params.prompt) : Promise.resolve();
         // A prompt iterable a test scripts to throw would otherwise reject with nobody awaiting
         // it, surfacing as a cross-test unhandled rejection; capturePromptDone above is the
         // awaitable/assertable surface, this just marks the original promise as handled.

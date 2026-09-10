@@ -1,4 +1,5 @@
 import { describe, test, expect } from 'bun:test';
+import { DISCORD_TOOLS_RULE, DURABLE_MEMORY_RULE, MANAGING_QUOTA_SECTION, SERVICE_HEALTH_RULE } from '../../../../src/agent/prompts/shared-sections';
 import {
     buildSessionSystemPrompt,
     buildPeerPrompt,
@@ -7,19 +8,7 @@ import {
     PERCH_ROLE_PROMPT
 } from '../../../../src/agent/prompts/system-prompt';
 import { SESSION_PEER_NAMES } from '../../../../src/agent/session/query-options';
-
-/**
- * Test-local prompt-hygiene check shared by every `buildSessionSystemPrompt` case: no
- * unresolved `{PLACEHOLDER}` tokens, no trailing whitespace on any line, and no duplicated
- * (back-to-back) blank lines.
- */
-function assertPromptHygiene(text: string): void {
-    expect(text).not.toMatch(/\{[A-Z_]+\}/);
-    for(const line of text.split('\n')) {
-        expect(line).not.toMatch(/\s$/);
-    }
-    expect(text).not.toContain('\n\n\n');
-}
+import { assertPromptHygiene } from '../../../helpers/prompt-hygiene';
 
 describe.concurrent('system-prompt', () => {
     describe('buildSessionSystemPrompt', () => {
@@ -109,6 +98,14 @@ describe.concurrent('system-prompt', () => {
             expect(SESSION_BASE_PROMPT).toMatch(/\[BOOT[^\n]*(no reply|nothing to do|not a request)/i);
         });
 
+        test('the boot-bundle catalogue line no longer promises identity in the bundle body — WP4a moved identity into the system prompt itself', () => {
+            const catalogueLine = SESSION_BASE_PROMPT.split('\n').find(line => line.includes('[BOOT BUNDLE'));
+
+            expect(catalogueLine).toBeDefined();
+            expect(catalogueLine).toContain('re-seeds your working memory');
+            expect(catalogueLine).not.toContain('identity');
+        });
+
         test('PERCH_ROLE_PROMPT carries the perch exploration philosophy the one-shot perch prompt used to send every slot, plus the suggestion-level legend', () => {
             // Regression: the first conductor-mode perch turns ended with "light touch, ending here" —
             // the slot envelope carries only the slot name, hint, level number and context, and the
@@ -167,6 +164,38 @@ describe.concurrent('system-prompt', () => {
                 assertPromptHygiene(prompt);
             }
             expect(SESSION_BASE_PROMPT).toContain('five-hour and weekly utilization');
+        });
+
+        test('renders MANAGING_QUOTA_SECTION verbatim, in both roles, rather than a second copy of the same advice', () => {
+            for(const role of ['conversation', 'perch'] as const) {
+                expect(buildSessionSystemPrompt({ role, identity: 'id' })).toContain(MANAGING_QUOTA_SECTION);
+            }
+            expect(SESSION_BASE_PROMPT).toContain(MANAGING_QUOTA_SECTION);
+        });
+
+        test('"## Managing quota" follows "## The subscription is shared" directly, with no section between them', () => {
+            const sharedIndex = SESSION_BASE_PROMPT.indexOf('## The subscription is shared');
+            const quotaIndex = SESSION_BASE_PROMPT.indexOf('## Managing quota');
+
+            expect(sharedIndex).toBeGreaterThan(-1);
+            expect(quotaIndex).toBeGreaterThan(sharedIndex);
+            expect(SESSION_BASE_PROMPT.slice(sharedIndex + '## The subscription is shared'.length, quotaIndex)).not.toContain('\n## ');
+        });
+
+        test('the identity text still comes last, after the quota section', () => {
+            const prompt = buildSessionSystemPrompt({ role: 'conversation', identity: 'unique-identity-marker' });
+
+            expect(prompt.indexOf('## Identity')).toBeGreaterThan(prompt.indexOf('## Managing quota'));
+            expect(prompt.trimEnd().endsWith('unique-identity-marker')).toBe(true);
+        });
+
+        test('renders the durable-memory, Discord-tools and service-health fragments from the same shared constants the sub-agent prompt uses', () => {
+            for(const role of ['conversation', 'perch'] as const) {
+                const prompt = buildSessionSystemPrompt({ role, identity: 'id' });
+                expect(prompt).toContain(DURABLE_MEMORY_RULE);
+                expect(prompt).toContain(DISCORD_TOOLS_RULE);
+                expect(prompt).toContain(SERVICE_HEALTH_RULE);
+            }
         });
 
         test('the peer section is appended after the role section and before the identity text', () => {

@@ -10,7 +10,7 @@
  *
  * @module agent/session/query-options
  */
-import type { HookCallbackMatcher, HookEvent, McpServerConfig, Options, SdkPluginConfig, SettingSource } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentDefinition, HookCallbackMatcher, HookEvent, McpServerConfig, Options, SdkPluginConfig, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { SessionRole } from './types';
 
@@ -81,19 +81,57 @@ export const EXPLICIT_TOOLS = [
 ];
 
 /**
- * Explicit sub-agent definitions.
- * Only general-purpose is overridden (to pin its model). The SDK's built-in Explore and Plan
- * agents are stronger than any one-line override, so they are left as shipped. The built-in
- * `claude` and `statusline-setup` agents cannot be removed via this option.
- * Agent description/prompt strings are configuration - correctness validated by integration tests.
+ * Effort tiers registered as sub-agent types, cheapest first. `max` is deliberately not offered:
+ * it is model-limited, so a launch naming it can fail on the very models a cheap tier picks.
  */
-export const EXPLICIT_AGENTS = {
-    'general-purpose': {
-        description: 'General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks',
-        prompt:      'You are a general-purpose assistant helping with software engineering tasks.',
-        model:       'sonnet' as const,
-    },
-};
+export const SUBAGENT_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+
+/** Effort tiers that may not launch further sub-agents or workflows of their own. */
+export const LAUNCH_RESTRICTED_EFFORTS: readonly string[] = ['low', 'medium'];
+
+/**
+ * Tools a launch-restricted tier may not call. Three names on purpose: the SDK's launch tool is
+ * `Agent` (see `AgentInput` in `sdk-tools.d.ts`, and `agent-naming.ts`, which matches on that
+ * name), while {@link EXPLICIT_TOOLS} and {@link buildAllowedTools} list `Task`; disallowing only
+ * one of the two would silently leave the cheap tiers able to spawn.
+ */
+export const SUBAGENT_LAUNCH_TOOLS: readonly string[] = ['Agent', 'Task', 'Workflow'];
+
+/**
+ * Builds one Isambard sub-agent definition per effort tier, plus `general-purpose` as an alias of
+ * the `high` tier — an explicit `subagent_type: 'general-purpose'` must NOT bypass Isambard's own
+ * sub-agent prompt, identity and quota rules the way the old pinned-Sonnet definition did. The
+ * name is kept rather than dropped because the SDK and Izzy's skills may still route to it.
+ *
+ * No tier pins a `model`: the launching `Agent` call carries `model`, and the Agent tool has no
+ * `effort` field of its own, so the tier IS the effort knob (see the `## Managing quota` section
+ * of both prompts, which teaches exactly that split).
+ * @param subagentSystemPrompt Reads the CURRENT sub-agent system prompt — called at every session
+ * open and reopen, so a session that reopens after an identity change carries the new identity
+ * into everything it launches.
+ * @returns The `agents` map for the SDK `Options`, keyed by sub-agent type
+ */
+export function buildSubagentAgents(subagentSystemPrompt: () => string): Record<string, AgentDefinition> {
+    const prompt = subagentSystemPrompt();
+
+    /** One tier's definition: the shared prompt, its own effort, and a launch ban for the cheap tiers. */
+    function tier(effort: typeof SUBAGENT_EFFORTS[number]): AgentDefinition {
+        return {
+            description: `General-purpose Isambard sub-agent at ${effort} effort; pass the model on the launch.`,
+            prompt,
+            effort,
+            ...LAUNCH_RESTRICTED_EFFORTS.includes(effort) ? { disallowedTools: [...SUBAGENT_LAUNCH_TOOLS] } : {},
+        };
+    }
+
+    return {
+        ...Object.fromEntries(SUBAGENT_EFFORTS.map((effort): [string, AgentDefinition] => [effort, tier(effort)])),
+        'general-purpose': {
+            ...tier('high'),
+            description: 'General-purpose Isambard sub-agent — the same as `high`; pass the model on the launch.',
+        },
+    };
+}
 
 /**
  * The name each session role registers in the machine-wide Claude Code peer registry — the
@@ -196,23 +234,30 @@ export function buildAllowedTools(servers: SessionMcpServers): string[] {
 /** Parameters for {@link buildSessionQueryOptions}. */
 export interface BuildSessionQueryOptionsParams {
     /** Which session this options object is for. Tools/hooks are currently identical for both roles. */
-    role:           SessionRole
+    role:                 SessionRole
     /** System prompt with core identity, built by the caller */
-    systemPrompt:   string
+    systemPrompt:         string
+    /**
+     * Returns the sub-agent system prompt every registered effort tier runs under. A getter, not
+     * a string, because it is read at each open/reopen: a session reopened after an identity
+     * change must launch sub-agents carrying the CURRENT identity, not the one this options
+     * builder first saw.
+     */
+    subagentSystemPrompt: () => string
     /** MCP servers configured for this session, by name */
-    mcpServers:     SessionMcpServers
+    mcpServers:           SessionMcpServers
     /** Plugin configurations */
-    plugins?:       SdkPluginConfig[]
+    plugins?:             SdkPluginConfig[]
     /** Fully composed hook map (task-tracking, lifecycle, compaction, ...) */
-    hooks:          Partial<Record<HookEvent, HookCallbackMatcher[]>>
+    hooks:                Partial<Record<HookEvent, HookCallbackMatcher[]>>
     /** Session ID to resume, when resuming an existing session */
-    resume?:        string
+    resume?:              string
     /** Claude model to use for this session */
-    mainModel:      string
+    mainModel:            string
     /** Fallback model to use when the primary model is unavailable */
-    fallbackModel?: string
+    fallbackModel?:       string
     /** Returns true while the session is mid-interrupt, to classify the SDK's expected abort stderr as non-error */
-    isInterrupting: () => boolean
+    isInterrupting:       () => boolean
 }
 
 /**
@@ -222,7 +267,7 @@ export interface BuildSessionQueryOptionsParams {
  * @returns Query options object for Agent SDK, satisfying `Options`
  */
 export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams) {
-    const { role, systemPrompt, mcpServers, plugins, hooks, resume, mainModel, fallbackModel, isInterrupting } = params;
+    const { role, systemPrompt, subagentSystemPrompt, mcpServers, plugins, hooks, resume, mainModel, fallbackModel, isInterrupting } = params;
 
     return {
         model:           mainModel,
@@ -231,7 +276,7 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
         // Persisted session title only — NOT the messaging identity; see SESSION_PEER_NAMES.
         title:           SESSION_PEER_NAMES[role],
         tools:           EXPLICIT_TOOLS,
-        agents:          EXPLICIT_AGENTS,
+        agents:          buildSubagentAgents(subagentSystemPrompt),
         mcpServers:      buildMcpServers(mcpServers),
         plugins:         plugins && plugins.length > 0 ? plugins : undefined,
         permissionMode:  'acceptEdits' as const,

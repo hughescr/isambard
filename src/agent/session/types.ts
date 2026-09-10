@@ -167,6 +167,15 @@ export type JournalEntry
       | { type: 'compaction_completed', at: Date }
       | { type: 'compaction_failed', at: Date, error: string }
       | { type: 'session_opened', at: Date, role: SessionRole, sessionId: string, resumed: boolean, fallback?: boolean }
+      /**
+       * A controlled close-and-resume the host asked for — today, because the identity behind
+       * this session's SDK `systemPrompt` changed, and the SDK fixes that prompt at `query()`
+       * time. Journaled the moment the request is ACCEPTED, not when it runs, so a request
+       * deferred behind a running turn is still visible if the process dies before the idle
+       * point ever arrives. The `session_opened` row that follows it (if one does) is the
+       * replacement session.
+       */
+      | { type: 'session_reopen_requested', at: Date, role: SessionRole, reason: string }
       /** The counterpart to session_opened, journaled by the P7 shutdown sequence. */
       | { type: 'session_ended', at: Date, sessionId: string }
       /** Journaled last, after session_ended, once the P7 shutdown sequence has flushed the journal. */

@@ -50,6 +50,22 @@ export class InputQueue {
         return this.queue.length;
     }
 
+    /**
+     * Removes and returns every message queued here but not yet drained by the consumer.
+     *
+     * Used when a session's handle is being replaced (see `conductor.ts`'s reopen paths): a
+     * message still sitting in this array was, by construction, never read by the SDK — the
+     * async iterator only ever `shift()`s a message immediately before yielding it — so the
+     * conductor can re-push these onto the replacement session's queue with no risk of double
+     * delivery, and with no risk of silently losing an accumulate-only envelope that was queued
+     * behind the boot handshake when the old handle died.
+     *
+     * @returns The undrained messages, oldest first; `[]` when there are none.
+     */
+    takePending(): SDKUserMessage[] {
+        return this.queue.splice(0);
+    }
+
     async* [Symbol.asyncIterator](): AsyncGenerator<SDKUserMessage> {
         for(;;) {
             const next = this.queue.shift();

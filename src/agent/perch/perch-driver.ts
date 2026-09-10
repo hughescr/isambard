@@ -53,6 +53,28 @@ import { formatTimeHeader } from '@/utils';
  * omitted — mirrors `perchConfigSchema`'s own default in `@/config`. */
 const DEFAULT_INTERRUPT_GRACE_MINUTES = 2;
 
+/**
+ * Slot-boundary callbacks the host can hang policy off.
+ *
+ * `onSlotStart` fires when a slot turn is actually STARTED — not when an overlapping trigger is
+ * merely folded into the driver's single pending flag — and `onSlotEnd` when that same turn
+ * settles, including when it settled because the overrun interrupt aborted it or because the
+ * submission rejected outright. Every start is therefore matched by exactly one end.
+ *
+ * The one consumer today is the perch system-prompt refresh (`src/app/sessions.ts`): a controlled
+ * reopen for an identity change waits for `onSlotEnd` rather than tearing down the session
+ * mid-slot. `onSlotEnd` runs while the conductor is still inside its own turn-end window, so a
+ * `requestReopen` made from it is recorded and deferred, and the next slot's envelope — queued
+ * synchronously by this driver's own pending-trigger path — waits behind the reopen rather than
+ * racing it.
+ */
+export interface PerchSlotHooks {
+    /** Called synchronously as a slot turn starts. */
+    onSlotStart: () => void
+    /** Called synchronously once that slot turn has settled, before any pending trigger is run. */
+    onSlotEnd:   () => void
+}
+
 /** Dependencies for {@link createPerchDriver}. */
 export interface PerchDriverDeps {
     /**
@@ -74,6 +96,8 @@ export interface PerchDriverDeps {
      * falls back to the bare `formatTimeHeader`, exactly as before that block.
      */
     timeHeader?:         TimeHeaderProvider
+    /** Optional slot-boundary callbacks — see {@link PerchSlotHooks}. Omitted, the driver reports no boundaries. */
+    slotHooks?:          PerchSlotHooks
     logger:              Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
 }
 
@@ -96,7 +120,7 @@ export interface PerchDriver {
  * @returns A {@link PerchDriver}.
  */
 export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
-    const { conductor, contextBuilder, clock, config, getCurrentLocalHour, activityLogger, logger, timeHeader = formatTimeHeader } = deps;
+    const { conductor, contextBuilder, clock, config, getCurrentLocalHour, activityLogger, logger, slotHooks, timeHeader = formatTimeHeader } = deps;
     const interruptGraceMinutes = config.interruptGraceMinutes ?? DEFAULT_INTERRUPT_GRACE_MINUTES;
 
     let slotRunning = false;
@@ -177,6 +201,10 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
         slotRunning = false;
         slotEnvelopeId = undefined;
         logActivity('perch-end', 'Perch session completed');
+        // Before the pending-trigger branch below: a host deferring work to the slot boundary
+        // (the identity-driven system-prompt reopen) must be told the slot is over BEFORE the
+        // next one is started, or its "no slot is open" test would read the new slot instead.
+        slotHooks?.onSlotEnd();
 
         if(pending) {
             pending = false;
@@ -227,6 +255,7 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
         }
 
         slotRunning = true;
+        slotHooks?.onSlotStart();
 
         const now = new Date(clock.now());
         const endsAt = computeSlotEndsAt(now, config.maxSessionMinutes);

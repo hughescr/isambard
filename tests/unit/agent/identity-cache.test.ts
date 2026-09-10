@@ -238,4 +238,170 @@ describe('IdentityCache', () => {
             expect(controlled).toHaveBeenCalledTimes(1);
         });
     });
+
+    describe('onChange()', () => {
+        test('a registered listener fires on invalidate()', () => {
+            const cache = new IdentityCache(loaderMock);
+            const listener = mock(() => undefined);
+            cache.onChange(listener);
+
+            cache.invalidate();
+
+            expect(listener).toHaveBeenCalledTimes(1);
+        });
+
+        test('a registered listener fires on set()', () => {
+            const cache = new IdentityCache(loaderMock);
+            const listener = mock(() => undefined);
+            cache.onChange(listener);
+
+            cache.set('new identity');
+
+            expect(listener).toHaveBeenCalledTimes(1);
+        });
+
+        test('every registered listener fires, not just the first', () => {
+            const cache = new IdentityCache(loaderMock);
+            const first = mock(() => undefined);
+            const second = mock(() => undefined);
+            cache.onChange(first);
+            cache.onChange(second);
+
+            cache.invalidate();
+
+            expect(first).toHaveBeenCalledTimes(1);
+            expect(second).toHaveBeenCalledTimes(1);
+        });
+
+        test('the returned unsubscribe stops further notifications for that listener alone', () => {
+            const cache = new IdentityCache(loaderMock);
+            const kept = mock(() => undefined);
+            const dropped = mock(() => undefined);
+            cache.onChange(kept);
+            const unsubscribe = cache.onChange(dropped);
+
+            unsubscribe();
+            cache.invalidate();
+
+            expect(dropped).not.toHaveBeenCalled();
+            expect(kept).toHaveBeenCalledTimes(1);
+        });
+
+        test('a plain get() notifies nobody — only an actual change does', async () => {
+            const cache = new IdentityCache(loaderMock);
+            const listener = mock(() => undefined);
+            cache.onChange(listener);
+
+            await cache.get();
+            await cache.get();
+
+            expect(listener).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('revision()', () => {
+        test('advances on invalidate() and on set(), but never on get()', async () => {
+            const cache = new IdentityCache(loaderMock);
+            const start = cache.revision();
+
+            await cache.get();
+            expect(cache.revision()).toBe(start);
+
+            cache.invalidate();
+            const afterInvalidate = cache.revision();
+            expect(afterInvalidate).not.toBe(start);
+
+            cache.set('pushed');
+            expect(cache.revision()).not.toBe(afterInvalidate);
+        });
+    });
+
+    describe('invalidate() clears the in-flight slot', () => {
+        test('a get() issued after invalidate() starts a FRESH load rather than joining the pre-write one', async () => {
+            const resolvers: ((value: string) => void)[] = [];
+            const controlled = mock((): Promise<string> => new Promise<string>((resolve) => {
+                resolvers.push(resolve);
+            }));
+            const cache = new IdentityCache(controlled);
+
+            const stale = cache.get();
+            expect(controlled).toHaveBeenCalledTimes(1);
+
+            cache.invalidate();
+            const fresh = cache.get();
+            expect(controlled).toHaveBeenCalledTimes(2);
+
+            resolvers[0]('pre-write identity');
+            resolvers[1]('post-write identity');
+
+            expect(await stale).toBe('pre-write identity');
+            expect(await fresh).toBe('post-write identity');
+            // The fresh load's value is what got committed, so no third load is needed.
+            expect(await cache.get()).toBe('post-write identity');
+            expect(controlled).toHaveBeenCalledTimes(2);
+        });
+
+        test('a stale load settling after an invalidate() does not clear the newer in-flight slot', async () => {
+            const resolvers: ((value: string) => void)[] = [];
+            const controlled = mock((): Promise<string> => new Promise<string>((resolve) => {
+                resolvers.push(resolve);
+            }));
+            const cache = new IdentityCache(controlled);
+
+            const stale = cache.get();
+            cache.invalidate();
+            const fresh = cache.get();
+            expect(controlled).toHaveBeenCalledTimes(2);
+
+            // The superseded load settles LAST-but-one; it must neither commit its value nor
+            // release the in-flight slot the newer load owns.
+            resolvers[0]('pre-write identity');
+            expect(await stale).toBe('pre-write identity');
+
+            const joiner = cache.get();
+            expect(controlled).toHaveBeenCalledTimes(2);
+
+            resolvers[1]('post-write identity');
+            expect(await fresh).toBe('post-write identity');
+            expect(await joiner).toBe('post-write identity');
+        });
+
+        test('a stale load REJECTING after an invalidate() does not clear the newer in-flight slot', async () => {
+            const rejecters: ((error: Error) => void)[] = [];
+            const controlled = mock((): Promise<string> => new Promise<string>((_resolve, reject) => {
+                rejecters.push(reject);
+            }));
+            const cache = new IdentityCache(controlled);
+
+            const stale = cache.get();
+            // Bun's `expect(promise).rejects` must be created AFTER the promise has already
+            // settled — creating it against a still-pending promise deadlocks the test runner.
+            // Pre-attach a plain `.catch` so the gap before the real assertion below doesn't
+            // trip an unhandled-rejection warning.
+            stale.catch(() => undefined);
+            cache.invalidate();
+            const fresh = cache.get();
+            fresh.catch(() => undefined);
+            expect(controlled).toHaveBeenCalledTimes(2);
+
+            // The superseded load rejects after the invalidate(); its catch handler must not
+            // release the in-flight slot the newer (fresh) load now owns.
+            rejecters[0](new Error('stale loader failure'));
+            await Promise.resolve();
+            await Promise.resolve();
+            await expect(stale).rejects.toThrow('stale loader failure');
+
+            // If the generation guard were bypassed, this would clear the fresh in-flight slot
+            // and trigger a THIRD loader call instead of joining the still-pending fresh load.
+            const joiner = cache.get();
+            joiner.catch(() => undefined);
+            expect(controlled).toHaveBeenCalledTimes(2);
+
+            rejecters[1](new Error('fresh loader failure'));
+            await Promise.resolve();
+            await Promise.resolve();
+            await expect(fresh).rejects.toThrow('fresh loader failure');
+            await expect(joiner).rejects.toThrow('fresh loader failure');
+        });
+    });
 });

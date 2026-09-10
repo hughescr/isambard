@@ -181,6 +181,9 @@ describe('SessionJournalBackend', () => {
             {
                 ...BASE, SK: 'p', type: 'turn_completed', envelopeId: 'e3', kind: 'task', responseText: 'done',
             },
+            {
+                ...BASE, SK: 'q', type: 'session_reopen_requested', role: 'conversation', reason: 'an identity change',
+            },
         ];
 
         test('every JournalEntry member round-trips through readSince with no malformed rows', async () => {
@@ -203,6 +206,17 @@ describe('SessionJournalBackend', () => {
             expect(entries).toHaveLength(1);
             expect(entries[0]).toMatchObject({ ...expectedFields, at: expect.any(Date) as Date });
             expect(entries[0]?.type as string).toBe(type);
+        });
+
+        test('a session_reopen_requested row with no reason is rejected as malformed', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [{
+                ...BASE, SK: 'r', type: 'session_reopen_requested', role: 'conversation',
+            }] });
+
+            const entries = await backend.readSince('conversation', '2026-09-01T00:00:00.000Z');
+
+            expect(entries).toHaveLength(0);
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
         });
     });
 });

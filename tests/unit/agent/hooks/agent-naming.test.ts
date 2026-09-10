@@ -95,7 +95,45 @@ describe('createAgentNamingHooks', () => {
         it('leaves a name that already starts with Izzy- alone, rewriting nothing', async () => {
             const h = build();
 
-            expect(await run(h, preToolUseInput({ tool_input: { name: 'Izzy-reviewer' } }))).toBeUndefined();
+            expect(await run(h, preToolUseInput({ tool_input: { name: 'Izzy-reviewer', subagent_type: 'high' } }))).toBeUndefined();
+        });
+
+        it('routes a launch with no subagent_type to the `high` tier, so it runs under Izzy\'s own sub-agent prompt', async () => {
+            const h = build();
+
+            const updated = await run(h, preToolUseInput({ tool_input: { prompt: 'go' } }));
+
+            expect(updated).toEqual({ prompt: 'go', subagent_type: 'high', name: 'Izzy-high-1' });
+        });
+
+        it('treats an empty subagent_type as bare and defaults it too', async () => {
+            const h = build();
+
+            const updated = await run(h, preToolUseInput({ tool_input: { subagent_type: '', prompt: 'go' } }));
+
+            expect(updated).toEqual({ prompt: 'go', subagent_type: 'high', name: 'Izzy-high-1' });
+        });
+
+        it('leaves an explicit subagent_type alone, still prefixing the name', async () => {
+            const h = build();
+
+            const updated = await run(h, preToolUseInput({ tool_input: { name: 'reviewer', subagent_type: 'low', prompt: 'go' } }));
+
+            expect(updated).toEqual({ name: 'Izzy-reviewer', subagent_type: 'low', prompt: 'go' });
+        });
+
+        it('defaults the type even when the name already needs no rewrite', async () => {
+            const h = build();
+
+            const updated = await run(h, preToolUseInput({ tool_input: { name: 'Izzy-thing', prompt: 'go' } }));
+
+            expect(updated).toEqual({ name: 'Izzy-thing', prompt: 'go', subagent_type: 'high' });
+        });
+
+        it('rewrites nothing when the name already fits and the type is explicit', async () => {
+            const h = build();
+
+            expect(await run(h, preToolUseInput({ tool_input: { name: 'Izzy-x', subagent_type: 'high' } }))).toBeUndefined();
         });
 
         it('invents Izzy-<subagent_type>-<n> when no name was given', async () => {
@@ -104,14 +142,6 @@ describe('createAgentNamingHooks', () => {
             const updated = await run(h, preToolUseInput({ tool_input: { subagent_type: 'opus-high', prompt: 'go' } }));
 
             expect(updated).toEqual({ subagent_type: 'opus-high', prompt: 'go', name: 'Izzy-opus-high-1' });
-        });
-
-        it('falls back to Izzy-agent-<n> when neither name nor subagent_type is given', async () => {
-            const h = build();
-
-            const updated = await run(h, preToolUseInput({ tool_input: { prompt: 'go' } }));
-
-            expect(updated).toEqual({ prompt: 'go', name: 'Izzy-agent-1' });
         });
 
         it('treats an empty name and a non-string name as no name at all', async () => {
@@ -124,25 +154,25 @@ describe('createAgentNamingHooks', () => {
             expect(numeric).toMatchObject({ name: 'Izzy-x-2' });
         });
 
-        it('treats an empty and a non-string subagent_type as absent', async () => {
+        it('treats an empty and a non-string subagent_type as absent, naming both after the default tier', async () => {
             const h = build();
 
             const empty = await run(h, preToolUseInput({ tool_input: { subagent_type: '' } }));
             const numeric = await run(h, preToolUseInput({ tool_input: { subagent_type: 3 } }));
 
-            expect(empty).toMatchObject({ name: 'Izzy-agent-1' });
-            expect(numeric).toMatchObject({ name: 'Izzy-agent-2' });
+            expect(empty).toMatchObject({ subagent_type: 'high', name: 'Izzy-high-1' });
+            expect(numeric).toMatchObject({ subagent_type: 'high', name: 'Izzy-high-2' });
         });
 
         it('counts invented names up from 1, per hook instance, and never reuses a number', async () => {
             const first = build();
 
-            expect(await run(first, preToolUseInput({ tool_input: {} }))).toMatchObject({ name: 'Izzy-agent-1' });
-            expect(await run(first, preToolUseInput({ tool_input: {} }))).toMatchObject({ name: 'Izzy-agent-2' });
-            expect(await run(first, preToolUseInput({ tool_input: {} }))).toMatchObject({ name: 'Izzy-agent-3' });
+            expect(await run(first, preToolUseInput({ tool_input: {} }))).toMatchObject({ name: 'Izzy-high-1' });
+            expect(await run(first, preToolUseInput({ tool_input: {} }))).toMatchObject({ name: 'Izzy-high-2' });
+            expect(await run(first, preToolUseInput({ tool_input: {} }))).toMatchObject({ name: 'Izzy-high-3' });
 
             const second = build();
-            expect(await run(second, preToolUseInput({ tool_input: {} }))).toMatchObject({ name: 'Izzy-agent-1' });
+            expect(await run(second, preToolUseInput({ tool_input: {} }))).toMatchObject({ name: 'Izzy-high-1' });
         });
 
         it('does not burn a counter number on a launch that already had a name', async () => {
@@ -150,7 +180,7 @@ describe('createAgentNamingHooks', () => {
 
             await run(h, preToolUseInput({ tool_input: { name: 'reviewer' } }));
 
-            expect(await run(h, preToolUseInput({ tool_input: {} }))).toMatchObject({ name: 'Izzy-agent-1' });
+            expect(await run(h, preToolUseInput({ tool_input: {} }))).toMatchObject({ name: 'Izzy-high-1' });
         });
     });
 

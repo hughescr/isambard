@@ -71,6 +71,38 @@ function fakeContextBuilder(overrides: Partial<ContextBuilder> = {}): Pick<Conte
     };
 }
 
+/**
+ * The `IdentitySource` half of a fake `IdentityCache`: change listeners, a revision counter, and a
+ * `fireIdentityChange()` that models an identity write (bump the revision, then notify), plus a
+ * `setRevision` for tests that need to move the revision from INSIDE a `get()` — the shape of a
+ * second write landing mid-load.
+ */
+function fakeIdentitySource(): {
+    onChange:           ReturnType<typeof jest.fn>
+    revision:           ReturnType<typeof jest.fn>
+    fireIdentityChange: () => void
+    setRevision:        (value: number) => void
+} {
+    const listeners: (() => void)[] = [];
+    let revisionValue = 0;
+    return {
+        onChange: jest.fn((listener: () => void) => {
+            listeners.push(listener);
+            return () => {
+                listeners.splice(listeners.indexOf(listener), 1);
+            };
+        }),
+        revision:           jest.fn(() => revisionValue),
+        fireIdentityChange: () => {
+            revisionValue += 1;
+            for(const listener of listeners) {
+                listener();
+            }
+        },
+        setRevision: (value: number) => { revisionValue = value; },
+    };
+}
+
 function build(overrides: Partial<CreateConversationConductorParams> = {}) {
     const { queryFn, instances } = fakeQueryFn();
     const clock = new FakeClock(0);
@@ -78,6 +110,8 @@ function build(overrides: Partial<CreateConversationConductorParams> = {}) {
     const resumeStore = new FakeResumeStore();
     const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
     const identityGet = jest.fn(() => Promise.resolve('I am Izzy'));
+    const identitySource = fakeIdentitySource();
+    const { onChange: identityOnChange, revision: identityRevision, fireIdentityChange } = identitySource;
     const contextBuilder = fakeContextBuilder();
     const taskListReader = { buildTaskListSummary: jest.fn(() => Promise.resolve(undefined)) };
     const channelListProvider = jest.fn(() => Promise.resolve('#general'));
@@ -87,7 +121,7 @@ function build(overrides: Partial<CreateConversationConductorParams> = {}) {
         queryFn,
         mcpShared:     {} as McpSharedDeps,
         contextBuilder,
-        identityCache: { get: identityGet },
+        identityCache: { get: identityGet, onChange: identityOnChange, revision: identityRevision },
         taskListReader,
         journal,
         resumeStore,
@@ -98,7 +132,9 @@ function build(overrides: Partial<CreateConversationConductorParams> = {}) {
     };
 
     return {
-        params, instances, clock, journal, resumeStore, logger, identityGet, contextBuilder, taskListReader, channelListProvider,
+        params, instances, clock, journal, resumeStore, logger, identityGet, identityOnChange, identityRevision, fireIdentityChange,
+        setIdentityRevision: identitySource.setRevision,
+        contextBuilder, taskListReader, channelListProvider,
     };
 }
 
@@ -120,7 +156,7 @@ describe('createConversationConductor', () => {
         expect(createInstancesSpy).toHaveBeenCalledWith(h.params.mcpShared, { role: 'conversation', emailServerFactory });
     });
 
-    it('builds the system prompt once from IdentityCache, even across a later reopen', async () => {
+    it('builds the system prompt once at construction, and not again per open', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
 
@@ -134,6 +170,176 @@ describe('createConversationConductor', () => {
 
         expect(h.identityGet).toHaveBeenCalledTimes(1);
         expect(h.instances[0].receivedParams?.options.systemPrompt).toContain('I am Izzy');
+        expect(h.instances[0].receivedParams?.options.model).toBe('sonnet');
+    });
+
+    it('rebuilds the system prompt and reopens the session when the identity changes', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        h.identityGet.mockResolvedValue('I am Izzy, revised');
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        expect(h.instances).toHaveLength(2);
+        expect(h.instances[1].receivedParams?.options.systemPrompt).toContain('I am Izzy, revised');
+        // The dead session keeps the prompt it was born with — the SDK fixes it at query() time.
+        expect(h.instances[0].receivedParams?.options.systemPrompt).not.toContain('revised');
+        expect(h.journal.byKind('session_reopen_requested').at(-1)).toMatchObject({ reason: 'an identity change' });
+    });
+
+    it('the refreshed identity reaches the effort sub-agent definitions too', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        h.identityGet.mockResolvedValue('I am Izzy, revised');
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        expect(h.instances[1].receivedParams?.options.agents?.high.prompt).toContain('I am Izzy, revised');
+    });
+
+    it('an identity change that renders the same prompt reopens nothing', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        // Not every identity-layer write changes what loadCoreIdentity renders.
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        expect(h.instances).toHaveLength(1);
+    });
+
+    it('a failing identity reload is logged and reopens nothing', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        h.identityGet.mockRejectedValue(new Error('DynamoDB throttled'));
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        expect(h.instances).toHaveLength(1);
+        expect(h.logger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error) }, 'Rebuilding the conversation system prompt after an identity change failed'
+        );
+    });
+
+    it('two identity changes in a row rebuild in order; the reopened session carries the last', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        h.identityGet.mockResolvedValue('identity one');
+        h.fireIdentityChange();
+        h.identityGet.mockResolvedValue('identity two');
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+        h.instances[1].emit(frames.init('sess-1'));
+        await flush();
+        await flush();
+
+        expect(h.instances.at(-1)?.receivedParams?.options.systemPrompt).toContain('identity two');
+    });
+
+    it('a load superseded mid-flight is discarded — its stale text never reaches a prompt', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        // The revision moves DURING the get(), exactly as a second write landing mid-load would:
+        // this value is already superseded, and the newer change queues its own refresh.
+        h.identityGet.mockImplementation(() => {
+            h.setIdentityRevision(99);
+            return Promise.resolve('stale identity');
+        });
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        expect(h.instances).toHaveLength(1);
+    });
+
+    it('an identity write landing between the startup read and the subscription is still picked up', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        // The revision the factory captured before its own await no longer matches by the time it
+        // subscribes — a write landed in that window and fired no listener anybody had registered.
+        h.identityGet.mockImplementation(() => {
+            h.setIdentityRevision(7);
+            return Promise.resolve('I am Izzy');
+        });
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        expect(h.identityGet.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('registers the effort sub-agent tiers, each carrying the Isambard sub-agent prompt built from the same identity', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const agents = h.instances[0].receivedParams?.options.agents;
+        expect(Object.keys(agents ?? {})).toEqual(['low', 'medium', 'high', 'xhigh', 'general-purpose']);
+        expect(agents?.high.prompt).toContain('I am Izzy');
+        expect(agents?.high.prompt).toContain('sub-agent of Isambard');
+        // One identity read feeds both prompts — the sub-agent prompt is not a second load.
+        expect(h.identityGet).toHaveBeenCalledTimes(1);
     });
 
     it('passes the stored resume id through to the SDK options on open()', async () => {
@@ -752,6 +958,8 @@ function buildPerch(overrides: Partial<CreatePerchConductorParams> = {}) {
     const resumeStore = new FakeResumeStore();
     const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
     const identityGet = jest.fn(() => Promise.resolve('I am Izzy'));
+    const identitySource = fakeIdentitySource();
+    const { onChange: identityOnChange, revision: identityRevision, fireIdentityChange } = identitySource;
     const contextBuilder = fakeContextBuilder();
     const taskListReader = { buildTaskListSummary: jest.fn(() => Promise.resolve(undefined)) };
 
@@ -760,7 +968,7 @@ function buildPerch(overrides: Partial<CreatePerchConductorParams> = {}) {
         queryFn,
         mcpShared:     {} as McpSharedDeps,
         contextBuilder,
-        identityCache: { get: identityGet },
+        identityCache: { get: identityGet, onChange: identityOnChange, revision: identityRevision },
         taskListReader,
         journal,
         resumeStore,
@@ -770,7 +978,9 @@ function buildPerch(overrides: Partial<CreatePerchConductorParams> = {}) {
     };
 
     return {
-        params, instances, clock, journal, resumeStore, logger, identityGet, contextBuilder, taskListReader,
+        params, instances, clock, journal, resumeStore, logger, identityGet, identityOnChange, identityRevision, fireIdentityChange,
+        setIdentityRevision: identitySource.setRevision,
+        contextBuilder, taskListReader,
     };
 }
 
@@ -837,6 +1047,237 @@ describe('createPerchConductor', () => {
         expect(mcpServersOption.health).toBe(FULL_MCP_SERVERS.healthMcpServer);
     });
 
+    it('defers an identity reopen until the open perch slot ends', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, slotHooks } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        slotHooks.onSlotStart();
+        h.identityGet.mockResolvedValue('I am Izzy, revised');
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        // Mid-slot: the perch is thinking out loud on a clock, and a reopen would cut it off.
+        expect(h.instances).toHaveLength(1);
+
+        slotHooks.onSlotEnd();
+        await flush();
+
+        expect(h.instances).toHaveLength(2);
+        expect(h.instances[1].receivedParams?.options.systemPrompt).toContain('I am Izzy, revised');
+    });
+
+    it('reopens immediately when no slot is open', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        h.identityGet.mockResolvedValue('I am Izzy, revised');
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        expect(h.instances).toHaveLength(2);
+        expect(h.journal.byKind('session_reopen_requested').at(-1)).toMatchObject({ reason: 'an identity change' });
+    });
+
+    it('an identity change that renders the same prompt reopens nothing (perch)', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        // Not every identity-layer write changes what loadCoreIdentity renders.
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        expect(h.instances).toHaveLength(1);
+    });
+
+    it('a failing perch identity reload is logged, reopens nothing, and leaves the previous prompt in place', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        h.identityGet.mockRejectedValue(new Error('DynamoDB throttled'));
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        expect(h.instances).toHaveLength(1);
+        expect(h.journal.byKind('session_reopen_requested')).toHaveLength(0);
+        expect(h.logger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error) }, 'Rebuilding the perch system prompt after an identity change failed'
+        );
+
+        // The half-finished rebuild must not have left a torn prompt behind: whatever opens next
+        // (here a crash reopen) still carries the identity the failed reload never replaced.
+        h.instances[0].fail(new Error('worker crashed'));
+        await flush();
+
+        expect(h.instances[1].receivedParams?.options.systemPrompt).toContain('I am Izzy');
+    });
+
+    it('a load superseded mid-flight is discarded — its stale text never reaches a perch prompt', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        // The revision moves DURING the get(), exactly as a second write landing mid-load would:
+        // this value is already superseded, and the newer change queues its own refresh.
+        h.identityGet.mockImplementation(() => {
+            h.setIdentityRevision(99);
+            return Promise.resolve('stale identity');
+        });
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        expect(h.instances).toHaveLength(1);
+    });
+
+    it('a perch identity write landing between the startup read and the subscription is still picked up', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        // The revision the factory captured before its own await no longer matches by the time it
+        // subscribes — a write landed in that window and fired no listener anybody had registered.
+        h.identityGet.mockImplementation(() => {
+            h.setIdentityRevision(7);
+            return Promise.resolve('I am Izzy');
+        });
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        expect(h.identityGet.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('two identity changes during one slot yield a single reopen at slot end', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, slotHooks } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        slotHooks.onSlotStart();
+        h.identityGet.mockResolvedValue('identity one');
+        h.fireIdentityChange();
+        await flush();
+        h.identityGet.mockResolvedValue('identity two');
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        slotHooks.onSlotEnd();
+        await flush();
+
+        expect(h.instances).toHaveLength(2);
+        expect(h.instances[1].receivedParams?.options.systemPrompt).toContain('identity two');
+
+        // The pending flag must have been cleared by that reopen: a later slot with no new
+        // identity change must not fire a redundant second reopen.
+        slotHooks.onSlotStart();
+        slotHooks.onSlotEnd();
+        await flush();
+
+        expect(h.instances).toHaveLength(2);
+    });
+
+    it('the deferred reopen is asked for exactly once, even after the reopen it fired has completed', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, slotHooks } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        slotHooks.onSlotStart();
+        h.identityGet.mockResolvedValue('I am Izzy, revised');
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        slotHooks.onSlotEnd();
+        await flush();
+        expect(h.journal.byKind('session_reopen_requested')).toHaveLength(1);
+
+        // Let the replacement finish opening. Until it does, the conductor swallows any further
+        // request as "already reopening", which would hide a pending flag that was never cleared.
+        h.instances[1].emit(frames.init('sess-2'));
+        await flush();
+        await flush();
+
+        slotHooks.onSlotStart();
+        slotHooks.onSlotEnd();
+        await flush();
+
+        // Nothing new has changed identity, so the second slot must ask for no reopen at all —
+        // a still-set pending flag would journal a second request and churn the session.
+        expect(h.journal.byKind('session_reopen_requested')).toHaveLength(1);
+        expect(h.instances).toHaveLength(2);
+    });
+
+    it('a slot ending with no identity change pending reopens nothing', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, slotHooks } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        slotHooks.onSlotStart();
+        slotHooks.onSlotEnd();
+        await flush();
+        await flush();
+
+        expect(h.instances).toHaveLength(1);
+    });
+
     it('builds the perch system prompt once from IdentityCache', async () => {
         const h = buildPerch();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
@@ -851,6 +1292,23 @@ describe('createPerchConductor', () => {
 
         expect(h.instances[0].receivedParams?.options.systemPrompt).toContain('I am Izzy');
         expect(h.instances[0].receivedParams?.options.systemPrompt).toContain('This session: perch');
+        expect(h.instances[0].receivedParams?.options.model).toBe('sonnet');
+    });
+
+    it('registers the effort sub-agent tiers for perch too, carrying the Isambard sub-agent prompt', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const agents = h.instances[0].receivedParams?.options.agents;
+        expect(Object.keys(agents ?? {})).toEqual(['low', 'medium', 'high', 'xhigh', 'general-purpose']);
+        expect(agents?.high.prompt).toContain('I am Izzy');
+        expect(agents?.high.prompt).toContain('sub-agent of Isambard');
     });
 
     it('passes the stored resume id through to the SDK options on open() — a distinct role-keyed resume store from conversation', async () => {
@@ -1398,8 +1856,8 @@ describe('createSessionAmbience', () => {
         const first = h.ambience.timeHeaderFor('conversation')();
         const second = h.ambience.timeHeaderFor('conversation')();
 
-        expect(first).toContain('- Quota: 5-hour 42% · week 61% · shared with Craig\'s own sessions');
-        expect(second).toContain('- Quota: 5-hour 42% · week 61%');
+        expect(first).toContain('- Quota: 5-hour 42% used · week 61% used · shared with Craig\'s own sessions');
+        expect(second).toContain('- Quota: 5-hour 42% used · week 61% used');
         expect(second).not.toContain('shared with Craig');
     });
 

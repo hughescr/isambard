@@ -77,7 +77,8 @@ class FakeConductor implements Conductor {
     };
 
     open = (): Promise<{ sessionId: string, resumed: boolean }> => Promise.resolve({ sessionId: 'sess-1', resumed: false });
-    appendWithoutTurn = (): void => { throw new Error('FakeConductor.appendWithoutTurn is unused by conductor-processor.ts'); };
+    appendWithoutTurn = (): boolean => { throw new Error('FakeConductor.appendWithoutTurn is unused by conductor-processor.ts'); };
+    requestReopen = (): void => { throw new Error('FakeConductor.requestReopen is unused by conductor-processor.ts'); };
     adoptWakeTurn = (): void => { throw new Error('FakeConductor.adoptWakeTurn is unused by conductor-processor.ts'); };
 
     adoptPeerTurn = (): void => { throw new Error('FakeConductor.adoptPeerTurn is unused by conductor-processor.ts'); };

@@ -18,7 +18,7 @@
  *
  * @module agent/session/conductor
  */
-import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Logger } from '@hughescr/logger';
 import { classifyClaudeError } from '../claude-retry';
 import { buildResumeNote } from '../resume-prompt-builder';
@@ -277,15 +277,40 @@ export interface Conductor {
     submit:                        (envelope: Envelope, options: SubmitOptions) => Promise<TurnResult>
     /**
      * Pushes `envelope` onto the live SDK queue without opening a turn — mirrors the private
-     * boot-bundle push (`pushBootBundle`). A no-op when there is no live queue yet (before
-     * `open()` has assigned one), or while shutting down or reopening. Never reads or writes
+     * boot-bundle push (`pushBootBundle`). Returns `true` once the envelope is the conductor's
+     * responsibility — either queued on the live session, or held in the reopen buffer while a
+     * session is being replaced — and `false` when it could not be accepted at all (no queue yet,
+     * because `open()` has not assigned one, or the conductor is shutting down). Callers with
+     * their own "already reported" memory (see `notification-bridge.ts`) key off that boolean:
+     * burning a dedupe key on a `false` would lose the notification permanently. Never reads or writes
      * {@link ConductorStatus.turn} and never calls `beginTurn`/`processQueue`: this is the
      * accumulate-only seam for `shouldQuery:false` notifications, which the SDK appends to the
      * transcript without triggering an assistant turn (no result frame), so routing one through
      * `submit()` would wedge the one-turn-in-flight invariant forever. Throws
      * {@link InvariantViolationError} if `envelope.shouldQuery !== false`.
      */
-    appendWithoutTurn:             (envelope: Envelope) => void
+    appendWithoutTurn:             (envelope: Envelope) => boolean
+    /**
+     * Asks for a controlled close-and-resume of the live session.
+     *
+     * This is the only way to change an SDK `systemPrompt`, which is fixed at `query()` time: the
+     * host rebuilds the prompt (today, because the identity behind it changed) and calls this, and
+     * the conductor closes the current handle and reopens it with `resume` and freshly built
+     * options. The reopen runs at the next idle point — no turn running, and no turn-end
+     * compaction check still outstanding — and until it has run NO new turn is started, so the
+     * wait is bounded by the turn already in flight rather than by however long the queue stays
+     * busy. Queued envelopes are never dropped: they replay on the replacement session, as do
+     * appended envelopes the dying session never read.
+     *
+     * Recorded rather than discarded when an open or another reopen is already in flight, so an
+     * identity change landing in either window is applied afterwards instead of lost — unless
+     * that open already built its options from the new prompt, in which case the request is
+     * dropped as already satisfied. A no-op only once {@link Conductor.shutdown} has begun.
+     *
+     * @param reason Short human phrase for the journal, log and boot handshake (e.g. `'an
+     *   identity change'`).
+     */
+    requestReopen:                 (reason: string) => void
     /**
      * Adopts a pending wake turn synthesized from background work finishing (R2): the NEXT
      * spontaneous assistant frame — the one the SDK's own `<task-notification>` wake produces —
@@ -450,8 +475,37 @@ export function createConductor(params: CreateConductorParams): Conductor {
     let deliveryGuard: DeliveryGuard | undefined;
     /** The text {@link openHandshakeText} returns — the static {@link bootBundle} until {@link runBootRecovery} replaces it with {@link buildBootBundle}'s output, when provided. */
     let resolvedBootBundle = bootBundle;
-    /** True from the moment a mid-life close is observed until a replacement session (resumed or fresh) has opened — or reopening has been given up on entirely. Gates {@link processQueue} and {@link submitCompact} so no envelope is ever pushed into the dead handle's orphaned {@link InputQueue} while a reopen is in flight. */
+    /** True from the moment a mid-life close is observed until a replacement session (resumed or fresh) has opened — or reopening has been given up on entirely, or `shutdown()` overtook the reopen, in which case it is simply left set (every reader tests {@link shuttingDown} first). Gates {@link processQueue}, {@link submitCompact} and {@link appendWithoutTurn} so no envelope is ever pushed into the dead handle's orphaned {@link InputQueue} while a reopen is in flight. */
     let reopening = false;
+    /**
+     * Monotonic count of `buildOptions()` calls — i.e. of queries this conductor has created. A
+     * requested reopen is redundant once this has moved past the value captured when it was
+     * requested, because some query has by then already been created from options built AFTER the
+     * request, and therefore already carries whatever the request wanted applied.
+     */
+    let openGeneration = 0;
+    /** A controlled reopen the host asked for that has not started yet — see {@link requestReopen}. */
+    let pendingReopen: { reason: string, atGeneration: number } | undefined;
+    /**
+     * Accumulate-only envelopes appended while a reopen was in flight, flushed onto the
+     * replacement session's queue once it opens. Buffered rather than dropped because the caller's
+     * dedupe key is burned the moment it hands one over (see `notification-bridge.ts`), so a
+     * silent drop here is a permanently lost notification.
+     */
+    let bufferedAppends: SDKUserMessage[] = [];
+    /**
+     * The most recent reopen, so {@link shutdown} can await it instead of racing a replacement
+     * child into existence.
+     *
+     * Deliberately never cleared on completion, only overwritten by the next reopen: a completing
+     * reopen can START the next one before its own bookkeeping would run — `reopenReplacementSession`
+     * sets `reopening = false` and calls `processQueue()` (which starts a pending requested reopen)
+     * synchronously, and a replacement handle that dies immediately re-enters `handleMidLifeClosed`
+     * the same way — so clearing here would erase the NEWER reopen's promise and let `shutdown`
+     * finish without awaiting the session it is about to orphan. Awaiting an already-settled reopen
+     * is a no-op, so holding the last one costs nothing.
+     */
+    let reopenInFlight: Promise<void> = Promise.resolve();
     let currentSessionId: string | undefined;
     let currentHandleRef: SessionHandle | undefined;
     let currentQueue: InputQueue | undefined;
@@ -640,7 +694,26 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     function processQueue(): void {
-        if(currentTurn !== null || shuttingDown || reopening) {
+        // `reopening` is deliberately NOT tested here: the check below covers it, and testing it
+        // twice would narrow it to `false` for the rest of this function, hiding the fact that
+        // `maybeStartRequestedReopen()` can flip it (TypeScript does not reset a `let`'s narrowing
+        // across a call). `maybeStartRequestedReopen` is itself a no-op while `reopening`.
+        if(currentTurn !== null || shuttingDown) {
+            return;
+        }
+        // A controlled reopen the host is owed outranks starting anything new: the reopen is what
+        // applies the new system prompt, and a busy queue -- or the perch driver's next slot,
+        // which starts synchronously as the previous one ends -- could otherwise starve it
+        // indefinitely. A no-op when nothing is owed.
+        maybeStartRequestedReopen();
+        if(pendingReopen !== undefined || reopening) {
+            // Either still owed (waiting for the turn-end compaction check, or for a handle to
+            // exist), already in flight when we got here, or just started by the call above.
+            // Queued items are left untouched and play on the replacement session. Deliberately
+            // NOT an early return before that call -- a request an intervening open already
+            // satisfied is dropped by it, and the queue that open just refilled (a crash reopen
+            // re-queues its interrupted turn) has to be serviced here rather than left to stall
+            // until the next submit.
             return;
         }
         if(ledgerStore.get().compaction === 'compacting') {
@@ -1043,6 +1116,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
             const queue = new InputQueue();
             const interrupting = createInterruptFlag();
             const options = buildOptions(resumeId);
+            // Counted here, at the single point where a query's options are actually built, so
+            // `maybeStartRequestedReopen` can tell "a query already captured the new prompt" from
+            // "every live query predates the request" without comparing handle identities.
+            openGeneration += 1;
             queue.push(toSdkUserMessage(buildBootEnvelope(handshakeText, now())));
             const handle = openSession({
                 role,
@@ -1096,18 +1173,32 @@ export function createConductor(params: CreateConductorParams): Conductor {
         return `[BOOT] Session ${verb} at ${now().toISOString()}. No boot context to report. Host handshake — nothing to do, no reply expected.`;
     }
 
-    function appendWithoutTurn(envelope: Envelope): void {
+    function appendWithoutTurn(envelope: Envelope): boolean {
         if(envelope.shouldQuery !== false) {
             throw new InvariantViolationError('conductor.appendWithoutTurn', 'called with a shouldQuery:true envelope — this seam is accumulate-only; use submit() for shouldQuery:true envelopes');
         }
-        if(currentQueue === undefined || shuttingDown || reopening) {
-            return;
+        // Tested BEFORE `reopening`: a shutting-down conductor must refuse rather than buffer,
+        // because the buffer a reopen unwinding into `shutdown` discards is exactly the
+        // "reported accepted, then silently dropped" loss the boolean exists to prevent.
+        if(shuttingDown) {
+            return false;
+        }
+        if(reopening) {
+            // Held, not dropped, and reported as accepted: the caller burns its dedupe key on a
+            // `true`, and a session being replaced is a transient state the envelope should
+            // survive. Flushed onto the replacement queue by `reopenReplacementSession`.
+            bufferedAppends.push(toSdkUserMessage(envelope));
+            return true;
+        }
+        if(currentQueue === undefined) {
+            return false;
         }
         // Deliberately does NOT dispatch `envelope_queued`: that ledger event is only ever
         // balanced by `turn_submitted` (see `enqueue`/`beginTurn`), and this seam by construction
         // never opens a turn — dispatching it here would permanently inflate `ledger.queued.other`
         // for the life of the process (see Q5 review finding).
         currentQueue.push(toSdkUserMessage(envelope));
+        return true;
     }
 
     /**
@@ -1174,23 +1265,34 @@ export function createConductor(params: CreateConductorParams): Conductor {
         handle.close();
     }
 
-    async function handleMidLifeClosed(error: unknown): Promise<void> {
-        if(shuttingDown) {
-            return;
-        }
-        logger.error({ error }, 'Session ended unexpectedly; reopening');
-        reopening = true;
-        const inFlightItem = currentTurn?.item;
-        if(currentTurn?.escalationTimer !== undefined) {
-            clock.clearTimer(currentTurn.escalationTimer);
-        }
-        currentTurn = null;
-        resolveTurnEndedWaiters();
-        const lastSessionId = currentSessionId;
-        const handshake = `[BOOT] Session reopened at ${now().toISOString()} after the previous session ended unexpectedly. Host handshake — nothing to do, no reply expected.`;
+    /**
+     * Opens the replacement for a session that has gone away — resuming the old id, falling back
+     * to a fresh session when the resume fails, and giving up (rejecting the in-flight and queued
+     * work) when both fail. Shared by the crash path ({@link handleMidLifeClosed}) and the
+     * controlled path ({@link startRequestedReopen}); the caller has already set `reopening` and
+     * cleared any running turn.
+     *
+     * Carries over whatever the dying queue never delivered: messages still sitting in the old
+     * {@link InputQueue} were by construction never read by the SDK (the iterator only hands one
+     * out by shifting it off), and accumulate-only appends made during the reopen are buffered —
+     * both are pushed onto the replacement's queue after its boot handshake, so a notification is
+     * neither lost nor delivered twice.
+     *
+     * @param handshake The `[BOOT]` text pushed onto the replacement's queue before any frame is
+     *   awaited — mandatory, because the SDK emits nothing at all (not even `system/init`) until
+     *   it has read a first user message.
+     * @param inFlightItem The turn that was running when the session went away, re-queued ahead of
+     *   everything else on success and rejected if the reopen is abandoned; `undefined` on the
+     *   controlled path, which only ever runs while idle.
+     * @param carryOver Messages the dying queue never delivered, taken by the CALLER: the
+     *   controlled path has to `discardHandle` the old handle first (so its `onClosed` is not read
+     *   as a crash), and `discardHandle` clears `currentQueue`, so by the time this function runs
+     *   there is no dying queue left to ask.
+     */
+    async function reopenReplacementSession(handshake: string, inFlightItem: QueuedItem | undefined, carryOver: SDKUserMessage[]): Promise<void> {
         try {
             try {
-                const { handle, sessionId } = await openWithHandle(lastSessionId, handshake);
+                const { handle, sessionId } = await openWithHandle(currentSessionId, handshake);
                 try {
                     await finishOpen(sessionId, true, false);
                 } catch (finishError) {
@@ -1217,13 +1319,109 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 inFlightItem.deferred.reject(failure);
             }
             rejectAllQueued(failure);
+            // Stryker disable next-line ArithmeticOperator: dropped count is informational (logged, not branched on) — a wrong count changes no behavior a test can observe
+            logger.warn({ dropped: carryOver.length + bufferedAppends.length }, 'Giving up on a reopen; dropping input the dead session never delivered');
+            bufferedAppends = [];
+            return;
+        }
+        if(shuttingDown) {
+            // shutdown() began while this open was in flight. discardHandle cleared
+            // currentHandleRef before the close, so shutdown's own final close would find nothing
+            // and this brand-new child would outlive the process it belongs to.
+            if(currentHandleRef !== undefined) {
+                discardHandle(currentHandleRef);
+            }
+            // `reopening` is deliberately NOT cleared: `shuttingDown` is terminal, and every
+            // reader of `reopening` (submitCompact, processQueue, appendWithoutTurn,
+            // maybeStartRequestedReopen) tests `shuttingDown` first, so nothing consults it again.
+            bufferedAppends = [];
             return;
         }
         reopening = false;
+        for(const message of [...carryOver, ...bufferedAppends]) {
+            currentQueue?.push(message);
+        }
+        bufferedAppends = [];
         if(inFlightItem !== undefined) {
             pendingQueue.unshift(inFlightItem);
         }
         processQueue();
+    }
+
+    async function handleMidLifeClosed(error: unknown): Promise<void> {
+        if(shuttingDown) {
+            return;
+        }
+        logger.error({ error }, 'Session ended unexpectedly; reopening');
+        reopening = true;
+        const inFlightItem = currentTurn?.item;
+        if(currentTurn?.escalationTimer !== undefined) {
+            clock.clearTimer(currentTurn.escalationTimer);
+        }
+        currentTurn = null;
+        // Stryker disable next-line CallExpression: turnEndedWaiters is only ever populated by shutdown()'s waitForTurnEnd(), which only runs once shuttingDown is true — and the check above already returns before this line whenever shuttingDown is true, so the array this splices is always empty here
+        resolveTurnEndedWaiters();
+        // Taken before any open: openWithHandle reassigns currentQueue as part of settling.
+        const carryOver = currentQueue?.takePending() ?? [];
+        const handshake = `[BOOT] Session reopened at ${now().toISOString()} after the previous session ended unexpectedly. Host handshake — nothing to do, no reply expected.`;
+        reopenInFlight = reopenReplacementSession(handshake, inFlightItem, carryOver);
+        await reopenInFlight;
+    }
+
+    /**
+     * Runs a requested reopen against `handle`. `reopening` is set first so nothing is pushed into
+     * the dying handle's queue, and `discardHandle` clears `currentHandleRef` BEFORE closing, so
+     * the handle's own `onClosed` does not mistake this deliberate close for a crash.
+     */
+    async function startRequestedReopen(reason: string, handle: SessionHandle): Promise<void> {
+        reopening = true;
+        logger.info({ reason }, 'Reopening the session on request');
+        // Taken BEFORE discardHandle, which clears currentQueue along with currentHandleRef.
+        const carryOver = currentQueue?.takePending() ?? [];
+        discardHandle(handle);
+        await reopenReplacementSession(
+            `[BOOT] Session reopened at ${now().toISOString()} to apply ${reason}. Host handshake — nothing to do, no reply expected.`,
+            undefined,
+            carryOver
+        );
+    }
+
+    /**
+     * Starts a pending controlled reopen if the session is idle and still needs one. Called from
+     * {@link requestReopen}, from the end of {@link open}, and from {@link processQueue} — which
+     * is where every turn end and every completed reopen lands.
+     */
+    function maybeStartRequestedReopen(): void {
+        const pending = pendingReopen;
+        if(pending === undefined || currentTurn !== null || awaitingTurnEnd || shuttingDown || reopening) {
+            return;
+        }
+        if(openGeneration > pending.atGeneration) {
+            // A query has already been created from options built after the request — the initial
+            // open, or a crash reopen that overtook it — so it already carries what was asked for.
+            pendingReopen = undefined;
+            logger.debug({ reason: pending.reason }, 'Dropping a requested reopen an intervening open already satisfied');
+            return;
+        }
+        const handle = currentHandleRef;
+        if(handle === undefined) {
+            // Not open yet (or between handles); the end of open() calls back here.
+            return;
+        }
+        pendingReopen = undefined;
+        reopenInFlight = startRequestedReopen(pending.reason, handle);
+        void reopenInFlight;
+    }
+
+    function requestReopen(reason: string): void {
+        if(shuttingDown) {
+            return;
+        }
+        // Overwrites any earlier pending request rather than branching on one: a later request is
+        // strictly newer, and its own generation is what decides redundancy.
+        pendingReopen = { reason, atGeneration: openGeneration };
+        journal.append({ type: 'session_reopen_requested', at: now(), role, reason });
+        maybeStartRequestedReopen();
     }
 
     async function open(): Promise<{ sessionId: string, resumed: boolean }> {
@@ -1238,6 +1436,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
                     discardHandle(handle);
                     throw finishError;
                 }
+                maybeStartRequestedReopen();
                 return { sessionId, resumed: true };
             } catch (error) {
                 logger.warn({ error }, 'Resuming the stored session failed; opening a fresh session');
@@ -1245,6 +1444,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
         const { sessionId } = await openWithHandle(undefined, openHandshakeText(false));
         await finishOpen(sessionId, false, stored !== undefined);
+        maybeStartRequestedReopen();
         return { sessionId, resumed: false };
     }
 
@@ -1408,6 +1608,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
         });
 
         const graceful = (async (): Promise<void> => {
+            // A replacement handle may be seconds from existing; awaiting the latest reopen
+            // (inside the deadline race below) is what lets the final close find and close it.
+            // Settled when no reopen ever ran, or when the last one is already done.
+            await reopenInFlight;
             if(currentTurn !== null) {
                 await raceAgainstTimeout(waitForTurnEnd(), options.turnWaitMs);
                 // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, sonarjs/different-types-comparison -- TS narrows currentTurn from the outer check, but the await above lets afterResult() (running from a frame observed while we waited) set it back to null concurrently; re-checking is deliberate, not redundant
@@ -1437,7 +1641,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     return {
-        open, submit, appendWithoutTurn, adoptWakeTurn, adoptPeerTurn, deliver, interruptCurrent, subscribeTurn, status, shutdown,
+        open, submit, appendWithoutTurn, requestReopen, adoptWakeTurn, adoptPeerTurn, deliver, interruptCurrent, subscribeTurn, status, shutdown,
         getCompactionThresholdPercent: () => guard.getThresholdPercent(),
         setCompactionThresholdPercent: (percent: number) => { guard.setThresholdPercent(percent); },
     };

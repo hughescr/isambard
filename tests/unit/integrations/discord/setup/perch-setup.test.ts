@@ -110,6 +110,37 @@ describe('setupPerchDriverAndScheduler', () => {
         expect(createPerchDriverSpy.mock.calls[0][0].timeHeader).toBe(timeHeader);
     });
 
+    it('forwards the perch slot hooks to the driver by identity, so the identity-driven reopen lands between slots', () => {
+        const fakeDriver = { runSlot: mock(), stop: mock() };
+        const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
+        const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
+        jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) };
+        const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
+        const slotHooks = { onSlotStart: mock(), onSlotEnd: mock() };
+
+        setupPerchDriverAndScheduler({
+            conductor, perchConfig: PERCH_CONFIG, clock, slotHooks, ...deliveryDeps(),
+        });
+
+        expect(createPerchDriverSpy.mock.calls[0][0].slotHooks).toBe(slotHooks);
+    });
+
+    it('leaves the driver\'s slot hooks undefined when none are wired', () => {
+        const fakeDriver = { runSlot: mock(), stop: mock() };
+        const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
+        const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
+        jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) };
+        const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
+
+        setupPerchDriverAndScheduler({
+            conductor, perchConfig: PERCH_CONFIG, clock, ...deliveryDeps(),
+        });
+
+        expect(createPerchDriverSpy.mock.calls[0][0].slotHooks).toBeUndefined();
+    });
+
     it('leaves the driver\'s time-header provider undefined when none is wired', () => {
         const fakeDriver = { runSlot: mock(), stop: mock() };
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };

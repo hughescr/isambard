@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest, type Mock } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
 import { FakeClock } from '../../../helpers/fake-clock';
-import { createPerchDriver, type PerchDriverDeps } from '@/agent/perch/perch-driver';
+import { createPerchDriver, type PerchDriverDeps, type PerchSlotHooks } from '@/agent/perch/perch-driver';
 import type { PerchConfig } from '@/agent/perch/types';
 import type { Conductor, ConductorStatus, Envelope, SubmitOptions, TurnResult } from '@/agent/session';
 import type { ActivityLogger } from '@/storage';
@@ -349,6 +349,96 @@ describe('createPerchDriver', () => {
         await Promise.resolve();
 
         expect(activityLogger.log).toHaveBeenCalledWith(expect.objectContaining({ type: 'perch-end' }));
+    });
+
+    describe('slot hooks', () => {
+        /** Records the slot boundaries the driver reports, in order, as `'start'`/`'end'` strings. */
+        function recordingHooks(): { calls: string[], hooks: PerchSlotHooks } {
+            const calls: string[] = [];
+            return {
+                calls,
+                hooks: {
+                    onSlotStart: () => { calls.push('start'); },
+                    onSlotEnd:   () => { calls.push('end'); },
+                },
+            };
+        }
+
+        test('onSlotStart fires when a slot turn is actually started', () => {
+            const { calls, hooks } = recordingHooks();
+            const driver = createPerchDriver({ ...deps, slotHooks: hooks });
+
+            expect(driver.runSlot('afternoon')).toBe('started');
+
+            expect(calls).toEqual(['start']);
+        });
+
+        test('onSlotStart does not fire for a trigger that was merely folded into the pending flag', () => {
+            const { calls, hooks } = recordingHooks();
+            const driver = createPerchDriver({ ...deps, slotHooks: hooks });
+            driver.runSlot('afternoon');
+
+            expect(driver.runSlot('afternoon')).toBe('deferred');
+
+            expect(calls).toEqual(['start']);
+        });
+
+        test('onSlotEnd fires once the slot turn settles', async () => {
+            const { calls, hooks } = recordingHooks();
+            const driver = createPerchDriver({ ...deps, slotHooks: hooks });
+            driver.runSlot('afternoon');
+
+            conductor.submissions[0].resolve(makeTurnResult());
+            await flush();
+
+            expect(calls).toEqual(['start', 'end']);
+        });
+
+        test('onSlotEnd fires when the overrun interrupt is what ends the slot', async () => {
+            const { calls, hooks } = recordingHooks();
+            const driver = createPerchDriver({ ...deps, slotHooks: hooks });
+            driver.runSlot('afternoon');
+
+            clock.advance((MAX_SESSION_MINUTES + INTERRUPT_GRACE_MINUTES) * MINUTE_MS);
+            expect(conductor.interruptCurrent).toHaveBeenCalledTimes(1);
+            conductor.submissions[0].resolve(makeTurnResult({ wasInterrupted: true }));
+            await flush();
+
+            expect(calls).toEqual(['start', 'end']);
+        });
+
+        test('a deferred trigger reports a second start after the first slot\'s end', async () => {
+            const { calls, hooks } = recordingHooks();
+            const driver = createPerchDriver({ ...deps, slotHooks: hooks });
+            driver.runSlot('afternoon');
+            driver.runSlot('afternoon');
+
+            conductor.submissions[0].resolve(makeTurnResult());
+            await flush();
+
+            expect(calls).toEqual(['start', 'end', 'start']);
+        });
+
+        test('a slot turn that rejects still reports its end', async () => {
+            const { calls, hooks } = recordingHooks();
+            const driver = createPerchDriver({ ...deps, slotHooks: hooks });
+            driver.runSlot('afternoon');
+
+            conductor.submissions[0].reject(new Error('slot turn failed'));
+            await flush();
+
+            expect(calls).toEqual(['start', 'end']);
+        });
+
+        test('the driver runs perfectly well with no slot hooks wired at all', async () => {
+            const driver = createPerchDriver(deps);
+
+            expect(driver.runSlot('afternoon')).toBe('started');
+            conductor.submissions[0].resolve(makeTurnResult());
+            await flush();
+
+            expect(activityLogger.log).toHaveBeenCalledWith(expect.objectContaining({ type: 'perch-end' }));
+        });
     });
 
     test('stop() clears timers and the pending flag: no wrap-up, no interrupt, and no auto-resumed slot', async () => {

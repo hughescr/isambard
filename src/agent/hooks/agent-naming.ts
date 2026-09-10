@@ -8,8 +8,11 @@
  * sessions and should be left alone. That rule is only true if everything Izzy launches wears
  * the prefix, which is what this `PreToolUse` hook enforces:
  *
- * - `Agent`: `name` is prefixed with `Izzy-`; a missing/blank/non-string name becomes
- *   `Izzy-<subagent_type>-<n>` (or `Izzy-agent-<n>`), counting up per hook instance.
+ * - `Agent`: a missing/blank `subagent_type` is defaulted to {@link DEFAULT_SUBAGENT_TYPE} so a
+ *   bare launch runs under Isambard's own sub-agent prompt (see `agent/prompts/subagent-prompt`)
+ *   rather than the SDK's generic default; `name` is then prefixed with `Izzy-`, and a
+ *   missing/blank/non-string name becomes `Izzy-<subagent_type>-<n>`, counting up per hook
+ *   instance — so a bare launch reads as `Izzy-high-<n>` in the registry.
  * - `Workflow`: the `name:` string literal inside the script's `meta = { … }` object gains an
  *   `Izzy-workflow-` prefix. Deliberately a narrow regex over the script source — the script is
  *   an opaque string to the host — so anything it does not recognise is left untouched.
@@ -30,8 +33,14 @@ const IZZY_PREFIX = 'Izzy-';
 /** Prefix stamped onto a workflow's `meta.name`. Starts with {@link IZZY_PREFIX}, so a re-run is a no-op. */
 const IZZY_WORKFLOW_PREFIX = 'Izzy-workflow-';
 
-/** Name stem used when an `Agent` launch names neither itself nor a `subagent_type`. */
-const ANONYMOUS_AGENT_STEM = 'agent';
+/**
+ * Sub-agent type a bare `Agent` launch is routed to. The effort tiers are registered as sub-agent
+ * types in `agent/session/query-options.ts`, and each one carries Isambard's sub-agent system
+ * prompt (identity, quota rules, reporting contract). A launch with no `subagent_type` would
+ * otherwise get the SDK's generic agent, with none of that — so `high`, the ordinary substantive
+ * tier, is the default.
+ */
+const DEFAULT_SUBAGENT_TYPE = 'high';
 
 /**
  * Matches the `name:` string literal inside a workflow script's `meta` object:
@@ -110,13 +119,16 @@ export function createAgentNamingHooks(params: CreateAgentNamingHooksParams): Pa
     const { logger } = params;
     let anonymousCount = 0;
 
-    /** The name for an `Agent` launch, or `undefined` when the model's own name already fits. */
-    function agentName(input: Record<string, unknown>): string | undefined {
+    /**
+     * The name for an `Agent` launch, or `undefined` when the model's own name already fits.
+     * `subagentType` is the type the launch will actually run under (the model's own, or the
+     * default), so an invented name says which tier ran.
+     */
+    function agentName(input: Record<string, unknown>, subagentType: string): string | undefined {
         const given = nonEmptyString(input.name);
         if(given === undefined) {
             anonymousCount += 1;
-            const stem = nonEmptyString(input.subagent_type) ?? ANONYMOUS_AGENT_STEM;
-            return `${IZZY_PREFIX}${stem}-${anonymousCount}`;
+            return `${IZZY_PREFIX}${subagentType}-${anonymousCount}`;
         }
         if(given.startsWith(IZZY_PREFIX)) {
             return undefined;
@@ -131,8 +143,14 @@ export function createAgentNamingHooks(params: CreateAgentNamingHooksParams): Pa
             return undefined;
         }
         if(toolName === 'Agent') {
-            const name = agentName(input);
-            return name === undefined ? undefined : { ...input, name };
+            const explicitType = nonEmptyString(input.subagent_type);
+            const subagentType = explicitType ?? DEFAULT_SUBAGENT_TYPE;
+            const name = agentName(input, subagentType);
+            if(name === undefined && explicitType !== undefined) {
+                return undefined;
+            }
+            const renamed = name === undefined ? input : { ...input, name };
+            return { ...renamed, subagent_type: subagentType };
         }
         if(toolName === 'Workflow') {
             const script = nonEmptyString(input.script);

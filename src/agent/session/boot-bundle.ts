@@ -5,26 +5,32 @@
  * `additionalContext` on a `SessionStart` hook. R1 re-seeds by boot KIND rather than always
  * injecting the same full bundle:
  *
- * - `fresh` (a cold process start): the full re-seed — identity, current focus/state, events
+ * - `fresh` (a cold process start): the full re-seed — current focus/state, events
  *   (the rolling `bootEventsWindowMs` window, or `eventsSinceMs` when the caller has a better
  *   boundary), the task list, the channel list, who was recently talked to, background tasks
  *   lost at restart, undelivered envelopes, and the live active-task set.
- * - `compact` (working memory was just reset by a compaction): identity, current focus/state,
+ * - `compact` (working memory was just reset by a compaction): current focus/state,
  *   events since the mark, the task list, and the active-task set — NO channel list, recent
  *   users, lost tasks or undelivered envelopes, because nothing was lost across a compaction
  *   (Discord turns are held by the conductor for the duration; see `conductor.ts`).
  * - `resume` (the transcript survived — a process restart resuming an existing session): ONLY
  *   what happened while offline — events since the last journaled turn, lost tasks, undelivered
- *   envelopes, and the active-task set — no identity/state/task-list/channels, since none of
+ *   envelopes, and the active-task set — no state/task-list/channels, since none of
  *   that was lost. `build()` returns `''` (and the hook then adds no `additionalContext` at
  *   all — see `../hooks/boot-bundle.ts`) when every one of those sections is empty.
  *
  * Two role variants share one builder: `conversation` re-seeds the sections above; `perch`
- * re-seeds identity, the task list and `ContextBuilder.buildPerchContext`'s own block verbatim
+ * re-seeds the task list and `ContextBuilder.buildPerchContext`'s own block verbatim
  * for `fresh`/`compact` (it already carries a time header, top state and recent events, so
  * those sections are not rendered separately for perch, and there is no channel list) and, for
- * `resume`, only lost tasks/undelivered/active tasks — no identity, task list or perch context
+ * `resume`, only lost tasks/undelivered/active tasks — no task list or perch context
  * fetch at all.
+ *
+ * NO bundle of any kind carries an `## Identity` section (WP4a): identity is rendered into the
+ * session's own SDK `systemPrompt` instead, and a change to it drives a controlled
+ * close-and-resume (`Conductor.requestReopen`) rather than a fresh boot bundle — so re-seeding it
+ * here as USER-turn text would only duplicate, in every fresh/compact bundle, what the system
+ * prompt already states once and caches.
  *
  * Session-peers block 4: every non-empty bundle opens with the role's ambient time header (the
  * injected `timeHeader` provider — `ambience.timeHeaderFor(role)` at the composition root), so a
@@ -45,11 +51,6 @@
  * @module agent/session/boot-bundle
  */
 import { formatMemoryPreview, type ContextBuilder } from '../context-builder';
-
-/** The subset of `IdentityCache` this builder depends on. */
-export interface IdentitySource {
-    get: () => Promise<string>
-}
 
 /** The subset of `ContextBuilder` this builder depends on. */
 export type BootContextSource = Pick<ContextBuilder, 'loadHotState' | 'loadRecentEventsSince' | 'buildPerchContext'>;
@@ -72,7 +73,6 @@ export type BootKind = 'fresh' | 'resume' | 'compact';
 /** Inputs to {@link createBootBundleBuilder}. */
 export interface CreateBootBundleBuilderParams {
     role:                 'conversation' | 'perch'
-    identityCache:        IdentitySource
     contextBuilder:       BootContextSource
     taskListReader:       TaskListSource
     /** Optional channel-list text provider; never invoked for the perch variant, nor for any non-`fresh` kind. */
@@ -129,8 +129,6 @@ export interface BootBundleParts {
      * is true of every moment, so a resume with nothing else to say still renders `''`.
      */
     timeHeader?:      string
-    /** Conversation: fresh/compact only. Perch: fresh/compact only. Omitted (no `## Identity` section) for `resume` on either role. */
-    identity?:        string
     /** Conversation only; fresh/compact only. */
     currentFocus?:    string
     /** Conversation only; omitted (section not rendered) when there is nothing to show, or when the kind doesn't render events. */
@@ -187,7 +185,6 @@ function conversationSections(parts: BootBundleParts): (string | undefined)[] {
     }
     if(parts.kind === 'compact') {
         return [
-            renderHeadingSection('Identity', parts.identity),
             renderHeadingSection('Current focus', parts.currentFocus),
             renderHeadingSection(eventsHeading(parts.kind), parts.events),
             renderHeadingSection('Task list', parts.taskListSummary),
@@ -195,7 +192,6 @@ function conversationSections(parts: BootBundleParts): (string | undefined)[] {
         ];
     }
     return [
-        renderHeadingSection('Identity', parts.identity),
         renderHeadingSection('Current focus', parts.currentFocus),
         renderHeadingSection(eventsHeading(parts.kind), parts.events),
         renderHeadingSection('Task list', parts.taskListSummary),
@@ -217,7 +213,6 @@ function perchSections(parts: BootBundleParts): (string | undefined)[] {
         ];
     }
     return [
-        renderHeadingSection('Identity', parts.identity),
         renderHeadingSection('Task list', parts.taskListSummary),
         parts.perchContext,
         renderListSection('Background tasks lost at restart', parts.lostTasks),
@@ -287,7 +282,7 @@ async function loadEventsSection(
  */
 export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): BootBundleBuilder {
     const {
-        role, identityCache, contextBuilder, taskListReader, channelListProvider, now, timeHeader,
+        role, contextBuilder, taskListReader, channelListProvider, now, timeHeader,
         bootEventsWindowMs = 24 * 60 * 60 * 1000, bootEventsLimit = 50,
     } = params;
 
@@ -300,36 +295,34 @@ export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): 
 
             if(role === 'perch') {
                 if(kind === 'resume') {
-                    // No identity/task-list/perch-context fetch at all for a perch resume --
-                    // none of it is rendered, so there is nothing worth the round trip.
+                    // No task-list/perch-context fetch at all for a perch resume -- neither is
+                    // rendered, so there is nothing worth the round trip.
                     return formatBootBundle({ role: 'perch', kind, timeHeader: header, recentUsers, lostTasks, undelivered, activeTasks });
                 }
 
-                // Independent fetches (identity/task-list/perch-context depend on none of each
-                // other) run concurrently rather than as three sequential round trips.
-                const [identity, taskListSummary, perchContext] = await Promise.all([
-                    identityCache.get(),
+                // Independent fetches (task-list/perch-context depend on neither each other)
+                // run concurrently rather than as two sequential round trips.
+                const [taskListSummary, perchContext] = await Promise.all([
                     taskListReader.buildTaskListSummary(),
                     contextBuilder.buildPerchContext(new Date(now())),
                 ]);
 
                 return formatBootBundle({
-                    role: 'perch', kind, timeHeader: header, identity, taskListSummary, perchContext, recentUsers, lostTasks, undelivered, activeTasks,
+                    role: 'perch', kind, timeHeader: header, taskListSummary, perchContext, recentUsers, lostTasks, undelivered, activeTasks,
                 });
             }
 
             if(kind === 'resume') {
-                // Only the events section needs a fetch for a conversation resume; identity,
-                // state and the task list were not lost, so they are not re-fetched.
+                // Only the events section needs a fetch for a conversation resume; state and the
+                // task list were not lost, so they are not re-fetched.
                 const events = await loadEventsSection(contextBuilder, kind, eventsSinceMs, bootEventsWindowMs, bootEventsLimit, now);
                 return formatBootBundle({ role: 'conversation', kind, timeHeader: header, events, recentUsers, lostTasks, undelivered, activeTasks });
             }
 
-            // Same reasoning as the perch branch: five independent round trips, gathered
+            // Same reasoning as the perch branch: four independent round trips, gathered
             // concurrently instead of in sequence. The channel list is only ever rendered for
             // `fresh`, so it is only ever fetched for `fresh`.
-            const [identity, taskListSummary, currentFocus, events, channelList] = await Promise.all([
-                identityCache.get(),
+            const [taskListSummary, currentFocus, events, channelList] = await Promise.all([
                 taskListReader.buildTaskListSummary(),
                 contextBuilder.loadHotState(new Date(now())),
                 loadEventsSection(contextBuilder, kind, eventsSinceMs, bootEventsWindowMs, bootEventsLimit, now),
@@ -337,7 +330,7 @@ export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): 
             ]);
 
             return formatBootBundle({
-                role: 'conversation', kind, timeHeader: header, identity, currentFocus, events, taskListSummary, channelList, recentUsers, lostTasks, undelivered, activeTasks,
+                role: 'conversation', kind, timeHeader: header, currentFocus, events, taskListSummary, channelList, recentUsers, lostTasks, undelivered, activeTasks,
             });
         },
     };

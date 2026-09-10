@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, jest } from 'bun:test';
 import type { SDKNotificationMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { FakeClock } from '../../../helpers/fake-clock';
 import { FakeJournal } from '../../../helpers/fake-journal';
-import { fakeQueryFn, type FakeQuery } from '../../../helpers/fake-query';
+import { fakeQueryFn, type FakeQuery, type FakeQueryFnOptions } from '../../../helpers/fake-query';
 import { FakeResumeStore } from '../../../helpers/fake-resume-store';
 import * as frames from '../../../helpers/sdk-frames';
 import { createConductor, type Conductor, type CreateConductorParams } from '@/agent/session/conductor';
@@ -111,8 +111,8 @@ interface Harness {
 const DEFAULT_CONFIG: SessionConfig = sessionConfigSchema.parse({});
 const FAST_RETRY_POLICY: RetryPolicy = { maxAttempts: 2, baseDelayMs: 100, maxDelayMs: 10_000, backoffMultiplier: 2, jitterFraction: 0 };
 
-function build(overrides: Partial<CreateConductorParams> = {}): Harness {
-    const { queryFn, instances } = fakeQueryFn();
+function build(overrides: Partial<CreateConductorParams> = {}, queryFnOptions: FakeQueryFnOptions = {}): Harness {
+    const { queryFn, instances } = fakeQueryFn(queryFnOptions);
     const clock = new FakeClock(0);
     const journal = new FakeJournal();
     const resumeStore = new FakeResumeStore();
@@ -123,7 +123,9 @@ function build(overrides: Partial<CreateConductorParams> = {}): Harness {
     const conductor = createConductor({
         role:         'conversation',
         queryFn,
-        buildOptions: () => ({}),
+        // Echoes `resume` back into the Options a test can read off FakeQuery.receivedParams, so
+        // a reopen's resume-vs-fresh choice is directly observable.
+        buildOptions: (resume?: string) => (resume === undefined ? {} : { resume }),
         clock,
         readRss,
         ledgerStore,
@@ -1324,10 +1326,12 @@ describe('createConductor', () => {
             const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
             await flush();
 
-            h.instances[0].fail(new Error('worker crashed'));
+            const crash = new Error('worker crashed');
+            h.instances[0].fail(crash);
             await flush();
 
             expect(h.instances).toHaveLength(2);
+            expect(h.logger.error).toHaveBeenCalledWith({ error: crash }, 'Session ended unexpectedly; reopening');
             h.instances[1].emit(frames.init('sess-1'));
             await flush();
 
@@ -1410,6 +1414,10 @@ describe('createConductor', () => {
             await expect(inFlight).rejects.toThrow();
             await expect(queued).rejects.toThrow();
             expect(h.logger.error).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.stringContaining('giving up'));
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                { dropped: expect.any(Number) },
+                'Giving up on a reopen; dropping input the dead session never delivered'
+            );
             // rejectAllQueued/the in-flight-item rejection path both clear their AbortSignal
             // listener — a long-lived signal must not keep retaining a settled item's callback.
             expect(inFlightRemoveSpy).toHaveBeenCalledWith('abort', expect.any(Function));
@@ -1800,6 +1808,32 @@ describe('createConductor', () => {
 
             expect(h.journal.byKind('session_ended')).toEqual([]);
             expect(h.journal.byKind('shutdown')).toEqual([{ type: 'shutdown', at: expect.any(Date) }]);
+        });
+
+        it('called while a mid-life crash reopen is in flight awaits it before flushing/closing, and the reopen discards its brand-new replacement rather than leaking it', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            expect(h.instances).toHaveLength(2);
+
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+            await flush();
+
+            // The reopen has not resolved yet (instances[1] has not emitted its init frame), so
+            // shutdown() must still be waiting on it rather than having already flushed/closed.
+            expect(h.instances[1].closeCalls).toBe(0);
+            expect(h.journal.flushCount).toBe(0);
+
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            await shutdownPromise;
+
+            // reopenReplacementSession's own shuttingDown branch closes the brand-new handle
+            // itself (it would otherwise outlive the process), before shutdown()'s final close.
+            expect(h.instances[1].closeCalls).toBe(1);
+            expect(h.journal.flushCount).toBe(1);
         });
     });
 
@@ -2890,6 +2924,509 @@ describe('createConductor', () => {
             expect(h.journal.byKind('turn_failed')).toEqual([
                 { type: 'turn_failed', at: expect.any(Date), envelopeId: envelope.id, kind: 'peer', error: 'overloaded' },
             ]);
+        });
+    });
+
+    describe('requestReopen()', () => {
+        it('closes and resumes the live session as soon as the conductor is idle', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+            expect(h.instances[0].closeCalls).toBe(1);
+            expect(h.instances[1].receivedParams?.options.resume).toBe('sess-1');
+        });
+
+        it('pushes a boot handshake naming the reason, before any frame is awaited', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+
+            const [handshake] = h.instances[1].consumedPrompts;
+            expect(JSON.stringify(handshake.message)).toContain('[BOOT] Session reopened');
+            expect(JSON.stringify(handshake.message)).toContain('an identity change');
+        });
+
+        it('journals session_reopen_requested with the role and reason, at request time', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+
+            // Journaled synchronously, before the reopen has begun: a request deferred behind a
+            // running turn must still be visible if the process dies before the idle point.
+            expect(h.journal.byKind('session_reopen_requested')).toEqual([
+                { type: 'session_reopen_requested', at: expect.any(Date), role: 'conversation', reason: 'an identity change' },
+            ]);
+        });
+
+        it('logs the reason at info when the reopen actually starts', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+
+            expect(h.logger.info).toHaveBeenCalledWith({ reason: 'an identity change' }, 'Reopening the session on request');
+        });
+
+        it('is a no-op once shutdown has begun — neither journaled nor acted on', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            await h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+
+            expect(h.journal.byKind('session_reopen_requested')).toEqual([]);
+            expect(h.instances).toHaveLength(1);
+        });
+
+        it('a request made before open() is satisfied by the open itself, not by a second session', async () => {
+            const h = build();
+
+            h.conductor.requestReopen('an identity change');
+            await openWith(h, 'sess-1');
+            await flush();
+
+            // The request is recorded (it may outlive the process) but the open that followed it
+            // already built its options from the current prompt, so nothing is reopened.
+            expect(h.journal.byKind('session_reopen_requested')).toHaveLength(1);
+            expect(h.instances).toHaveLength(1);
+            expect(h.logger.debug).toHaveBeenCalledWith(
+                { reason: 'an identity change' }, 'Dropping a requested reopen an intervening open already satisfied'
+            );
+        });
+
+        it('a request made while open() is in flight, after its options were built, reopens once the open completes', async () => {
+            const h = build();
+            const openPromise = h.conductor.open();
+            await flush();
+            // buildOptions has already run for instance 0 — this request cannot be satisfied by it.
+            h.conductor.requestReopen('an identity change');
+
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+            expect(h.instances[1].receivedParams?.options.resume).toBe('sess-1');
+        });
+
+        it('a request made while a RESUME open() is in flight, after its options were built, reopens once that resume completes', async () => {
+            const h = build();
+            await h.resumeStore.save('conversation', 'sess-old');
+            const openPromise = h.conductor.open();
+            await flush();
+            // buildOptions has already run for instance 0 (the resume attempt) — this request
+            // cannot be satisfied by it.
+            h.conductor.requestReopen('an identity change');
+
+            h.instances[0].emit(frames.init('sess-old'));
+            await openPromise;
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+            expect(h.instances[1].receivedParams?.options.resume).toBe('sess-old');
+        });
+
+        it('a request made while a crash reopen is in flight is applied after it', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            expect(h.instances).toHaveLength(2);
+
+            // instances[1] exists, so its options were built BEFORE this request.
+            h.conductor.requestReopen('an identity change');
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+
+            expect(h.instances).toHaveLength(3);
+            expect(h.instances[1].closeCalls).toBe(1);
+        });
+
+        it('a request made before a crash reopen is dropped by it — the replacement already carries the new prompt', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.conductor.requestReopen('an identity change');
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+        });
+
+        it('the turn a crash re-queued still runs once the crash has dropped the pending request', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            const envelope = discordEnvelope();
+            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.conductor.requestReopen('an identity change');
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+
+            // Dropping the now-redundant request must not also abandon the queue the crash
+            // reopen just refilled: the interrupted turn is re-queued and has to be started.
+            expect(turnPrompts(h.instances[1])).toHaveLength(1);
+
+            h.instances[1].emit(frames.resultSuccess());
+            await expect(resultPromise).resolves.toEqual(expect.objectContaining({ envelopeId: envelope.id, isError: false }));
+        });
+
+        it('waits for a running turn to end before reopening', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            expect(h.instances).toHaveLength(1);
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+        });
+
+        it('does not start a queued turn while a reopen is owed; the queued envelope plays on the replacement', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const queued = h.conductor.submit(discordEnvelope(), { priority: 'other' });
+            await flush();
+
+            h.conductor.requestReopen('an identity change');
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            // The queued envelope must NOT have been started on the dying session.
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
+            expect(h.instances).toHaveLength(2);
+
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            expect(turnPrompts(h.instances[1])).toHaveLength(1);
+
+            h.instances[1].emit(frames.resultSuccess());
+            await expect(queued).resolves.toEqual(expect.objectContaining({ isError: false }));
+        });
+
+        it('holds the reopen while the turn-end compaction check is still outstanding', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            const deferredUsage = h.instances[0].deferContextUsage();
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+            h.conductor.requestReopen('an identity change');
+            await flush();
+
+            // currentTurn is already null, but guard.onTurnEnd() has not resolved — a /compact
+            // turn can still be born in this window, so the reopen must wait it out.
+            expect(h.instances).toHaveLength(1);
+
+            deferredUsage.resolve(frames.contextUsage({ percentage: 10 }));
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+        });
+
+        it('starts no turn for an envelope submitted while the reopen is owed but still deferred', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            const deferredUsage = h.instances[0].deferContextUsage();
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+            h.conductor.requestReopen('an identity change');
+            // currentTurn is null and the reopen has not started (guard.onTurnEnd is still
+            // outstanding), so this submit reaches processQueue with the reopen merely owed.
+            const queued = h.conductor.submit(discordEnvelope(), { priority: 'other' });
+            await flush();
+
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
+
+            deferredUsage.resolve(frames.contextUsage({ percentage: 10 }));
+            await flush();
+            expect(h.instances).toHaveLength(2);
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+
+            // Held through the whole window, then played on the replacement session.
+            expect(turnPrompts(h.instances[1])).toHaveLength(1);
+            h.instances[1].emit(frames.resultSuccess());
+            await expect(queued).resolves.toEqual(expect.objectContaining({ isError: false }));
+        });
+
+        it('an envelope submitted while the requested reopen is in flight is held, not routed into the orphaned queue', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            expect(h.instances).toHaveLength(2);
+
+            const pendingSubmit = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            expect(turnPrompts(h.instances[0])).toHaveLength(0);
+            expect(turnPrompts(h.instances[1])).toHaveLength(0);
+
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            expect(turnPrompts(h.instances[1])).toHaveLength(1);
+
+            h.instances[1].emit(frames.resultSuccess());
+            await expect(pendingSubmit).resolves.toEqual(expect.objectContaining({ isError: false }));
+        });
+
+        it('falls back to a fresh session when the resume attempt fails', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            h.instances[1].fail(new Error('resume rejected by CLI'));
+            await flush();
+
+            expect(h.instances).toHaveLength(3);
+            h.instances[2].emit(frames.init('sess-2'));
+            await flush();
+
+            expect(h.journal.byKind('session_opened').at(-1)).toEqual(
+                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-2', resumed: false, fallback: true }
+            );
+        });
+
+        it('does not reopen a second time once the requested reopen has completed', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+        });
+
+        it('wipes the ledger task list on the replacement session, exactly as a crash reopen does', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'background work' }));
+            await flush();
+            expect(h.ledgerStore.get().tasks).toHaveLength(1);
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+
+            expect(h.ledgerStore.get().tasks).toHaveLength(0);
+        });
+
+        it('replays an accumulate-only envelope the dying session never read onto the replacement', async () => {
+            // Instance 0 never reads its prompt iterable, modelling an SDK that has not yet
+            // drained what the host queued; instance 1 reads normally so the replay is visible.
+            const h = build({}, { drainPrompts: index => index > 0 });
+            await openWith(h, 'sess-1');
+
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'carry me over' }))).toBe(true);
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            // A second drain pass: the carried messages are pushed only after finishOpen's own
+            // await chain settles, and each one costs the capture loop a couple of ticks.
+            await flush();
+
+            expect(JSON.stringify(h.instances[1].consumedPrompts)).toContain('carry me over');
+        });
+
+        it('buffers an append made during the reopen and delivers it to the replacement', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            expect(h.instances).toHaveLength(2);
+
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'buffered during reopen' }))).toBe(true);
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+
+            expect(JSON.stringify(h.instances[1].consumedPrompts)).toContain('buffered during reopen');
+        });
+
+        it('a crash reopen also carries over what the dead queue never delivered', async () => {
+            const h = build({}, { drainPrompts: index => index > 0 });
+            await openWith(h, 'sess-1');
+            h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'crash carry-over' }));
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            await flush();
+
+            expect(JSON.stringify(h.instances[1].consumedPrompts)).toContain('crash carry-over');
+        });
+
+        it('shutting down during an in-flight requested reopen closes the replacement rather than leaking it', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            expect(h.instances).toHaveLength(2);
+
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            h.clock.runAll();
+            await shutdownPromise;
+
+            expect(h.instances[1].closeCalls).toBeGreaterThanOrEqual(1);
+            expect(turnPrompts(h.instances[1])).toHaveLength(0);
+            expect(h.instances).toHaveLength(2);
+        });
+
+        it('shutdown awaits the reopen a completing reopen started, not the one it replaced', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            // Crash reopen A. instances[1]'s options were built as part of starting it, so the
+            // request below cannot be satisfied by it and becomes reopen B the moment A finishes.
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            expect(h.instances).toHaveLength(2);
+
+            h.conductor.requestReopen('an identity change');
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            // B is in flight: its handle exists but has emitted no init frame yet.
+            expect(h.instances).toHaveLength(3);
+            expect(h.instances[2].closeCalls).toBe(0);
+
+            let finished = false;
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 }).then(() => {
+                finished = true;
+                return undefined;
+            });
+            await flush();
+
+            // A's completion must not have erased B's tracking promise: shutdown has to wait for
+            // the replacement child B is spawning, or it exits leaving it orphaned.
+            expect(finished).toBe(false);
+
+            h.instances[2].emit(frames.init('sess-1'));
+            await flush();
+            h.clock.runAll();
+            await shutdownPromise;
+
+            expect(finished).toBe(true);
+            expect(h.instances[2].closeCalls).toBeGreaterThanOrEqual(1);
+        });
+
+        it('a replacement that lands after shutdown gave up at its deadline is closed by the reopen itself, and its buffered input dropped', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            expect(h.instances).toHaveLength(2);
+
+            // Buffered while the reopen is in flight: the replacement it was destined for is
+            // about to be thrown away, so it must never be pushed into a session nobody reads.
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'buffered during reopen' }))).toBe(true);
+
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+            await flush();
+            // The deadline wins the race while the replacement is still opening, so shutdown's
+            // own final close runs against a cleared currentHandleRef and closes nothing: the
+            // freshly opened child is the reopen's to dispose of, or it outlives the process.
+            h.clock.advance(120_000);
+            await shutdownPromise;
+            expect(h.instances[1].closeCalls).toBe(0);
+
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            await flush();
+
+            expect(h.instances[1].closeCalls).toBe(1);
+            expect(h.instances).toHaveLength(2);
+            expect(turnPrompts(h.instances[1])).toHaveLength(0);
+            expect(JSON.stringify(h.instances[1].consumedPrompts)).not.toContain('buffered during reopen');
+        });
+    });
+
+    describe('appendWithoutTurn() acceptance', () => {
+        it('returns true when the envelope reached the live queue', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope())).toBe(true);
+        });
+
+        it('returns false before open() has assigned a queue', () => {
+            const h = build();
+
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope())).toBe(false);
+        });
+
+        it('returns false once shutting down', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            await h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope())).toBe(false);
+        });
+
+        it('returns false once shutting down even while a reopen is still in flight', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            // The replacement has emitted no init frame, so the reopen — and the append buffer it
+            // owns — is still live when shutdown begins.
+            expect(h.instances).toHaveLength(2);
+
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+            await flush();
+
+            // Buffering here would report the envelope as accepted (burning the caller's dedupe
+            // key) and then discard it with the rest of the buffer as the reopen unwinds.
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope())).toBe(false);
+
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            h.clock.runAll();
+            await shutdownPromise;
+
+            expect(turnPrompts(h.instances[1])).toHaveLength(0);
         });
     });
 });

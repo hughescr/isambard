@@ -27,6 +27,7 @@ import { createMcpServerInstances, type McpSharedDeps } from './mcp-servers';
 import {
     buildSessionQueryOptions,
     buildSessionSystemPrompt,
+    buildSubagentSystemPrompt,
     computeRecovery,
     createAgentNamingHooks,
     createBootBundleBuilder,
@@ -67,14 +68,29 @@ import {
     type SessionQueryFn,
     type StateTopSetSource,
     type TurnResult,
-    type CalendarAgendaSource
+    type CalendarAgendaSource,
+    type PerchSlotHooks
 } from '@/agent';
 import { type SessionConfig, loadRetryConfig  } from '@/config';
 import type { ServiceHealthRegistry } from '@/services';
 import { formatTimeHeader } from '@/utils';
 
-/** The subset of `IdentityCache` the system prompt and boot bundle depend on. */
-type IdentitySource = CreateBootBundleBuilderParams['identityCache'];
+/**
+ * The subset of `IdentityCache` both conductors depend on: read the current identity, hear when
+ * it changes, and tell whether the value a read returned has already been superseded.
+ *
+ * Every member is REQUIRED on purpose (no optionals): a composition root that wires a plain
+ * `{ get }` object would otherwise type-check while leaving the session's system prompt frozen at
+ * its startup identity forever, which is exactly the bug this interface exists to prevent.
+ */
+interface IdentitySource {
+    /** The current identity text, loading it on a cold slot. */
+    get:      () => Promise<string>
+    /** Registers a listener fired after every identity invalidation/replacement; returns an unsubscribe. */
+    onChange: (listener: () => void) => () => void
+    /** Monotonic revision, bumped by every invalidation/replacement — see `IdentityCache.revision`. */
+    revision: () => number
+}
 
 /** The subset of `ContextBuilder` the boot bundle and context policy depend on. */
 type BootContextSource = CreateBootBundleBuilderParams['contextBuilder'];
@@ -372,10 +388,19 @@ export async function createConversationConductor(params: CreateConversationCond
         health:         mcpInstances.healthMcpServer,
     };
 
-    // Built once, here, from the injected IdentityCache — never rebuilt on a later reopen
-    // (buildOptions, below, closes over this same string).
+    // Rebuilt whenever the identity behind them changes (see scheduleIdentityRefresh below).
+    // `buildOptions` reads these VARIABLES at every open and reopen rather than capturing their
+    // values, so the next session the conductor opens carries the current identity.
+    // `revisionAtStart` is captured before the await: a write landing between this read and the
+    // subscription below would otherwise fire no listener anybody had registered yet, and the
+    // session would stay frozen at a stale identity for the life of the process.
+    const revisionAtStart = identityCache.revision();
     const identity = await identityCache.get();
-    const systemPrompt = buildSessionSystemPrompt({ role: 'conversation', identity });
+    let systemPrompt = buildSessionSystemPrompt({ role: 'conversation', identity });
+    // The prompt every effort tier's sub-agents run under, from the same identity read as the
+    // session's own prompt, so a session and everything it launches never disagree about who
+    // Isambard is.
+    let subagentSystemPrompt = buildSubagentSystemPrompt({ identity });
 
     const ledgerStore = createLedgerStore('conversation', { logger });
     ambience?.register(ledgerStore);
@@ -386,7 +411,7 @@ export async function createConversationConductor(params: CreateConversationCond
     });
     const bootBundleBuilder = createBootBundleBuilder({
         role:               'conversation',
-        identityCache, contextBuilder, taskListReader, channelListProvider,
+        contextBuilder, taskListReader, channelListProvider,
         now:                () => clock.now(),
         bootEventsWindowMs: config.bootEventsWindowMs,
         // Session-peers block 4: a boot turn opens with the same ambient header every other
@@ -527,20 +552,22 @@ export async function createConversationConductor(params: CreateConversationCond
 
     function buildOptions(resume?: string): Options {
         return buildSessionQueryOptions({
-            role:           'conversation',
+            role:                 'conversation',
             systemPrompt,
-            mcpServers:     sessionMcpServers,
+            // A getter, read at every open and reopen — see BuildSessionQueryOptionsParams.
+            subagentSystemPrompt: () => subagentSystemPrompt,
+            mcpServers:           sessionMcpServers,
             plugins,
             hooks,
             resume,
-            mainModel:      'sonnet',
+            mainModel:            'sonnet',
             // The per-open InterruptFlag conductor.ts creates in openWithHandle() is private to
             // that module and not threaded into this callback's signature (only `resume` is), so
             // this session's SDK stderr classifier cannot distinguish an expected
             // interrupt-abort's stderr from a real error. A deliberate, low-risk simplification:
             // it only affects log level (debug vs error) for one specific stderr string, never
             // functional behaviour.
-            isInterrupting: () => false,
+            isInterrupting:       () => false,
         });
     }
 
@@ -562,6 +589,53 @@ export async function createConversationConductor(params: CreateConversationCond
         onWakeTurnSettled,
     });
     conductorRef = innerConductor;
+
+    /**
+     * Serialized chain of identity refreshes: two writes in quick succession reload in order, so
+     * the prompt the session ends up with is the one the LAST write produced rather than whichever
+     * load happened to settle last.
+     */
+    let identityRefresh: Promise<void> = Promise.resolve();
+
+    /**
+     * Rebuilds both prompts from the current identity and, if the rendered system prompt actually
+     * changed, asks the conductor for a controlled reopen — the only way to change an SDK
+     * `systemPrompt`, which is fixed at `query()` time.
+     */
+    function scheduleIdentityRefresh(): void {
+        const previous = identityRefresh;
+        identityRefresh = (async (): Promise<void> => {
+            await previous;
+            try {
+                const revision = identityCache.revision();
+                const next = await identityCache.get();
+                if(identityCache.revision() !== revision) {
+                    // Superseded mid-load: a newer write has already queued its own refresh, and
+                    // acting on this value would install an identity known to be out of date.
+                    return;
+                }
+                const nextSystemPrompt = buildSessionSystemPrompt({ role: 'conversation', identity: next });
+                if(nextSystemPrompt === systemPrompt) {
+                    // An identity-layer write that did not change what loadCoreIdentity renders.
+                    // A reopen would restart the session to install a byte-identical prompt.
+                    return;
+                }
+                systemPrompt = nextSystemPrompt;
+                subagentSystemPrompt = buildSubagentSystemPrompt({ identity: next });
+                innerConductor.requestReopen('an identity change');
+            } catch (error: unknown) {
+                logger.error({ error }, 'Rebuilding the conversation system prompt after an identity change failed');
+            }
+        })();
+    }
+
+    // The unsubscribe is deliberately dropped: this subscription's lifetime is the process's.
+    identityCache.onChange(scheduleIdentityRefresh);
+    if(identityCache.revision() !== revisionAtStart) {
+        // A write landed in the startup window described above. A spurious refresh is free here,
+        // because an unchanged prompt reopens nothing.
+        scheduleIdentityRefresh();
+    }
 
     // Thin wrapper: every method delegates to innerConductor unchanged except submit(), which
     // additionally records the envelope's author (see recordRecentAuthor above) before
@@ -637,6 +711,13 @@ export interface PerchConductorResult {
      * no origin channel of its own to fall back to instead.
      */
     setWakeTurnDelivery: (fn: (envelope: Envelope, result: TurnResult) => Promise<void>) => void
+    /**
+     * The perch driver's slot-boundary callbacks, to be handed to `createPerchDriver` (via
+     * `bot.ts` / `perch-setup.ts`). They exist so an identity change can wait: the perch session
+     * runs in time-boxed slots, and closing it mid-slot would abort the very turn the slot is for,
+     * so a prompt refresh is held until `onSlotEnd` and applied between slots.
+     */
+    slotHooks:           PerchSlotHooks
 }
 
 /**
@@ -703,15 +784,19 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         // No browser (single Bun.WebView — conversation only).
     };
 
-    // Built once, here, from the injected IdentityCache — never rebuilt on a later reopen.
+    // See createConversationConductor's identical block: rebuilt on an identity change, read by
+    // buildOptions at every open and reopen, with the pre-await revision closing the startup window.
+    const revisionAtStart = identityCache.revision();
     const identity = await identityCache.get();
-    const systemPrompt = buildSessionSystemPrompt({ role: 'perch', identity });
+    let systemPrompt = buildSessionSystemPrompt({ role: 'perch', identity });
+    // See createConversationConductor's identical comment: one identity read feeds both prompts.
+    let subagentSystemPrompt = buildSubagentSystemPrompt({ identity });
 
     const ledgerStore = createLedgerStore('perch', { logger });
     ambience?.register(ledgerStore);
     const bootBundleBuilder = createBootBundleBuilder({
         role:               'perch',
-        identityCache, contextBuilder, taskListReader,
+        contextBuilder, taskListReader,
         now:                () => clock.now(),
         bootEventsWindowMs: config.bootEventsWindowMs,
         // Session-peers block 4: see createConversationConductor's identical comment.
@@ -818,17 +903,19 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
 
     function buildOptions(resume?: string): Options {
         return buildSessionQueryOptions({
-            role:           'perch',
+            role:                 'perch',
             systemPrompt,
-            mcpServers:     sessionMcpServers,
+            // See createConversationConductor: read at every open and reopen, not captured here.
+            subagentSystemPrompt: () => subagentSystemPrompt,
+            mcpServers:           sessionMcpServers,
             plugins,
             hooks,
             resume,
-            mainModel:      'sonnet',
+            mainModel:            'sonnet',
             // See createConversationConductor's identical comment: no per-open InterruptFlag is
             // threaded into this callback, so the stderr classifier cannot distinguish an
             // expected interrupt-abort's stderr from a real error — log-level only, no functional effect.
-            isInterrupting: () => false,
+            isInterrupting:       () => false,
         });
     }
 
@@ -851,6 +938,61 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     });
     conductorRef = conductor;
 
+    /** True between `onSlotStart` and `onSlotEnd` — i.e. while a perch slot turn is live. */
+    let slotActive = false;
+    /** True once an identity change has rebuilt the prompts but the reopen has not been asked for. */
+    let identityReopenPending = false;
+    /** See createConversationConductor's identical chain. */
+    let identityRefresh: Promise<void> = Promise.resolve();
+
+    /** Asks for the deferred reopen, if one is owed and no slot is currently running. */
+    function maybeReopenForIdentity(): void {
+        if(!identityReopenPending || slotActive) {
+            return;
+        }
+        identityReopenPending = false;
+        conductor.requestReopen('an identity change');
+    }
+
+    /** See createConversationConductor's `scheduleIdentityRefresh` — identical but for the deferral. */
+    function scheduleIdentityRefresh(): void {
+        const previous = identityRefresh;
+        identityRefresh = (async (): Promise<void> => {
+            await previous;
+            try {
+                const revision = identityCache.revision();
+                const next = await identityCache.get();
+                if(identityCache.revision() !== revision) {
+                    return;
+                }
+                const nextSystemPrompt = buildSessionSystemPrompt({ role: 'perch', identity: next });
+                if(nextSystemPrompt === systemPrompt) {
+                    return;
+                }
+                systemPrompt = nextSystemPrompt;
+                subagentSystemPrompt = buildSubagentSystemPrompt({ identity: next });
+                identityReopenPending = true;
+                maybeReopenForIdentity();
+            } catch (error: unknown) {
+                logger.error({ error }, 'Rebuilding the perch system prompt after an identity change failed');
+            }
+        })();
+    }
+
+    identityCache.onChange(scheduleIdentityRefresh);
+    if(identityCache.revision() !== revisionAtStart) {
+        scheduleIdentityRefresh();
+    }
+
+    /** Handed to the perch driver by the composition root — see {@link PerchConductorResult.slotHooks}. */
+    const slotHooks: PerchSlotHooks = {
+        onSlotStart: () => { slotActive = true; },
+        onSlotEnd:   () => {
+            slotActive = false;
+            maybeReopenForIdentity();
+        },
+    };
+
     // Q11: see createConversationConductor's identical wiring/comment above.
     createCompactionThresholdTuner({
         ledgerStore,
@@ -863,6 +1005,6 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     });
 
     return {
-        conductor, ledgerStore, compactionTelemetry, setWakeTurnDelivery,
+        conductor, ledgerStore, compactionTelemetry, setWakeTurnDelivery, slotHooks,
     };
 }

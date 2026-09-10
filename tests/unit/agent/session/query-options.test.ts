@@ -5,7 +5,9 @@ import {
     buildMcpServers,
     buildAllowedTools,
     EXPLICIT_TOOLS,
-    EXPLICIT_AGENTS,
+    LAUNCH_RESTRICTED_EFFORTS,
+    SUBAGENT_EFFORTS,
+    SUBAGENT_LAUNCH_TOOLS,
     SESSION_PEER_NAMES,
     type SessionMcpServers
 } from '../../../../src/agent/session/query-options';
@@ -16,24 +18,106 @@ const mockMcpServer = { command: 'node', args: ['server.js'] };
 
 function baseParams(overrides: Partial<Parameters<typeof buildSessionQueryOptions>[0]> = {}) {
     return {
-        role:           'conversation' as SessionRole,
-        systemPrompt:   'You are Izzy.',
-        mcpServers:     {} as SessionMcpServers,
-        hooks:          {} as Partial<Record<HookEvent, HookCallbackMatcher[]>>,
-        mainModel:      'sonnet',
-        isInterrupting: () => false,
+        role:                 'conversation' as SessionRole,
+        systemPrompt:         'You are Izzy.',
+        subagentSystemPrompt: () => 'SUBAGENT-PROMPT',
+        mcpServers:           {} as SessionMcpServers,
+        hooks:                {} as Partial<Record<HookEvent, HookCallbackMatcher[]>>,
+        mainModel:            'sonnet',
+        isInterrupting:       () => false,
         ...overrides,
     };
 }
 
-describe('EXPLICIT_TOOLS / EXPLICIT_AGENTS', () => {
+describe('EXPLICIT_TOOLS', () => {
     test('EXPLICIT_TOOLS is non-empty and has no blank entries', () => {
         expect(EXPLICIT_TOOLS.length).toBeGreaterThan(0);
         expect(EXPLICIT_TOOLS.every(tool => tool !== '')).toBe(true);
     });
+});
 
-    test('EXPLICIT_AGENTS defines only general-purpose', () => {
-        expect(Object.keys(EXPLICIT_AGENTS)).toEqual(['general-purpose']);
+describe('sub-agent effort tiers', () => {
+    /** The `agents` map from a freshly built options object, typed for assertions. */
+    function agentsOf(overrides: Partial<Parameters<typeof buildSessionQueryOptions>[0]> = {}) {
+        return buildSessionQueryOptions(baseParams(overrides)).agents;
+    }
+
+    test('offers low, medium, high and xhigh — and never max, which not every model has', () => {
+        expect(SUBAGENT_EFFORTS).toEqual(['low', 'medium', 'high', 'xhigh']);
+        expect(LAUNCH_RESTRICTED_EFFORTS).toEqual(['low', 'medium']);
+        expect(SUBAGENT_LAUNCH_TOOLS).toEqual(['Agent', 'Task', 'Workflow']);
+    });
+
+    test('registers one agent definition per effort tier, plus the general-purpose alias', () => {
+        expect(Object.keys(agentsOf())).toEqual(['low', 'medium', 'high', 'xhigh', 'general-purpose']);
+    });
+
+    test('each tier declares its own effort, and general-purpose runs at high', () => {
+        const agents = agentsOf();
+
+        for(const effort of SUBAGENT_EFFORTS) {
+            expect(agents[effort].effort).toBe(effort);
+        }
+        expect(agents['general-purpose'].effort).toBe('high');
+    });
+
+    test('every tier carries the sub-agent system prompt read from the getter, including the alias', () => {
+        const agents = agentsOf();
+
+        for(const name of [...SUBAGENT_EFFORTS, 'general-purpose']) {
+            expect(agents[name].prompt).toBe('SUBAGENT-PROMPT');
+        }
+    });
+
+    test('reads the prompt through the getter at build time, so a reopened session gets the current identity', () => {
+        let current = 'FIRST';
+
+        const first = buildSessionQueryOptions(baseParams({ subagentSystemPrompt: () => current })).agents;
+        current = 'SECOND';
+        const second = buildSessionQueryOptions(baseParams({ subagentSystemPrompt: () => current })).agents;
+
+        expect(first.high.prompt).toBe('FIRST');
+        expect(second.high.prompt).toBe('SECOND');
+    });
+
+    test('low and medium may not launch sub-agents or workflows of their own', () => {
+        const agents = agentsOf();
+
+        expect(agents.low.disallowedTools).toEqual(['Agent', 'Task', 'Workflow']);
+        expect(agents.medium.disallowedTools).toEqual(['Agent', 'Task', 'Workflow']);
+    });
+
+    test('high, xhigh and general-purpose restrict no tools', () => {
+        const agents = agentsOf();
+
+        expect(agents.high.disallowedTools).toBeUndefined();
+        expect(agents.xhigh.disallowedTools).toBeUndefined();
+        expect(agents['general-purpose'].disallowedTools).toBeUndefined();
+    });
+
+    test('no tier pins a model — the launching Agent call carries model, and the tier is the effort knob', () => {
+        const agents = agentsOf();
+
+        for(const name of [...SUBAGENT_EFFORTS, 'general-purpose']) {
+            expect(agents[name].model).toBeUndefined();
+        }
+    });
+
+    test('each description names its own effort so the launching model can choose between them', () => {
+        const agents = agentsOf();
+
+        for(const effort of SUBAGENT_EFFORTS) {
+            expect(agents[effort].description).toBe(`General-purpose Isambard sub-agent at ${effort} effort; pass the model on the launch.`);
+        }
+        expect(agents['general-purpose'].description).toContain('the same as `high`');
+    });
+
+    test('general-purpose is an alias of high, not the old pinned-Sonnet generic agent', () => {
+        const agents = agentsOf();
+
+        expect(agents['general-purpose'].prompt).toBe(agents.high.prompt);
+        expect(agents['general-purpose'].effort).toBe(agents.high.effort);
+        expect(agents['general-purpose'].prompt).not.toContain('general-purpose assistant');
     });
 });
 

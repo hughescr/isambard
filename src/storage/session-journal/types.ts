@@ -54,6 +54,9 @@ export const journalEntrySchema = z.discriminatedUnion('type', [
     z.object({
         ...journalEntryBase, type: z.literal('session_opened'), role: sessionRoleSchema, sessionId: z.string(), resumed: z.boolean(), fallback: z.boolean().optional(),
     }),
+    z.object({
+        ...journalEntryBase, type: z.literal('session_reopen_requested'), role: sessionRoleSchema, reason: z.string(),
+    }),
     z.object({ ...journalEntryBase, type: z.literal('session_ended'), sessionId: z.string() }),
     z.object({ ...journalEntryBase, type: z.literal('shutdown') }),
     z.object({
