@@ -102,8 +102,11 @@ Rules:
 Pure functions, no I/O, no LLM:
 
 - `composeTaskBoards(ledgers: readonly Ledger[], now: Date): TaskBoardView[]` — one view per
-  **board key** `${channelId}:${turnId}` over running + finished tasks that have a `channelId`.
-  Tasks with no channel produce no board. A view carries: `key`, `channelId`, `tasks` (launch
+  **board key** `${channelId}:${turnId}` over running + finished tasks. A task whose turn had no
+  channel (a bare `notification` turn the SDK opened itself, or a wake whose launch record was
+  lost) takes the caller's fallback channel for its ledger role — `setupTaskBoard` resolves the
+  `fallback` well-known channel once for the conversation role — and is dropped when the role has
+  no fallback (perch). A view carries: `key`, `channelId`, `tasks` (launch
   order, never reordered), `state: 'running' | 'done' | 'failed'` (failed if any task failed or
   stopped, done when none running), `startedAt`, `finishedAt?`, and per-task derived fields
   (elapsed ms, meter fraction for workflows).
@@ -151,5 +154,5 @@ Pure functions, no I/O, no LLM:
 
 ## Out of scope for this pass
 
-Perch-session launches (no channel → no board), per-task stop buttons, reading the workflow
+Perch-session launches (no fallback → no board), per-task stop buttons, reading the workflow
 journal file, DM channels beyond what `channels.fetch` already handles.

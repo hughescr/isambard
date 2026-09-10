@@ -49,6 +49,53 @@ describe('composeTaskBoards', () => {
             expect(boards).toEqual([]);
         });
 
+        describe('fallback channel', () => {
+            test('a task with a turn but no channel lands on the fallback channel for its ledger role', () => {
+                const boards = composeTaskBoards([ledger([task({ channelId: undefined })])], at(1), {
+                    fallbackChannelIds: { conversation: 'fallback-1' },
+                });
+
+                expect(boards).toHaveLength(1);
+                expect(boards[0].key).toBe('fallback-1:turn-1');
+                expect(boards[0].channelId).toBe('fallback-1');
+                expect(boards[0].turnId).toBe('turn-1');
+            });
+
+            test('the fallback never overrides a task that has its own channel', () => {
+                const boards = composeTaskBoards([ledger([task()])], at(1), {
+                    fallbackChannelIds: { conversation: 'fallback-1' },
+                });
+
+                expect(boards.map(board => board.key)).toEqual(['chan-1:turn-1']);
+            });
+
+            test('a task with no turn still produces no board even with a fallback', () => {
+                const boards = composeTaskBoards([ledger([task({ channelId: undefined, turnId: undefined })])], at(1), {
+                    fallbackChannelIds: { conversation: 'fallback-1' },
+                });
+
+                expect(boards).toEqual([]);
+            });
+
+            test('a role with no fallback configured still drops channel-less tasks', () => {
+                const perch: BoardLedgerInput = { role: 'perch', tasks: [task({ channelId: undefined })], finishedTasks: [] };
+                const boards = composeTaskBoards([perch], at(1), {
+                    fallbackChannelIds: { conversation: 'fallback-1' },
+                });
+
+                expect(boards).toEqual([]);
+            });
+
+            test('channel-less and channelled tasks of one turn stay on separate boards', () => {
+                const boards = composeTaskBoards([ledger([
+                    task({ id: 'a' }),
+                    task({ id: 'b', channelId: undefined, startedAt: at(5) }),
+                ])], at(10), { fallbackChannelIds: { conversation: 'fallback-1' } });
+
+                expect(boards.map(board => board.key)).toEqual(['chan-1:turn-1', 'fallback-1:turn-1']);
+            });
+        });
+
         test('two turns in one channel produce two boards', () => {
             const boards = composeTaskBoards([ledger([
                 task({ id: 'a', turnId: 'turn-1' }),

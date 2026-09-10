@@ -231,6 +231,155 @@ describe('setupTaskBoard', () => {
         board.stop();
     });
 
+    describe('fallback channel', () => {
+        /** A resolver whose settlement the test controls. */
+        function deferredResolver(): { resolver: ReturnType<typeof mock>, resolve: (id: string | undefined) => void, reject: (error: unknown) => void } {
+            const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+            return { resolver: mock(() => promise), resolve, reject };
+        }
+
+        test('a channel-less task gets no board until the fallback resolves, then re-ticks onto it', async () => {
+            const store = fakeStore(ledgerWith([runningTask({ channelId: undefined })]));
+            const deferred = deferredResolver();
+
+            const board = setupTaskBoard({
+                readyClient,
+                rateLimiter,
+                ledgers:                  [store.store],
+                config:                   CONFIG,
+                timeZone:                 'UTC',
+                logger,
+                now:                      () => T0,
+                resolveFallbackChannelId: deferred.resolver,
+            });
+            expect(applied()).toEqual([[]]);
+
+            deferred.resolve('fallback-1');
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(applied()).toHaveLength(2);
+            expect(applied()[1].map(view => view.key)).toEqual(['fallback-1:turn-1']);
+
+            board.stop();
+        });
+
+        test('resolves once per distinct ledger role', async () => {
+            const conversation = fakeStore(ledgerWith([]));
+            const perch = fakeStore({ role: 'perch', tasks: [], finishedTasks: [] } as unknown as Ledger);
+            const again = fakeStore(ledgerWith([]));
+            const resolver = mock(async (role: string) => `${role}-fallback`);
+
+            const board = setupTaskBoard({
+                readyClient,
+                rateLimiter,
+                ledgers:                  [conversation.store, perch.store, again.store],
+                config:                   CONFIG,
+                timeZone:                 'UTC',
+                logger,
+                now:                      () => T0,
+                resolveFallbackChannelId: resolver,
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(resolver.mock.calls).toEqual([['conversation'], ['perch']]);
+
+            perch.set({ role: 'perch', tasks: [runningTask({ channelId: undefined })], finishedTasks: [] } as unknown as Ledger);
+            perch.emit();
+            expect(applied().at(-1)?.map(view => view.key)).toEqual(['perch-fallback:turn-1']);
+
+            board.stop();
+        });
+
+        test('a resolver that yields nothing leaves channel-less tasks without a board and does not re-tick', async () => {
+            const store = fakeStore(ledgerWith([runningTask({ channelId: undefined })]));
+
+            const board = setupTaskBoard({
+                readyClient,
+                rateLimiter,
+                ledgers:                  [store.store],
+                config:                   CONFIG,
+                timeZone:                 'UTC',
+                logger,
+                now:                      () => T0,
+                resolveFallbackChannelId: async () => undefined,
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(applied()).toEqual([[]]);
+            expect(logger.warn).not.toHaveBeenCalled();
+
+            board.stop();
+        });
+
+        test('a resolver that rejects is logged once and channel-less tasks stay without a board', async () => {
+            const store = fakeStore(ledgerWith([runningTask({ channelId: undefined })]));
+            const error = new Error('registry down');
+
+            const board = setupTaskBoard({
+                readyClient,
+                rateLimiter,
+                ledgers:                  [store.store],
+                config:                   CONFIG,
+                timeZone:                 'UTC',
+                logger,
+                now:                      () => T0,
+                resolveFallbackChannelId: () => Promise.reject(error),
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(applied()).toEqual([[]]);
+            expect(logger.warn).toHaveBeenCalledTimes(1);
+            expect(logger.warn.mock.calls[0]?.[0]).toEqual({ role: 'conversation', error, msg: 'Task board fallback channel lookup failed; channel-less tasks get no board' });
+
+            board.stop();
+        });
+
+        test('a fallback that resolves after stop() is not applied', async () => {
+            const store = fakeStore(ledgerWith([runningTask({ channelId: undefined })]));
+            const deferred = deferredResolver();
+
+            const board = setupTaskBoard({
+                readyClient,
+                rateLimiter,
+                ledgers:                  [store.store],
+                config:                   CONFIG,
+                timeZone:                 'UTC',
+                logger,
+                now:                      () => T0,
+                resolveFallbackChannelId: deferred.resolver,
+            });
+            board.stop();
+
+            deferred.resolve('fallback-1');
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(applied()).toEqual([[]]);
+        });
+
+        test('without a resolver, channel-less tasks get no board', () => {
+            const store = fakeStore(ledgerWith([runningTask({ channelId: undefined })]));
+
+            const board = setupTaskBoard({
+                readyClient,
+                rateLimiter,
+                ledgers:  [store.store],
+                config:   CONFIG,
+                timeZone: 'UTC',
+                logger,
+                now:      () => T0,
+            });
+
+            expect(applied()).toEqual([[]]);
+
+            board.stop();
+        });
+    });
+
     describe('refresh interval', () => {
         test('re-ticks while a board is running', () => {
             const store = fakeStore(ledgerWith([runningTask()]));

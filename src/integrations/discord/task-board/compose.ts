@@ -2,9 +2,12 @@
  * Board composition: turns the session ledgers' task lists into one {@link TaskBoardView} per
  * board — the tasks a single turn launched in a single channel.
  *
- * Pure over its inputs and the injected `now`: no clock, no I/O, no LLM. A task with no
- * `channelId` or no `turnId` (a perch launch, or one made outside a turn) has nowhere to post, so
- * it produces no board at all.
+ * Pure over its inputs and the injected `now`: no clock, no I/O, no LLM. A task with no `turnId`
+ * (one made outside a turn) has nowhere to post and produces no board. A task with a turn but no
+ * `channelId` — launched from a turn the SDK started on its own, such as a bare `notification`
+ * turn or a background-work wake whose launch record was never found — posts to the caller's
+ * fallback channel for its ledger role (the same rule wake delivery applies to such a turn's
+ * reply), and is dropped when that role has no fallback.
  *
  * @module integrations/discord/task-board/compose
  */
@@ -44,9 +47,16 @@ function compareBoards(a: TaskBoardView, b: TaskBoardView): number {
     return a.key.localeCompare(b.key);
 }
 
+/** Options the wiring layer supplies to {@link composeTaskBoards}. */
+export interface ComposeTaskBoardsOptions {
+    /** Channel for a role's channel-less tasks, keyed by `BoardLedgerInput.role`; a role absent here drops them. */
+    readonly fallbackChannelIds?: Readonly<Record<string, string | undefined>>
+}
+
 /** Files one task under its `${channelId}:${turnId}` key, dropping tasks that have no board. */
-function addTask(groups: Map<string, BoardGroup>, task: BoardTaskInput): void {
-    const { channelId, turnId } = task;
+function addTask(groups: Map<string, BoardGroup>, task: BoardTaskInput, fallbackChannelId: string | undefined): void {
+    const { turnId } = task;
+    const channelId = task.channelId ?? fallbackChannelId;
     if(channelId === undefined || turnId === undefined) {
         return;
     }
@@ -132,13 +142,15 @@ function composeBoard(group: BoardGroup, now: Date): TaskBoardView {
 /**
  * Composes one {@link TaskBoardView} per `${channelId}:${turnId}` over every ledger's running and
  * finished tasks, oldest board first. Tasks keep their launch order within a board and are never
- * reshuffled as they finish.
+ * reshuffled as they finish. A channel-less task takes `options.fallbackChannelIds[ledger.role]`
+ * as its channel, so a turn's fallback board is a separate board from any channelled one.
  */
-export function composeTaskBoards(ledgers: readonly BoardLedgerInput[], now: Date): TaskBoardView[] {
+export function composeTaskBoards(ledgers: readonly BoardLedgerInput[], now: Date, options: ComposeTaskBoardsOptions = {}): TaskBoardView[] {
     const groups = new Map<string, BoardGroup>();
     for(const ledger of ledgers) {
+        const fallbackChannelId = options.fallbackChannelIds?.[ledger.role];
         for(const task of [...ledger.tasks, ...ledger.finishedTasks]) {
-            addTask(groups, task);
+            addTask(groups, task, fallbackChannelId);
         }
     }
 
