@@ -55,6 +55,19 @@ describe('sub-agent effort tiers', () => {
         ]);
     });
 
+    test('pins the bounded utraque route contract to literal external model ids and efforts', () => {
+        expect(CROSS_PROVIDER_SUBAGENTS).toEqual({
+            'astra-high':          { model: 'anthropic-compat.astra', effort: 'high', restricted: false },
+            'luna-medium':         { model: 'anthropic-compat.luna', effort: 'medium', restricted: true },
+            'terra-high':          { model: 'anthropic-compat.terra', effort: 'high', restricted: false },
+            'sol-high':            { model: 'anthropic-compat.sol', effort: 'high', restricted: false },
+            'spark-high':          { model: 'anthropic-compat.gpt-5.3-codex-spark', effort: 'high', restricted: false },
+            'deepseek-flash-low':  { model: 'anthropic-compat.deepseek-flash', effort: 'low', restricted: true },
+            'deepseek-flash-high': { model: 'anthropic-compat.deepseek-flash', effort: 'high', restricted: false },
+            'deepseek-pro-high':   { model: 'anthropic-compat.deepseek-v4-pro', effort: 'high', restricted: false },
+        });
+    });
+
     test('each tier declares its own effort, and general-purpose runs at high', () => {
         const agents = agentsOf();
 
@@ -164,6 +177,17 @@ describe('buildMcpServers', () => {
 });
 
 describe('buildAllowedTools', () => {
+    test('keeps the complete literal built-in and safe-command allowlist', () => {
+        expect(buildAllowedTools({})).toEqual([
+            'mcp__memory__*',
+            'Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch',
+            'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'SendMessage', 'ListAgents',
+            'Workflow', 'Monitor', 'ToolSearch', 'Task', 'TaskOutput', 'TaskStop', 'Skill',
+            'Bash(git:*)', 'Bash(bun run:*)', 'Bash(bun test:*)', 'Bash(bun lint:*)',
+            'Bash(bun typecheck)', 'Bash(ls:*)',
+        ]);
+    });
+
     test('every configured mcpServers key has a matching allowedTools pattern', () => {
         const names: (keyof SessionMcpServers)[] = ['memory', 'discord', 'inbox', 'email', 'bsky', 'caldav', 'wikipedia', 'media', 'contacts', 'user-context', 'browser', 'health'];
         for(const name of names) {

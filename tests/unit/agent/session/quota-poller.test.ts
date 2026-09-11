@@ -63,6 +63,11 @@ function harness(overrides: Partial<CreateQuotaPollerParams> = {}): Harness {
 }
 
 describe('provider report parsing', () => {
+    it('uses the documented local report and official Anthropic fallback endpoints', () => {
+        expect(DEFAULT_PROVIDER_REPORT_URL).toBe('http://127.0.0.1:8317/v1/utraque/providers');
+        expect(DEFAULT_ANTHROPIC_USAGE_URL).toBe('https://api.anthropic.com/api/oauth/usage');
+    });
+
     it('preserves quota identifiers, scopes, durations, freshness and monetary balances', () => {
         const body = providerReport({
             source_freshness: { cached: true, stale: false, age_seconds: 12 },
@@ -94,6 +99,23 @@ describe('provider report parsing', () => {
         const snapshot = parseProviderSnapshot(providerReport({ quota_after: { source: 'codex', collected_at: GENERATED } }));
         expect(snapshot?.providers[0]?.quotaAfter).toBeUndefined();
     });
+
+    it('accepts inclusive percentage boundaries and drops out-of-range or wrongly-unitized quotas', () => {
+        const snapshot = parseProviderSnapshot(providerReport({ quota_after: {
+            source:       'anthropic', collected_at: GENERATED,
+            quotas:       [
+                { id: 'empty', used_percent: 0, unit: 'percent_0_100' },
+                { id: 'full', used_percent: 100, unit: 'percent_0_100' },
+                { id: 'negative', used_percent: -0.01, unit: 'percent_0_100' },
+                { id: 'over', used_percent: 100.01, unit: 'percent_0_100' },
+                { id: 'fraction', used_percent: 0.5, unit: 'fraction_0_1' },
+            ],
+        } }));
+
+        expect(snapshot?.providers[0]?.quotaAfter?.quotas.map(quota => [quota.id, quota.usedPercent])).toEqual([
+            ['empty', 0], ['full', 100],
+        ]);
+    });
 });
 
 describe('direct Anthropic fallback parsing', () => {
@@ -115,6 +137,29 @@ describe('direct Anthropic fallback parsing', () => {
             fiveHour: { utilization: 31.5, resetsAt: new Date(RESET) },
             sevenDay: { utilization: 35, resetsAt: new Date(RESET) },
         });
+    });
+
+    it('supports legacy window ids, inclusive boundaries, and epoch-second resets', () => {
+        expect(parseUsageWindows({
+            five_hour: { utilization: 0, resets_at: 1_800_000_000 },
+            seven_day: { utilization: 100 },
+        })).toEqual({
+            windows: {
+                fiveHour: { utilization: 0, resetsAt: new Date(1_800_000_000_000) },
+                sevenDay: { utilization: 100 },
+            },
+            rejected: false,
+        });
+        expect(parseUsageWindows({
+            five_hour: { utilization: -0.01 },
+            seven_day: { utilization: 100.01 },
+        })).toEqual({ windows: undefined, rejected: true });
+    });
+
+    it('excludes a surface-scoped limit even when its kind and group look unified', () => {
+        expect(parseUsageWindows({ limits: [{
+            kind: 'session', group: 'session', percent: 95, scope: { surface: { id: 'cli' } },
+        }] })).toEqual({ windows: undefined, rejected: false });
     });
 });
 
@@ -142,6 +187,27 @@ describe('provider polling', () => {
         });
     });
 
+    it('excludes surface-scoped, slotted, inactive, and already-reset Anthropic report quotas', async () => {
+        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
+            source:       'anthropic', collected_at: GENERATED,
+            quotas:       [
+                { id: 'five_hour', kind: 'five_hour', used_percent: 42, unit: 'percent_0_100' },
+                { id: 'surface', kind: 'session', group: 'session', used_percent: 91, unit: 'percent_0_100', scope: { surface: { id: 'cli' } } },
+                { id: 'slot', kind: 'session', group: 'session', slot: 'secondary', used_percent: 92, unit: 'percent_0_100' },
+                { id: 'inactive', kind: 'session', group: 'session', active: false, used_percent: 93, unit: 'percent_0_100' },
+                { id: 'reset', kind: 'session', group: 'session', resets_at: GENERATED, used_percent: 94, unit: 'percent_0_100' },
+            ],
+        } })) });
+
+        poller.start();
+        await poller.poll();
+
+        expect(ledgers[0]?.dispatch).toHaveBeenCalledTimes(1);
+        expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            quota: { fiveHour: { utilization: 42 } },
+        }));
+    });
+
     it('keeps a stale source out of the Claude ledger', async () => {
         const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ source_freshness: { cached: true, stale: true, age_seconds: 900 } })) });
         poller.start();
@@ -159,6 +225,24 @@ describe('provider polling', () => {
         await poller.poll();
         expect(poller.getSnapshot?.()?.providers).toHaveLength(1);
         expect(poller.getSnapshot?.()?.providers[0]?.freshness.stale).toBe(true);
+    });
+
+    it('accumulates source age across repeated report failures', async () => {
+        const clock = new FakeClock(Date.parse(GENERATED));
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok(providerReport({ source_freshness: { cached: true, stale: false, age_seconds: 12 } })))
+            .mockResolvedValue({ ok: false, status: 401, json: async () => ({}) });
+        const { poller } = harness({ clock, fetch });
+        poller.start();
+        await poller.poll();
+
+        clock.advance(300_000);
+        await poller.poll();
+        expect(poller.getSnapshot?.()?.providers[0]?.freshness.ageSeconds).toBe(312);
+
+        clock.advance(300_000);
+        await poller.poll();
+        expect(poller.getSnapshot?.()?.providers[0]?.freshness.ageSeconds).toBe(612);
     });
 
     it('does not send the bearer to the direct endpoint after a local-auth rejection', async () => {
@@ -179,6 +263,32 @@ describe('provider polling', () => {
             headers: { Authorization: 'Bearer secret', 'anthropic-beta': 'oauth-2025-04-20' }, signal: expect.any(AbortSignal),
         });
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({ quota: { fiveHour: { utilization: 42 } } }));
+    });
+
+    it.each([405, 500])('falls back after provider report status %d', async (status) => {
+        const fetch = jest.fn<QuotaFetch>(async url => (url === DEFAULT_PROVIDER_REPORT_URL
+            ? { ok: false, status, json: async () => ({}) }
+            : ok({ five_hour: { utilization: 42 } })));
+        const { poller } = harness({ fetch });
+        poller.start();
+        await poller.poll();
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(fetch).toHaveBeenLastCalledWith(DEFAULT_ANTHROPIC_USAGE_URL, expect.any(Object));
+    });
+
+    it('warns once for invalid percentages while retaining valid fallback windows', async () => {
+        const { logger, poller } = harness({
+            preferProviderReport: false,
+            fetch:                async () => ok({ five_hour: { utilization: 101 }, seven_day: { utilization: 42 } }),
+        });
+        poller.start();
+        await poller.poll();
+        await poller.poll();
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith(
+            { fallbackUrl: DEFAULT_ANTHROPIC_USAGE_URL },
+            'Quota poll: direct Anthropic usage response contained an invalid percentage'
+        );
     });
 
     it('keeps the provider snapshot stale while a fresh direct fallback updates Claude pacing', async () => {
@@ -287,5 +397,60 @@ describe('provider polling', () => {
         expect(fetch).toHaveBeenCalledTimes(2);
         expect(ledgers[0]?.dispatch).toHaveBeenCalledTimes(1);
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({ quota: { fiveHour: { utilization: 55 } } }));
+    });
+
+    it('does not publish an old direct-fallback response after stop and restart', async () => {
+        let release = (_response: QuotaFetchResponse): void => {};
+        const gate = new Promise<QuotaFetchResponse>((resolve) => {
+            release = resolve;
+        });
+        const fetch = jest.fn<QuotaFetch>()
+            .mockImplementationOnce(async () => gate)
+            .mockResolvedValueOnce(ok({ five_hour: { utilization: 55 } }));
+        const { ledgers, poller } = harness({ fetch, preferProviderReport: false });
+        poller.start();
+        const attempt = poller.poll();
+        poller.stop();
+        poller.start();
+        release(ok({ five_hour: { utilization: 42 } }));
+        await attempt;
+        await Promise.resolve();
+        await poller.poll();
+
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(ledgers[0]?.dispatch).toHaveBeenCalledTimes(1);
+        expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({ quota: { fiveHour: { utilization: 55 } } }));
+        expect(poller.getSnapshot?.()?.anthropicFallback?.windows.fiveHour?.utilization).toBe(55);
+    });
+
+    it('starts idempotently and schedules only one recurring poll', async () => {
+        let release = (_response: QuotaFetchResponse): void => {};
+        const gate = new Promise<QuotaFetchResponse>((resolve) => {
+            release = resolve;
+        });
+        const { clock, fetch, poller } = harness({ fetch: async () => gate });
+        poller.start();
+        poller.start();
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(clock.pending()).toBe(2); // one recurrence and one request timeout
+        release(ok(providerReport()));
+        await poller.poll();
+    });
+
+    it('polls on a result only after the debounce boundary and never while stopped', async () => {
+        const { clock, fetch, poller } = harness({ resultDebounceMs: 30_000 });
+        poller.start();
+        await poller.poll();
+        clock.advance(29_999);
+        poller.noteResult();
+        expect(fetch).toHaveBeenCalledTimes(1);
+        clock.advance(1);
+        poller.noteResult();
+        await poller.poll();
+        expect(fetch).toHaveBeenCalledTimes(2);
+        poller.stop();
+        clock.advance(30_000);
+        poller.noteResult();
+        expect(fetch).toHaveBeenCalledTimes(2);
     });
 });

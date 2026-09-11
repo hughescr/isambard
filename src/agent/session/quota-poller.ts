@@ -305,7 +305,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
                 freshness: {
                     ...provider.freshness,
                     stale:      true,
-                    ageSeconds: Math.max(provider.freshness.ageSeconds, elapsed),
+                    ageSeconds: provider.freshness.ageSeconds + elapsed,
                 },
             })),
         };
