@@ -1859,7 +1859,7 @@ describe('createSessionAmbience', () => {
         expect(first).toContain('- Quota: Anthropic fallback (direct) 5-hour 42% used');
         expect(first).toContain('shared subscriptions; provider balances are separate');
         expect(second).toContain('- Quota: Anthropic fallback (direct) 5-hour 42% used');
-        expect(second).not.toContain('shared with Craig');
+        expect(second).not.toContain('shared subscriptions; provider balances are separate');
     });
 
     it('does not spend the one-time note on a header rendered before any quota is known', async () => {
@@ -1867,7 +1867,7 @@ describe('createSessionAmbience', () => {
         h.ambience.quotaPoller.start();
         h.ambience.register(h.conversation);
 
-        expect(h.ambience.timeHeaderFor('conversation')()).not.toContain('shared with Craig');
+        expect(h.ambience.timeHeaderFor('conversation')()).not.toContain('shared subscriptions; provider balances are separate');
 
         await h.ambience.quotaPoller.poll();
 

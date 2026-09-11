@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { HookEvent, HookCallbackMatcher, Options } from '@anthropic-ai/claude-agent-sdk';
 import {
     buildSessionQueryOptions,
+    buildSubagentAgents,
     buildMcpServers,
     buildAllowedTools,
     CROSS_PROVIDER_SUBAGENTS,
@@ -151,6 +152,12 @@ describe('sub-agent effort tiers', () => {
             'low', 'medium', 'high', 'xhigh', 'general-purpose',
         ]);
     });
+
+    test('includes cross-provider routes when buildSubagentAgents uses its default', () => {
+        expect(Object.keys(buildSubagentAgents(() => 'SUBAGENT-PROMPT'))).toEqual([
+            'low', 'medium', 'high', 'xhigh', 'general-purpose', ...Object.keys(CROSS_PROVIDER_SUBAGENTS),
+        ]);
+    });
 });
 
 describe('SESSION_PEER_NAMES', () => {
@@ -173,6 +180,11 @@ describe('buildMcpServers', () => {
     test('returns a record keyed by server name for each configured server', () => {
         const servers = buildMcpServers({ inbox: mockMcpServer, discord: mockMcpServer });
         expect(servers).toEqual({ inbox: mockMcpServer, discord: mockMcpServer });
+    });
+
+    test('omits explicitly undefined servers while retaining configured ones', () => {
+        expect(buildMcpServers({ inbox: undefined, discord: mockMcpServer })).toEqual({ discord: mockMcpServer });
+        expect(buildMcpServers({ inbox: undefined })).toBeUndefined();
     });
 });
 
@@ -300,6 +312,18 @@ describe('buildSessionQueryOptions', () => {
         expect(opts.hooks).toBe(hooks);
     });
 
+    test('plugins are present only when the configured list is non-empty', () => {
+        const plugin = { type: 'local', path: '/tmp/isambard-plugin' } as const;
+
+        expect(buildSessionQueryOptions(baseParams()).plugins).toBeUndefined();
+        expect(buildSessionQueryOptions(baseParams({ plugins: [] })).plugins).toBeUndefined();
+        expect(buildSessionQueryOptions(baseParams({ plugins: [plugin] })).plugins).toEqual([plugin]);
+    });
+
+    test('requires the SDK to use only the explicitly configured MCP servers', () => {
+        expect(buildSessionQueryOptions(baseParams()).strictMcpConfig).toBe(true);
+    });
+
     test('satisfies Options', () => {
         const opts: Options = buildSessionQueryOptions(baseParams());
         expect(opts).toBeDefined();
@@ -329,6 +353,16 @@ describe('buildSessionQueryOptions', () => {
             stderr('Error in hook callback: Stream closed');
             expect(mockLogger.debug).toHaveBeenCalledTimes(1);
             expect(mockLogger.error).not.toHaveBeenCalled();
+        });
+
+        test.each([
+            ['Error in hook callback'],
+            ['Stream closed'],
+        ])('a lone hook-close marker remains an error: %s', (data) => {
+            const stderr = stderrOf(() => false);
+            stderr(data);
+            expect(mockLogger.error).toHaveBeenCalledTimes(1);
+            expect(mockLogger.debug).not.toHaveBeenCalled();
         });
 
         test('anything else logs at error', () => {
