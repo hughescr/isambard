@@ -224,7 +224,7 @@ src/
 │   ├── multimodal-message-builder.ts   # Builds multimodal messages with image support
 │   ├── plugin-loader.ts                # Plugin loading for Agent SDK
 │   ├── resume-prompt-builder.ts        # Resume prompts for background task auto-resume
-│   ├── session-cleanup.ts              # Session lifecycle management
+│   ├── session-cleanup.ts              # Extracts session IDs from SDK stream events
 │   ├── skill-agent-loader.ts           # Syncs agents/skills to scratch/.claude/ at startup
 │   ├── stream-tracker.ts               # StreamTracker: streaming progress capture
 │   ├── task-list-reader.ts             # TaskListReader: reads Claude task list state

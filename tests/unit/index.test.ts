@@ -33,7 +33,6 @@ import * as staticInboxMcpModule from '@/agent/inbox-mcp-server';
 import * as staticMemoryMcpModule from '@/agent/memory-mcp-server';
 import * as staticPluginLoaderModule from '@/agent/plugin-loader';
 import * as staticQuestionRegistryModule from '@/agent/question-registry';
-import * as staticSessionCleanupModule from '@/agent/session-cleanup';
 import * as staticAppLifecycleModule from '@/app/lifecycle';
 import { createSessionAmbience as importedCreateSessionAmbience } from '@/app/sessions';
 import * as staticSessionsModule from '@/app/sessions';
@@ -79,12 +78,11 @@ const sessionConfig: SessionConfig = {
     bootEventsWindowMs:      24 * 60 * 60 * 1000,
     shutdownTurnWaitMs:      60_000,
     shutdownDeadlineMs:      120_000,
-    transcriptRetentionMs:   7 * 24 * 60 * 60 * 1000,
     debounceMs:              250,
     timezone:                'UTC',
 };
 
-/** Default `config.perch` for `wireHappyPathForCleanupTests` — perch enabled, matching production defaults. `perchOverrides` lets a test disable it (`{ enabled: false }`) or tweak a field. */
+/** Default `config.perch` for `wireHappyPath` — perch enabled, matching production defaults. `perchOverrides` lets a test disable it (`{ enabled: false }`) or tweak a field. */
 const defaultPerchConfig = {
     enabled:               true,
     timezone:              'UTC',
@@ -98,29 +96,22 @@ const defaultPerchConfig = {
 /**
  * Wires the same full happy-path mock set the "Plugin loading path" test uses — storage layer
  * constructed for real against a mocked docClient, everything Discord/agent/email-side stubbed —
- * so `createApp()` can run to completion. Used by the P8 stale-session-cleanup tests, which need
- * `createApp()` to actually reach (and complete) the cleanup step it re-orders below `loadConfig`
- * and storage creation. `sessionOverrides` lets each test pick `session.mode`; `perchOverrides`
- * lets a test disable perch or tweak a field (P12); the returned `getSessionIdForRole` mock lets
- * the conductor-mode test control what the two role-keyed `TASK_SESSION#<role>` rows resolve to.
- * `bskyEnabled` (Q8) additionally configures `config.bsky`, mocks `BlueskyClient` (constructor +
- * no-op `login`) and `setupBsky` (resolving with a stubbed `dmPoller`, captured via the returned
- * `dmPollerStart`/`dmPollerStop` mocks) so the bsky composition-root block actually runs.
+ * so `createApp()` can run to completion. Used by the majority of `createApp()` tests below.
+ * `sessionOverrides` lets each test tweak a `session` field; `perchOverrides` lets a test disable
+ * perch or tweak a field (P12). `bskyEnabled` (Q8) additionally configures `config.bsky`, mocks
+ * `BlueskyClient` (constructor + no-op `login`) and `setupBsky` (resolving with a stubbed
+ * `dmPoller`, captured via the returned `dmPollerStart`/`dmPollerStop` mocks) so the bsky
+ * composition-root block actually runs.
  */
-function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false): {
-    pruneStaleSessionsSpy: ReturnType<typeof spyOn>
-    getSessionIdForRole:   ReturnType<typeof mock>
-    createBotSpy:          ReturnType<typeof spyOn>
-    emailSetupSpy:         ReturnType<typeof spyOn>
-    bskySetupSpy?:         ReturnType<typeof spyOn>
-    dmPollerStart:         ReturnType<typeof mock>
-    dmPollerStop:          ReturnType<typeof mock>
+function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false): {
+    createBotSpy:  ReturnType<typeof spyOn>
+    emailSetupSpy: ReturnType<typeof spyOn>
+    bskySetupSpy?: ReturnType<typeof spyOn>
+    dmPollerStart: ReturnType<typeof mock>
+    dmPollerStop:  ReturnType<typeof mock>
 } {
     const mockDocClient = {} as unknown as DynamoDBDocumentClient;
     const getSessionIdForRole = mock(async (_role: 'conversation' | 'perch') => undefined as string | undefined);
-    // P13b: retention is always pruneStaleSessions now — cleanupAllStaleSessions (the one-shot
-    // path's unconditional wipe) is deleted along with the mode flag.
-    const pruneStaleSessionsSpy = spyOn(staticSessionCleanupModule, 'pruneStaleSessions').mockResolvedValue(undefined);
     const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
         start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
     });
@@ -243,12 +234,11 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
         }),
         spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
             tableName: 'IsambardMemory',
-        }),
-        pruneStaleSessionsSpy
+        })
     );
 
     return {
-        pruneStaleSessionsSpy, getSessionIdForRole, createBotSpy, emailSetupSpy, bskySetupSpy, dmPollerStart, dmPollerStop,
+        createBotSpy, emailSetupSpy, bskySetupSpy, dmPollerStart, dmPollerStop,
     };
 }
 
@@ -580,36 +570,9 @@ describe('createApp', () => {
         });
     });
 
-    describe('Stale session cleanup ordering (P8, P13b)', () => {
-        test('pruneStaleSessions runs with the two stored role ids and the configured retention (the one-shot cleanupAllStaleSessions path is gone)', async () => {
-            const { pruneStaleSessionsSpy, getSessionIdForRole } = wireHappyPathForCleanupTests(spies);
-            getSessionIdForRole.mockImplementation(async (role: 'conversation' | 'perch') => (role === 'conversation' ? 'conv-id' : 'perch-id'));
-
-            const { createApp } = staticIndexModule;
-            await createApp();
-
-            expect(pruneStaleSessionsSpy).toHaveBeenCalledWith({
-                keepSessionIds: new Set(['conv-id', 'perch-id']),
-                maxAgeMs:       7 * 24 * 60 * 60 * 1000,
-            });
-        });
-
-        test('a role-id lookup failure is logged and pruning is skipped, not run with an empty keep set', async () => {
-            const { pruneStaleSessionsSpy, getSessionIdForRole } = wireHappyPathForCleanupTests(spies);
-            const lookupFailure = new Error('DynamoDB throttled');
-            getSessionIdForRole.mockImplementation(() => Promise.reject(lookupFailure));
-
-            const { createApp } = staticIndexModule;
-            await expect(createApp()).resolves.toBeDefined();
-
-            expect(pruneStaleSessionsSpy).not.toHaveBeenCalled();
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ error: lookupFailure }), expect.any(String));
-        });
-    });
-
     describe('Shutdown config wiring (P10)', () => {
         test('passes config.session.shutdownTurnWaitMs and shutdownDeadlineMs through to createDiscordBot, so an operator-configured budget actually reaches the conductor shutdown orchestrator', async () => {
-            const { createBotSpy } = wireHappyPathForCleanupTests(spies, {
+            const { createBotSpy } = wireHappyPath(spies, {
                 shutdownTurnWaitMs: 5000,
                 shutdownDeadlineMs: 30_000,
             });
@@ -626,7 +589,7 @@ describe('createApp', () => {
 
     describe('Conversation conductor build (P9, P13b: the only path)', () => {
         test('createConversationConductor is called once, after the OAuth env write, and its (unopened) conductor is handed to createDiscordBot before it is created', async () => {
-            wireHappyPathForCleanupTests(spies);
+            wireHappyPath(spies);
 
             let oauthTokenAtCallTime: string | undefined;
             const fakeOpen = mock(async () => ({ sessionId: 'sess-1', resumed: false }));
@@ -664,7 +627,7 @@ describe('createApp', () => {
         }
 
         test('perch enabled: createPerchConductor is called once, AFTER createConversationConductor, and its (unopened) conductor is handed to createDiscordBot as perchConductor', async () => {
-            wireHappyPathForCleanupTests(spies);
+            wireHappyPath(spies);
 
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
@@ -693,7 +656,7 @@ describe('createApp', () => {
         });
 
         test('perch DISABLED (config.perch.enabled: false): createPerchConductor is never called', async () => {
-            wireHappyPathForCleanupTests(spies, {}, { enabled: false });
+            wireHappyPath(spies, {}, { enabled: false });
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
@@ -707,7 +670,7 @@ describe('createApp', () => {
         });
 
         test('passes a role-keyed journal/resume store distinct from the conversation conductor\'s own', async () => {
-            wireHappyPathForCleanupTests(spies);
+            wireHappyPath(spies);
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
@@ -762,7 +725,7 @@ describe('createApp', () => {
         }
 
         test('passes a working isCostPaused function into createDiscordBot, initially false', async () => {
-            wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            wireHappyPath(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
@@ -780,7 +743,7 @@ describe('createApp', () => {
         });
 
         test('a conversation ledger event crossing dailyCostCeilingUsd pauses isCostPaused()', async () => {
-            wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            wireHappyPath(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const conversationLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
@@ -805,7 +768,7 @@ describe('createApp', () => {
         });
 
         test('a perch ledger event crossing dailyCostCeilingUsd also pauses isCostPaused() — the shared ceiling folds both stores', async () => {
-            wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            wireHappyPath(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const perchLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
@@ -829,7 +792,7 @@ describe('createApp', () => {
         });
 
         test('dailyCostCeilingUsd left undefined: isCostPaused() stays false regardless of ledger spend', async () => {
-            wireHappyPathForCleanupTests(spies);
+            wireHappyPath(spies);
             const conversationLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
@@ -849,7 +812,7 @@ describe('createApp', () => {
         });
 
         test('restores a previously-persisted paused snapshot from the conversation journal at boot, before any ledger event', async () => {
-            wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            wireHappyPath(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const snapshotRow = {
                 PK: 'SESSION_JOURNAL#conversation', SK: '2026-09-05T00:00:00.000Z#000000', TTL: 0, at: '2026-09-05T00:00:00.000Z', type: 'cost_ceiling_snapshot', dateKey: '2026-09-05', totalUsd: 5, paused: true,
             };
@@ -880,7 +843,7 @@ describe('createApp', () => {
         });
 
         test('a boot-time journal read failure is logged and tolerated, never blocking startup', async () => {
-            wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            wireHappyPath(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: { send: mock(async () => { throw new Error('DynamoDB throttled'); }) } as unknown as DynamoDBDocumentClient,
@@ -908,7 +871,7 @@ describe('createApp', () => {
             }
 
             test('a five-hour window at agent.quota.perchPauseAtPercent pauses isCostPaused(), with no daily cost ceiling configured at all', async () => {
-                wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: undefined, timezone: 'UTC' });
+                wireHappyPath(spies, { dailyCostCeilingUsd: undefined, timezone: 'UTC' });
                 const conversationLedgerStore = fakeLedgerStoreWithEmit();
                 const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                     conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
@@ -930,7 +893,7 @@ describe('createApp', () => {
             });
 
             test('the perch ledger feeds the same quota ceiling', async () => {
-                wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: undefined, timezone: 'UTC' });
+                wireHappyPath(spies, { dailyCostCeilingUsd: undefined, timezone: 'UTC' });
                 const perchLedgerStore = fakeLedgerStoreWithEmit();
                 const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                     conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
@@ -955,7 +918,7 @@ describe('createApp', () => {
             test('the shared quota poller\'s recurring timer is armed by app.start() and cancelled by app.stop()', async () => {
                 // Without this the configured agent.quota.pollIntervalMs is dead config and an
                 // idle process never notices quota Craig's own sessions spent.
-                wireHappyPathForCleanupTests(spies, { timezone: 'UTC' });
+                wireHappyPath(spies, { timezone: 'UTC' });
                 const pollerStart = mock(() => undefined);
                 const pollerStop = mock(() => undefined);
                 spies.push(
@@ -986,7 +949,7 @@ describe('createApp', () => {
             });
 
             test('createQuotaNotes is built from config.agent.quota and the shared notification bridge\'s notify', async () => {
-                wireHappyPathForCleanupTests(spies, { timezone: 'UTC' });
+                wireHappyPath(spies, { timezone: 'UTC' });
                 const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                     conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
                 });
@@ -1019,7 +982,7 @@ describe('createApp', () => {
         }
 
         test('is constructed before setupEmail and before createConversationConductor', async () => {
-            const { emailSetupSpy } = wireHappyPathForCleanupTests(spies);
+            const { emailSetupSpy } = wireHappyPath(spies);
             const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
                 (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => realCreateNotificationBridge(bridgeParams)
             );
@@ -1050,7 +1013,7 @@ describe('createApp', () => {
                     return bridge;
                 }
             );
-            const { emailSetupSpy } = wireHappyPathForCleanupTests(spies);
+            const { emailSetupSpy } = wireHappyPath(spies);
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
@@ -1073,7 +1036,7 @@ describe('createApp', () => {
                     return bridge;
                 }
             );
-            const { bskySetupSpy } = wireHappyPathForCleanupTests(spies, {}, {}, true);
+            const { bskySetupSpy } = wireHappyPath(spies, {}, {}, true);
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
@@ -1091,7 +1054,7 @@ describe('createApp', () => {
         });
 
         test('starts the dmPoller during app.start() and stops it during app.stop() (Q8)', async () => {
-            const { dmPollerStart, dmPollerStop } = wireHappyPathForCleanupTests(spies, {}, {}, true);
+            const { dmPollerStart, dmPollerStop } = wireHappyPath(spies, {}, {}, true);
             // app.start() fires real healthRegistry.sendEvent transitions, which independently wake
             // the outbox drainer's health subscription — it needs a docClient.send that resolves
             // (see the identically-named helper in the "Lifecycle seams (P10)" describe block below).
@@ -1118,7 +1081,7 @@ describe('createApp', () => {
         });
 
         test('notify() called while createConversationConductor is still resolving is a safe no-op; once attached (after resolution) it reaches the real conductor via the createDiscordBot options', async () => {
-            wireHappyPathForCleanupTests(spies);
+            wireHappyPath(spies);
             let capturedBridge: NotificationBridge | undefined;
             const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
                 (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
@@ -1156,7 +1119,7 @@ describe('createApp', () => {
         });
 
         test('app.stop() detaches the notification bridge from the conductor', async () => {
-            wireHappyPathForCleanupTests(spies);
+            wireHappyPath(spies);
             // app.stop() reaches storage.holder.destroy() -> client.destroy(); the shared happy-path
             // mock's bare `{}` client has no such method (only tests that actually call stop()
             // need this override — see the equivalent stub near the double-stop test below).
@@ -1192,7 +1155,7 @@ describe('createApp', () => {
         });
 
         test('R2: threads notificationBridge, and both conductors\' own setWakeTurnDelivery, into createDiscordBot\'s options', async () => {
-            wireHappyPathForCleanupTests(spies);
+            wireHappyPath(spies);
             const conversationSetWakeTurnDelivery = mock(() => undefined);
             const perchSetWakeTurnDelivery = mock(() => undefined);
             const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
@@ -1225,7 +1188,7 @@ describe('createApp', () => {
 
     describe('Health-outage notification source (Q6)', () => {
         test('subscribes exactly once to healthRegistry with a listener built from the real predicate, coalescer, and bridge notify; unsubscribes on stop()', async () => {
-            wireHappyPathForCleanupTests(spies);
+            wireHappyPath(spies);
             // app.stop() reaches storage.holder.destroy() -> client.destroy(); the shared
             // happy-path mock's bare `{}` client has no such method (see the equivalent stub on
             // the Q5 "app.stop() detaches the notification bridge" test above).
@@ -1309,7 +1272,7 @@ describe('createApp', () => {
 
     describe('Lifecycle seams (P10, P13b: no more mode)', () => {
         test('app.config exposes the resolved config createApp() was built from', async () => {
-            wireHappyPathForCleanupTests(spies);
+            wireHappyPath(spies);
 
             const { createApp } = staticIndexModule;
             const app = await createApp();
@@ -1319,7 +1282,7 @@ describe('createApp', () => {
         });
 
         test('createDiscordBot is called without a botStateManager option (P14: the state/ directory is gone)', async () => {
-            const { createBotSpy } = wireHappyPathForCleanupTests(spies);
+            const { createBotSpy } = wireHappyPath(spies);
 
             const { createApp } = staticIndexModule;
             await createApp();
@@ -1331,7 +1294,7 @@ describe('createApp', () => {
         /**
          * app.start() fires real `healthRegistry.sendEvent` transitions, which (independently of
          * this seam) wake the outbox drainer's health subscription — it needs a `docClient.send`
-         * that resolves rather than `wireHappyPathForCleanupTests`'s bare `{}` docClient.
+         * that resolves rather than `wireHappyPath`'s bare `{}` docClient.
          */
         function stubDocClientSend(): void {
             spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
@@ -1344,7 +1307,7 @@ describe('createApp', () => {
         }
 
         test('app.start() wires createDiscordRecoveryHandler as the health registry\'s discord subscriber, with no mode field (P13b removed it from CreateDiscordRecoveryHandlerParams)', async () => {
-            wireHappyPathForCleanupTests(spies);
+            wireHappyPath(spies);
             stubDocClientSend();
             const fakeHandler = mock(() => undefined);
             const createDiscordRecoveryHandlerSpy = spyOn(staticAppLifecycleModule, 'createDiscordRecoveryHandler').mockReturnValue(fakeHandler);
@@ -1832,9 +1795,9 @@ describe('createApp', () => {
             mockLogger.warn.mockClear();
 
             // Mock storage client to succeed. `send` must resolve (not be absent) so the
-            // conductor path's stale-session retention lookup (storage.createResumeStore(...).load())
-            // does not itself reject and log an unrelated warning that would confuse the
-            // 'Failed to load identity context' assertion below.
+            // conductor path's resume-store lookups (storage.createResumeStore(...).load(), used
+            // when wiring each conductor) do not themselves reject and log an unrelated warning
+            // that would confuse the 'Failed to load identity context' assertion below.
             const mockDocClient = { send: mock(async () => ({ Item: undefined, Items: [] })) } as unknown as DynamoDBDocumentClient;
             const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,

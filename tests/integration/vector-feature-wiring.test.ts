@@ -50,7 +50,6 @@ const sessionConfig: SessionConfig = {
     bootEventsWindowMs:      24 * 60 * 60 * 1000,
     shutdownTurnWaitMs:      60_000,
     shutdownDeadlineMs:      120_000,
-    transcriptRetentionMs:   7 * 24 * 60 * 60 * 1000,
     debounceMs:              250,
     timezone:                'UTC',
 };

@@ -7,7 +7,7 @@ import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { loadPlugins, QuestionRegistry, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createQuotaNotes, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
+import { loadPlugins, QuestionRegistry, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createQuotaNotes, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
@@ -42,12 +42,11 @@ export interface App {
  * Creates the Isambard application with all components wired together.
  *
  * Initialization flow:
- * 1. Clean up stale session files from previous runs
- * 2. Load configuration (Discord, Agent OAuth token)
- * 3. Set CLAUDE_CODE_OAUTH_TOKEN for Agent SDK
- * 4. Create memory system (context builder + MCP server) if DynamoDB is available
- * 5. Create Claude agent with hybrid memory support
- * 6. Create Discord bot with agent as message handler
+ * 1. Load configuration (Discord, Agent OAuth token)
+ * 2. Set CLAUDE_CODE_OAUTH_TOKEN for Agent SDK
+ * 3. Create memory system (context builder + MCP server) if DynamoDB is available
+ * 4. Create Claude agent with hybrid memory support
+ * 5. Create Discord bot with agent as message handler
  *
  * Error handling:
  * - Missing required config (Discord, OAuth token) throws immediately
@@ -116,29 +115,6 @@ export async function createApp(): Promise<App> {
         embedder,
         onIdentityWrite
     );
-
-    // Clean up stale session files (P8: below loadConfig/storage creation so the role-keyed
-    // resume stores can be consulted). P13b: the conductor is the only path now — retention
-    // always ages entries out via pruneStaleSessions, sparing whichever of the two role-keyed
-    // sessions are still live. The one-shot path's unconditional wipe-everything helper is gone.
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Cleaning up stale sessions...');
-    // The role-id lookup and the prune itself can each reject (a DynamoDB blip/throttle at
-    // startup, or a hand-edited/legacy row that fails session-id validation) — a rejection here
-    // must not abort createApp(). Skip pruning entirely on failure rather than falling back to
-    // an empty keepSessionIds, which would delete the live role transcripts.
-    try {
-        const [conversationSessionId, perchSessionId] = await Promise.all([
-            storage.createResumeStore('conversation').load(),
-            storage.createResumeStore('perch').load(),
-        ]);
-        const keepSessionIds = new Set([conversationSessionId, perchSessionId].filter((id): id is string => id !== undefined));
-        await pruneStaleSessions({ keepSessionIds, maxAgeMs: config.session.transcriptRetentionMs });
-    } catch (error) {
-        logger.warn({ error }, 'Conductor session-id lookup or transcript pruning failed; skipping retention this run');
-    }
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Stale sessions cleaned up');
 
     // Wire DynamoDB health monitoring.
     // DynamoDB is a required dependency — we probe it with DescribeTable to detect

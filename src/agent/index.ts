@@ -36,9 +36,6 @@ export * from './perch';
 // Long-lived session core
 export * from './session';
 
-// Session Cleanup
-export { pruneStaleSessions, type PruneStaleSessionsParams } from './session-cleanup';
-
 // Skill/Agent Loader
 export { syncAgentsAndSkills } from './skill-agent-loader';
 

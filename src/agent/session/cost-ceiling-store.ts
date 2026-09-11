@@ -23,12 +23,12 @@ import type { Clock, JournalEntry } from './types';
  * to survive a long outage": {@link import('./cost-ceiling').CostCeiling.restore} rolls over (and
  * zeroes) any snapshot whose `dateKey` isn't the current local day on the very next
  * `isPaused()`/`snapshot()` call, so a snapshot older than ~48h can never survive `restore()`
- * regardless of how far back `load()` looked for it — a wider window (this used to match
- * `sessionConfigSchema`'s 30-day `transcriptRetentionMs`, then a 7-day compromise) only adds cost
- * for zero behavioural benefit. `SessionJournalBackend.readSince` pages the whole window with no
- * `Limit` (see `conductor.ts`'s own `RECOVERY_WINDOW_MS` doc for why that matters against a
- * free-tier-provisioned table), so this stays a small multiple of the longest possible local day
- * (25h, DST fall-back) rather than a multi-day margin that buys nothing.
+ * regardless of how far back `load()` looked for it — a wider window (this used to be a 30-day
+ * window, then a 7-day compromise) only adds cost for zero behavioural benefit.
+ * `SessionJournalBackend.readSince` pages the whole window with no `Limit` (see `conductor.ts`'s
+ * own `RECOVERY_WINDOW_MS` doc for why that matters against a free-tier-provisioned table), so
+ * this stays a small multiple of the longest possible local day (25h, DST fall-back) rather than
+ * a multi-day margin that buys nothing.
  */
 const LOOKBACK_MS = 2 * 24 * 60 * 60 * 1000;
 

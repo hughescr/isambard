@@ -1,8 +1,9 @@
 /**
  * A convenience role-bound store over the P8 role-keyed `TASK_SESSION#<role>` rows
  * (src/storage/task-session/backend.ts), for callers that already know which role they mean
- * (e.g. src/index.ts's boot-time transcript-retention lookup — see `storage.createResumeStore`
- * in src/app/storage-layer.ts).
+ * (e.g. src/index.ts's conductor build sites, which call `storage.createResumeStore(role)` — see
+ * `storage.createResumeStore` in src/app/storage-layer.ts — to wire each conductor's resume
+ * lookup).
  *
  * `RoleResumeStore` is DELIBERATELY NOT the P7 {@link import('./ports').ResumeStore} port,
  * despite sharing method names: the port's `save` takes `(role, sessionId)` while this one's
