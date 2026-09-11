@@ -2,7 +2,7 @@ import { describe, expect, it, jest, type Mock } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
 import { FakeClock } from '../../../helpers/fake-clock';
 import { composeAmbientLines } from '@/agent/session/ambient-lines';
-import { createLedgerStore, type LedgerEvent } from '@/agent/session/ledger';
+import { createLedgerStore, initialLedger, type LedgerEvent } from '@/agent/session/ledger';
 import {
     DEFAULT_ANTHROPIC_USAGE_URL,
     DEFAULT_PROVIDER_REPORT_URL,
@@ -213,6 +213,27 @@ describe('provider polling', () => {
         })[0] ?? '';
         expect(line).toContain('Anthropic fallback (direct) 5-hour 42% used (source 20:01)');
         expect(line).not.toContain('week');
+    });
+
+    it('expires reset-less direct headroom and renews it after an identical successful observation', async () => {
+        const clock = new FakeClock(Date.parse(GENERATED));
+        const fetch = jest.fn<QuotaFetch>(async () => ok({ five_hour: { utilization: 42 } }));
+        const { poller } = harness({ clock, fetch, preferProviderReport: false, pollIntervalMs: 60_000 });
+        poller.start();
+        await poller.poll();
+        poller.stop();
+        clock.advance(120_001);
+
+        const expired = poller.getSnapshot?.();
+        expect(composeAmbientLines({ self: initialLedger('conversation'), now: new Date(clock.now()), timezone: 'UTC', providerSnapshot: expired })[0])
+            .toContain('Anthropic fallback unavailable');
+
+        poller.start();
+        await poller.poll();
+        const refreshed = poller.getSnapshot?.();
+        expect(composeAmbientLines({ self: initialLedger('conversation'), now: new Date(clock.now()), timezone: 'UTC', providerSnapshot: refreshed })[0])
+            .toContain('Anthropic fallback (direct) 5-hour 42% used');
+        expect(refreshed?.anthropicFallback?.expiresAt.getTime()).toBe(clock.now() + 120_000);
     });
 
     it('joins a single in-flight request', async () => {

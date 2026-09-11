@@ -331,7 +331,7 @@ describe('composeAmbientLines: provider reports', () => {
             freshness:   { cached: false, stale: true, ageSeconds: 0 }, errors:      [],
         }, ...snapshot.providers];
         snapshot.generatedAt = NOW;
-        snapshot.anthropicFallback = { collectedAt: NOW, windows: { fiveHour: { utilization: 42 } } };
+        snapshot.anthropicFallback = { collectedAt: NOW, expiresAt: new Date(NOW.getTime() + 60_000), windows: { fiveHour: { utilization: 42 } } };
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 42 }, source: 'poll', at: NOW } });
         const line = compose({ self, providerSnapshot: snapshot })[0] ?? '';
         expect(line).toContain('Anthropic fallback (direct) 5-hour 42% used (source 14:07)');

@@ -62,7 +62,7 @@ export interface ProviderSnapshot {
     providers:          readonly ProviderStatus[]
     expiresAt?:         Date
     previous?:          ProviderSnapshot
-    anthropicFallback?: { collectedAt: Date, windows: QuotaWindows }
+    anthropicFallback?: { collectedAt: Date, expiresAt: Date, windows: QuotaWindows }
 }
 
 export interface CreateQuotaPollerParams {
@@ -335,10 +335,11 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
             return;
         }
         const collectedAt = new Date(clock.now());
+        const expiresAt = new Date(clock.now() + pollIntervalMs * 2);
         if(running && generation === attemptGeneration) {
             snapshot = snapshot === undefined
-                ? { generatedAt: collectedAt, providers: [], expiresAt: new Date(clock.now() + pollIntervalMs * 2), anthropicFallback: { collectedAt, windows: parsed.windows } }
-                : { ...snapshot, anthropicFallback: { collectedAt, windows: parsed.windows } };
+                ? { generatedAt: collectedAt, providers: [], expiresAt, anthropicFallback: { collectedAt, expiresAt, windows: parsed.windows } }
+                : { ...snapshot, anthropicFallback: { collectedAt, expiresAt, windows: parsed.windows } };
         }
         dispatch(parsed.windows, collectedAt, attemptGeneration);
     }

@@ -264,7 +264,7 @@ function providerUnavailable(provider: ProviderStatus, reportExpired: boolean): 
 function providerLine(snapshot: ProviderSnapshot, now: Date, timezone: string, sharedNote: boolean): string {
     const note = sharedNote ? ' · shared subscriptions; provider balances are separate' : '';
     const reportExpired = snapshot.expiresAt !== undefined && snapshot.expiresAt <= now;
-    const fallback = snapshot.anthropicFallback === undefined
+    const fallback = snapshot.anthropicFallback === undefined || snapshot.anthropicFallback.expiresAt <= now
         ? undefined
         : observedFallbackSegment(snapshot.anthropicFallback.windows, snapshot.anthropicFallback.collectedAt, now, timezone);
     const segments = snapshot.providers.map(provider => (provider.provider === 'anthropic' && providerUnavailable(provider, reportExpired) && fallback !== undefined
