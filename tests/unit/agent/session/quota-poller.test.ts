@@ -95,9 +95,34 @@ describe('provider report parsing', () => {
     it('rejects unknown schemas and refuses a future, negative-age, or wrong-provider source as fresh quota', () => {
         expect(parseProviderSnapshot({ ...providerReport(), schema_version: 2 })).toBeUndefined();
         expect(parseProviderSnapshot(providerReport({ source_freshness: { cached: false, stale: false, age_seconds: -1 } }))).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ last_attempt: '2026-09-11T20:00:02Z' }))).toBeUndefined();
         expect(parseProviderSnapshot(providerReport({ quota_after: { source: 'anthropic', collected_at: '2026-09-11T20:00:02Z' } }))?.providers[0]?.quotaAfter).toBeUndefined();
         const snapshot = parseProviderSnapshot(providerReport({ quota_after: { source: 'codex', collected_at: GENERATED } }));
         expect(snapshot?.providers[0]?.quotaAfter).toBeUndefined();
+    });
+
+    it('rejects empty or non-string required provider fields', () => {
+        expect(parseProviderSnapshot(providerReport({ provider: '' }))).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ provider: 42 }))).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ status: '' }))).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ quota_after: { source: '', collected_at: GENERATED } }))?.providers[0]?.quotaAfter).toBeUndefined();
+    });
+
+    it('preserves display-name-only scopes, omits an absent scope, and validates error entries independently', () => {
+        const snapshot = parseProviderSnapshot(providerReport({
+            errors:      [{ section: 'quota_after', code: 'expired' }, { section: '', code: 'ignored' }, null],
+            quota_after: {
+                source:       'anthropic', collected_at: GENERATED,
+                quotas:       [
+                    { id: 'named-scope', used_percent: 5, unit: 'percent_0_100', scope: { model: { display_name: 'Named model' } } },
+                    { id: 'unscoped', used_percent: 6, unit: 'percent_0_100' },
+                ],
+            },
+        }));
+
+        expect(snapshot?.providers[0]?.errors).toEqual([{ section: 'quota_after', code: 'expired' }]);
+        expect(snapshot?.providers[0]?.quotaAfter?.quotas[0]?.scope).toEqual({ model: { displayName: 'Named model' } });
+        expect(snapshot?.providers[0]?.quotaAfter?.quotas[1]?.scope).toBeUndefined();
     });
 
     it('accepts inclusive percentage boundaries and drops out-of-range or wrongly-unitized quotas', () => {
@@ -161,6 +186,29 @@ describe('direct Anthropic fallback parsing', () => {
             kind: 'session', group: 'session', percent: 95, scope: { surface: { id: 'cli' } },
         }] })).toEqual({ windows: undefined, rejected: false });
     });
+
+    it('maps each supported limit kind independently and ignores scoped or unknown kinds', () => {
+        expect(parseUsageWindows({ limits: [
+            { kind: 'session', percent: 10 },
+            { kind: 'seven_day', percent: 20 },
+            { kind: 'seven_day_opus', percent: 30 },
+            { kind: 'weekly_scoped', percent: 40 },
+            { kind: 'session', percent: 50, scope: { model: { display_name: 'Named model' } } },
+            { kind: 'unknown', percent: 60 },
+            { percent: 70 },
+        ] })).toEqual({
+            windows: {
+                fiveHour: { utilization: 10 },
+                sevenDay: { utilization: 20 },
+                perModel: { seven_day_opus: { utilization: 30 } },
+            },
+            rejected: false,
+        });
+    });
+
+    it('rejects an empty legacy id instead of silently accepting its percentage', () => {
+        expect(parseUsageWindows({ '': { utilization: 42 } })).toEqual({ windows: undefined, rejected: true });
+    });
 });
 
 describe('provider polling', () => {
@@ -172,12 +220,13 @@ describe('provider polling', () => {
     });
 
     it('fetches utraque with a bounded signal, stores the snapshot, and adapts only unscoped Anthropic limits', async () => {
-        const { fetch, ledgers, poller } = harness();
+        const { clock, fetch, ledgers, poller } = harness();
         poller.start();
         await poller.poll();
 
         expect(fetch).toHaveBeenCalledWith(DEFAULT_PROVIDER_REPORT_URL, { headers: {}, signal: expect.any(AbortSignal) });
         expect(poller.getSnapshot?.()?.providers[0]?.provider).toBe('anthropic');
+        expect(poller.getSnapshot?.()?.expiresAt).toEqual(new Date(clock.now() + 600_000));
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith({
             type:  'quota_polled', at:    new Date(GENERATED),
             quota: {
@@ -193,6 +242,7 @@ describe('provider polling', () => {
             quotas:       [
                 { id: 'five_hour', kind: 'five_hour', used_percent: 42, unit: 'percent_0_100' },
                 { id: 'surface', kind: 'session', group: 'session', used_percent: 91, unit: 'percent_0_100', scope: { surface: { id: 'cli' } } },
+                { id: 'model', kind: 'session', group: 'session', used_percent: 90, unit: 'percent_0_100', scope: { model: { id: 'opus' } } },
                 { id: 'slot', kind: 'session', group: 'session', slot: 'secondary', used_percent: 92, unit: 'percent_0_100' },
                 { id: 'inactive', kind: 'session', group: 'session', active: false, used_percent: 93, unit: 'percent_0_100' },
                 { id: 'reset', kind: 'session', group: 'session', resets_at: GENERATED, used_percent: 94, unit: 'percent_0_100' },
@@ -206,6 +256,44 @@ describe('provider polling', () => {
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({
             quota: { fiveHour: { utilization: 42 } },
         }));
+    });
+
+    it('selects Anthropic by provider name when another provider is listed first', async () => {
+        const report = providerReport();
+        const codex = {
+            ...report.providers[0],
+            provider:    'codex',
+            quota_after: { ...report.providers[0].quota_after, source: 'codex' },
+        };
+        const { ledgers, poller } = harness({ fetch: async () => ok({ ...report, providers: [codex, report.providers[0]] }) });
+        poller.start();
+        await poller.poll();
+
+        expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            quota: expect.objectContaining({ fiveHour: expect.objectContaining({ utilization: 31.5 }) }),
+        }));
+    });
+
+    it('uses non-quota errors for status only, but refuses an errored quota source', async () => {
+        const unrelated = harness({ fetch: async () => ok(providerReport({ errors: [{ section: 'models', code: 'partial' }] })) });
+        unrelated.poller.start();
+        await unrelated.poller.poll();
+        expect(unrelated.ledgers[0]?.dispatch).toHaveBeenCalledTimes(1);
+
+        const quotaError = harness({ fetch: async () => ok(providerReport({ errors: [{ section: 'quota_after', code: 'expired' }] })) });
+        quotaError.poller.start();
+        await quotaError.poller.poll();
+        expect(quotaError.ledgers[0]?.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('does not dispatch an observation whose source says it is unavailable', async () => {
+        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
+            ...providerReport().providers[0].quota_after,
+            available: false,
+        } })) });
+        poller.start();
+        await poller.poll();
+        expect(ledgers[0]?.dispatch).not.toHaveBeenCalled();
     });
 
     it('keeps a stale source out of the Claude ledger', async () => {
@@ -246,10 +334,51 @@ describe('provider polling', () => {
     });
 
     it('does not send the bearer to the direct endpoint after a local-auth rejection', async () => {
-        const { fetch, poller } = harness({ fetch: async () => ({ ok: false, status: 401, json: async () => ({}) }) });
+        const { fetch, logger, poller } = harness({ fetch: async () => ({ ok: false, status: 401, json: async () => ({}) }) });
         poller.start();
         await poller.poll();
         expect(fetch).toHaveBeenCalledTimes(1);
+        expect(logger.debug).toHaveBeenCalledWith({ status: 401 }, 'Quota poll: utraque provider report returned a non-OK status');
+    });
+
+    it('marks a prior direct reading stale when its next response is non-OK', async () => {
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }))
+            .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) });
+        const { logger, poller } = harness({ fetch, preferProviderReport: false });
+        poller.start();
+        await poller.poll();
+        await poller.poll();
+
+        expect(poller.getSnapshot?.()?.anthropicFallback).toBeUndefined();
+        expect(poller.getSnapshot?.()?.expiresAt?.getTime()).toBe(Date.parse(GENERATED));
+        expect(logger.debug).toHaveBeenCalledWith({ status: 503 }, 'Quota poll: direct Anthropic fallback returned a non-OK status');
+    });
+
+    it('marks a prior direct reading stale when a successful response has no usable windows', async () => {
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }))
+            .mockResolvedValueOnce(ok({}));
+        const { poller } = harness({ fetch, preferProviderReport: false });
+        poller.start();
+        await poller.poll();
+        await poller.poll();
+
+        expect(poller.getSnapshot?.()?.anthropicFallback).toBeUndefined();
+        expect(poller.getSnapshot?.()?.expiresAt?.getTime()).toBe(Date.parse(GENERATED));
+    });
+
+    it('marks a prior report stale and logs when a later 200 response has an invalid schema', async () => {
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok(providerReport()))
+            .mockResolvedValueOnce(ok({ schema_version: 2 }));
+        const { logger, poller } = harness({ fetch });
+        poller.start();
+        await poller.poll();
+        await poller.poll();
+
+        expect(poller.getSnapshot?.()?.providers[0]?.freshness.stale).toBe(true);
+        expect(logger.debug).toHaveBeenCalledWith('Quota poll: utraque provider report was not valid schema version 1');
     });
 
     it('falls back after a missing report route and uses separate official OAuth headers', async () => {
@@ -374,29 +503,131 @@ describe('provider polling', () => {
         expect(logger.debug).toHaveBeenCalledWith({ errorName: 'Error' }, 'Quota poll failed; keeping the last known readings');
     });
 
+    it('clears the request timeout and completed controller after a successful attempt', async () => {
+        let requestSignal: AbortSignal | undefined;
+        const { clock, poller } = harness({ fetch: async (_url, init) => {
+            requestSignal = init.signal;
+            return ok(providerReport());
+        } });
+        poller.start();
+        await poller.poll();
+
+        expect(clock.pending()).toBe(1); // recurring poll only
+        poller.stop();
+        expect(requestSignal?.aborted).toBe(false);
+        expect(clock.pending()).toBe(0);
+    });
+
+    it('marks providers stale when the report throws, then retains a successful direct fallback', async () => {
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok(providerReport()))
+            .mockRejectedValueOnce(new TypeError('network down'))
+            .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }));
+        const { logger, poller } = harness({ fetch });
+        poller.start();
+        await poller.poll();
+        await poller.poll();
+
+        expect(fetch).toHaveBeenCalledTimes(3);
+        expect(poller.getSnapshot?.()?.providers[0]?.freshness.stale).toBe(true);
+        expect(poller.getSnapshot?.()?.anthropicFallback?.windows.fiveHour?.utilization).toBe(42);
+        expect(logger.debug).toHaveBeenCalledWith(
+            { errorName: 'TypeError' },
+            'Quota poll: utraque provider report failed; trying direct Anthropic fallback'
+        );
+    });
+
+    it('labels a non-Error provider failure unknown and still enables fallback', async () => {
+        const fetch = jest.fn<QuotaFetch>()
+            .mockRejectedValueOnce('network down')
+            .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }));
+        const { logger, poller } = harness({ fetch });
+        poller.start();
+        await poller.poll();
+
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(logger.debug).toHaveBeenCalledWith(
+            { errorName: 'unknown' },
+            'Quota poll: utraque provider report failed; trying direct Anthropic fallback'
+        );
+    });
+
+    it('marks a prior direct reading stale when the direct request throws', async () => {
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }))
+            .mockRejectedValueOnce('direct down');
+        const { logger, poller } = harness({ fetch, preferProviderReport: false });
+        poller.start();
+        await poller.poll();
+        await poller.poll();
+
+        expect(poller.getSnapshot?.()?.anthropicFallback).toBeUndefined();
+        expect(logger.debug).toHaveBeenCalledWith(
+            { errorName: 'unknown' },
+            'Quota poll failed; keeping the last known readings'
+        );
+    });
+
     it('does not publish an old response after stop and restart, and starts a new-generation poll', async () => {
-        let release = (_response: QuotaFetchResponse): void => {};
-        const gate = new Promise<QuotaFetchResponse>((resolve) => {
-            release = resolve;
+        let releaseOld = (_response: QuotaFetchResponse): void => {};
+        let releaseCurrent = (_response: QuotaFetchResponse): void => {};
+        const oldGate = new Promise<QuotaFetchResponse>((resolve) => {
+            releaseOld = resolve;
+        });
+        const currentGate = new Promise<QuotaFetchResponse>((resolve) => {
+            releaseCurrent = resolve;
         });
         const fetch = jest.fn<QuotaFetch>()
-            .mockImplementationOnce(async () => gate)
-            .mockResolvedValueOnce(ok(providerReport({ quota_after: {
-                source:       'anthropic', collected_at: GENERATED,
-                quotas:       [{ id: 'session', kind: 'session', group: 'session', used_percent: 55, unit: 'percent_0_100' }],
-            } })));
+            .mockImplementationOnce(async () => oldGate)
+            .mockImplementationOnce(async () => currentGate);
         const { ledgers, poller } = harness({ fetch });
         poller.start();
         const attempt = poller.poll();
         poller.stop();
         poller.start();
-        release(ok(providerReport()));
+        releaseOld(ok(providerReport()));
         await attempt;
         await Promise.resolve();
-        await poller.poll();
+
         expect(fetch).toHaveBeenCalledTimes(2);
+        expect(ledgers[0]?.dispatch).not.toHaveBeenCalled();
+        expect(poller.getSnapshot?.()).toBeUndefined();
+
+        releaseCurrent(ok(providerReport({ quota_after: {
+            source:       'anthropic', collected_at: GENERATED,
+            quotas:       [{ id: 'session', kind: 'session', group: 'session', used_percent: 55, unit: 'percent_0_100' }],
+        } })));
+        await poller.poll();
         expect(ledgers[0]?.dispatch).toHaveBeenCalledTimes(1);
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({ quota: { fiveHour: { utilization: 55 } } }));
+    });
+
+    it('does not let an obsolete failed attempt stale the prior snapshot after restart', async () => {
+        let releaseOld = (_response: QuotaFetchResponse): void => {};
+        let releaseCurrent = (_response: QuotaFetchResponse): void => {};
+        const oldGate = new Promise<QuotaFetchResponse>((resolve) => {
+            releaseOld = resolve;
+        });
+        const currentGate = new Promise<QuotaFetchResponse>((resolve) => {
+            releaseCurrent = resolve;
+        });
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok(providerReport()))
+            .mockImplementationOnce(async () => oldGate)
+            .mockImplementationOnce(async () => currentGate);
+        const { poller } = harness({ fetch });
+        poller.start();
+        await poller.poll();
+        const attempt = poller.poll();
+        poller.stop();
+        poller.start();
+        releaseOld({ ok: false, status: 401, json: async () => ({}) });
+        await attempt;
+        await Promise.resolve();
+
+        expect(poller.getSnapshot?.()?.providers[0]?.freshness.stale).toBe(false);
+        releaseCurrent(ok(providerReport()));
+        await poller.poll();
     });
 
     it('does not publish an old direct-fallback response after stop and restart', async () => {
@@ -461,5 +692,33 @@ describe('provider polling', () => {
         clock.advance(30_000);
         poller.noteResult();
         expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps recurring polls scheduled after every interval', async () => {
+        const { clock, fetch, poller } = harness();
+        poller.start();
+        await poller.poll();
+
+        clock.advance(300_000);
+        expect(fetch).toHaveBeenCalledTimes(2);
+        await poller.poll();
+        clock.advance(300_000);
+        expect(fetch).toHaveBeenCalledTimes(3);
+        await poller.poll();
+    });
+
+    it('does not queue a replacement poll when stopped before an in-flight attempt settles', async () => {
+        let release = (_response: QuotaFetchResponse): void => {};
+        const gate = new Promise<QuotaFetchResponse>((resolve) => {
+            release = resolve;
+        });
+        const { fetch, poller } = harness({ fetch: async () => gate });
+        poller.start();
+        const attempt = poller.poll();
+        poller.stop();
+        release(ok(providerReport()));
+        await attempt;
+        await Promise.resolve();
+        expect(fetch).toHaveBeenCalledTimes(1);
     });
 });

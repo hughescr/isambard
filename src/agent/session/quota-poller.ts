@@ -214,11 +214,11 @@ export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefin
 
 export interface ParsedUsage { windows?: QuotaWindows, rejected: boolean }
 
-function unifiedAnthropicQuotaId(id: string, group?: string, scoped = false): string | undefined {
+function unifiedAnthropicQuotaId(id: string, scoped: boolean): string | undefined {
     if(scoped || id === 'weekly_scoped') {
         return undefined;
     }
-    if(id === 'five_hour' || id === 'session' || group === 'session') {
+    if(id === 'five_hour' || id === 'session') {
         return 'five_hour';
     }
     if(id === 'seven_day' || id === 'weekly_all') {
@@ -252,10 +252,13 @@ export function parseUsageWindows(body: unknown): ParsedUsage {
     if(Array.isArray(raw?.limits)) {
         for(const value of raw.limits) {
             const limit = asRecord(value);
-            const kind = stringValue(limit?.kind) ?? '';
+            const kind = stringValue(limit?.kind);
+            if(kind === undefined) {
+                continue;
+            }
             const scope = asRecord(limit?.scope);
             const scoped = scopeLabel(scope?.model) !== undefined || scopeLabel(scope?.surface) !== undefined;
-            const id = unifiedAnthropicQuotaId(kind, stringValue(limit?.group), scoped);
+            const id = unifiedAnthropicQuotaId(kind, scoped);
             if(id !== undefined && booleanValue(limit?.is_active) !== false) {
                 add(id, limit?.percent, limit?.resets_at);
             }
@@ -267,7 +270,7 @@ export function parseUsageWindows(body: unknown): ParsedUsage {
 function anthropicWindows(observation: ProviderObservation, now: number): QuotaWindows | undefined {
     let windows: QuotaWindows = {};
     for(const quota of observation.quotas) {
-        const id = unifiedAnthropicQuotaId(quota.kind ?? quota.id, quota.group, quota.scope?.model !== undefined || quota.scope?.surface !== undefined);
+        const id = unifiedAnthropicQuotaId(quota.kind ?? quota.id, quota.scope?.model !== undefined || quota.scope?.surface !== undefined);
         if(id === undefined || quota.slot !== undefined || quota.active === false || (quota.resetsAt !== undefined && quota.resetsAt.getTime() <= now)) {
             continue;
         }
@@ -351,12 +354,12 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
         const attemptGeneration = generation;
         const timeout = clock.setTimer(() => controller.abort(), requestTimeoutMs);
         try {
+            if(!preferProviderReport) {
+                await directFallback(controller.signal, attemptGeneration);
+                return;
+            }
             let useFallback = false;
             try {
-                if(!preferProviderReport) {
-                    await directFallback(controller.signal, attemptGeneration);
-                    return;
-                }
                 const response = await fetch(url, { headers: headers(), signal: controller.signal });
                 if(response.ok) {
                     const parsed = parseProviderSnapshot(await response.json());
@@ -410,9 +413,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
             logger.debug({ errorName: error instanceof Error ? error.name : 'unknown' }, 'Quota poll failed; keeping the last known readings');
         } finally {
             clock.clearTimer(timeout);
-            if(abortController === controller) {
-                abortController = undefined;
-            }
+            abortController = undefined;
         }
     }
     function poll(): Promise<void> {
@@ -438,12 +439,11 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
                 generation += 1;
                 running = true;
                 scheduleNext();
-                const startGeneration = generation;
                 if(inFlight === undefined) {
                     void poll();
                 } else {
                     void inFlight.finally(() => {
-                        if(running && generation === startGeneration) {
+                        if(running) {
                             void poll();
                         }
                     });
