@@ -214,17 +214,17 @@ export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefin
 
 export interface ParsedUsage { windows?: QuotaWindows, rejected: boolean }
 
-function unifiedAnthropicQuotaId(id: string, scoped: boolean): string | undefined {
-    if(scoped || id === 'weekly_scoped') {
+function unifiedAnthropicQuotaId(id: string, group: string | undefined, scoped: boolean): string | undefined {
+    if(scoped) {
         return undefined;
     }
-    if(id === 'five_hour' || id === 'session') {
+    if(id === 'five_hour' || id === 'session' || group === 'session') {
         return 'five_hour';
     }
     if(id === 'seven_day' || id === 'weekly_all') {
         return 'seven_day';
     }
-    return id.startsWith('seven_day_') ? id : undefined;
+    return id;
 }
 
 /** Direct Anthropic OAuth usage percentages are already 0-100; SDK frames use another parser. */
@@ -253,12 +253,13 @@ export function parseUsageWindows(body: unknown): ParsedUsage {
         for(const value of raw.limits) {
             const limit = asRecord(value);
             const kind = stringValue(limit?.kind);
-            if(kind === undefined) {
+            const group = stringValue(limit?.group);
+            if(kind === undefined && group !== 'session') {
                 continue;
             }
             const scope = asRecord(limit?.scope);
             const scoped = scopeLabel(scope?.model) !== undefined || scopeLabel(scope?.surface) !== undefined;
-            const id = unifiedAnthropicQuotaId(kind, scoped);
+            const id = unifiedAnthropicQuotaId(kind ?? 'session', group, scoped);
             if(id !== undefined && booleanValue(limit?.is_active) !== false) {
                 add(id, limit?.percent, limit?.resets_at);
             }
@@ -270,7 +271,7 @@ export function parseUsageWindows(body: unknown): ParsedUsage {
 function anthropicWindows(observation: ProviderObservation, now: number): QuotaWindows | undefined {
     let windows: QuotaWindows = {};
     for(const quota of observation.quotas) {
-        const id = unifiedAnthropicQuotaId(quota.kind ?? quota.id, quota.scope?.model !== undefined || quota.scope?.surface !== undefined);
+        const id = unifiedAnthropicQuotaId(quota.kind ?? quota.id, quota.group, quota.scope?.model !== undefined || quota.scope?.surface !== undefined);
         if(id === undefined || quota.slot !== undefined || quota.active === false || (quota.resetsAt !== undefined && quota.resetsAt.getTime() <= now)) {
             continue;
         }

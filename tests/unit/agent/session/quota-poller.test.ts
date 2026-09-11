@@ -190,6 +190,8 @@ describe('direct Anthropic fallback parsing', () => {
     it('maps each supported limit kind independently and ignores scoped or unknown kinds', () => {
         expect(parseUsageWindows({ limits: [
             { kind: 'session', percent: 10 },
+            { kind: 'new-session-kind', group: 'session', percent: 11 },
+            { group: 'session', percent: 12 },
             { kind: 'seven_day', percent: 20 },
             { kind: 'seven_day_opus', percent: 30 },
             { kind: 'weekly_scoped', percent: 40 },
@@ -198,7 +200,7 @@ describe('direct Anthropic fallback parsing', () => {
             { percent: 70 },
         ] })).toEqual({
             windows: {
-                fiveHour: { utilization: 10 },
+                fiveHour: { utilization: 12 },
                 sevenDay: { utilization: 20 },
                 perModel: { seven_day_opus: { utilization: 30 } },
             },
@@ -255,6 +257,18 @@ describe('provider polling', () => {
         expect(ledgers[0]?.dispatch).toHaveBeenCalledTimes(1);
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({
             quota: { fiveHour: { utilization: 42 } },
+        }));
+    });
+
+    it('accepts an unscoped provider quota identified only by its session group', async () => {
+        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
+            source:       'anthropic', collected_at: GENERATED,
+            quotas:       [{ id: 'primary', group: 'session', used_percent: 37, unit: 'percent_0_100' }],
+        } })) });
+        poller.start();
+        await poller.poll();
+        expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            quota: { fiveHour: { utilization: 37 } },
         }));
     });
 
@@ -621,7 +635,7 @@ describe('provider polling', () => {
         const attempt = poller.poll();
         poller.stop();
         poller.start();
-        releaseOld({ ok: false, status: 401, json: async () => ({}) });
+        releaseOld({ ok: false, status: 500, json: async () => ({}) });
         await attempt;
         await Promise.resolve();
 
@@ -715,6 +729,8 @@ describe('provider polling', () => {
         const { fetch, poller } = harness({ fetch: async () => gate });
         poller.start();
         const attempt = poller.poll();
+        poller.stop();
+        poller.start();
         poller.stop();
         release(ok(providerReport()));
         await attempt;
