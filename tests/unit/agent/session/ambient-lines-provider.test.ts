@@ -100,12 +100,13 @@ describe('composeAmbientLines provider quota rendering', () => {
             { kind: 'cash', currency: 'USD', total: '9.35' },
             { kind: 'credits', total: '120', amountUnit: 'credits' },
             { kind: 'requests', total: '40' },
+            { kind: 'cashless', currency: 'USD' },
             { kind: 'grant' },
         ];
 
         expect(render(snapshot([provider({ quotaAfter: observation({ balances }) })]))).toBe(
             'Quota: Codex enterprise (org) unlimited balance, prepaid (team) balance unavailable, cash USD 9.35 balance, '
-            + 'credits 120 credits balance, requests 40 units balance, grant balance reported (source 14:07)'
+            + 'credits 120 credits balance, requests 40 units balance, cashless balance reported, grant balance reported (source 14:07)'
         );
     });
 
@@ -194,19 +195,19 @@ describe('composeAmbientLines provider burn pace', () => {
     it('computes positive pace at the exact one-minute boundary', () => {
         const report = paceReport(quota({ usedPercent: 35 }), quota({ usedPercent: 34 }), 60_000);
 
-        expect(render(report)).toContain('+60.0pp/h shared burn');
+        expect(render(report)).toBe('Quota: Codex limit 35% used/65% left, resets Thu 09:00, +60.0pp/h shared burn (source 14:07)');
     });
 
     it.each([
-        ['less than one minute', quota({ usedPercent: 35 }), quota({ usedPercent: 34 }), 59_999, undefined],
-        ['unchanged use', quota({ usedPercent: 35 }), quota({ usedPercent: 35 }), 3_600_000, undefined],
-        ['falling use', quota({ usedPercent: 34 }), quota({ usedPercent: 35 }), 3_600_000, undefined],
-        ['same timestamp', quota({ usedPercent: 35 }), quota({ usedPercent: 34 }), 0, NOW],
-        ['later prior timestamp', quota({ usedPercent: 35 }), quota({ usedPercent: 34 }), 0, new Date(NOW.getTime() + 1)],
-        ['changed group identity', quota({ usedPercent: 35, group: 'a' }), quota({ usedPercent: 34, group: 'b' }), 3_600_000, undefined],
-        ['changed model identity', quota({ usedPercent: 35, scope: { model: { id: 'gpt-5' } } }), quota({ usedPercent: 34, scope: { model: { id: 'o3' } } }), 3_600_000, undefined],
-    ] as const)('suppresses pace for %s', (_case, current, prior, elapsedMs, priorCollectedAt) => {
-        expect(render(paceReport(current, prior, elapsedMs, priorCollectedAt))).not.toContain('pp/h');
+        ['less than one minute', quota({ usedPercent: 35 }), quota({ usedPercent: 34 }), 59_999, undefined, 'Quota: Codex limit 35% used/65% left, resets Thu 09:00 (source 14:07)'],
+        ['unchanged use', quota({ usedPercent: 35 }), quota({ usedPercent: 35 }), 3_600_000, undefined, 'Quota: Codex limit 35% used/65% left, resets Thu 09:00 (source 14:07)'],
+        ['falling use', quota({ usedPercent: 34 }), quota({ usedPercent: 35 }), 3_600_000, undefined, 'Quota: Codex limit 34% used/66% left, resets Thu 09:00 (source 14:07)'],
+        ['same timestamp', quota({ usedPercent: 35 }), quota({ usedPercent: 34 }), 0, NOW, 'Quota: Codex limit 35% used/65% left, resets Thu 09:00 (source 14:07)'],
+        ['later prior timestamp', quota({ usedPercent: 35 }), quota({ usedPercent: 34 }), 0, new Date(NOW.getTime() + 1), 'Quota: Codex limit 35% used/65% left, resets Thu 09:00 (source 14:07)'],
+        ['changed group identity', quota({ usedPercent: 35, group: 'a' }), quota({ usedPercent: 34, group: 'b' }), 3_600_000, undefined, 'Quota: Codex limit [group=a] 35% used/65% left, resets Thu 09:00 (source 14:07)'],
+        ['changed model identity', quota({ usedPercent: 35, scope: { model: { id: 'gpt-5' } } }), quota({ usedPercent: 34, scope: { model: { id: 'o3' } } }), 3_600_000, undefined, 'Quota: Codex limit [model=gpt-5] 35% used/65% left, resets Thu 09:00 (source 14:07)'],
+    ] as const)('suppresses pace for %s', (_case, current, prior, elapsedMs, priorCollectedAt, expected) => {
+        expect(render(paceReport(current, prior, elapsedMs, priorCollectedAt))).toBe(expected);
     });
 
     it('matches the previous sample from the same provider even when provider order changes', () => {
@@ -230,7 +231,7 @@ describe('composeAmbientLines provider burn pace', () => {
             3_600_000
         );
 
-        expect(render(report)).not.toContain('pp/h');
+        expect(render(report)).toBe('Quota: Codex ab [group=c] 35% used/65% left, resets Thu 09:00 (source 14:07)');
     });
 });
 
@@ -282,6 +283,30 @@ describe('composeAmbientLines direct Anthropic fallback', () => {
         const report = snapshot([anthropic], { anthropicFallback: fallback({ fiveHour: { utilization: 99 } }) });
 
         expect(render(report)).toBe('Quota: Anthropic provider-limit 35% used/65% left (source 14:07)');
+    });
+
+    it('does not replace fresh Anthropic data because an unrelated provider section failed', () => {
+        const anthropic = provider({
+            provider:   'anthropic',
+            status:     'partial',
+            errors:     [{ section: 'balances', code: 'timed_out' }],
+            quotaAfter: observation({ source: 'anthropic' }),
+        });
+        const report = snapshot([anthropic], { anthropicFallback: fallback({ fiveHour: { utilization: 99 } }) });
+
+        expect(render(report)).toBe('Quota: Anthropic no quota or balance reported (source 14:07; partial)');
+    });
+
+    it('reports unavailable Anthropic provider state when no direct fallback exists', () => {
+        const anthropic = provider({ provider: 'anthropic', status: 'error', quotaAfter: undefined });
+
+        expect(render(snapshot([anthropic]))).toBe('Quota: Anthropic unavailable (error; 14:07)');
+    });
+
+    it('treats a direct fallback observation with no windows as unavailable', () => {
+        const report = snapshot([], { anthropicFallback: fallback({}) });
+
+        expect(render(report)).toBe('Quota: Anthropic fallback unavailable (last attempt 14:07)');
     });
 
     it('expires the direct fallback at its exact expiry boundary', () => {

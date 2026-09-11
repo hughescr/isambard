@@ -190,8 +190,11 @@ function burnPace(quota: ProviderQuota, currentAt: Date, previous: ProviderStatu
         return '';
     }
     const priorObservation = previous?.quotaAfter;
-    const prior = priorObservation?.quotas.find(candidate => quotaIdentity(candidate) === quotaIdentity(quota));
-    if(prior === undefined || priorObservation === undefined || priorObservation.collectedAt >= currentAt) {
+    if(priorObservation === undefined) {
+        return '';
+    }
+    const prior = priorObservation.quotas.find(candidate => quotaIdentity(candidate) === quotaIdentity(quota));
+    if(prior === undefined) {
         return '';
     }
     const elapsedHours = (currentAt.getTime() - priorObservation.collectedAt.getTime()) / 3_600_000;
@@ -200,7 +203,7 @@ function burnPace(quota: ProviderQuota, currentAt: Date, previous: ProviderStatu
         return '';
     }
     const rate = increase / elapsedHours;
-    return Number.isFinite(rate) ? `, +${rate.toFixed(1)}pp/h shared burn` : '';
+    return `, +${rate.toFixed(1)}pp/h shared burn`;
 }
 
 function providerQuotaSegment(quota: ProviderQuota, collectedAt: Date, previous: ProviderStatus | undefined, now: Date, timezone: string): string {
@@ -233,7 +236,7 @@ function providerBalanceSegment(balance: ProviderBalance): string {
 }
 
 function providerName(provider: string): string {
-    return provider.length === 0 ? provider : `${provider[0]?.toUpperCase()}${provider.slice(1)}`;
+    return `${provider.charAt(0).toUpperCase()}${provider.slice(1)}`;
 }
 
 function providerStatusSegment(provider: ProviderStatus, previous: ProviderStatus | undefined, reportExpired: boolean, generatedAt: Date, now: Date, timezone: string): string {
