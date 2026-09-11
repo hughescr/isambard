@@ -221,10 +221,10 @@ function unifiedAnthropicQuotaId(id: string, group: string | undefined, scoped: 
     if(id === 'five_hour' || id === 'session' || group === 'session') {
         return 'five_hour';
     }
-    if(id === 'seven_day' || id === 'weekly_all') {
+    if(id === 'weekly_all') {
         return 'seven_day';
     }
-    return id;
+    return id === 'seven_day' || id.startsWith('seven_day_') ? id : undefined;
 }
 
 /** Direct Anthropic OAuth usage percentages are already 0-100; SDK frames use another parser. */

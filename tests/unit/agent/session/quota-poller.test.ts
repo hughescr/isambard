@@ -215,8 +215,17 @@ describe('direct Anthropic fallback parsing', () => {
     });
 
     it('maps a session kind without relying on its group or another later limit', () => {
-        expect(parseUsageWindows({ limits: [{ kind: 'session', percent: 10 }] })).toEqual({
+        const parsed = parseUsageWindows({ limits: [{ kind: 'session', percent: 10 }] });
+        expect(parsed).toEqual({
             windows:  { fiveHour: { utilization: 10, resetsAt: undefined } },
+            rejected: false,
+        });
+        expect(Object.hasOwn(parsed.windows!.fiveHour!, 'resetsAt')).toBe(false);
+    });
+
+    it('ignores an invalid percentage on an unknown limit kind', () => {
+        expect(parseUsageWindows({ limits: [{ kind: 'unknown', percent: 101 }] })).toEqual({
+            windows:  undefined,
             rejected: false,
         });
     });
@@ -283,6 +292,11 @@ describe('provider polling', () => {
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({
             quota: { fiveHour: { utilization: 37 } },
         }));
+        const event = ledgers[0]!.dispatch.mock.calls[0]![0];
+        expect(event.type).toBe('quota_polled');
+        if(event.type === 'quota_polled') {
+            expect(Object.hasOwn(event.quota.fiveHour!, 'resetsAt')).toBe(false);
+        }
     });
 
     it('selects Anthropic by provider name when another provider is listed first', async () => {
