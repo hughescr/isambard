@@ -25,7 +25,7 @@
  */
 import { DateTime } from 'luxon';
 import type { ActivityPhase } from './activity-phase';
-import type { Ledger, LedgerQuota, LedgerTask, QuotaWindow } from './ledger';
+import type { Ledger, LedgerQuota, LedgerTask, QuotaWindow, QuotaWindows } from './ledger';
 import type { ProviderBalance, ProviderQuota, ProviderSnapshot, ProviderStatus } from './quota-poller';
 import type { SessionRole } from './types';
 
@@ -261,10 +261,12 @@ function providerUnavailable(provider: ProviderStatus, reportExpired: boolean): 
       || provider.quotaAfter.available === false || provider.errors.some(error => error.section === 'quota_after');
 }
 
-function providerLine(snapshot: ProviderSnapshot, self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, timezone: string, sharedNote: boolean): string {
+function providerLine(snapshot: ProviderSnapshot, now: Date, timezone: string, sharedNote: boolean): string {
     const note = sharedNote ? ' · shared subscriptions; provider balances are separate' : '';
     const reportExpired = snapshot.expiresAt !== undefined && snapshot.expiresAt <= now;
-    const fallback = fallbackSegment(self, other, now, timezone, snapshot.generatedAt);
+    const fallback = snapshot.anthropicFallback === undefined
+        ? undefined
+        : observedFallbackSegment(snapshot.anthropicFallback.windows, snapshot.anthropicFallback.collectedAt, now, timezone);
     const segments = snapshot.providers.map(provider => (provider.provider === 'anthropic' && providerUnavailable(provider, reportExpired) && fallback !== undefined
         ? fallback
         : providerStatusSegment(
@@ -277,6 +279,9 @@ function providerLine(snapshot: ProviderSnapshot, self: LedgerQuota | undefined,
         )));
     if(!snapshot.providers.some(provider => provider.provider === 'anthropic') && fallback !== undefined) {
         segments.unshift(fallback);
+    }
+    if(segments.length === 0) {
+        segments.push(`Anthropic fallback unavailable (last attempt ${formatStamp(snapshot.generatedAt, now, timezone)})`);
     }
     return `${QUOTA_LINE_PREFIX}${segments.join(' · ')}${note}`;
 }
@@ -328,30 +333,36 @@ function freshestDatedWindow(name: UnifiedWindowName, self: LedgerQuota | undefi
     return theirs.at.getTime() > mine.at.getTime() ? theirs : mine;
 }
 
-function fallbackWindow(label: string, reading: DatedWindow, now: Date, timezone: string): string {
-    const source = `source ${formatStamp(reading.at, now, timezone)}`;
-    return reading.window.resetsAt !== undefined && reading.window.resetsAt <= now
+function fallbackWindow(label: string, window: QuotaWindow, source: string, now: Date, timezone: string): string {
+    return window.resetsAt !== undefined && window.resetsAt <= now
         ? `${label} expired (${source})`
-        : `${label} ${renderWindow(reading.window, now, timezone)} (${source})`;
+        : `${label} ${renderWindow(window, now, timezone)} (${source})`;
 }
 
-function fallbackSegment(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, timezone: string, minimumAt?: Date): string | undefined {
-    const recent = (reading: DatedWindow | undefined): reading is DatedWindow => reading !== undefined
-      && (minimumAt === undefined || reading.at >= minimumAt);
+function observedFallbackSegment(windows: QuotaWindows, collectedAt: Date, now: Date, timezone: string): string | undefined {
+    const source = `source ${formatStamp(collectedAt, now, timezone)}`;
+    const segments = [
+        ...windows.fiveHour === undefined ? [] : [fallbackWindow('5-hour', windows.fiveHour, source, now, timezone)],
+        ...windows.sevenDay === undefined ? [] : [fallbackWindow('week', windows.sevenDay, source, now, timezone)],
+    ];
+    return segments.length === 0 ? undefined : `Anthropic fallback (direct) ${segments.join(', ')}`;
+}
+
+function ledgerFallbackSegment(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, timezone: string): string | undefined {
     const fiveHour = freshestDatedWindow('fiveHour', self, other);
     const sevenDay = freshestDatedWindow('sevenDay', self, other);
     const segments = [
-        ...recent(fiveHour) ? [fallbackWindow('5-hour', fiveHour, now, timezone)] : [],
-        ...recent(sevenDay) ? [fallbackWindow('week', sevenDay, now, timezone)] : [],
+        ...fiveHour === undefined ? [] : [fallbackWindow('5-hour', fiveHour.window, 'source age unknown', now, timezone)],
+        ...sevenDay === undefined ? [] : [fallbackWindow('week', sevenDay.window, 'source age unknown', now, timezone)],
     ];
     if(segments.length === 0) {
         return undefined;
     }
-    return `Anthropic fallback (SDK/direct) ${segments.join(', ')}`;
+    return `Anthropic fallback (SDK) ${segments.join(', ')}`;
 }
 
 function quotaLine(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, timezone: string, sharedNote: boolean): string | undefined {
-    const fallback = fallbackSegment(self, other, now, timezone);
+    const fallback = ledgerFallbackSegment(self, other, now, timezone);
     if(fallback === undefined) {
         return undefined;
     }
@@ -371,7 +382,7 @@ export function composeAmbientLines(params: ComposeAmbientLinesParams): string[]
     // Merged per window from both ledgers rather than taken from one of them — see freshestDatedWindow.
     const quota = providerSnapshot === undefined
         ? quotaLine(self.quota, other?.quota, now, timezone, sharedQuotaNote)
-        : providerLine(providerSnapshot, self.quota, other?.quota, now, timezone, sharedQuotaNote);
+        : providerLine(providerSnapshot, now, timezone, sharedQuotaNote);
     return [
         ...other === undefined ? [] : [otherSessionLine(other, now, timezone)],
         ...quota === undefined ? [] : [quota],

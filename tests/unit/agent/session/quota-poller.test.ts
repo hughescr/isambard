@@ -1,7 +1,8 @@
 import { describe, expect, it, jest, type Mock } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
 import { FakeClock } from '../../../helpers/fake-clock';
-import type { LedgerEvent } from '@/agent/session/ledger';
+import { composeAmbientLines } from '@/agent/session/ambient-lines';
+import { createLedgerStore, type LedgerEvent } from '@/agent/session/ledger';
 import {
     DEFAULT_ANTHROPIC_USAGE_URL,
     DEFAULT_PROVIDER_REPORT_URL,
@@ -191,6 +192,27 @@ describe('provider polling', () => {
         await poller.poll();
         expect(poller.getSnapshot?.()?.providers[0]?.freshness.stale).toBe(true);
         expect(ledgers[0]?.dispatch).toHaveBeenLastCalledWith(expect.objectContaining({ quota: { fiveHour: { utilization: 42 } } }));
+    });
+
+    it('dates repeated direct observations separately and does not re-present a retained partial window', async () => {
+        const clock = new FakeClock(Date.parse(GENERATED));
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 }, seven_day: { utilization: 61 } }))
+            .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }));
+        const logger = { debug: jest.fn<Logger['debug']>(), warn: jest.fn<Logger['warn']>(), error: jest.fn<Logger['error']>() };
+        const ledger = createLedgerStore('conversation', { logger });
+        const poller = createQuotaPoller({ clock, fetch, ledgers: [ledger], logger, preferProviderReport: false });
+        poller.start();
+        await poller.poll();
+        clock.advance(60_000);
+        await poller.poll();
+
+        expect(ledger.get().quota?.sevenDay?.utilization).toBe(61);
+        const line = composeAmbientLines({
+            self: ledger.get(), now: new Date(clock.now()), timezone: 'UTC', providerSnapshot: poller.getSnapshot?.(),
+        })[0] ?? '';
+        expect(line).toContain('Anthropic fallback (direct) 5-hour 42% used (source 20:01)');
+        expect(line).not.toContain('week');
     });
 
     it('joins a single in-flight request', async () => {

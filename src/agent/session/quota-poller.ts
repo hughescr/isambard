@@ -58,10 +58,11 @@ export interface ProviderStatus {
     quotaAfter?: ProviderObservation
 }
 export interface ProviderSnapshot {
-    generatedAt: Date
-    providers:   readonly ProviderStatus[]
-    expiresAt?:  Date
-    previous?:   ProviderSnapshot
+    generatedAt:        Date
+    providers:          readonly ProviderStatus[]
+    expiresAt?:         Date
+    previous?:          ProviderSnapshot
+    anthropicFallback?: { collectedAt: Date, windows: QuotaWindows }
 }
 
 export interface CreateQuotaPollerParams {
@@ -296,9 +297,10 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
         const elapsed = Math.max(0, (at - snapshot.generatedAt.getTime()) / 1000);
         snapshot = {
             ...snapshot,
-            generatedAt: new Date(at),
-            expiresAt:   new Date(at),
-            providers:   snapshot.providers.map(provider => ({
+            generatedAt:       new Date(at),
+            expiresAt:         new Date(at),
+            anthropicFallback: undefined,
+            providers:         snapshot.providers.map(provider => ({
                 ...provider,
                 freshness: {
                     ...provider.freshness,
@@ -319,6 +321,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
     async function directFallback(signal: AbortSignal, attemptGeneration: number): Promise<void> {
         const response = await fetch(fallbackUrl, { headers: fallbackHeaders(), signal });
         if(!response.ok) {
+            markSnapshotStale(clock.now(), attemptGeneration);
             logger.debug({ status: response.status }, 'Quota poll: direct Anthropic fallback returned a non-OK status');
             return;
         }
@@ -327,9 +330,17 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
             warned = true;
             logger.warn({ fallbackUrl }, 'Quota poll: direct Anthropic usage response contained an invalid percentage');
         }
-        if(parsed.windows !== undefined) {
-            dispatch(parsed.windows, new Date(clock.now()), attemptGeneration);
+        if(parsed.windows === undefined) {
+            markSnapshotStale(clock.now(), attemptGeneration);
+            return;
         }
+        const collectedAt = new Date(clock.now());
+        if(running && generation === attemptGeneration) {
+            snapshot = snapshot === undefined
+                ? { generatedAt: collectedAt, providers: [], expiresAt: new Date(clock.now() + pollIntervalMs * 2), anthropicFallback: { collectedAt, windows: parsed.windows } }
+                : { ...snapshot, anthropicFallback: { collectedAt, windows: parsed.windows } };
+        }
+        dispatch(parsed.windows, collectedAt, attemptGeneration);
     }
     // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- one bounded attempt coordinates preferred/fallback fetch, validation, lifecycle generation and ledger adaptation
     async function pollOnce(): Promise<void> {

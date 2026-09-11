@@ -1856,9 +1856,9 @@ describe('createSessionAmbience', () => {
         const first = h.ambience.timeHeaderFor('conversation')();
         const second = h.ambience.timeHeaderFor('conversation')();
 
-        expect(first).toContain('- Quota: Anthropic fallback (SDK/direct) 5-hour 42% used');
-        expect(first).toContain('shared with Craig\'s own sessions');
-        expect(second).toContain('- Quota: Anthropic fallback (SDK/direct) 5-hour 42% used');
+        expect(first).toContain('- Quota: Anthropic fallback (direct) 5-hour 42% used');
+        expect(first).toContain('shared subscriptions; provider balances are separate');
+        expect(second).toContain('- Quota: Anthropic fallback (direct) 5-hour 42% used');
         expect(second).not.toContain('shared with Craig');
     });
 
@@ -1871,7 +1871,7 @@ describe('createSessionAmbience', () => {
 
         await h.ambience.quotaPoller.poll();
 
-        expect(h.ambience.timeHeaderFor('conversation')()).toContain('shared with Craig\'s own sessions');
+        expect(h.ambience.timeHeaderFor('conversation')()).toContain('shared subscriptions; provider balances are separate');
     });
 
     it('returns the same provider instance for a role every time, so the one-time note is per session, not per producer', () => {

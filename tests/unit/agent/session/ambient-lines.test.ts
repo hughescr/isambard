@@ -170,7 +170,7 @@ describe('composeAmbientLines: the quota line', () => {
     it('renders both windows with their reset stamps', () => {
         const self = ledger('conversation', { quota: QUOTA });
 
-        expect(compose({ self })).toEqual(['Quota: Anthropic fallback (SDK/direct) 5-hour 42% used (resets 15:00) (source 14:07), week 61% used (resets Thu 09:00) (source 14:07)']);
+        expect(compose({ self })).toEqual(['Quota: Anthropic fallback (SDK) 5-hour 42% used (resets 15:00) (source age unknown), week 61% used (resets Thu 09:00) (source age unknown)']);
     });
 
     it('omits the quota line entirely when no window is known', () => {
@@ -186,24 +186,24 @@ describe('composeAmbientLines: the quota line', () => {
     it('renders a window with no reset stamp as a bare percentage', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 42 }, source: 'headers', at: NOW } });
 
-        expect(compose({ self })).toEqual(['Quota: Anthropic fallback (SDK/direct) 5-hour 42% used (source 14:07)']);
+        expect(compose({ self })).toEqual(['Quota: Anthropic fallback (SDK) 5-hour 42% used (source age unknown)']);
     });
 
     it('labels a fallback window expired instead of showing old headroom', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 99, resetsAt: new Date(NOW.getTime() - 1) }, source: 'headers', at: NOW } });
-        expect(compose({ self })).toEqual(['Quota: Anthropic fallback (SDK/direct) 5-hour expired (source 14:07)']);
+        expect(compose({ self })).toEqual(['Quota: Anthropic fallback (SDK) 5-hour expired (source age unknown)']);
     });
 
     it('renders the weekly window alone when the five-hour window is unknown', () => {
         const self = ledger('conversation', { quota: { sevenDay: { utilization: 61 }, source: 'headers', at: NOW } });
 
-        expect(compose({ self })).toEqual(['Quota: Anthropic fallback (SDK/direct) week 61% used (source 14:07)']);
+        expect(compose({ self })).toEqual(['Quota: Anthropic fallback (SDK) week 61% used (source age unknown)']);
     });
 
     it('rounds utilization to whole percent', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 42.5 }, sevenDay: { utilization: 61.4 }, source: 'headers', at: NOW } });
 
-        expect(compose({ self })).toEqual(['Quota: Anthropic fallback (SDK/direct) 5-hour 43% used (source 14:07), week 61% used (source 14:07)']);
+        expect(compose({ self })).toEqual(['Quota: Anthropic fallback (SDK) 5-hour 43% used (source age unknown), week 61% used (source age unknown)']);
     });
 
     it('falls back to the other session\'s quota when this session has seen none', () => {
@@ -211,7 +211,7 @@ describe('composeAmbientLines: the quota line', () => {
 
         expect(compose({ other })).toEqual([
             'Perch: idle',
-            'Quota: Anthropic fallback (SDK/direct) 5-hour 42% used (resets 15:00) (source 14:07), week 61% used (resets Thu 09:00) (source 14:07)',
+            'Quota: Anthropic fallback (SDK) 5-hour 42% used (resets 15:00) (source age unknown), week 61% used (resets Thu 09:00) (source age unknown)',
         ]);
     });
 
@@ -219,7 +219,7 @@ describe('composeAmbientLines: the quota line', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 7 }, sevenDay: { utilization: 8 }, source: 'headers', at: NOW } });
         const other = ledger('perch', { quota: QUOTA });
 
-        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: Anthropic fallback (SDK/direct) 5-hour 7% used (source 14:07), week 8% used (source 14:07)']);
+        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: Anthropic fallback (SDK) 5-hour 7% used (source age unknown), week 8% used (source age unknown)']);
     });
 
     it('takes the other session\'s reading of a window when it is the newer of the two', () => {
@@ -228,7 +228,7 @@ describe('composeAmbientLines: the quota line', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 20 }, source: 'headers', at: TODAY_1402 } });
         const other = ledger('perch', { quota: { fiveHour: { utilization: 80 }, sevenDay: { utilization: 70 }, source: 'headers', at: NOW } });
 
-        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: Anthropic fallback (SDK/direct) 5-hour 80% used (source 14:07), week 70% used (source 14:07)']);
+        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: Anthropic fallback (SDK) 5-hour 80% used (source age unknown), week 70% used (source age unknown)']);
     });
 
     it('keeps this session\'s reading of a window the newer ledger does not carry at all', () => {
@@ -237,21 +237,21 @@ describe('composeAmbientLines: the quota line', () => {
         const self = ledger('conversation', { quota: { sevenDay: { utilization: 61, resetsAt: THU_0900 }, source: 'headers', at: TODAY_1402 } });
         const other = ledger('perch', { quota: { fiveHour: { utilization: 80 }, source: 'headers', at: NOW } });
 
-        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: Anthropic fallback (SDK/direct) 5-hour 80% used (source 14:07), week 61% used (resets Thu 09:00) (source 14:02)']);
+        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: Anthropic fallback (SDK) 5-hour 80% used (source age unknown), week 61% used (resets Thu 09:00) (source age unknown)']);
     });
 
     it('keeps this session\'s reading of every window when it is the newer ledger', () => {
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 20 }, source: 'headers', at: NOW } });
         const other = ledger('perch', { quota: { fiveHour: { utilization: 80 }, sevenDay: { utilization: 70 }, source: 'headers', at: TODAY_1402 } });
 
-        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: Anthropic fallback (SDK/direct) 5-hour 20% used (source 14:07), week 70% used (source 14:02)']);
+        expect(compose({ self, other })).toEqual(['Perch: idle', 'Quota: Anthropic fallback (SDK) 5-hour 20% used (source age unknown), week 70% used (source age unknown)']);
     });
 
     it('appends the shared-subscription note when asked for it', () => {
         const self = ledger('conversation', { quota: QUOTA });
 
         expect(compose({ self, sharedQuotaNote: true })).toEqual([
-            'Quota: Anthropic fallback (SDK/direct) 5-hour 42% used (resets 15:00) (source 14:07), week 61% used (resets Thu 09:00) (source 14:07) · shared with Craig\'s own sessions',
+            'Quota: Anthropic fallback (SDK) 5-hour 42% used (resets 15:00) (source age unknown), week 61% used (resets Thu 09:00) (source age unknown) · shared with Craig\'s own sessions',
         ]);
     });
 
@@ -331,9 +331,10 @@ describe('composeAmbientLines: provider reports', () => {
             freshness:   { cached: false, stale: true, ageSeconds: 0 }, errors:      [],
         }, ...snapshot.providers];
         snapshot.generatedAt = NOW;
+        snapshot.anthropicFallback = { collectedAt: NOW, windows: { fiveHour: { utilization: 42 } } };
         const self = ledger('conversation', { quota: { fiveHour: { utilization: 42 }, source: 'poll', at: NOW } });
         const line = compose({ self, providerSnapshot: snapshot })[0] ?? '';
-        expect(line).toContain('Anthropic fallback (SDK/direct) 5-hour 42% used (source 14:07)');
+        expect(line).toContain('Anthropic fallback (direct) 5-hour 42% used (source 14:07)');
         expect(line).toContain('Codex unavailable (stale; ok; 14:07)');
         expect(line).toContain('Deepseek unavailable (stale; ok; 14:07)');
     });
