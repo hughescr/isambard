@@ -40,7 +40,7 @@ describe.concurrent('shared-sections', () => {
         test('gives bounded, substantive, and strongest-available routes', () => {
             expect(MANAGING_QUOTA_SECTION).toContain('Luna or DeepSeek Flash for bounded work');
             expect(MANAGING_QUOTA_SECTION).toContain('Terra or Sol for substantive');
-            expect(MANAGING_QUOTA_SECTION).toContain('Fable or a top-tier utraque definition');
+            expect(MANAGING_QUOTA_SECTION).toContain('Astra or Fable for consequential judgement');
         });
 
         test('compares headroom and pace, switching only when exhaustion is likely', () => {

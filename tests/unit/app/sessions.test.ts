@@ -1856,9 +1856,9 @@ describe('createSessionAmbience', () => {
         const first = h.ambience.timeHeaderFor('conversation')();
         const second = h.ambience.timeHeaderFor('conversation')();
 
-        expect(first).toContain('- Quota: Anthropic fallback (SDK/direct) 5-hour 42% used · week 61% used');
+        expect(first).toContain('- Quota: Anthropic fallback (SDK/direct) 5-hour 42% used');
         expect(first).toContain('shared with Craig\'s own sessions');
-        expect(second).toContain('- Quota: Anthropic fallback (SDK/direct) 5-hour 42% used · week 61% used');
+        expect(second).toContain('- Quota: Anthropic fallback (SDK/direct) 5-hour 42% used');
         expect(second).not.toContain('shared with Craig');
     });
 

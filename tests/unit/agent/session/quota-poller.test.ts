@@ -89,6 +89,7 @@ describe('provider report parsing', () => {
     it('rejects unknown schemas and refuses a future, negative-age, or wrong-provider source as fresh quota', () => {
         expect(parseProviderSnapshot({ ...providerReport(), schema_version: 2 })).toBeUndefined();
         expect(parseProviderSnapshot(providerReport({ source_freshness: { cached: false, stale: false, age_seconds: -1 } }))).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ quota_after: { source: 'anthropic', collected_at: '2026-09-11T20:00:02Z' } }))?.providers[0]?.quotaAfter).toBeUndefined();
         const snapshot = parseProviderSnapshot(providerReport({ quota_after: { source: 'codex', collected_at: GENERATED } }));
         expect(snapshot?.providers[0]?.quotaAfter).toBeUndefined();
     });
@@ -105,7 +106,8 @@ describe('direct Anthropic fallback parsing', () => {
     it('maps the current unscoped limits schema and excludes scoped weekly limits', () => {
         const parsed = parseUsageWindows({ limits: [
             { kind: 'session', group: 'session', percent: 31.5, resets_at: RESET },
-            { kind: 'weekly_all', group: 'weekly', percent: 35, resets_at: RESET },
+            { kind: 'session', group: 'session', percent: 95, is_active: false },
+            { kind: 'weekly_all', group: 'weekly', percent: 35, resets_at: RESET, scope: null },
             { kind: 'weekly_scoped', group: 'weekly', percent: 90, scope: { model: { id: 'opus' } } },
         ] });
         expect(parsed.windows).toEqual({
@@ -176,6 +178,19 @@ describe('provider polling', () => {
             headers: { Authorization: 'Bearer secret', 'anthropic-beta': 'oauth-2025-04-20' }, signal: expect.any(AbortSignal),
         });
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({ quota: { fiveHour: { utilization: 42 } } }));
+    });
+
+    it('keeps the provider snapshot stale while a fresh direct fallback updates Claude pacing', async () => {
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok(providerReport()))
+            .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) })
+            .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }));
+        const { ledgers, poller } = harness({ fetch });
+        poller.start();
+        await poller.poll();
+        await poller.poll();
+        expect(poller.getSnapshot?.()?.providers[0]?.freshness.stale).toBe(true);
+        expect(ledgers[0]?.dispatch).toHaveBeenLastCalledWith(expect.objectContaining({ quota: { fiveHour: { utilization: 42 } } }));
     });
 
     it('joins a single in-flight request', async () => {

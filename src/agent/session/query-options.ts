@@ -99,6 +99,7 @@ export const SUBAGENT_LAUNCH_TOOLS: readonly string[] = ['Agent', 'Task', 'Workf
 
 /** Model-pinned routes supplied by utraque. Names encode effort because AgentInput cannot. */
 export const CROSS_PROVIDER_SUBAGENTS = {
+    'astra-high':          { model: 'anthropic-compat.astra', effort: 'high', restricted: false },
     'luna-medium':         { model: 'anthropic-compat.luna', effort: 'medium', restricted: true },
     'terra-high':          { model: 'anthropic-compat.terra', effort: 'high', restricted: false },
     'sol-high':            { model: 'anthropic-compat.sol', effort: 'high', restricted: false },

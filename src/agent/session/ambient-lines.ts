@@ -11,7 +11,7 @@
  * 2. **How much of the Claude Max subscription is spent** — `Quota: 5-hour 42% used (resets 14:00) ·
  *    week 61% used (resets Thu 09:00)`, from `Ledger.quota` (block 3: SDK `rate_limit_event` frames
  *    primarily, the usage poller secondarily), merged PER WINDOW across both ledgers by their
- *    `quota.at` stamps — see {@link freshestWindow}. Omitted entirely while nothing is known.
+ *    `quota.at` stamps — see {@link freshestDatedWindow}. Omitted entirely while nothing is known.
  *
  * Both functions here are PURE: no clock, no I/O, no state. `now` is passed in the same way every
  * envelope builder takes it, and the once-after-boot "shared with Craig's own sessions" note is a
@@ -186,6 +186,9 @@ function quotaIdentity(quota: ProviderQuota): string {
 }
 
 function burnPace(quota: ProviderQuota, currentAt: Date, previous: ProviderStatus | undefined): string {
+    if(quota.resetsAt === undefined) {
+        return '';
+    }
     const priorObservation = previous?.quotaAfter;
     const prior = priorObservation?.quotas.find(candidate => quotaIdentity(candidate) === quotaIdentity(quota));
     if(prior === undefined || priorObservation === undefined || priorObservation.collectedAt >= currentAt) {
@@ -197,7 +200,7 @@ function burnPace(quota: ProviderQuota, currentAt: Date, previous: ProviderStatu
         return '';
     }
     const rate = increase / elapsedHours;
-    return Number.isFinite(rate) && rate <= 100 ? `, +${rate.toFixed(1)}pp/h shared burn` : '';
+    return Number.isFinite(rate) ? `, +${rate.toFixed(1)}pp/h shared burn` : '';
 }
 
 function providerQuotaSegment(quota: ProviderQuota, collectedAt: Date, previous: ProviderStatus | undefined, now: Date, timezone: string): string {
@@ -253,17 +256,29 @@ function providerStatusSegment(provider: ProviderStatus, previous: ProviderStatu
     return `${name} ${items.length === 0 ? 'no quota or balance reported' : items.join(', ')} (source ${formatStamp(observation.collectedAt, now, timezone)}${cache}${partial})`;
 }
 
-function providerLine(snapshot: ProviderSnapshot, now: Date, timezone: string, sharedNote: boolean): string {
+function providerUnavailable(provider: ProviderStatus, reportExpired: boolean): boolean {
+    return provider.freshness.stale || reportExpired || provider.quotaAfter === undefined
+      || provider.quotaAfter.available === false || provider.errors.some(error => error.section === 'quota_after');
+}
+
+function providerLine(snapshot: ProviderSnapshot, self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, timezone: string, sharedNote: boolean): string {
     const note = sharedNote ? ' · shared subscriptions; provider balances are separate' : '';
     const reportExpired = snapshot.expiresAt !== undefined && snapshot.expiresAt <= now;
-    return `${QUOTA_LINE_PREFIX}${snapshot.providers.map(provider => providerStatusSegment(
-        provider,
-        snapshot.previous?.providers.find(previous => previous.provider === provider.provider),
-        reportExpired,
-        snapshot.generatedAt,
-        now,
-        timezone
-    )).join(' · ')}${note}`;
+    const fallback = fallbackSegment(self, other, now, timezone, snapshot.generatedAt);
+    const segments = snapshot.providers.map(provider => (provider.provider === 'anthropic' && providerUnavailable(provider, reportExpired) && fallback !== undefined
+        ? fallback
+        : providerStatusSegment(
+            provider,
+            snapshot.previous?.providers.find(previous => previous.provider === provider.provider),
+            reportExpired,
+            snapshot.generatedAt,
+            now,
+            timezone
+        )));
+    if(!snapshot.providers.some(provider => provider.provider === 'anthropic') && fallback !== undefined) {
+        segments.unshift(fallback);
+    }
+    return `${QUOTA_LINE_PREFIX}${segments.join(' · ')}${note}`;
 }
 
 /** The two unified windows either session paces itself against; per-model windows are not rendered. */
@@ -296,39 +311,52 @@ function datedWindow(quota: LedgerQuota | undefined, name: UnifiedWindowName): D
  * stamped with the later `quota.at` wins, a ledger carrying no such window never wins, and a tie
  * goes to `self` — the session actually about to spend.
  */
-function freshestWindow(name: UnifiedWindowName, self: LedgerQuota | undefined, other: LedgerQuota | undefined): QuotaWindow | undefined {
-    const mine = datedWindow(self, name);
-    const theirs = datedWindow(other, name);
-    if(mine === undefined) {
-        return theirs?.window;
-    }
-    if(theirs === undefined) {
-        return mine.window;
-    }
-    return theirs.at.getTime() > mine.at.getTime() ? theirs.window : mine.window;
-}
-
 /**
  * The quota line, or undefined when neither unified window is known — a `quota` carrying only
  * per-model weekly windows renders nothing, since those are not what either session is pacing
  * itself against.
  */
-function quotaLine(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, timezone: string, sharedNote: boolean): string | undefined {
-    const fiveHour = freshestWindow('fiveHour', self, other);
-    const sevenDay = freshestWindow('sevenDay', self, other);
+function freshestDatedWindow(name: UnifiedWindowName, self: LedgerQuota | undefined, other: LedgerQuota | undefined): DatedWindow | undefined {
+    const mine = datedWindow(self, name);
+    const theirs = datedWindow(other, name);
+    if(mine === undefined) {
+        return theirs;
+    }
+    if(theirs === undefined) {
+        return mine;
+    }
+    return theirs.at.getTime() > mine.at.getTime() ? theirs : mine;
+}
+
+function fallbackWindow(label: string, reading: DatedWindow, now: Date, timezone: string): string {
+    const source = `source ${formatStamp(reading.at, now, timezone)}`;
+    return reading.window.resetsAt !== undefined && reading.window.resetsAt <= now
+        ? `${label} expired (${source})`
+        : `${label} ${renderWindow(reading.window, now, timezone)} (${source})`;
+}
+
+function fallbackSegment(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, timezone: string, minimumAt?: Date): string | undefined {
+    const recent = (reading: DatedWindow | undefined): reading is DatedWindow => reading !== undefined
+      && (minimumAt === undefined || reading.at >= minimumAt);
+    const fiveHour = freshestDatedWindow('fiveHour', self, other);
+    const sevenDay = freshestDatedWindow('sevenDay', self, other);
     const segments = [
-        ...fiveHour === undefined ? [] : [`5-hour ${renderWindow(fiveHour, now, timezone)}`],
-        ...sevenDay === undefined ? [] : [`week ${renderWindow(sevenDay, now, timezone)}`],
+        ...recent(fiveHour) ? [fallbackWindow('5-hour', fiveHour, now, timezone)] : [],
+        ...recent(sevenDay) ? [fallbackWindow('week', sevenDay, now, timezone)] : [],
     ];
     if(segments.length === 0) {
         return undefined;
     }
+    return `Anthropic fallback (SDK/direct) ${segments.join(', ')}`;
+}
+
+function quotaLine(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, timezone: string, sharedNote: boolean): string | undefined {
+    const fallback = fallbackSegment(self, other, now, timezone);
+    if(fallback === undefined) {
+        return undefined;
+    }
     const note = sharedNote ? ' · shared with Craig\'s own sessions' : '';
-    const dates = [datedWindow(self, 'fiveHour')?.at, datedWindow(self, 'sevenDay')?.at,
-        datedWindow(other, 'fiveHour')?.at, datedWindow(other, 'sevenDay')?.at].filter(date => date !== undefined);
-    const sourceAt = dates.length === 0 ? undefined : new Date(Math.max(...dates.map(date => date.getTime())));
-    const source = sourceAt === undefined ? '' : ` (source ${formatStamp(sourceAt, now, timezone)})`;
-    return `${QUOTA_LINE_PREFIX}Anthropic fallback (SDK/direct) ${segments.join(' · ')}${source}${note}`;
+    return `${QUOTA_LINE_PREFIX}${fallback}${note}`;
 }
 
 /**
@@ -340,10 +368,10 @@ function quotaLine(self: LedgerQuota | undefined, other: LedgerQuota | undefined
  */
 export function composeAmbientLines(params: ComposeAmbientLinesParams): string[] {
     const { self, other, now, timezone, sharedQuotaNote = false, providerSnapshot } = params;
-    // Merged per window from both ledgers rather than taken from one of them — see freshestWindow.
+    // Merged per window from both ledgers rather than taken from one of them — see freshestDatedWindow.
     const quota = providerSnapshot === undefined
         ? quotaLine(self.quota, other?.quota, now, timezone, sharedQuotaNote)
-        : providerLine(providerSnapshot, now, timezone, sharedQuotaNote);
+        : providerLine(providerSnapshot, self.quota, other?.quota, now, timezone, sharedQuotaNote);
     return [
         ...other === undefined ? [] : [otherSessionLine(other, now, timezone)],
         ...quota === undefined ? [] : [quota],

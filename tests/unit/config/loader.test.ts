@@ -400,6 +400,10 @@ describe('loadConfig - Agent Quota Config', () => {
         delete process.env.AGENT_QUOTA_POLL_INTERVAL_MS;
         delete process.env.AGENT_QUOTA_PERCH_PAUSE_AT_PERCENT;
         delete process.env.AGENT_QUOTA_NOTIFY_AT_PERCENTS;
+        delete process.env.UTRAQUE_ENABLED;
+        delete process.env.ANTHROPIC_BASE_URL;
+        delete process.env.UTRAQUE_LOCAL_TOKEN;
+        delete process.env.UTRAQUE_REPORT_TIMEOUT_MS;
     });
 
     test('should fall back to the schema defaults when no quota env vars are set', () => {
@@ -430,6 +434,22 @@ describe('loadConfig - Agent Quota Config', () => {
         process.env.AGENT_QUOTA_PERCH_PAUSE_AT_PERCENT = '150';
 
         expect(() => loadConfig(createMockResources())).toThrow(/perchPauseAtPercent|quota/);
+    });
+
+    test('enables the local utraque gateway by default', () => {
+        expect(loadConfig(createMockResources()).agent.gateway).toEqual({
+            enabled: true, baseUrl: 'http://127.0.0.1:8317', reportRequestTimeoutMs: 100_000,
+        });
+    });
+
+    test('loads the gateway switch, URL, token and timeout from the environment', () => {
+        process.env.UTRAQUE_ENABLED = 'false';
+        process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:9999';
+        process.env.UTRAQUE_LOCAL_TOKEN = 'local-secret';
+        process.env.UTRAQUE_REPORT_TIMEOUT_MS = '30000';
+        expect(loadConfig(createMockResources()).agent.gateway).toEqual({
+            enabled: false, baseUrl: 'http://127.0.0.1:9999', localToken: 'local-secret', reportRequestTimeoutMs: 30_000,
+        });
     });
 });
 

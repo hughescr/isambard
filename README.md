@@ -33,7 +33,7 @@ Isambard uses OAuth authentication via Claude Max subscription:
 - Set up token: `claude setup-token`
 - Configure: `bunx sst secret set ClaudeCodeOAuthToken <token>`
 - Token valid for 1 year, renewable
-- Uses Max subscription quota (no separate API billing)
+- Claude routes use Max subscription quota; DeepSeek routes debit the configured API balance
 
 Isambard routes the Agent SDK through the local [utraque](https://github.com/hughescr/utraque) proxy by default. This applies process-wide to the long-lived sessions and one-shot text generators. The default configuration is equivalent to:
 
@@ -43,7 +43,7 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8317
 UTRAQUE_REPORT_TIMEOUT_MS=100000
 ```
 
-Isambard sets `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1` itself so proxied Claude models retain first-party context-window handling. If utraque uses local authentication, provide `UTRAQUE_LOCAL_TOKEN`; Isambard sends it as `X-Utraque-Token` for inference and provider reporting without logging it. Set `UTRAQUE_ENABLED=false` (and leave `ANTHROPIC_BASE_URL` unset) for direct-Claude mode; cross-provider named sub-agents are then omitted.
+Isambard sets `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1` itself so proxied Claude models retain first-party context-window handling. If utraque uses local authentication, provide `UTRAQUE_LOCAL_TOKEN`; Isambard sends it as `X-Utraque-Token` for inference and provider reporting without logging it. Set `UTRAQUE_ENABLED=false` for direct-Claude mode; Isambard removes the SDK proxy routing and omits cross-provider named sub-agents even if `ANTHROPIC_BASE_URL` was inherited.
 
 The per-turn provider line comes from utraque's schema-v1 `/v1/utraque/providers` report. Percentages are 0–100 values. Quota, monetary balances, spend controls, source timestamps, scopes, cache state and failures remain distinct; local history's calculated API-reference cost is neither an invoice nor a subscription quota weight. See the provider terms for [Claude Max](https://support.claude.com/en/articles/11049741-what-is-the-max-plan), [Codex](https://learn.chatgpt.com/docs/pricing), and [DeepSeek API pricing](https://api-docs.deepseek.com/quick_start/pricing/).
 

@@ -22,11 +22,11 @@ export const MANAGING_QUOTA_SECTION = `## Managing quota
 
 Choose the cheapest model and effort likely to finish correctly, including likely retries and review. Model and effort both affect capability and cost; there is no fixed multiplier that converts one provider's quota into another's.
 
-For Claude-only launches, select an effort definition (\`low\`, \`medium\`, \`high\`, \`xhigh\`) and pass \`model\` (\`sonnet\`, \`opus\`, or \`fable\`). For an utraque route, select a named model-and-effort definition such as \`luna-medium\`, \`terra-high\`, \`sol-high\`, \`spark-high\`, \`deepseek-flash-low\`, \`deepseek-flash-high\`, or \`deepseek-pro-high\`, and OMIT the Agent \`model\` override: the SDK enum cannot express cross-provider IDs and would replace the definition's pinned model. Set model and effort explicitly on workflow \`agent()\` calls.
+For Claude-only launches, select an effort definition (\`low\`, \`medium\`, \`high\`, \`xhigh\`) and pass \`model\` (\`sonnet\`, \`opus\`, or \`fable\`). For an utraque route, select a named model-and-effort definition such as \`astra-high\`, \`luna-medium\`, \`terra-high\`, \`sol-high\`, \`spark-high\`, \`deepseek-flash-low\`, \`deepseek-flash-high\`, or \`deepseek-pro-high\`, and OMIT the Agent \`model\` override: the SDK enum cannot express cross-provider IDs and would replace the definition's pinned model. Set model and effort explicitly on workflow \`agent()\` calls.
 
 Low and medium definitions may not launch further agents or workflows. When quota affects a delegated task, include the relevant current provider reading in its launch prompt.
 
-Use Luna or DeepSeek Flash for bounded work with an objective check. Use Terra or Sol for substantive implementation, research, and debugging. Use the strongest available route, such as Fable or a top-tier utraque definition when registered, for consequential judgement or a hard failure. DeepSeek Pro's name alone does not make it the better route; prefer observed task fit.
+Use Luna or DeepSeek Flash for bounded work with an objective check. Use Terra or Sol for substantive implementation, research, and debugging. Use Astra or Fable for consequential judgement or a hard failure. DeepSeek Pro's name alone does not make it the better route; prefer observed task fit.
 
 Claude's shared five-hour and weekly windows can each bind. Codex is a separate shared subscription: respect only the bucket scopes and reset times actually reported. DeepSeek is pay-as-you-go; its balance is money, and input, cached input, and output tokens debit a real but often tiny API cost. It can conserve scarce subscription headroom when it is capable.
 

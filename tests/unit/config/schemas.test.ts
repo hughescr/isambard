@@ -170,6 +170,21 @@ describe('agentConfigSchema', () => {
     test('should reject a non-positive quota pollIntervalMs', () => {
         expect(agentConfigSchema.safeParse({ oauthToken: 'test-token', quota: { pollIntervalMs: 0 } }).success).toBe(false);
     });
+
+    test('fills local utraque defaults when the gateway block is present', () => {
+        const result = agentConfigSchema.safeParse({ oauthToken: 'test-token', gateway: {} });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.gateway).toEqual({
+                enabled: true, baseUrl: 'http://127.0.0.1:8317', reportRequestTimeoutMs: 100_000,
+            });
+        }
+    });
+
+    test('rejects an invalid gateway URL or timeout', () => {
+        expect(agentConfigSchema.safeParse({ oauthToken: 'test-token', gateway: { baseUrl: 'not a url' } }).success).toBe(false);
+        expect(agentConfigSchema.safeParse({ oauthToken: 'test-token', gateway: { reportRequestTimeoutMs: 0 } }).success).toBe(false);
+    });
 });
 
 describe('emailConfigSchema', () => {

@@ -252,8 +252,10 @@ export function parseUsageWindows(body: unknown): ParsedUsage {
         for(const value of raw.limits) {
             const limit = asRecord(value);
             const kind = stringValue(limit?.kind) ?? '';
-            const id = unifiedAnthropicQuotaId(kind, stringValue(limit?.group), limit?.scope !== undefined);
-            if(id !== undefined) {
+            const scope = asRecord(limit?.scope);
+            const scoped = scopeLabel(scope?.model) !== undefined || scopeLabel(scope?.surface) !== undefined;
+            const id = unifiedAnthropicQuotaId(kind, stringValue(limit?.group), scoped);
+            if(id !== undefined && booleanValue(limit?.is_active) !== false) {
                 add(id, limit?.percent, limit?.resets_at);
             }
         }
