@@ -292,10 +292,10 @@ describe('provider polling', () => {
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({
             quota: { fiveHour: { utilization: 37 } },
         }));
-        const event = ledgers[0]!.dispatch.mock.calls[0]![0];
-        expect(event.type).toBe('quota_polled');
-        if(event.type === 'quota_polled') {
-            expect(Object.hasOwn(event.quota.fiveHour!, 'resetsAt')).toBe(false);
+        const event = ledgers.at(0)?.dispatch.mock.calls.at(0)?.at(0);
+        expect(event?.type).toBe('quota_polled');
+        if(event?.type === 'quota_polled' && event.quota.fiveHour) {
+            expect(Object.hasOwn(event.quota.fiveHour, 'resetsAt')).toBe(false);
         }
     });
 
