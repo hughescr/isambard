@@ -215,7 +215,7 @@ export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefin
 export interface ParsedUsage { windows?: QuotaWindows, rejected: boolean }
 
 function unifiedAnthropicQuotaId(id: string, group: string | undefined, scoped: boolean): string | undefined {
-    if(scoped) {
+    if(scoped || id === 'weekly_scoped') {
         return undefined;
     }
     if(id === 'five_hour' || id === 'session' || group === 'session') {

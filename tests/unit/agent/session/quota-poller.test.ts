@@ -108,6 +108,11 @@ describe('provider report parsing', () => {
         expect(parseProviderSnapshot(providerReport({ quota_after: { source: '', collected_at: GENERATED } }))?.providers[0]?.quotaAfter).toBeUndefined();
     });
 
+    it('rejects report-shaped arrays and callable values at the unknown input boundary', () => {
+        expect(parseProviderSnapshot(Object.assign([], providerReport()))).toBeUndefined();
+        expect(parseProviderSnapshot(Object.assign(() => undefined, providerReport()))).toBeUndefined();
+    });
+
     it('preserves display-name-only scopes, omits an absent scope, and validates error entries independently', () => {
         const snapshot = parseProviderSnapshot(providerReport({
             errors:      [{ section: 'quota_after', code: 'expired' }, { section: '', code: 'ignored' }, null],
@@ -195,6 +200,7 @@ describe('direct Anthropic fallback parsing', () => {
             { kind: 'seven_day', percent: 20 },
             { kind: 'seven_day_opus', percent: 30 },
             { kind: 'weekly_scoped', percent: 40 },
+            { kind: 'weekly_scoped', group: 'session', percent: 41 },
             { kind: 'session', percent: 50, scope: { model: { display_name: 'Named model' } } },
             { kind: 'unknown', percent: 60 },
             { percent: 70 },
@@ -204,6 +210,13 @@ describe('direct Anthropic fallback parsing', () => {
                 sevenDay: { utilization: 20 },
                 perModel: { seven_day_opus: { utilization: 30 } },
             },
+            rejected: false,
+        });
+    });
+
+    it('maps a session kind without relying on its group or another later limit', () => {
+        expect(parseUsageWindows({ limits: [{ kind: 'session', percent: 10 }] })).toEqual({
+            windows:  { fiveHour: { utilization: 10, resetsAt: undefined } },
             rejected: false,
         });
     });
