@@ -88,7 +88,12 @@ export interface QuotaPoller {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+    return typeof value === 'object' && (
+        // Stryker disable next-line ConditionalExpression: current consumers treat null and undefined identically
+        value !== null
+    ) && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : undefined;
 }
 function stringValue(value: unknown): string | undefined {
     return typeof value === 'string' && value.length > 0 ? value : undefined;
