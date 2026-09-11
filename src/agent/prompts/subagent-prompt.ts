@@ -45,12 +45,12 @@ const SERVICE_HEALTH_SECTION = `## Service health
 ${SERVICE_HEALTH_RULE}`;
 
 /** The shared-subscription framing, in its sub-agent form: no time header to read it from. */
-const SUBSCRIPTION_SECTION = `## The subscription is shared
+const SUBSCRIPTION_SECTION = `## Provider capacity is shared
 
-Your tokens come out of one Claude subscription shared by Craig's own Claude Code sessions, both of Isambard's sessions, and every other sub-agent and workflow running right now. Running longer or launching wider is not free to anyone else.`;
+Your launch uses the provider and model pinned by the launching session. Claude and Codex subscription buckets are shared with Craig's sessions and other Isambard work; DeepSeek debits a monetary API balance. Running longer or launching wider consumes that provider's capacity.`;
 
 /** What the quota section cannot tell a sub-agent, and the bar for launching work of its own. */
-const QUOTA_TAIL = 'You do not see a live quota reading. If the level matters for this task, the session that launched you states it in your prompt; otherwise work to the tiers above. You may launch sub-agents or workflows of your own only if your tier allows it and the work clearly needs parallel hands — each launch spends the same shared allowance.';
+const QUOTA_TAIL = 'You do not see the live provider snapshot. The parent passes the relevant reading when it affects your task; otherwise finish within the named route. Launch further work only when your tier permits it and the task clearly needs it.';
 
 /** Peers: leave Craig's sessions alone, and report rather than message Isambard's own sessions. */
 const PEERS_SECTION = `## Peer sessions

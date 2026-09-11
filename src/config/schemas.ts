@@ -28,6 +28,14 @@ export const quotaConfigSchema = z.object({
     notifyAtPercents:    z.array(z.coerce.number().int().positive().max(100)).default([75, 90]),
 });
 
+/** Local utraque routing. Enabled by default for this deployment; set UTRAQUE_ENABLED=false for direct Claude mode. */
+export const agentGatewayConfigSchema = z.object({
+    enabled:                z.boolean().default(true),
+    baseUrl:                z.url().default('http://127.0.0.1:8317'),
+    localToken:             z.string().min(1).optional(),
+    reportRequestTimeoutMs: z.number().int().positive().default(100_000),
+});
+
 // Agent config: OAuth token for Claude Agent SDK
 export const agentConfigSchema = z.object({
     oauthToken:    z.string().min(1),
@@ -38,6 +46,9 @@ export const agentConfigSchema = z.object({
     // Stryker disable next-line StringLiteral: Default fallback model value is configuration
     fallbackModel: z.string().min(1).default('sonnet'),
     quota:         quotaConfigSchema.default(quotaConfigSchema.parse({})),
+    // Optional in the structural Config type so existing programmatic test/config producers
+    // remain compatible; loadConfig always supplies the production default.
+    gateway:       agentGatewayConfigSchema.optional(),
 });
 
 // Email config

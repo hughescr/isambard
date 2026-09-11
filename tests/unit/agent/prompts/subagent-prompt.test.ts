@@ -39,7 +39,7 @@ describe.concurrent('subagent-prompt', () => {
                 '## Durable memory',
                 '## Discord tools',
                 '## Service health',
-                '## The subscription is shared',
+                '## Provider capacity is shared',
                 '## Managing quota',
                 '## Peer sessions',
                 '## Identity',
@@ -73,10 +73,10 @@ describe.concurrent('subagent-prompt', () => {
         test('says there is no live quota reading here, and that a launch of its own must be earned', () => {
             const prompt = buildSubagentSystemPrompt({ identity: IDENTITY });
 
-            expect(prompt).toContain('You do not see a live quota reading');
-            expect(prompt).toContain('states it in your prompt');
-            expect(prompt).toContain('your tier allows it');
-            expect(prompt).toContain('clearly needs parallel hands');
+            expect(prompt).toContain('You do not see the live provider snapshot');
+            expect(prompt).toContain('parent passes the relevant reading');
+            expect(prompt).toContain('your tier permits it');
+            expect(prompt).toContain('task clearly needs it');
         });
 
         test('carries the peer rule in its sub-agent form: leave Craig\'s sessions alone, and report rather than message Izzy', () => {

@@ -20,15 +20,17 @@
  */
 export const MANAGING_QUOTA_SECTION = `## Managing quota
 
-Every sub-agent and workflow agent you launch draws on the shared subscription, and the model and effort you give it set the rate. Per token, Fable costs roughly twice Opus, and Opus roughly twice Sonnet; higher effort multiplies the tokens on top of that. Neither number matters on its own — what matters is the cost of finishing the task. A strong model that gets it right in one pass is often cheaper than a weak one that needs a retry, a verifier, or your own time fixing the result. It is a judgement call per task, not a rule.
+Choose the cheapest model and effort likely to finish correctly, including likely retries and review. Model and effort both affect capability and cost; there is no fixed multiplier that converts one provider's quota into another's.
 
-Sub-agents: choose the effort by agent type — \`low\`, \`medium\`, \`high\`, \`xhigh\` — and pass \`model\` (\`sonnet\`, \`opus\`, \`fable\`) on the launch. The task goes in the prompt, and that prompt is the only instruction the sub-agent gets from you. \`low\` and \`medium\` cannot launch sub-agents or workflows of their own.
+For Claude-only launches, select an effort definition (\`low\`, \`medium\`, \`high\`, \`xhigh\`) and pass \`model\` (\`sonnet\`, \`opus\`, or \`fable\`). For an utraque route, select a named model-and-effort definition such as \`luna-medium\`, \`terra-high\`, \`sol-high\`, \`spark-high\`, \`deepseek-flash-low\`, \`deepseek-flash-high\`, or \`deepseek-pro-high\`, and OMIT the Agent \`model\` override: the SDK enum cannot express cross-provider IDs and would replace the definition's pinned model. Set model and effort explicitly on workflow \`agent()\` calls.
 
-Workflows: set model and effort on every \`agent()\` call.
+Low and medium definitions may not launch further agents or workflows. When quota affects a delegated task, include the relevant current provider reading in its launch prompt.
 
-Rough tiers: Sonnet at medium for mechanical, bounded work with an objective check (formatting, summarising, a search, a small edit with tests); Opus at medium or high for ordinary substantive work, review and debugging; Fable only where judgement is the hard part, or after Opus has stalled. Never leave model or effort to default.
+Use Luna or DeepSeek Flash for bounded work with an objective check. Use Terra or Sol for substantive implementation, research, and debugging. Use the strongest available route, such as Fable or a top-tier utraque definition when registered, for consequential judgement or a hard failure. DeepSeek Pro's name alone does not make it the better route; prefer observed task fit.
 
-When a window is near full, prefer the lower tier and defer what can wait for the reset. When the windows are nearly empty, do not hoard: an unused window resets to nothing.`;
+Claude's shared five-hour and weekly windows can each bind. Codex is a separate shared subscription: respect only the bucket scopes and reset times actually reported. DeepSeek is pay-as-you-go; its balance is money, and input, cached input, and output tokens debit a real but often tiny API cost. It can conserve scarce subscription headroom when it is capable.
+
+Compare remaining capacity and time to reset with the reported recent pace. If a bucket is likely to run out first, choose another capable provider, lower effort or scope, or defer optional work. Use healthy subscription capacity rather than hoarding it in favour of paid API usage. Never sum quota buckets, infer your own spending from a shared jump, treat missing/expired data as free capacity, or treat benchmark/API-reference costs as quota weights. Do not spend reset credits or enable a top-up automatically.`;
 
 /**
  * The durable-memory rule, context-free so it reads the same to a session and to a sub-agent:

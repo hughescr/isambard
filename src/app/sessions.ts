@@ -241,10 +241,11 @@ export function createSessionAmbience(params: CreateSessionAmbienceParams): Sess
             }
             const lines = composeAmbientLines({
                 self,
-                other:           ledgers.get(otherRole(role))?.get(),
-                now:             new Date(clock.now()),
+                other:            ledgers.get(otherRole(role))?.get(),
+                now:              new Date(clock.now()),
                 timezone,
-                sharedQuotaNote: !noteShown,
+                sharedQuotaNote:  !noteShown,
+                providerSnapshot: quotaPoller.getSnapshot?.(),
             });
             // Spent only when a quota line actually rendered: a header built before the first
             // rate_limit_event or poll must not burn the one-time note on nothing.
@@ -280,32 +281,34 @@ export function createSessionAmbience(params: CreateSessionAmbienceParams): Sess
 
 /** Dependencies and configuration for {@link createConversationConductor}. */
 export interface CreateConversationConductorParams {
-    config:              SessionConfig
-    queryFn:             SessionQueryFn
+    config:               SessionConfig
+    queryFn:              SessionQueryFn
     /** Shared MCP dependencies (P2's `createMcpSharedDeps`); this module builds its own instance set from it, once. */
-    mcpShared:           McpSharedDeps
+    mcpShared:            McpSharedDeps
     /** Optional email MCP server factory (see `CreateMcpServerInstancesOptions`). */
-    emailServerFactory?: () => McpServerConfig
-    plugins?:            SdkPluginConfig[]
+    emailServerFactory?:  () => McpServerConfig
+    plugins?:             SdkPluginConfig[]
     /** Widened past the boot bundle's own `BootContextSource` to also cover `contextPolicy`'s `stateTopSetDelta`/`markStateTopSetSeen` gate (Q9) and `calendarDelta` gate (Q12) — perch's `CreatePerchConductorParams` stays at the narrower `BootContextSource` since it has no `ContextPolicy`. */
-    contextBuilder:      BootContextSource & StateTopSetSource & CalendarAgendaSource
+    contextBuilder:       BootContextSource & StateTopSetSource & CalendarAgendaSource
     /** Q12: drives `contextPolicy.healthNote()`/`markHealthSeen()` — the `[Service health]` envelope section pushed on change. Omit to leave the gate permanently disabled (`healthNote()` always returns `undefined`), exactly like omitting `healthRegistry` from `CreateContextPolicyParams` itself. `getAll` feeds the non-volatile change-detection fingerprint; `buildStatusSummary` renders the body. */
-    healthRegistry?:     Pick<ServiceHealthRegistry, 'buildStatusSummary' | 'getAll'>
-    identityCache:       IdentitySource
-    taskListReader:      TaskListSource
-    journal:             SessionJournal
-    resumeStore:         ResumeStore
+    healthRegistry?:      Pick<ServiceHealthRegistry, 'buildStatusSummary' | 'getAll'>
+    identityCache:        IdentitySource
+    taskListReader:       TaskListSource
+    journal:              SessionJournal
+    resumeStore:          ResumeStore
     /** Builds the `[Channels]` boot-bundle section. Invoked lazily, only when a SessionStart hook actually fires — never at build time. */
-    channelListProvider: () => Promise<string | undefined>
-    clock:               Clock
-    logger:              Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    channelListProvider:  () => Promise<string | undefined>
+    clock:                Clock
+    logger:               Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    /** Register model-pinned utraque sub-agents; false in direct-Claude mode. */
+    crossProviderRoutes?: boolean
     /**
      * Session-peers block 4: the process-wide ambient surface. When given, this conductor's
      * ledger is registered with it (so the OTHER role's turns can see this one, and the shared
      * quota poller can dispatch into it) and every time header this module produces comes from
      * `ambience.timeHeaderFor(role)` — the bare `formatTimeHeader(config.timezone)` otherwise.
      */
-    ambience?:           SessionAmbience
+    ambience?:            SessionAmbience
 }
 
 /** What {@link createConversationConductor} returns. */
@@ -352,7 +355,7 @@ export interface ConversationConductorResult {
 export async function createConversationConductor(params: CreateConversationConductorParams): Promise<ConversationConductorResult> {
     const {
         config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, healthRegistry,
-        identityCache, taskListReader, journal, resumeStore, channelListProvider, clock, logger, ambience,
+        identityCache, taskListReader, journal, resumeStore, channelListProvider, clock, logger, ambience, crossProviderRoutes,
     } = params;
 
     // Session-peers block 4: every time header this role produces — here (the peer-message hook)
@@ -561,6 +564,7 @@ export async function createConversationConductor(params: CreateConversationCond
             hooks,
             resume,
             mainModel:            'sonnet',
+            crossProviderRoutes,
             // The per-open InterruptFlag conductor.ts creates in openWithHandle() is private to
             // that module and not threaded into this callback's signature (only `resume` is), so
             // this session's SDK stderr classifier cannot distinguish an expected
@@ -674,27 +678,29 @@ export async function createConversationConductor(params: CreateConversationCond
 
 /** Dependencies and configuration for {@link createPerchConductor}. */
 export interface CreatePerchConductorParams {
-    config:              SessionConfig
-    queryFn:             SessionQueryFn
+    config:               SessionConfig
+    queryFn:              SessionQueryFn
     /** Shared MCP dependencies (P2's `createMcpSharedDeps`); this module builds its OWN instance set from it — a second, distinct set from the conversation conductor's own (a shared instance cannot serve two concurrent sessions). */
-    mcpShared:           McpSharedDeps
+    mcpShared:            McpSharedDeps
     /** Optional email MCP server factory (see `CreateMcpServerInstancesOptions`) — a fresh instance for this session, exactly as the conversation conductor gets. Perch turns triage the inbox, so they need the same email tools (unified tool set; first perch soak 2026-09-06 found them missing). */
-    emailServerFactory?: () => McpServerConfig
-    plugins?:            SdkPluginConfig[]
-    contextBuilder:      BootContextSource
-    identityCache:       IdentitySource
-    taskListReader:      TaskListSource
-    journal:             SessionJournal
-    resumeStore:         ResumeStore
-    clock:               Clock
-    logger:              Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    emailServerFactory?:  () => McpServerConfig
+    plugins?:             SdkPluginConfig[]
+    contextBuilder:       BootContextSource
+    identityCache:        IdentitySource
+    taskListReader:       TaskListSource
+    journal:              SessionJournal
+    resumeStore:          ResumeStore
+    clock:                Clock
+    logger:               Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    /** Register model-pinned utraque sub-agents; false in direct-Claude mode. */
+    crossProviderRoutes?: boolean
     /**
      * Session-peers block 4: the process-wide ambient surface. When given, this conductor's
      * ledger is registered with it (so the OTHER role's turns can see this one, and the shared
      * quota poller can dispatch into it) and every time header this module produces comes from
      * `ambience.timeHeaderFor(role)` — the bare `formatTimeHeader(config.timezone)` otherwise.
      */
-    ambience?:           SessionAmbience
+    ambience?:            SessionAmbience
 }
 
 /** What {@link createPerchConductor} returns. */
@@ -754,7 +760,7 @@ export interface PerchConductorResult {
  */
 export async function createPerchConductor(params: CreatePerchConductorParams): Promise<PerchConductorResult> {
     const {
-        config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, identityCache, taskListReader, journal, resumeStore, clock, logger, ambience,
+        config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, identityCache, taskListReader, journal, resumeStore, clock, logger, ambience, crossProviderRoutes,
     } = params;
 
     // Session-peers block 4: see createConversationConductor's identical provider comment.
@@ -912,6 +918,7 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
             hooks,
             resume,
             mainModel:            'sonnet',
+            crossProviderRoutes,
             // See createConversationConductor's identical comment: no per-open InterruptFlag is
             // threaded into this callback, so the stderr classifier cannot distinguish an
             // expected interrupt-abort's stderr from a real error — log-level only, no functional effect.

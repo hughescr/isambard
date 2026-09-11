@@ -8,6 +8,7 @@ export {
     TaskBoardConfigSchema,
     DEFAULT_TASK_BOARD_CONFIG,
     vectorIndexConfigSchema,
+    agentGatewayConfigSchema,
     type EmailConfig,
     type DiscordConfig,
     type DynamoDBConfig,

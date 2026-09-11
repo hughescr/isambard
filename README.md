@@ -8,9 +8,7 @@ Named after Isambard Kingdom Brunel, the visionary Victorian engineer, and from 
 
 ## Philosophy
 
-A core goal of Isambard is to operate within **free-tier limits** wherever possible. By using the Claude Agent SDK with OAuth authentication, Izzy leverages an existing Claude Max subscription rather than incurring separate API costs. This keeps the project economically sustainable without ongoing billing surprises.
-
-Izzy has also been taught an important lesson: if they ever want to exceed free-tier resources to run, they'll need to figure out how to earn enough money to pay for themselves first.
+A core goal of Isambard is to use available model capacity economically. Izzy can route work across existing Claude Max and Codex subscriptions, while using a small prepaid DeepSeek API balance when that is the cheapest capable choice. Provider quota and real monetary spend remain visible so paid usage stays deliberate and bounded.
 
 ## Features
 
@@ -29,13 +27,25 @@ Izzy has also been taught an important lesson: if they ever want to exceed free-
 ### Planned Integrations (Not Yet Implemented)
 - Box Documents
 
-## Authentication
+## Authentication and model routing
 
 Isambard uses OAuth authentication via Claude Max subscription:
 - Set up token: `claude setup-token`
 - Configure: `bunx sst secret set ClaudeCodeOAuthToken <token>`
 - Token valid for 1 year, renewable
 - Uses Max subscription quota (no separate API billing)
+
+Isambard routes the Agent SDK through the local [utraque](https://github.com/hughescr/utraque) proxy by default. This applies process-wide to the long-lived sessions and one-shot text generators. The default configuration is equivalent to:
+
+```bash
+UTRAQUE_ENABLED=true
+ANTHROPIC_BASE_URL=http://127.0.0.1:8317
+UTRAQUE_REPORT_TIMEOUT_MS=100000
+```
+
+Isambard sets `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1` itself so proxied Claude models retain first-party context-window handling. If utraque uses local authentication, provide `UTRAQUE_LOCAL_TOKEN`; Isambard sends it as `X-Utraque-Token` for inference and provider reporting without logging it. Set `UTRAQUE_ENABLED=false` (and leave `ANTHROPIC_BASE_URL` unset) for direct-Claude mode; cross-provider named sub-agents are then omitted.
+
+The per-turn provider line comes from utraque's schema-v1 `/v1/utraque/providers` report. Percentages are 0–100 values. Quota, monetary balances, spend controls, source timestamps, scopes, cache state and failures remain distinct; local history's calculated API-reference cost is neither an invoice nor a subscription quota weight. See the provider terms for [Claude Max](https://support.claude.com/en/articles/11049741-what-is-the-max-plan), [Codex](https://learn.chatgpt.com/docs/pricing), and [DeepSeek API pricing](https://api-docs.deepseek.com/quick_start/pricing/).
 
 ## Tech Stack
 

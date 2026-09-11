@@ -64,6 +64,12 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
                 // `delimiter || ','`, so an empty one still splits on commas).
                 notifyAtPercents:    env.get('AGENT_QUOTA_NOTIFY_AT_PERCENTS').asArray(),
             },
+            gateway: {
+                enabled:                env.get('UTRAQUE_ENABLED').default('true').asBool(),
+                baseUrl:                env.get('ANTHROPIC_BASE_URL').default('http://127.0.0.1:8317').asString(),
+                localToken:             env.get('UTRAQUE_LOCAL_TOKEN').asString(),
+                reportRequestTimeoutMs: env.get('UTRAQUE_REPORT_TIMEOUT_MS').asIntPositive(),
+            },
         },
         discord: {
             botToken:      resources.DiscordBotToken.value,

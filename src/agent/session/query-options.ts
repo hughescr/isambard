@@ -97,6 +97,17 @@ export const LAUNCH_RESTRICTED_EFFORTS: readonly string[] = ['low', 'medium'];
  */
 export const SUBAGENT_LAUNCH_TOOLS: readonly string[] = ['Agent', 'Task', 'Workflow'];
 
+/** Model-pinned routes supplied by utraque. Names encode effort because AgentInput cannot. */
+export const CROSS_PROVIDER_SUBAGENTS = {
+    'luna-medium':         { model: 'anthropic-compat.luna', effort: 'medium', restricted: true },
+    'terra-high':          { model: 'anthropic-compat.terra', effort: 'high', restricted: false },
+    'sol-high':            { model: 'anthropic-compat.sol', effort: 'high', restricted: false },
+    'spark-high':          { model: 'anthropic-compat.gpt-5.3-codex-spark', effort: 'high', restricted: false },
+    'deepseek-flash-low':  { model: 'anthropic-compat.deepseek-flash', effort: 'low', restricted: true },
+    'deepseek-flash-high': { model: 'anthropic-compat.deepseek-flash', effort: 'high', restricted: false },
+    'deepseek-pro-high':   { model: 'anthropic-compat.deepseek-v4-pro', effort: 'high', restricted: false },
+} as const;
+
 /**
  * Builds one Isambard sub-agent definition per effort tier, plus `general-purpose` as an alias of
  * the `high` tier — an explicit `subagent_type: 'general-purpose'` must NOT bypass Isambard's own
@@ -111,7 +122,7 @@ export const SUBAGENT_LAUNCH_TOOLS: readonly string[] = ['Agent', 'Task', 'Workf
  * into everything it launches.
  * @returns The `agents` map for the SDK `Options`, keyed by sub-agent type
  */
-export function buildSubagentAgents(subagentSystemPrompt: () => string): Record<string, AgentDefinition> {
+export function buildSubagentAgents(subagentSystemPrompt: () => string, includeCrossProvider = true): Record<string, AgentDefinition> {
     const prompt = subagentSystemPrompt();
 
     /** One tier's definition: the shared prompt, its own effort, and a launch ban for the cheap tiers. */
@@ -124,12 +135,23 @@ export function buildSubagentAgents(subagentSystemPrompt: () => string): Record<
         };
     }
 
+    const crossProvider = includeCrossProvider
+        ? Object.fromEntries(Object.entries(CROSS_PROVIDER_SUBAGENTS).map(([name, route]): [string, AgentDefinition] => [name, {
+            description: `Utraque ${route.model} sub-agent at ${route.effort} effort; select this named definition and omit the Agent model override.`,
+            prompt,
+            model:       route.model,
+            effort:      route.effort,
+            ...(route.restricted ? { disallowedTools: [...SUBAGENT_LAUNCH_TOOLS] } : {}),
+        }]))
+        : {};
+
     return {
         ...Object.fromEntries(SUBAGENT_EFFORTS.map((effort): [string, AgentDefinition] => [effort, tier(effort)])),
         'general-purpose': {
             ...tier('high'),
             description: 'General-purpose Isambard sub-agent — the same as `high`; pass the model on the launch.',
         },
+        ...crossProvider,
     };
 }
 
@@ -258,6 +280,8 @@ export interface BuildSessionQueryOptionsParams {
     fallbackModel?:       string
     /** Returns true while the session is mid-interrupt, to classify the SDK's expected abort stderr as non-error */
     isInterrupting:       () => boolean
+    /** Whether utraque model-pinned agent definitions should be registered. */
+    crossProviderRoutes?: boolean
 }
 
 /**
@@ -267,7 +291,7 @@ export interface BuildSessionQueryOptionsParams {
  * @returns Query options object for Agent SDK, satisfying `Options`
  */
 export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams) {
-    const { role, systemPrompt, subagentSystemPrompt, mcpServers, plugins, hooks, resume, mainModel, fallbackModel, isInterrupting } = params;
+    const { role, systemPrompt, subagentSystemPrompt, mcpServers, plugins, hooks, resume, mainModel, fallbackModel, isInterrupting, crossProviderRoutes = true } = params;
 
     return {
         model:           mainModel,
@@ -276,7 +300,7 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
         // Persisted session title only — NOT the messaging identity; see SESSION_PEER_NAMES.
         title:           SESSION_PEER_NAMES[role],
         tools:           EXPLICIT_TOOLS,
-        agents:          buildSubagentAgents(subagentSystemPrompt),
+        agents:          buildSubagentAgents(subagentSystemPrompt, crossProviderRoutes),
         mcpServers:      buildMcpServers(mcpServers),
         plugins:         plugins && plugins.length > 0 ? plugins : undefined,
         permissionMode:  'acceptEdits' as const,

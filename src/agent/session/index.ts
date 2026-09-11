@@ -57,11 +57,20 @@ export {
 export {
     DEFAULT_QUOTA_POLL_INTERVAL_MS,
     DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
+    DEFAULT_QUOTA_REQUEST_TIMEOUT_MS,
+    DEFAULT_PROVIDER_REPORT_URL,
+    DEFAULT_ANTHROPIC_USAGE_URL,
     type CreateQuotaPollerParams,
     type QuotaFetch,
     type QuotaFetchResponse,
     type QuotaPoller,
+    type ProviderSnapshot,
+    type ProviderStatus,
+    type ProviderObservation,
+    type ProviderQuota,
+    type ProviderBalance,
     createQuotaPoller,
+    parseProviderSnapshot,
     parseUsageWindows
 } from './quota-poller';
 
@@ -74,6 +83,7 @@ export {
     LAUNCH_RESTRICTED_EFFORTS,
     SUBAGENT_EFFORTS,
     SUBAGENT_LAUNCH_TOOLS,
+    CROSS_PROVIDER_SUBAGENTS,
     SESSION_PEER_NAMES,
     type SessionMcpServers,
     type SessionMcpServerName,

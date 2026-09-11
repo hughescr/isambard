@@ -163,7 +163,7 @@ describe.concurrent('system-prompt', () => {
                 expect(prompt).toContain('not evidence of your own spending');
                 assertPromptHygiene(prompt);
             }
-            expect(SESSION_BASE_PROMPT).toContain('five-hour and weekly utilization');
+            expect(SESSION_BASE_PROMPT).toContain('utraque reading for each active provider');
         });
 
         test('renders MANAGING_QUOTA_SECTION verbatim, in both roles, rather than a second copy of the same advice', () => {
@@ -173,13 +173,13 @@ describe.concurrent('system-prompt', () => {
             expect(SESSION_BASE_PROMPT).toContain(MANAGING_QUOTA_SECTION);
         });
 
-        test('"## Managing quota" follows "## The subscription is shared" directly, with no section between them', () => {
-            const sharedIndex = SESSION_BASE_PROMPT.indexOf('## The subscription is shared');
+        test('"## Managing quota" follows "## Provider capacity is shared" directly, with no section between them', () => {
+            const sharedIndex = SESSION_BASE_PROMPT.indexOf('## Provider capacity is shared');
             const quotaIndex = SESSION_BASE_PROMPT.indexOf('## Managing quota');
 
             expect(sharedIndex).toBeGreaterThan(-1);
             expect(quotaIndex).toBeGreaterThan(sharedIndex);
-            expect(SESSION_BASE_PROMPT.slice(sharedIndex + '## The subscription is shared'.length, quotaIndex)).not.toContain('\n## ');
+            expect(SESSION_BASE_PROMPT.slice(sharedIndex + '## Provider capacity is shared'.length, quotaIndex)).not.toContain('\n## ');
         });
 
         test('the identity text still comes last, after the quota section', () => {

@@ -335,7 +335,7 @@ describe('createConversationConductor', () => {
         await openPromise;
 
         const agents = h.instances[0].receivedParams?.options.agents;
-        expect(Object.keys(agents ?? {})).toEqual(['low', 'medium', 'high', 'xhigh', 'general-purpose']);
+        expect(Object.keys(agents ?? {})).toEqual(expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'general-purpose', 'luna-medium', 'deepseek-flash-low']));
         expect(agents?.high.prompt).toContain('I am Izzy');
         expect(agents?.high.prompt).toContain('sub-agent of Isambard');
         // One identity read feeds both prompts — the sub-agent prompt is not a second load.
@@ -1306,7 +1306,7 @@ describe('createPerchConductor', () => {
         await openPromise;
 
         const agents = h.instances[0].receivedParams?.options.agents;
-        expect(Object.keys(agents ?? {})).toEqual(['low', 'medium', 'high', 'xhigh', 'general-purpose']);
+        expect(Object.keys(agents ?? {})).toEqual(expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'general-purpose', 'luna-medium', 'deepseek-flash-low']));
         expect(agents?.high.prompt).toContain('I am Izzy');
         expect(agents?.high.prompt).toContain('sub-agent of Isambard');
     });
@@ -1761,7 +1761,7 @@ describe('createPerchConductor', () => {
 describe('createSessionAmbience', () => {
     const TIMEZONE = 'America/Los_Angeles';
     /** The shape the poller's parser is built against (block 3's own `unifiedWindows`). */
-    const USAGE_BODY = { five_hour: { utilization: 0.42 }, seven_day: { utilization: 0.61 } };
+    const USAGE_BODY = { five_hour: { utilization: 42 }, seven_day: { utilization: 61 } };
 
     function okResponse(body: unknown): QuotaFetchResponse {
         return { ok: true, status: 200, json: async () => body };
@@ -1771,7 +1771,7 @@ describe('createSessionAmbience', () => {
         const clock = new FakeClock(0);
         const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
         const fetch = jest.fn<QuotaFetch>(overrides.fetch ?? (async () => okResponse(USAGE_BODY)));
-        const ambience = createSessionAmbience({ timezone: TIMEZONE, clock, logger, quota: { fetch } });
+        const ambience = createSessionAmbience({ timezone: TIMEZONE, clock, logger, quota: { fetch, preferProviderReport: false } });
         const conversation = createLedgerStore('conversation', { logger });
         const perch = createLedgerStore('perch', { logger });
         return { clock, logger, fetch, ambience, conversation, perch };
@@ -1856,8 +1856,9 @@ describe('createSessionAmbience', () => {
         const first = h.ambience.timeHeaderFor('conversation')();
         const second = h.ambience.timeHeaderFor('conversation')();
 
-        expect(first).toContain('- Quota: 5-hour 42% used · week 61% used · shared with Craig\'s own sessions');
-        expect(second).toContain('- Quota: 5-hour 42% used · week 61% used');
+        expect(first).toContain('- Quota: Anthropic fallback (SDK/direct) 5-hour 42% used · week 61% used');
+        expect(first).toContain('shared with Craig\'s own sessions');
+        expect(second).toContain('- Quota: Anthropic fallback (SDK/direct) 5-hour 42% used · week 61% used');
         expect(second).not.toContain('shared with Craig');
     });
 

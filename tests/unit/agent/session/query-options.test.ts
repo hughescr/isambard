@@ -4,6 +4,7 @@ import {
     buildSessionQueryOptions,
     buildMcpServers,
     buildAllowedTools,
+    CROSS_PROVIDER_SUBAGENTS,
     EXPLICIT_TOOLS,
     LAUNCH_RESTRICTED_EFFORTS,
     SUBAGENT_EFFORTS,
@@ -48,8 +49,10 @@ describe('sub-agent effort tiers', () => {
         expect(SUBAGENT_LAUNCH_TOOLS).toEqual(['Agent', 'Task', 'Workflow']);
     });
 
-    test('registers one agent definition per effort tier, plus the general-purpose alias', () => {
-        expect(Object.keys(agentsOf())).toEqual(['low', 'medium', 'high', 'xhigh', 'general-purpose']);
+    test('registers the Claude effort tiers, general-purpose alias, and bounded utraque routes', () => {
+        expect(Object.keys(agentsOf())).toEqual([
+            'low', 'medium', 'high', 'xhigh', 'general-purpose', ...Object.keys(CROSS_PROVIDER_SUBAGENTS),
+        ]);
     });
 
     test('each tier declares its own effort, and general-purpose runs at high', () => {
@@ -118,6 +121,22 @@ describe('sub-agent effort tiers', () => {
         expect(agents['general-purpose'].prompt).toBe(agents.high.prompt);
         expect(agents['general-purpose'].effort).toBe(agents.high.effort);
         expect(agents['general-purpose'].prompt).not.toContain('general-purpose assistant');
+    });
+
+    test('pins each utraque route to its full model id and supported effort', () => {
+        const agents = agentsOf();
+        for(const [name, route] of Object.entries(CROSS_PROVIDER_SUBAGENTS)) {
+            expect(agents[name].model).toBe(route.model);
+            expect(agents[name].effort).toBe(route.effort);
+            expect(agents[name].description).toContain('omit the Agent model override');
+            expect(agents[name].disallowedTools).toEqual(route.restricted ? ['Agent', 'Task', 'Workflow'] : undefined);
+        }
+    });
+
+    test('omits cross-provider routes when the gateway is disabled', () => {
+        expect(Object.keys(buildSessionQueryOptions(baseParams({ crossProviderRoutes: false })).agents)).toEqual([
+            'low', 'medium', 'high', 'xhigh', 'general-purpose',
+        ]);
     });
 });
 

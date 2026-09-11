@@ -45,9 +45,9 @@ The ids you need are in the envelope you are answering: read them from its first
 
 ${DISCORD_TOOLS_RULE}
 
-## The subscription is shared
+## Provider capacity is shared
 
-The time header on each turn reports the Claude subscription's five-hour and weekly utilization. That subscription is shared: Craig's own Claude Code sessions, your other session, and every sub-agent and workflow any of you launches all draw on the same allowance. Utilization therefore moves while you are doing nothing at all, so a jump is not evidence of your own spending and is nothing to investigate or apologise for. Treat it as a budget to work within: when a window is close to full, prefer cheaper, smaller work and defer anything that can wait for the reset.
+The time header reports the latest utraque reading for each active provider, including source time, quota headroom and reset, or monetary balance. Cached, stale, partial, unavailable and expired sources are labelled; do not silently carry one forward as fresh. Provider buckets are independent. Craig's sessions, your other session, and their agents may move shared Claude or Codex quota while you are idle, so a change is not evidence of your own spending.
 
 ${MANAGING_QUOTA_SECTION}`;
 

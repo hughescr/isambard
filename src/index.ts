@@ -60,6 +60,32 @@ export async function createApp(): Promise<App> {
     // Load configuration (required)
 
     const config = loadConfig(Resource);
+    const gateway = config.agent.gateway ?? {
+        enabled: true, baseUrl: 'http://127.0.0.1:8317', reportRequestTimeoutMs: 100_000,
+    };
+
+    // Route every Agent SDK invocation in this process (long-lived sessions and one-shot text
+    // generators) through utraque. The first-party flag preserves Claude's native context-window
+    // handling behind the transparent loopback proxy. Direct Claude mode is an explicit config
+    // fallback; it does not expose the cross-provider model definitions at runtime.
+    const otherCustomHeaders = process.env.ANTHROPIC_CUSTOM_HEADERS?.split('\n')
+        .filter(header => !/^\s*X-Utraque-Token\s*:/i.test(header)).join('\n');
+    if(gateway.enabled) {
+        process.env.ANTHROPIC_BASE_URL = gateway.baseUrl;
+        process.env._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL = '1';
+        if(gateway.localToken !== undefined) {
+            process.env.ANTHROPIC_CUSTOM_HEADERS = [otherCustomHeaders, `X-Utraque-Token: ${gateway.localToken}`]
+                .filter(header => header !== undefined && header.length > 0).join('\n');
+        }
+    } else {
+        delete process.env.ANTHROPIC_BASE_URL;
+        delete process.env._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL;
+        if(otherCustomHeaders === undefined || otherCustomHeaders.length === 0) {
+            delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+        } else {
+            process.env.ANTHROPIC_CUSTOM_HEADERS = otherCustomHeaders;
+        }
+    }
 
     // Set OAuth token for Agent SDK
     process.env.CLAUDE_CODE_OAUTH_TOKEN = config.agent.oauthToken;
@@ -278,21 +304,25 @@ export async function createApp(): Promise<App> {
     //    utilization moves while Izzy is idle and no local `result` frame ever arrives; without
     //    the recurring poll the ledger's peak would stay stale and the perch quota ceiling
     //    (block 5) would let a slot start well past `perchPauseAtPercent`.
-    // The usage endpoint's shape is UNVERIFIED (probe P5), so the poll fails closed — a non-OK
-    // status, an unparseable body, or a window whose `utilization` is not the 0-1 fraction the SDK
-    // documents (a percent-shaped 87 is REJECTED, never clamped into a fabricated reading that
-    // would pause perch and fire threshold notes) leaves the last known quota in place, which the
-    // SDK's own `rate_limit_event` frames refresh on every change regardless (probe P4). A refused
-    // window is loud enough for one warn per process, since it means this endpoint contributes
-    // nothing at all until someone looks at it.
+    const providerHeaders = (): Record<string, string> => ({
+        Authorization: `Bearer ${config.agent.oauthToken}`,
+        ...(gateway.localToken === undefined ? {} : { 'X-Utraque-Token': gateway.localToken }),
+    });
     const ambience = createSessionAmbience({
         timezone: config.session.timezone,
         clock:    systemClock,
         logger,
         quota:    {
-            fetch:          globalThis.fetch,
-            headers:        () => ({ Authorization: `Bearer ${config.agent.oauthToken}` }),
-            pollIntervalMs: config.agent.quota.pollIntervalMs,
+            fetch:           globalThis.fetch,
+            url:             `${gateway.baseUrl.replace(/\/$/, '')}/v1/utraque/providers`,
+            headers:         providerHeaders,
+            fallbackHeaders: () => ({
+                Authorization:    `Bearer ${config.agent.oauthToken}`,
+                'anthropic-beta': 'oauth-2025-04-20',
+            }),
+            preferProviderReport: gateway.enabled,
+            pollIntervalMs:       config.agent.quota.pollIntervalMs,
+            requestTimeoutMs:     gateway.reportRequestTimeoutMs,
         },
     });
     const conversationTimeHeader = ambience.timeHeaderFor('conversation');
@@ -868,6 +898,7 @@ export async function createApp(): Promise<App> {
             clock:               systemClock,
             logger,
             ambience,
+            crossProviderRoutes: gateway.enabled,
         });
         conductorForTaskReader = builtConductor.conductor;
         conversationConductor = builtConductor.conductor;
@@ -907,19 +938,20 @@ export async function createApp(): Promise<App> {
         };
 
         const builtPerchConductor = await createPerchConductor({
-            config:             config.session,
-            queryFn:            query,
-            mcpShared:          mcpSharedDeps,
-            emailServerFactory: emailSetup?.createEmailMcpServerInstance,
+            config:              config.session,
+            queryFn:             query,
+            mcpShared:           mcpSharedDeps,
+            emailServerFactory:  emailSetup?.createEmailMcpServerInstance,
             plugins,
-            contextBuilder:     contextLayer.contextBuilder,
-            identityCache:      identityCacheSlot.cache,
-            taskListReader:     perchTaskListReader,
-            journal:            perchJournal,
-            resumeStore:        perchResumeStore,
-            clock:              systemClock,
+            contextBuilder:      contextLayer.contextBuilder,
+            identityCache:       identityCacheSlot.cache,
+            taskListReader:      perchTaskListReader,
+            journal:             perchJournal,
+            resumeStore:         perchResumeStore,
+            clock:               systemClock,
             logger,
             ambience,
+            crossProviderRoutes: gateway.enabled,
         });
         perchConductorForTaskReader = builtPerchConductor.conductor;
         perchConductor = builtPerchConductor.conductor;
