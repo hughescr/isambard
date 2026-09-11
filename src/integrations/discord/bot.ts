@@ -1001,14 +1001,19 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     // A conversation-session task launched from a turn with no channel (a bare
                     // notification turn, or a wake whose launch record was lost) boards in the
                     // `fallback` well-known channel — the same place wake delivery sends such a
-                    // turn's reply. Perch launches stay boardless: their reply routes to the perch
-                    // channel by kind, and a perch board there is out of scope (docs/plans/task-board.md).
+                    // turn's reply. A perch-session task always launches with no channel, so it
+                    // always takes this fallback: it boards in the `perch-time` well-known
+                    // channel, the same place the perch reply already goes.
                     resolveFallbackChannelId: async (role: string): Promise<string | undefined> => {
-                        if(role !== 'conversation') {
-                            return undefined;
+                        if(role === 'conversation') {
+                            const fallback = await channelRegistry.getWellKnownChannel('fallback');
+                            return fallback?.channelId;
                         }
-                        const fallback = await channelRegistry.getWellKnownChannel('fallback');
-                        return fallback?.channelId;
+                        if(role === 'perch') {
+                            const perch = await channelRegistry.getWellKnownChannel('perch-time');
+                            return perch?.channelId;
+                        }
+                        return undefined;
                     },
                 });
                 stopTaskBoard = taskBoard.stop;

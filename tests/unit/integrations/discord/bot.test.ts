@@ -1951,12 +1951,20 @@ describe('createDiscordBot', () => {
                 expect(call?.logger).toBe(loggerModule.logger);
             });
 
-            test('resolves the conversation fallback board channel from the fallback well-known channel, and none for perch', async () => {
+            test('resolves the conversation fallback board channel from the fallback well-known channel, and the perch fallback from perch-time', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
                 const { spy } = stubTaskBoard();
-                const getWellKnownChannel = mock(async () => ({ channelId: 'fallback-chan' }));
+                const getWellKnownChannel = mock(async (name: string) => {
+                    if(name === 'fallback') {
+                        return { channelId: 'fallback-chan' };
+                    }
+                    if(name === 'perch-time') {
+                        return { channelId: 'perch-chan' };
+                    }
+                    return null;
+                });
 
                 const deps = conductorDeps({ ledgerStore: makeFakeLedgerStore() });
 
@@ -1972,9 +1980,29 @@ describe('createDiscordBot', () => {
                 expect(call?.resolveFallbackChannelId).toBeDefined();
                 await expect(call?.resolveFallbackChannelId?.('conversation')).resolves.toBe('fallback-chan');
                 expect(getWellKnownChannel).toHaveBeenCalledWith('fallback');
-                const lookupsBeforePerch = getWellKnownChannel.mock.calls.length;
+                await expect(call?.resolveFallbackChannelId?.('perch')).resolves.toBe('perch-chan');
+                expect(getWellKnownChannel).toHaveBeenCalledWith('perch-time');
+                await expect(call?.resolveFallbackChannelId?.('other')).resolves.toBeUndefined();
+            });
+
+            test('the perch fallback board channel is undefined when perch-time is not registered', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { spy } = stubTaskBoard();
+
+                const deps = conductorDeps({ ledgerStore: makeFakeLedgerStore() });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: { ...mockChannelRegistry, getWellKnownChannel: mock(async () => null) } as unknown as typeof mockChannelRegistry,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                const call = spy.mock.calls[0]?.[0] as { resolveFallbackChannelId?: (role: string) => Promise<string | undefined> } | undefined;
                 await expect(call?.resolveFallbackChannelId?.('perch')).resolves.toBeUndefined();
-                expect(getWellKnownChannel).toHaveBeenCalledTimes(lookupsBeforePerch);
             });
 
             test('the conversation fallback board channel is undefined when no fallback well-known channel is registered', async () => {
