@@ -400,24 +400,33 @@ describe('provider polling', () => {
     });
 
     it('does not publish an old direct-fallback response after stop and restart', async () => {
-        let release = (_response: QuotaFetchResponse): void => {};
-        const gate = new Promise<QuotaFetchResponse>((resolve) => {
-            release = resolve;
+        let releaseOld = (_response: QuotaFetchResponse): void => {};
+        let releaseCurrent = (_response: QuotaFetchResponse): void => {};
+        const oldGate = new Promise<QuotaFetchResponse>((resolve) => {
+            releaseOld = resolve;
+        });
+        const currentGate = new Promise<QuotaFetchResponse>((resolve) => {
+            releaseCurrent = resolve;
         });
         const fetch = jest.fn<QuotaFetch>()
-            .mockImplementationOnce(async () => gate)
-            .mockResolvedValueOnce(ok({ five_hour: { utilization: 55 } }));
+            .mockImplementationOnce(async () => oldGate)
+            .mockImplementationOnce(async () => currentGate);
         const { ledgers, poller } = harness({ fetch, preferProviderReport: false });
         poller.start();
         const attempt = poller.poll();
         poller.stop();
         poller.start();
-        release(ok({ five_hour: { utilization: 42 } }));
+        releaseOld(ok({ five_hour: { utilization: 42 } }));
         await attempt;
         await Promise.resolve();
-        await poller.poll();
 
         expect(fetch).toHaveBeenCalledTimes(2);
+        expect(ledgers[0]?.dispatch).not.toHaveBeenCalled();
+        expect(poller.getSnapshot?.()).toBeUndefined();
+
+        releaseCurrent(ok({ five_hour: { utilization: 55 } }));
+        await poller.poll();
+
         expect(ledgers[0]?.dispatch).toHaveBeenCalledTimes(1);
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({ quota: { fiveHour: { utilization: 55 } } }));
         expect(poller.getSnapshot?.()?.anthropicFallback?.windows.fiveHour?.utilization).toBe(55);
@@ -446,8 +455,8 @@ describe('provider polling', () => {
         expect(fetch).toHaveBeenCalledTimes(1);
         clock.advance(1);
         poller.noteResult();
-        await poller.poll();
         expect(fetch).toHaveBeenCalledTimes(2);
+        await Promise.resolve();
         poller.stop();
         clock.advance(30_000);
         poller.noteResult();
