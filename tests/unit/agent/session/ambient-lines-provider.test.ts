@@ -417,6 +417,26 @@ describe('direct Anthropic fallback', () => {
         expect(object(array(object(data.anthropic).quotas)[0]).id).toBe('provider-limit');
     });
 
+    it('keeps a fresh protocol observation when its optional available field is omitted', () => {
+        const anthropic = provider({
+            provider:   'anthropic',
+            quotaAfter: {
+                source:        'anthropic', collectedAt:   NOW,
+                quotas:        [quota({ id: 'protocol-limit', usedPercent: 17 })],
+                balances:      [], spendControls: [],
+            },
+        });
+        const data = renderJson(snapshot([anthropic], { anthropicFallback: fallback({ fiveHour: { utilization: 99 } }) }));
+        expect(object(data.anthropic)).toEqual({
+            quota_lookup: { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
+            observed_at:  '2026-09-09T22:07:00.000Z',
+            quotas:       [{
+                id:                'protocol-limit', used_percent:      17, remaining_percent: 83,
+                resets_at:         '2026-09-10T17:00:00.000Z',
+            }],
+        });
+    });
+
     it('does not replace fresh data after an unrelated report section failed', () => {
         const anthropic = provider({
             provider: 'anthropic', status: 'partial', errors: [{ section: 'balances', code: 'timed_out' }], quotaAfter: observation({ source: 'anthropic' }),

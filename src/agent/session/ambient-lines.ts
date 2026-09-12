@@ -366,7 +366,7 @@ function providerUnavailable(provider: ProviderStatus, reportExpired: boolean): 
     if(provider.freshness.stale || reportExpired || provider.errors.some(error => error.section === 'quota_after')) {
         return true;
     }
-    return provider.quotaAfter?.available !== true;
+    return provider.quotaAfter === undefined || provider.quotaAfter.available === false;
 }
 
 function windowData(id: string, window: QuotaWindow, now: Date): Record<string, unknown> {
