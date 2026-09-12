@@ -64,6 +64,13 @@ describe.concurrent('shared-sections', () => {
             expect(MANAGING_QUOTA_SECTION).toContain('does not establish whether inference is available or quota is exhausted');
         });
 
+        test('explains the rough token estimates and their local seven-date basis', () => {
+            expect(MANAGING_QUOTA_SECTION).toContain('`estimate_tokens_remaining` is a rough local-history estimate normalized to `estimate_model`');
+            expect(MANAGING_QUOTA_SECTION).toContain('seven UTC dates');
+            expect(MANAGING_QUOTA_SECTION).toContain('Cache creation and cache reads are separate');
+            expect(MANAGING_QUOTA_SECTION).toContain('compared only within the same provider');
+        });
+
         test('does not advertise the retired Codex Spark route', () => {
             expect(MANAGING_QUOTA_SECTION.toLowerCase()).not.toContain('spark');
         });

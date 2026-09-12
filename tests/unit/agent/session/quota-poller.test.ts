@@ -41,6 +41,41 @@ function providerReport(overrides: Record<string, unknown> = {}) {
     };
 }
 
+function historyReport(provider = 'anthropic') {
+    let model = 'deepseek-flash';
+    if(provider === 'anthropic') {
+        model = 'claude-sonnet-5';
+    } else if(provider === 'codex') {
+        model = 'gpt-5.6-luna';
+    }
+    return {
+        source:      'ccusage', coverage:    'local_only', cost_basis:  'calculated_api_reference_usd',
+        started_at:  '2026-09-11T20:00:00Z', finished_at: GENERATED,
+        seven_days:  {
+            since:  '2026-09-05T00:00:00Z', until:  '2026-09-11T00:00:00Z',
+            models: [{
+                source:                'claude', model, provider,
+                input_tokens:          100, output_tokens:         200, cache_creation_tokens: 300, cache_read_tokens:     400,
+                total_tokens:          1000, cost_usd:              0.003, cost_status:           'available',
+            }],
+        },
+        blocks: [{
+            id:                    'current', source:                'claude', start_time:            '2026-09-11T17:00:00Z', end_time:              RESET,
+            actual_end_time:       GENERATED, is_active:             true, is_gap:                false, mixed_provider:        false, entries:               1,
+            input_tokens:          10, output_tokens:         20, cache_creation_tokens: 30, cache_read_tokens:     40,
+            total_tokens:          100, cost_usd:              0.0003, cost_status:           'available',
+            models:                [{ model, provider }],
+        }],
+    };
+}
+
+function referencePrices(model = 'claude-haiku-4-5-20251001') {
+    return {
+        source:      'models.dev', observed_at: GENERATED, unit:        'usd_per_million_tokens', assumptions: ['base_tier', 'cache_write_5m'],
+        models:      [{ model, input: 1, output: 5, cache_read: 0.1, cache_write: 1.25, eligible: true }],
+    };
+}
+
 function ok(body: unknown): QuotaFetchResponse {
     return { ok: true, status: 200, json: async () => body };
 }
@@ -90,6 +125,77 @@ describe('provider report parsing', () => {
                 spendControls: [{ scopeId: 'monthly', reached: false }],
             },
         });
+    });
+
+    it('parses compact history inputs and models.dev reference prices from the report contract', () => {
+        const snapshot = parseProviderSnapshot(providerReport({
+            history: historyReport(), reference_prices: referencePrices(),
+        }));
+
+        expect(snapshot?.providers[0]?.history).toMatchObject({
+            source:       'ccusage', coverage:     'local_only', costBasis:    'calculated_api_reference_usd', recentDays:   7,
+            recentTokens: { inputTokens: 100, outputTokens: 200, cacheCreationTokens: 300, cacheReadTokens: 400, totalTokens: 1000 },
+            recentModels: [{ model: 'claude-sonnet-5', costUsd: 0.003 }],
+            blocks:       [{ active: true, gap: false, mixedProvider: false, costUsd: 0.0003, modelProviders: ['anthropic'] }],
+        });
+        expect(snapshot?.providers[0]?.prices).toEqual({
+            source:      'models.dev', observedAt:  new Date(GENERATED), stale:       false, unit:        'usd_per_million_tokens',
+            assumptions: ['base_tier', 'cache_write_5m'],
+            models:      [{ model: 'claude-haiku-4-5-20251001', input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, eligible: true }],
+        });
+    });
+
+    it('drops malformed history and reference prices without rejecting live quota', () => {
+        const snapshot = parseProviderSnapshot(providerReport({
+            history:          { ...historyReport(), seven_days: { ...historyReport().seven_days, until: '2026-09-10T00:00:00Z' } },
+            reference_prices: { ...referencePrices(), models: [{ model: 'claude-haiku', input: 0, output: 5, eligible: true }] },
+        }));
+
+        expect(snapshot?.providers[0]?.quotaAfter).toBeDefined();
+        expect(snapshot?.providers[0]?.history).toBeUndefined();
+        expect(snapshot?.providers[0]?.prices).toBeUndefined();
+    });
+
+    it('requires trusted local API-reference history and internally consistent token totals', () => {
+        const wrongCoverage = parseProviderSnapshot(providerReport({
+            history: { ...historyReport(), coverage: 'remote' },
+        }));
+        const wrongTotal = historyReport();
+        wrongTotal.seven_days.models[0].total_tokens = 999;
+        const mismatched = parseProviderSnapshot(providerReport({ history: wrongTotal }));
+
+        expect(wrongCoverage?.providers[0]?.history).toBeUndefined();
+        expect(mismatched?.providers[0]?.history).toBeUndefined();
+    });
+
+    it('filters Spark from Codex history aggregates without dropping current Codex history', () => {
+        const current = historyReport('codex').seven_days.models[0];
+        const spark = { ...current, model: 'GPT-5.3-Codex-Spark', input_tokens: 1, total_tokens: 901 };
+        const sparkId = { ...current, model: 'CODEX_BENGALFOX', input_tokens: 1, total_tokens: 901 };
+        const rawHistory = historyReport('codex');
+        rawHistory.seven_days.models = [spark, sparkId, current];
+        const snapshot = parseProviderSnapshot(providerReport({
+            provider:    'codex',
+            quota_after: { source: 'codex', collected_at: GENERATED },
+            history:     rawHistory,
+        }));
+
+        expect(snapshot?.providers[0]?.history?.recentTokens).toEqual({
+            inputTokens: 100, outputTokens: 200, cacheCreationTokens: 300, cacheReadTokens: 400, totalTokens: 1000,
+        });
+        expect(snapshot?.providers[0]?.history?.recentModels.map(model => model.model)).toEqual(['gpt-5.6-luna']);
+    });
+
+    it('parses stale price provenance and rejects malformed optional price fields', () => {
+        const stale = parseProviderSnapshot(providerReport({
+            reference_prices: { ...referencePrices(), stale: true },
+        }));
+        const malformed = parseProviderSnapshot(providerReport({
+            reference_prices: { ...referencePrices(), stale: 'yes' },
+        }));
+
+        expect(stale?.providers[0]?.prices?.stale).toBe(true);
+        expect(malformed?.providers[0]?.prices).toBeUndefined();
     });
 
     it('rejects unknown schemas and refuses a future, negative-age, or wrong-provider source as fresh quota', () => {
@@ -301,8 +407,8 @@ describe('provider polling', () => {
         });
     });
 
-    it('keeps only non-Anthropic report rows in SDK-only mode and does not dispatch provider quota', async () => {
-        const report = providerReport();
+    it('retains Anthropic history in SDK-only mode without dispatching its provider quota', async () => {
+        const report = providerReport({ history: historyReport(), reference_prices: referencePrices() });
         const codex = {
             ...report.providers[0],
             provider:    'codex',
@@ -315,7 +421,8 @@ describe('provider polling', () => {
         poller.start();
         await poller.poll();
 
-        expect(poller.getSnapshot?.()?.providers.map(provider => provider.provider)).toEqual(['codex']);
+        expect(poller.getSnapshot?.()?.providers.map(provider => provider.provider)).toEqual(['anthropic', 'codex']);
+        expect(poller.getSnapshot?.()?.providers[0]?.history?.recentTokens.totalTokens).toBe(1000);
         expect(ledgers[0]?.dispatch).not.toHaveBeenCalled();
     });
 

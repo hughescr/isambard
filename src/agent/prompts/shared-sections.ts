@@ -30,6 +30,8 @@ Use Luna or DeepSeek Flash for bounded work with an objective check. Use Terra o
 
 Claude's shared five-hour and weekly windows can each bind. Codex is a separate shared subscription: respect only the bucket scopes and reset times actually reported. DeepSeek is pay-as-you-go; its balance is money, and input, cached input, and output tokens debit a real but often tiny API cost. It can conserve scarce subscription headroom when it is capable. The per-turn \`Quota:\` JSON is keyed by provider: \`quota_lookup.status\` describes quota API reports, \`quota_values.status\` describes SDK ledger values, \`observed_at\` dates provider quota values, and \`resets_at\` dates a bucket reset. A quota API lookup failure does not establish whether inference is available or quota is exhausted.
 
+\`estimate_tokens_remaining\` is a rough local-history estimate normalized to \`estimate_model\`. Read its basis, sample period, token mix, and reference-price timestamp with it. A \`recent_7d\` sample covers seven UTC dates; it is not the provider's literal quota week. Cache creation and cache reads are separate from ordinary input and output, and estimates should be compared only within the same provider.
+
 Compare remaining capacity and time to reset with the reported recent pace. If a bucket is likely to run out first, choose another capable provider, lower effort or scope, or defer optional work. Use healthy subscription capacity rather than hoarding it in favour of paid API usage. Never sum quota buckets, infer your own spending from a shared jump, treat missing/expired data as free capacity, or treat benchmark/API-reference costs as quota weights. Do not spend reset credits or enable a top-up automatically.`;
 
 /**

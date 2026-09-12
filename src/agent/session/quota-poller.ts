@@ -50,6 +50,58 @@ export interface ProviderObservation {
     spendControls: readonly { scopeId: string, reached: boolean }[]
     available?:    boolean
 }
+export interface ProviderTokenMix {
+    inputTokens:         number
+    outputTokens:        number
+    cacheCreationTokens: number
+    cacheReadTokens:     number
+    totalTokens:         number
+}
+export interface ProviderHistoryModel {
+    model:    string
+    tokens:   ProviderTokenMix
+    costUsd?: number
+}
+export interface ProviderHistoryBlock {
+    startTime:      Date
+    endTime:        Date
+    active:         boolean
+    gap:            boolean
+    mixedProvider:  boolean
+    modelProviders: readonly string[]
+    modelNames:     readonly string[]
+    tokens:         ProviderTokenMix
+    costUsd?:       number
+}
+export interface ProviderHistory {
+    source:       string
+    coverage:     string
+    costBasis:    string
+    startedAt:    Date
+    finishedAt:   Date
+    recentSince:  Date
+    recentUntil:  Date
+    recentDays:   number
+    recentTokens: ProviderTokenMix
+    recentModels: readonly ProviderHistoryModel[]
+    blocks:       readonly ProviderHistoryBlock[]
+}
+export interface ProviderReferencePrice {
+    model:       string
+    input:       number
+    output:      number
+    cacheRead?:  number
+    cacheWrite?: number
+    eligible:    boolean
+}
+export interface ProviderReferencePrices {
+    source:      'models.dev'
+    observedAt:  Date
+    stale:       boolean
+    unit:        'usd_per_million_tokens'
+    models:      readonly ProviderReferencePrice[]
+    assumptions: readonly ('base_tier' | 'cache_write_5m')[]
+}
 export interface ProviderStatus {
     provider:    string
     status:      string
@@ -57,6 +109,8 @@ export interface ProviderStatus {
     freshness:   { cached: boolean, stale: boolean, ageSeconds: number }
     errors:      readonly { section: string, code: string, retryAt?: Date }[]
     quotaAfter?: ProviderObservation
+    history?:    ProviderHistory
+    prices?:     ProviderReferencePrices
 }
 export interface ProviderSnapshot {
     generatedAt:        Date
@@ -106,6 +160,9 @@ function booleanValue(value: unknown): boolean | undefined {
 }
 function finiteNumber(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+function tokenCount(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 function dateValue(value: unknown): Date | undefined {
     if(typeof value !== 'string') {
@@ -183,6 +240,198 @@ function providerObservation(value: unknown): ProviderObservation | undefined {
     return { source, collectedAt, quotas, balances, spendControls, available: booleanValue(raw.available) };
 }
 
+function tokenMix(value: unknown): ProviderTokenMix | undefined {
+    const raw = asRecord(value);
+    const inputTokens = tokenCount(raw?.input_tokens);
+    const outputTokens = tokenCount(raw?.output_tokens);
+    const cacheCreationTokens = tokenCount(raw?.cache_creation_tokens);
+    const cacheReadTokens = tokenCount(raw?.cache_read_tokens);
+    if(inputTokens === undefined || outputTokens === undefined || cacheCreationTokens === undefined || cacheReadTokens === undefined) {
+        return undefined;
+    }
+    const totalTokens = inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens;
+    const reportedTotal = tokenCount(raw?.total_tokens);
+    return Number.isSafeInteger(totalTokens) && (reportedTotal === undefined || reportedTotal === totalTokens)
+        ? { inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, totalTokens }
+        : undefined;
+}
+
+function addTokenMix(total: ProviderTokenMix, value: ProviderTokenMix): ProviderTokenMix | undefined {
+    return tokenMix({
+        input_tokens:          total.inputTokens + value.inputTokens,
+        output_tokens:         total.outputTokens + value.outputTokens,
+        cache_creation_tokens: total.cacheCreationTokens + value.cacheCreationTokens,
+        cache_read_tokens:     total.cacheReadTokens + value.cacheReadTokens,
+    });
+}
+
+function isSparkHistoryModel(provider: string, model: string): boolean {
+    const normalized = model.toLowerCase();
+    return provider === 'codex' && (normalized === 'gpt-5.3-codex-spark' || normalized === 'codex_bengalfox');
+}
+
+interface ParsedCost { valid: boolean, value?: number }
+
+function parsedCost(value: Record<string, unknown> | undefined): ParsedCost {
+    const status = stringValue(value?.cost_status);
+    if(status === undefined) {
+        return { valid: false };
+    }
+    if(status !== 'available') {
+        return { valid: true };
+    }
+    const cost = finiteNumber(value?.cost_usd);
+    return cost === undefined || cost < 0 ? { valid: false } : { valid: true, value: cost };
+}
+
+function historyModel(value: unknown, provider: string): ProviderHistoryModel | undefined {
+    const raw = asRecord(value);
+    const model = stringValue(raw?.model);
+    const modelProvider = stringValue(raw?.provider);
+    const tokens = tokenMix(raw);
+    const cost = parsedCost(raw);
+    return model === undefined || modelProvider !== provider || tokens === undefined || !cost.valid
+        ? undefined
+        : { model, tokens, costUsd: cost.value };
+}
+
+// eslint-disable-next-line complexity -- rejects each independently malformed history-block field
+function historyBlock(value: unknown): ProviderHistoryBlock | undefined {
+    const raw = asRecord(value);
+    const startTime = dateValue(raw?.start_time);
+    const endTime = dateValue(raw?.end_time);
+    const active = booleanValue(raw?.is_active);
+    const gap = booleanValue(raw?.is_gap);
+    const mixedProvider = booleanValue(raw?.mixed_provider);
+    const tokens = tokenMix(raw);
+    const cost = parsedCost(raw);
+    if(startTime === undefined || endTime === undefined || startTime >= endTime || active === undefined
+      || gap === undefined || mixedProvider === undefined || tokens === undefined || !cost.valid
+      || !Array.isArray(raw?.models)) {
+        return undefined;
+    }
+    const modelNames: string[] = [];
+    const modelProviders: string[] = [];
+    for(const entry of raw.models) {
+        const model = asRecord(entry);
+        const name = stringValue(model?.model);
+        const provider = stringValue(model?.provider);
+        if(name === undefined || provider === undefined) {
+            return undefined;
+        }
+        modelNames.push(name);
+        modelProviders.push(provider);
+    }
+    return { startTime, endTime, active, gap, mixedProvider, modelNames, modelProviders, tokens, costUsd: cost.value };
+}
+
+// eslint-disable-next-line complexity -- validates report metadata and every aggregate/block before estimates can use them
+function providerHistory(value: unknown, provider: string, generatedAt: Date): ProviderHistory | undefined {
+    const raw = asRecord(value);
+    const source = stringValue(raw?.source);
+    const coverage = stringValue(raw?.coverage);
+    const costBasis = stringValue(raw?.cost_basis);
+    const startedAt = dateValue(raw?.started_at);
+    const finishedAt = dateValue(raw?.finished_at);
+    const recent = asRecord(raw?.seven_days);
+    const recentSince = dateValue(recent?.since);
+    const recentUntil = dateValue(recent?.until);
+    if(source !== 'ccusage' || coverage !== 'local_only' || costBasis !== 'calculated_api_reference_usd'
+      || startedAt === undefined || finishedAt === undefined
+      || startedAt > finishedAt || finishedAt > generatedAt || recentSince === undefined || recentUntil === undefined
+      || recentUntil.getTime() - recentSince.getTime() !== 6 * 86_400_000 || !Array.isArray(recent?.models)
+      || !Array.isArray(raw?.blocks)) {
+        return undefined;
+    }
+    let recentTokens: ProviderTokenMix = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 };
+    const recentModels: ProviderHistoryModel[] = [];
+    for(const entry of recent.models) {
+        const model = historyModel(entry, provider);
+        if(model === undefined) {
+            return undefined;
+        }
+        if(!isSparkHistoryModel(provider, model.model)) {
+            const next = addTokenMix(recentTokens, model.tokens);
+            if(next === undefined) {
+                return undefined;
+            }
+            recentTokens = next;
+            recentModels.push(model);
+        }
+    }
+    const blocks: ProviderHistoryBlock[] = [];
+    for(const entry of raw.blocks) {
+        const block = historyBlock(entry);
+        if(block === undefined) {
+            return undefined;
+        }
+        blocks.push(block);
+    }
+    return { source, coverage, costBasis, startedAt, finishedAt, recentSince, recentUntil, recentDays: 7, recentTokens, recentModels, blocks };
+}
+
+// eslint-disable-next-line complexity -- every required and optional price category is independently validated
+function referencePrice(value: unknown): ProviderReferencePrice | undefined {
+    const raw = asRecord(value);
+    const model = stringValue(raw?.model);
+    const input = finiteNumber(raw?.input);
+    const output = finiteNumber(raw?.output);
+    const cacheRead = finiteNumber(raw?.cache_read);
+    const cacheWrite = finiteNumber(raw?.cache_write);
+    const eligible = booleanValue(raw?.eligible);
+    if(model === undefined || input === undefined || input <= 0 || output === undefined || output <= 0
+      || eligible === undefined || (cacheRead !== undefined && cacheRead <= 0)
+      || (cacheWrite !== undefined && cacheWrite <= 0)) {
+        return undefined;
+    }
+    return { model, input, output, cacheRead, cacheWrite, eligible };
+}
+
+type ReferencePriceAssumption = 'base_tier' | 'cache_write_5m';
+
+function referencePriceAssumptions(value: unknown): ReferencePriceAssumption[] | undefined {
+    if(!Array.isArray(value)) {
+        return undefined;
+    }
+    const assumptions: ReferencePriceAssumption[] = [];
+    const entries: readonly unknown[] = value;
+    for(const assumption of entries) {
+        if(assumption !== 'base_tier' && assumption !== 'cache_write_5m') {
+            return undefined;
+        }
+        assumptions.push(assumption);
+    }
+    return assumptions;
+}
+
+// eslint-disable-next-line complexity -- validates independently optional freshness and each model price row
+function providerReferencePrices(value: unknown, generatedAt: Date): ProviderReferencePrices | undefined {
+    const raw = asRecord(value);
+    const observedAt = dateValue(raw?.observed_at);
+    const stale = raw?.stale === undefined ? false : booleanValue(raw.stale);
+    const assumptions = referencePriceAssumptions(raw?.assumptions ?? []);
+    if(raw?.source !== 'models.dev' || raw.unit !== 'usd_per_million_tokens' || observedAt === undefined || observedAt > generatedAt
+      || stale === undefined || !Array.isArray(raw.models) || assumptions === undefined) {
+        return undefined;
+    }
+    const models: ProviderReferencePrice[] = [];
+    for(const entry of raw.models) {
+        const model = referencePrice(entry);
+        if(model === undefined) {
+            return undefined;
+        }
+        models.push(model);
+    }
+    return {
+        source: 'models.dev',
+        observedAt,
+        stale,
+        unit:   'usd_per_million_tokens',
+        models,
+        assumptions,
+    };
+}
+
 /** Parse only utraque's schema-v1 contract; unknown or malformed reports fail closed. */
 export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefined {
     const raw = asRecord(body);
@@ -219,7 +468,11 @@ export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefin
             : [];
         const observation = providerObservation(item.quota_after);
         const quotaAfter = observation?.source === provider && observation.collectedAt <= generatedAt ? observation : undefined;
-        return [{ provider, status, lastAttempt, freshness: { cached, stale, ageSeconds }, errors, quotaAfter }];
+        return [{
+            provider, status, lastAttempt, freshness: { cached, stale, ageSeconds }, errors, quotaAfter,
+            history:   providerHistory(item.history, provider, generatedAt),
+            prices:    providerReferencePrices(item.reference_prices, generatedAt),
+        }];
     });
     return providers.length === 0 ? undefined : { generatedAt, providers };
 }
@@ -394,11 +647,8 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
                                 providers:   currentSnapshot.providers,
                                 expiresAt:   currentSnapshot.expiresAt,
                             };
-                        const providerReport = anthropicQuotaSource === 'sdk'
-                            ? { ...parsed, providers: parsed.providers.filter(provider => provider.provider !== 'anthropic') }
-                            : parsed;
                         snapshot = {
-                            ...providerReport,
+                            ...parsed,
                             expiresAt: new Date(clock.now() + pollIntervalMs * 2),
                             previous,
                         };

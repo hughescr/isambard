@@ -1767,13 +1767,22 @@ describe('createSessionAmbience', () => {
         return { ok: true, status: 200, json: async () => body };
     }
 
-    function ambienceHarness(overrides: { fetch?: QuotaFetch, anthropicQuotaSource?: 'provider' | 'sdk' } = {}) {
-        const clock = new FakeClock(0);
+    function ambienceHarness(overrides: {
+        fetch?:                QuotaFetch
+        anthropicQuotaSource?: 'provider' | 'sdk'
+        preferProviderReport?: boolean
+        clockAt?:              number
+    } = {}) {
+        const clock = new FakeClock(overrides.clockAt ?? 0);
         const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
         const fetch = jest.fn<QuotaFetch>(overrides.fetch ?? (async () => okResponse(USAGE_BODY)));
         const ambience = createSessionAmbience({
             timezone: TIMEZONE, clock, logger,
-            quota:    { fetch, preferProviderReport: false, anthropicQuotaSource: overrides.anthropicQuotaSource },
+            quota:    {
+                fetch,
+                preferProviderReport: overrides.preferProviderReport ?? false,
+                anthropicQuotaSource: overrides.anthropicQuotaSource,
+            },
         });
         const conversation = createLedgerStore('conversation', { logger });
         const perch = createLedgerStore('perch', { logger });
@@ -1867,16 +1876,58 @@ describe('createSessionAmbience', () => {
         expect(second).not.toContain('Subscription quotas are shared; provider balances are separate.');
     });
 
-    it('propagates SDK-only Anthropic policy into the rendered session header', () => {
-        const h = ambienceHarness({ anthropicQuotaSource: 'sdk' });
+    it('renders an SDK-only Anthropic estimate from provider history without exposing its skipped lookup', async () => {
+        const generated = '2026-09-09T22:07:00Z';
+        const reset = '2026-09-10T01:07:00Z';
+        const tokenFields = {
+            input_tokens: 100, output_tokens: 200, cache_creation_tokens: 300, cache_read_tokens: 400, total_tokens: 1000,
+        };
+        const report = {
+            schema_version: 1,
+            generated_at:   generated,
+            providers:      [{
+                provider:         'anthropic', status:           'partial', last_attempt:     generated,
+                source_freshness: { cached: false, stale: false, age_seconds: 0 },
+                errors:           [{ section: 'quota_after', code: 'credential_unavailable' }],
+                history:          {
+                    source:      'ccusage', coverage:    'local_only', cost_basis:  'calculated_api_reference_usd',
+                    started_at:  generated, finished_at: generated,
+                    seven_days:  {
+                        since:  '2026-09-03T00:00:00Z', until:  '2026-09-09T00:00:00Z',
+                        models: [{
+                            source:      'claude', model:       'claude-sonnet-5', provider:    'anthropic', ...tokenFields,
+                            cost_usd:    0.001, cost_status: 'available',
+                        }],
+                    },
+                    blocks: [{
+                        id:              'current', source:          'claude', start_time:      '2026-09-09T20:07:00Z', end_time:        reset,
+                        actual_end_time: generated, is_active:       true, is_gap:          false, mixed_provider:  false, entries:         1,
+                        ...tokenFields, cost_usd:        0.001, cost_status:     'available',
+                        models:          [{ model: 'claude-sonnet-5', provider: 'anthropic' }],
+                    }],
+                },
+                reference_prices: {
+                    source:      'models.dev', observed_at: generated, unit:        'usd_per_million_tokens',
+                    models:      [{ model: 'claude-haiku-4-5-20251001', input: 1, output: 1, cache_read: 1, cache_write: 1, eligible: true }],
+                },
+            }],
+        };
+        const h = ambienceHarness({
+            anthropicQuotaSource: 'sdk', preferProviderReport: true,
+            clockAt:              Date.parse(generated), fetch:                async () => okResponse(report),
+        });
         h.ambience.register(h.conversation);
+        h.ambience.quotaPoller.start();
+        await h.ambience.quotaPoller.poll();
         h.conversation.dispatch({
-            type:  'sdk_frame', at:    new Date(0),
+            type:  'sdk_frame', at:    new Date(generated),
             frame: {
                 type:            'rate_limit_event',
-                rate_limit_info: { status: 'allowed_warning', rateLimitType: 'five_hour', utilization: 0.42 },
-                uuid:            '222a99c1-0000-4000-8000-000000000000',
-                session_id:      '9301c9ba-0000-4000-8000-000000000000',
+                rate_limit_info: {
+                    status: 'allowed_warning', rateLimitType: 'five_hour', utilization: 0.2, resetsAt: Date.parse(reset) / 1000,
+                },
+                uuid:       '222a99c1-0000-4000-8000-000000000000',
+                session_id: '9301c9ba-0000-4000-8000-000000000000',
             },
         });
 
@@ -1884,7 +1935,11 @@ describe('createSessionAmbience', () => {
         expect(header).toContain('"quota_values": {');
         expect(header).toContain('"status": "ok"');
         expect(header).toContain('"last_update_source": "sdk_rate_limit_event"');
+        expect(header).toContain('"estimate_tokens_remaining": 4000');
+        expect(header).toContain('"estimate_model": "claude-haiku-4-5-20251001"');
+        expect(header).toContain('"coverage": "local_only"');
         expect(header).not.toContain('"quota_lookup"');
+        expect(header).not.toContain('credential_unavailable');
     });
 
     it('does not spend the one-time note on a header rendered before any quota is known', async () => {

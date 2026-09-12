@@ -70,6 +70,12 @@ export {
     type ProviderObservation,
     type ProviderQuota,
     type ProviderBalance,
+    type ProviderHistory,
+    type ProviderHistoryBlock,
+    type ProviderHistoryModel,
+    type ProviderTokenMix,
+    type ProviderReferencePrice,
+    type ProviderReferencePrices,
     createQuotaPoller,
     parseProviderSnapshot,
     parseUsageWindows

@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'bun:test';
 import { composeAmbientLines } from '@/agent/session/ambient-lines';
 import { initialLedger, type QuotaWindows } from '@/agent/session/ledger';
-import type { ProviderBalance, ProviderObservation, ProviderQuota, ProviderSnapshot, ProviderStatus } from '@/agent/session/quota-poller';
+import type {
+    ProviderBalance,
+    ProviderHistory,
+    ProviderObservation,
+    ProviderQuota,
+    ProviderReferencePrices,
+    ProviderSnapshot,
+    ProviderStatus,
+    ProviderTokenMix
+} from '@/agent/session/quota-poller';
 
 const TIMEZONE = 'America/Los_Angeles';
 const NOW = new Date('2026-09-09T22:07:00Z');
 const THU_0900 = new Date('2026-09-10T17:00:00Z');
+const ESTIMATE_RESET = new Date('2026-09-10T01:07:00Z');
 
 type JsonValue = boolean | number | string | null | JsonObject | JsonValue[];
 interface JsonObject { [key: string]: JsonValue | undefined }
@@ -27,6 +37,35 @@ function snapshot(providers: readonly ProviderStatus[], overrides: Partial<Provi
 
 function quota(overrides: Partial<ProviderQuota> = {}): ProviderQuota {
     return { id: 'limit', usedPercent: 35, resetsAt: THU_0900, ...overrides };
+}
+
+function tokens(overrides: Partial<ProviderTokenMix> = {}): ProviderTokenMix {
+    return { inputTokens: 100, outputTokens: 200, cacheCreationTokens: 300, cacheReadTokens: 400, totalTokens: 1000, ...overrides };
+}
+
+function history(providerName: string, overrides: Partial<ProviderHistory> = {}): ProviderHistory {
+    const recentTokens = tokens({ inputTokens: 700, outputTokens: 1400, cacheCreationTokens: 2100, cacheReadTokens: 2800, totalTokens: 7000 });
+    return {
+        source:       'ccusage', coverage:     'local_only', costBasis:    'calculated_api_reference_usd',
+        startedAt:    new Date('2026-09-09T22:06:00Z'), finishedAt:   NOW,
+        recentSince:  new Date('2026-09-03T00:00:00Z'), recentUntil:  new Date('2026-09-09T00:00:00Z'), recentDays:   7,
+        recentTokens,
+        recentModels: [{ model: `${providerName}-history-model`, tokens: recentTokens, costUsd: 0.007 }],
+        blocks:       [{
+            startTime:      new Date(ESTIMATE_RESET.getTime() - 5 * 3_600_000), endTime:        ESTIMATE_RESET,
+            active:         true, gap:            false, mixedProvider:  false, modelProviders: [providerName], modelNames:     [`${providerName}-history-model`],
+            tokens:         tokens(), costUsd:        0.001,
+        }],
+        ...overrides,
+    };
+}
+
+function prices(providerName: string, models: ProviderReferencePrices['models'] = [{
+    model: `${providerName}-cheap`, input: 1, output: 1, cacheRead: 1, cacheWrite: 1, eligible: true,
+}]): ProviderReferencePrices {
+    return {
+        source: 'models.dev', observedAt: NOW, stale: false, unit: 'usd_per_million_tokens', models, assumptions: ['base_tier'],
+    };
 }
 
 function render(report: ProviderSnapshot, now = NOW, sharedQuotaNote = false): string {
@@ -54,6 +93,12 @@ function array(value: JsonValue | undefined): JsonValue[] {
 
 function providerJson(report: ProviderSnapshot, name = 'codex', now = NOW): JsonObject {
     return object(renderJson(report, now)[name]);
+}
+
+function quotaLineJson(line: string): JsonObject {
+    const prefix = 'Quota: \n```json\n';
+    expect(line.startsWith(prefix)).toBe(true);
+    return JSON.parse(line.slice(prefix.length, -'\n```'.length)) as JsonObject;
 }
 
 describe('provider quota JSON', () => {
@@ -236,6 +281,243 @@ describe('provider quota JSON', () => {
             balances:       [{ kind: 'requests', scope_id: 'codex_bengalfox', total: '7' }],
             spend_controls: [{ scope_id: 'codex_bengalfox', reached: true }],
         });
+    });
+});
+
+describe('rough token estimates', () => {
+    it('estimates Codex five-hour and weekly headroom in the cheapest eligible routed model', () => {
+        const report = snapshot([provider({
+            history: history('codex'),
+            prices:  prices('codex', [
+                { model: 'gpt-5.5', input: 0.1, output: 0.1, cacheRead: 0.1, eligible: true },
+                { model: 'gpt-5.6-luna', input: 1, output: 2, cacheRead: 0.1, eligible: true },
+                { model: 'gpt-5.6-sol', input: 2, output: 4, cacheRead: 0.2, eligible: true },
+            ]),
+            quotaAfter: observation({ quotas: [
+                quota({ id: 'five_hour', durationSeconds: 18_000, usedPercent: 20, resetsAt: ESTIMATE_RESET }),
+                quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 35 }),
+            ] }),
+        })]);
+
+        const data = providerJson(report);
+        expect(data.estimates).toEqual({
+            history: {
+                source:           'ccusage', coverage:         'local_only', cost_basis:       'calculated_api_reference_usd',
+                finished_at:      '2026-09-09T22:07:00.000Z',
+                recent_7d_tokens: { input: 700, output: 1400, cache_creation: 2100, cache_read: 2800, total: 7000 },
+                recent_7d_period: { since: '2026-09-03T00:00:00.000Z', until: '2026-09-09T00:00:00.000Z' },
+            },
+            reference_prices: {
+                source:      'models.dev', observed_at: '2026-09-09T22:07:00.000Z', unit:        'usd_per_million_tokens',
+                assumptions: ['base_tier'],
+            },
+        });
+        expect(data.quotas).toEqual([
+            {
+                id:                        'five_hour', window:                    '5h', used_percent:              20, remaining_percent:         80,
+                resets_at:                 '2026-09-10T01:07:00.000Z', estimate_tokens_remaining: 4800,
+                estimate_model:            'gpt-5.6-luna', estimate_basis:            'current_5h_local_ratio',
+                estimate_sample_tokens:    { input: 100, output: 200, cache_creation: 300, cache_read: 400, total: 1000 },
+                estimate_sample_period:    { since: '2026-09-09T20:07:00.000Z', until: '2026-09-10T01:07:00.000Z' },
+            },
+            {
+                id:                        'weekly', window:                    '1w', used_percent:              35, remaining_percent:         65,
+                resets_at:                 '2026-09-10T17:00:00.000Z', estimate_tokens_remaining: 15_000,
+                estimate_model:            'gpt-5.6-luna', estimate_basis:            'recent_7d_local_ratio',
+                estimate_sample_tokens:    { input: 700, output: 1400, cache_creation: 2100, cache_read: 2800, total: 7000 },
+                estimate_sample_period:    { since: '2026-09-03T00:00:00.000Z', until: '2026-09-09T00:00:00.000Z' },
+            },
+        ]);
+    });
+
+    it('uses a matching eligible model for a model-scoped quota instead of a cheaper unrelated model', () => {
+        const sample = tokens();
+        const scopedHistory = history('codex', {
+            recentTokens: { inputTokens: 200, outputTokens: 400, cacheCreationTokens: 600, cacheReadTokens: 800, totalTokens: 2000 },
+            recentModels: [
+                { model: 'gpt-5.6-luna', tokens: sample, costUsd: 0.001 },
+                { model: 'gpt-5.6-sol', tokens: sample, costUsd: 0.002 },
+            ],
+        });
+        const data = providerJson(snapshot([provider({
+            history: scopedHistory,
+            prices:  prices('codex', [
+                { model: 'gpt-5.6-luna', input: 1, output: 2, cacheRead: 0.1, eligible: true },
+                { model: 'gpt-5.6-sol', input: 2, output: 4, cacheRead: 0.2, eligible: true },
+            ]),
+            quotaAfter: observation({ quotas: [quota({
+                id: 'sol-weekly', durationSeconds: 604_800, scope: { model: { id: 'gpt-5.6-sol' } },
+            })] }),
+        })]));
+
+        expect(object(array(data.quotas)[0])).toMatchObject({
+            estimate_model: 'gpt-5.6-sol', estimate_tokens_remaining: 2200,
+        });
+    });
+
+    it.each([
+        ['surface', { group: undefined, scope: { surface: { id: 'cli' } } }],
+        ['unknown group', { group: 'special' }],
+    ] as const)('omits an estimate for an unmapped %s scope', (_case, scope) => {
+        const data = providerJson(snapshot([provider({
+            history:    history('codex'), prices:     prices('codex'),
+            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, ...scope })] }),
+        })]));
+
+        expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
+    });
+
+    it('omits a model-scoped five-hour estimate when its current block belongs to another model', () => {
+        const data = providerJson(snapshot([provider({
+            history: history('codex', {
+                blocks: [{ ...history('codex').blocks[0], modelNames: ['gpt-5.6-luna'] }],
+            }),
+            prices: prices('codex', [
+                { model: 'gpt-5.6-luna', input: 1, output: 2, cacheRead: 0.1, eligible: true },
+                { model: 'gpt-5.6-sol', input: 2, output: 4, cacheRead: 0.2, eligible: true },
+            ]),
+            quotaAfter: observation({ quotas: [quota({
+                id:              'sol-five-hour', durationSeconds: 18_000, usedPercent:     20, resetsAt:        ESTIMATE_RESET,
+                scope:           { model: { id: 'gpt-5.6-sol' } },
+            })] }),
+        })]));
+
+        expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
+    });
+
+    it.each([
+        ['mixed provider', { mixedProvider: true }],
+        ['different reset', { endTime: new Date(ESTIMATE_RESET.getTime() + 1) }],
+        ['four-hour duration', { startTime: new Date(ESTIMATE_RESET.getTime() - 4 * 3_600_000) }],
+    ] as const)('omits a five-hour estimate for a %s block while retaining the weekly estimate', (_case, blockOverride) => {
+        const reportHistory = history('codex', {
+            blocks: [{ ...history('codex').blocks[0], ...blockOverride }],
+        });
+        const data = providerJson(snapshot([provider({
+            history:    reportHistory,
+            prices:     prices('codex'),
+            quotaAfter: observation({ quotas: [
+                quota({ id: 'five_hour', durationSeconds: 18_000, usedPercent: 20, resetsAt: ESTIMATE_RESET }),
+                quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 35 }),
+            ] }),
+        })]));
+
+        expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
+        expect(object(array(data.quotas)[1]).estimate_tokens_remaining).toBe(13_000);
+    });
+
+    it('renders zero remaining at a full bucket and omits an estimate before there is a usable ratio', () => {
+        const data = providerJson(snapshot([provider({
+            history:    history('codex'), prices:     prices('codex'),
+            quotaAfter: observation({ quotas: [
+                quota({ id: 'empty', durationSeconds: 604_800, usedPercent: 0 }),
+                quota({ id: 'full', durationSeconds: 604_800, usedPercent: 100 }),
+            ] }),
+        })]));
+
+        expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
+        expect(object(array(data.quotas)[1]).estimate_tokens_remaining).toBe(0);
+    });
+
+    it('keeps live quota but suppresses estimates when the local history section failed', () => {
+        const data = providerJson(snapshot([provider({
+            history:    history('codex'),
+            prices:     prices('codex'),
+            errors:     [{ section: 'history', code: 'timed_out' }],
+            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+        })]));
+
+        expect(array(data.quotas)).toHaveLength(1);
+        expect(data.estimates).toEqual({
+            reference_prices: {
+                source:      'models.dev', observed_at: '2026-09-09T22:07:00.000Z', unit:        'usd_per_million_tokens',
+                assumptions: ['base_tier'],
+            },
+        });
+        expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
+    });
+
+    it('estimates each eligible DeepSeek model from a fresh USD balance and observed token mix', () => {
+        const deepseek = provider({
+            provider: 'deepseek',
+            history:  history('deepseek'),
+            prices:   prices('deepseek', [
+                { model: 'deepseek-flash', input: 1, output: 1, cacheRead: 1, eligible: true },
+                { model: 'deepseek-pro', input: 2, output: 2, cacheRead: 2, eligible: true },
+                { model: 'deepseek-no-cache-rate', input: 0.5, output: 0.5, eligible: true },
+                { model: 'deepseek-retired', input: 0.5, output: 0.5, cacheRead: 0.5, eligible: false },
+            ]),
+            quotaAfter: observation({
+                source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '9.33' }],
+            }),
+        });
+
+        expect(object(providerJson(snapshot([deepseek]), 'deepseek').estimates).remaining_by_model).toEqual([
+            {
+                estimate_model:            'deepseek-flash', currency:                  'USD', balance:                   '9.33',
+                estimate_tokens_remaining: 9_300_000, estimate_tokens_per_usd:   1_000_000,
+                basis:                     'models_dev_observed_mix',
+            },
+            {
+                estimate_model:            'deepseek-pro', currency:                  'USD', balance:                   '9.33',
+                estimate_tokens_remaining: 4_700_000, estimate_tokens_per_usd:   500_000,
+                basis:                     'models_dev_observed_mix',
+            },
+        ]);
+    });
+
+    it('allows a zero DeepSeek balance but suppresses remaining estimates for stale or spend-blocked quota', () => {
+        const base = provider({
+            provider:   'deepseek', history:    history('deepseek'), prices:     prices('deepseek'),
+            quotaAfter: observation({ source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '0' }] }),
+        });
+        const zero = providerJson(snapshot([base]), 'deepseek');
+        expect(object(zero.estimates).remaining_by_model).toEqual([{
+            estimate_model:            'deepseek-cheap', currency:                  'USD', balance:                   '0', estimate_tokens_remaining: 0,
+            estimate_tokens_per_usd:   1_000_000, basis:                     'models_dev_observed_mix',
+        }]);
+
+        for(const blocked of [
+            { ...base, freshness: { cached: false, stale: true, ageSeconds: 1 } },
+            { ...base, errors: [{ section: 'balances', code: 'timed_out' }] },
+            { ...base, quotaAfter: observation({
+                source: 'deepseek', available: false, balances: [{ kind: 'prepaid', currency: 'USD', total: '9.33' }],
+            }) },
+            { ...base, quotaAfter: observation({
+                source:        'deepseek', balances:      [{ kind: 'prepaid', currency: 'USD', total: '9.33' }],
+                spendControls: [{ scopeId: 'monthly', reached: true }],
+            }) },
+        ]) {
+            expect(object(providerJson(snapshot([blocked]), 'deepseek').estimates).remaining_by_model).toBeUndefined();
+        }
+    });
+
+    it('keeps Anthropic history for SDK quota estimates without exposing the skipped quota lookup', () => {
+        const anthropic = provider({
+            provider:   'anthropic', status:     'error', quotaAfter: undefined,
+            errors:     [{ section: 'quota_after', code: 'credential_unavailable' }],
+            history:    history('anthropic'), prices:     prices('anthropic'),
+        });
+        const self = {
+            ...initialLedger('conversation'),
+            quota: {
+                fiveHour: { utilization: 20, resetsAt: ESTIMATE_RESET },
+                sevenDay: { utilization: 35, resetsAt: THU_0900 },
+                source:   'headers' as const,
+                at:       NOW,
+            },
+        };
+        const line = composeAmbientLines({
+            self, now: NOW, timezone: TIMEZONE, providerSnapshot: snapshot([anthropic]), anthropicQuotaSource: 'sdk',
+        })[0] ?? '';
+        const data = object(quotaLineJson(line).anthropic);
+
+        expect(data.quota_lookup).toBeUndefined();
+        expect(data.quota_values).toEqual({
+            status: 'ok', source: 'session_ledger', last_update_source: 'sdk_rate_limit_event', age: 'unknown',
+        });
+        expect(array(data.quotas).map(row => object(row).estimate_tokens_remaining)).toEqual([4000, 13_000]);
+        expect(object(data.estimates).history).toBeDefined();
     });
 });
 
