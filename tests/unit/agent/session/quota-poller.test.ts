@@ -286,6 +286,21 @@ describe('provider polling', () => {
         });
     });
 
+    it('adapts an Anthropic unified quota identified by id when kind is absent', async () => {
+        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
+            source:       'anthropic', collected_at: GENERATED,
+            quotas:       [{ id: 'five_hour', used_percent: 42, unit: 'percent_0_100', resets_at: RESET }],
+        } })) });
+
+        poller.start();
+        await poller.poll();
+
+        expect(ledgers[0]?.dispatch).toHaveBeenCalledWith({
+            type:  'quota_polled', at:    new Date(GENERATED),
+            quota: { fiveHour: { utilization: 42, resetsAt: new Date(RESET) } },
+        });
+    });
+
     it('keeps only non-Anthropic report rows in SDK-only mode and does not dispatch provider quota', async () => {
         const report = providerReport();
         const codex = {

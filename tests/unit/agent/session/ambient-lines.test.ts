@@ -363,11 +363,14 @@ describe('composeAmbientLines: provider reports', () => {
         const snapshot = providerSnapshot(35);
         const prior = providerSnapshot(25);
         prior.generatedAt = new Date(NOW.getTime() - 3_600_000);
-        prior.providers[0].quotaAfter!.collectedAt = prior.generatedAt;
+        const priorCodex = prior.providers[0];
+        priorCodex.quotaAfter!.collectedAt = prior.generatedAt;
+        // A previous snapshot can use a different provider order; burn must match by provider id.
+        prior.providers = [prior.providers[1], priorCodex];
         snapshot.previous = prior;
         expect(compose({ providerSnapshot: snapshot })[0]).toContain('"shared_burn_percent_per_hour": 10');
 
-        prior.providers[0].quotaAfter!.quotas[0].resetsAt = new Date(THU_0900.getTime() - 1000);
+        priorCodex.quotaAfter!.quotas[0].resetsAt = new Date(THU_0900.getTime() - 1000);
         expect(compose({ providerSnapshot: snapshot })[0]).not.toContain('pp/h');
     });
 
@@ -498,18 +501,19 @@ describe('composeAmbientLines: provider reports', () => {
 
     it('reports missing SDK quota explicitly when other providers are present', () => {
         const data = quotaJson(compose({
-            providerSnapshot: providerSnapshot(35), anthropicQuotaSource: 'sdk',
+            providerSnapshot: providerSnapshot(35), anthropicQuotaSource: 'sdk', sharedQuotaNote: true,
         })[0]);
 
         expect(data.anthropic).toEqual({
             quota_values: { status: 'unknown', reason: 'no_sdk_quota_reading' },
         });
-        expect(Object.keys(data)).toEqual(['codex', 'deepseek', 'anthropic']);
+        expect(Object.keys(data)).toEqual(['codex', 'deepseek', 'anthropic', 'note']);
+        expect(data.note).toBe('Subscription quotas are shared; provider balances are separate.');
     });
 
     it('uses SDK-only policy without a provider snapshot and rejects poll-last values', () => {
         const valid = quotaJson(compose({
-            self: ledger('conversation', { quota: QUOTA }), anthropicQuotaSource: 'sdk',
+            self: ledger('conversation', { quota: QUOTA }), anthropicQuotaSource: 'sdk', sharedQuotaNote: true,
         })[0]);
         const missing = quotaJson(compose({
             self: ledger('conversation', { quota: { ...QUOTA, source: 'poll' } }), anthropicQuotaSource: 'sdk',
@@ -523,8 +527,29 @@ describe('composeAmbientLines: provider reports', () => {
                     { id: 'seven_day', window: '1w', used_percent: 61, remaining_percent: 39, resets_at: '2026-09-10T17:00:00.000Z' },
                 ],
             },
+            note: 'Anthropic quota is shared with Craig\'s own sessions.',
         });
         expect(missing).toEqual({
+            anthropic: { quota_values: { status: 'unknown', reason: 'no_sdk_quota_reading' } },
+        });
+    });
+
+    it('uses only SDK-updated quota from the other session', () => {
+        const fromSdk = quotaJson(compose({
+            other: ledger('perch', { quota: QUOTA }), anthropicQuotaSource: 'sdk',
+        })[1]);
+        const fromPoll = quotaJson(compose({
+            other: ledger('perch', { quota: { ...QUOTA, source: 'poll' } }), anthropicQuotaSource: 'sdk',
+        })[1]);
+
+        expect(fromSdk.anthropic).toEqual({
+            quota_values: { status: 'ok', source: 'session_ledger', last_update_source: 'sdk_rate_limit_event', age: 'unknown' },
+            quotas:       [
+                { id: 'five_hour', window: '5h', used_percent: 42, remaining_percent: 58, resets_at: '2026-09-09T23:00:00.000Z' },
+                { id: 'seven_day', window: '1w', used_percent: 61, remaining_percent: 39, resets_at: '2026-09-10T17:00:00.000Z' },
+            ],
+        });
+        expect(fromPoll).toEqual({
             anthropic: { quota_values: { status: 'unknown', reason: 'no_sdk_quota_reading' } },
         });
     });
