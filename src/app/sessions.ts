@@ -241,11 +241,12 @@ export function createSessionAmbience(params: CreateSessionAmbienceParams): Sess
             }
             const lines = composeAmbientLines({
                 self,
-                other:            ledgers.get(otherRole(role))?.get(),
-                now:              new Date(clock.now()),
+                other:                ledgers.get(otherRole(role))?.get(),
+                now:                  new Date(clock.now()),
                 timezone,
-                sharedQuotaNote:  !noteShown,
-                providerSnapshot: quotaPoller.getSnapshot?.(),
+                sharedQuotaNote:      !noteShown,
+                providerSnapshot:     quotaPoller.getSnapshot?.(),
+                anthropicQuotaSource: quota.anthropicQuotaSource,
             });
             // Spent only when a quota line actually rendered: a header built before the first
             // rate_limit_event or poll must not burn the one-time note on nothing.

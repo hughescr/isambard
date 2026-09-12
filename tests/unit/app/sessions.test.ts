@@ -1767,11 +1767,14 @@ describe('createSessionAmbience', () => {
         return { ok: true, status: 200, json: async () => body };
     }
 
-    function ambienceHarness(overrides: { fetch?: QuotaFetch } = {}) {
+    function ambienceHarness(overrides: { fetch?: QuotaFetch, anthropicQuotaSource?: 'provider' | 'sdk' } = {}) {
         const clock = new FakeClock(0);
         const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
         const fetch = jest.fn<QuotaFetch>(overrides.fetch ?? (async () => okResponse(USAGE_BODY)));
-        const ambience = createSessionAmbience({ timezone: TIMEZONE, clock, logger, quota: { fetch, preferProviderReport: false } });
+        const ambience = createSessionAmbience({
+            timezone: TIMEZONE, clock, logger,
+            quota:    { fetch, preferProviderReport: false, anthropicQuotaSource: overrides.anthropicQuotaSource },
+        });
         const conversation = createLedgerStore('conversation', { logger });
         const perch = createLedgerStore('perch', { logger });
         return { clock, logger, fetch, ambience, conversation, perch };
@@ -1862,6 +1865,26 @@ describe('createSessionAmbience', () => {
         expect(second).toContain('- Quota: \n```json');
         expect(second).toContain('"source": "direct_anthropic"');
         expect(second).not.toContain('Subscription quotas are shared; provider balances are separate.');
+    });
+
+    it('propagates SDK-only Anthropic policy into the rendered session header', () => {
+        const h = ambienceHarness({ anthropicQuotaSource: 'sdk' });
+        h.ambience.register(h.conversation);
+        h.conversation.dispatch({
+            type:  'sdk_frame', at:    new Date(0),
+            frame: {
+                type:            'rate_limit_event',
+                rate_limit_info: { status: 'allowed_warning', rateLimitType: 'five_hour', utilization: 0.42 },
+                uuid:            '222a99c1-0000-4000-8000-000000000000',
+                session_id:      '9301c9ba-0000-4000-8000-000000000000',
+            },
+        });
+
+        const header = h.ambience.timeHeaderFor('conversation')();
+        expect(header).toContain('"quota_values": {');
+        expect(header).toContain('"status": "ok"');
+        expect(header).toContain('"last_update_source": "sdk_rate_limit_event"');
+        expect(header).not.toContain('"quota_lookup"');
     });
 
     it('does not spend the one-time note on a header rendered before any quota is known', async () => {

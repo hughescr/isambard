@@ -9,11 +9,11 @@
  *    digest riding on it), its running tasks, and — for a live perch slot turn — the slot fields
  *    the perch envelope's {@link import('./types').EnvelopeMeta} put on `Ledger.perch`.
  * 2. **Provider capacity** — a provider-keyed JSON block under `Quota:`. Fresh utraque reports
- *    carry explicit lookup, observation, window, reset and balance fields; the session ledger is
- *    the fallback. Its windows are merged PER WINDOW across both ledgers by their `quota.at`
- *    stamps — see {@link freshestDatedWindow}. Provider-report fallback admits only ledgers whose
- *    last quota update came from an SDK rate-limit event, and labels their per-window age unknown.
- *    Omitted entirely while nothing is known.
+ *    carry explicit lookup, observation, window, reset and balance fields. In SDK-only Anthropic
+ *    mode, Anthropic instead comes solely from ledger updates whose last source is an SDK
+ *    rate-limit event; a missing event is rendered explicitly as unknown. Ledger windows are
+ *    merged PER WINDOW across both sessions by their `quota.at` stamps — see
+ *    {@link freshestDatedWindow} — and their per-window age is labelled unknown.
  *
  * Both functions here are PURE: no clock, no I/O, no state. `now` is passed in the same way every
  * envelope builder takes it, and the once-after-boot "shared with Craig's own sessions" note is a
@@ -28,7 +28,7 @@
 import { DateTime } from 'luxon';
 import type { ActivityPhase } from './activity-phase';
 import type { Ledger, LedgerQuota, LedgerTask, QuotaWindow, QuotaWindows } from './ledger';
-import type { ProviderBalance, ProviderQuota, ProviderSnapshot, ProviderStatus } from './quota-poller';
+import type { AnthropicQuotaSource, ProviderBalance, ProviderQuota, ProviderSnapshot, ProviderStatus } from './quota-poller';
 import type { SessionRole } from './types';
 
 /**
@@ -44,17 +44,19 @@ export const QUOTA_LINE_PREFIX = 'Quota: ';
 /** Parameters for {@link composeAmbientLines}. */
 export interface ComposeAmbientLinesParams {
     /** The ledger of the session the header is being built for. */
-    self:              Ledger
+    self:                  Ledger
     /** The other role's ledger, when this process has one (perch is optional). */
-    other?:            Ledger
+    other?:                Ledger
     /** Stamped by the caller from its own {@link import('./types').Clock}; never read here. */
-    now:               Date
+    now:                   Date
     /** IANA zone every rendered wall-clock stamp is expressed in. */
-    timezone:          string
+    timezone:              string
     /** True to append the shared-subscription note to the quota line — see the module doc. */
-    sharedQuotaNote?:  boolean
+    sharedQuotaNote?:      boolean
     /** Latest independently-fresh utraque provider report, when the report route is available. */
-    providerSnapshot?: ProviderSnapshot
+    providerSnapshot?:     ProviderSnapshot
+    /** Which Anthropic quota path this composition intentionally treats as authoritative. */
+    anthropicQuotaSource?: AnthropicQuotaSource
 }
 
 /** The label each role is announced under in the other-session line. */
@@ -408,14 +410,18 @@ function providerLine(
     otherQuota: LedgerQuota | undefined,
     now: Date,
     _timezone: string,
-    sharedNote: boolean
+    sharedNote: boolean,
+    anthropicQuotaSource: AnthropicQuotaSource
 ): string {
     const reportExpiredAt = snapshot.expiresAt !== undefined && snapshot.expiresAt <= now ? snapshot.expiresAt : undefined;
     const fallback = snapshot.anthropicFallback === undefined || snapshot.anthropicFallback.expiresAt <= now
         ? undefined
         : directFallbackData(snapshot.anthropicFallback.windows, snapshot.anthropicFallback.collectedAt, now);
     const sdkFallback = sdkLedgerFallbackData(selfQuota, otherQuota, now);
-    const entries = snapshot.providers.map((provider) => {
+    const reportedProviders = anthropicQuotaSource === 'sdk'
+        ? snapshot.providers.filter(provider => provider.provider !== 'anthropic')
+        : snapshot.providers;
+    const entries = reportedProviders.map((provider) => {
         const unavailableAnthropic = provider.provider === 'anthropic' && providerUnavailable(provider, reportExpiredAt !== undefined);
         if(unavailableAnthropic && fallback !== undefined) {
             return [provider.provider, fallback] as const;
@@ -432,6 +438,11 @@ function providerLine(
             : data] as const;
     });
     const data: Record<string, unknown> = Object.fromEntries(entries);
+    if(anthropicQuotaSource === 'sdk') {
+        data.anthropic = sdkFallback ?? { quota_values: { status: 'unknown', reason: 'no_sdk_quota_reading' } };
+        data.note = sharedNote ? 'Subscription quotas are shared; provider balances are separate.' : undefined;
+        return quotaBlock(data);
+    }
     const anthropicFallback = fallback ?? sdkFallback;
     if(!Object.hasOwn(data, 'anthropic') && anthropicFallback !== undefined) {
         data.anthropic = anthropicFallback;
@@ -515,14 +526,33 @@ function ledgerFallbackData(self: LedgerQuota | undefined, other: LedgerQuota | 
 }
 
 function sdkLedgerFallbackData(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date): Record<string, unknown> | undefined {
-    return ledgerFallbackData(
+    const fallback = ledgerFallbackData(
         self?.source === 'headers' ? self : undefined,
         other?.source === 'headers' ? other : undefined,
         now
     );
+    return fallback === undefined
+        ? undefined
+        : {
+            quota_values: { status: 'ok', source: 'session_ledger', last_update_source: 'sdk_rate_limit_event', age: 'unknown' },
+            quotas:       fallback.quotas,
+        };
 }
 
-function quotaLine(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, _timezone: string, sharedNote: boolean): string | undefined {
+function quotaLine(
+    self: LedgerQuota | undefined,
+    other: LedgerQuota | undefined,
+    now: Date,
+    _timezone: string,
+    sharedNote: boolean,
+    anthropicQuotaSource: AnthropicQuotaSource
+): string | undefined {
+    if(anthropicQuotaSource === 'sdk') {
+        return quotaBlock({
+            anthropic: sdkLedgerFallbackData(self, other, now) ?? { quota_values: { status: 'unknown', reason: 'no_sdk_quota_reading' } },
+            note:      sharedNote ? 'Anthropic quota is shared with Craig\'s own sessions.' : undefined,
+        });
+    }
     const fallback = ledgerFallbackData(self, other, now);
     if(fallback === undefined) {
         return undefined;
@@ -541,11 +571,11 @@ function quotaLine(self: LedgerQuota | undefined, other: LedgerQuota | undefined
  * @returns Zero to two lines, ready for {@link withAmbientLines}.
  */
 export function composeAmbientLines(params: ComposeAmbientLinesParams): string[] {
-    const { self, other, now, timezone, sharedQuotaNote = false, providerSnapshot } = params;
+    const { self, other, now, timezone, sharedQuotaNote = false, providerSnapshot, anthropicQuotaSource = 'provider' } = params;
     // Merged per window from both ledgers rather than taken from one of them — see freshestDatedWindow.
     const quota = providerSnapshot === undefined
-        ? quotaLine(self.quota, other?.quota, now, timezone, sharedQuotaNote)
-        : providerLine(providerSnapshot, self.quota, other?.quota, now, timezone, sharedQuotaNote);
+        ? quotaLine(self.quota, other?.quota, now, timezone, sharedQuotaNote, anthropicQuotaSource)
+        : providerLine(providerSnapshot, self.quota, other?.quota, now, timezone, sharedQuotaNote, anthropicQuotaSource);
     return [
         ...other === undefined ? [] : [otherSessionLine(other, now, timezone)],
         ...quota === undefined ? [] : [quota],

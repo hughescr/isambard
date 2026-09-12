@@ -286,6 +286,77 @@ describe('provider polling', () => {
         });
     });
 
+    it('keeps only non-Anthropic report rows in SDK-only mode and does not dispatch provider quota', async () => {
+        const report = providerReport();
+        const codex = {
+            ...report.providers[0],
+            provider:    'codex',
+            quota_after: { ...report.providers[0].quota_after, source: 'codex' },
+        };
+        const { ledgers, poller } = harness({
+            anthropicQuotaSource: 'sdk', fetch: async () => ok({ ...report, providers: [report.providers[0], codex] }),
+        });
+
+        poller.start();
+        await poller.poll();
+
+        expect(poller.getSnapshot?.()?.providers.map(provider => provider.provider)).toEqual(['codex']);
+        expect(ledgers[0]?.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('does not call the direct Anthropic fallback when an SDK-only provider report fails', async () => {
+        const { fetch, poller } = harness({
+            anthropicQuotaSource: 'sdk', fetch: async () => ({ ok: false, status: 500, json: async () => ({}) }),
+        });
+
+        poller.start();
+        await poller.poll();
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(poller.getSnapshot?.()).toBeUndefined();
+    });
+
+    it('does not call or advertise the direct fallback when an SDK-only provider report throws', async () => {
+        const { fetch, logger, poller } = harness({
+            anthropicQuotaSource: 'sdk', fetch: async () => { throw new TypeError('offline'); },
+        });
+
+        poller.start();
+        await poller.poll();
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(logger.debug).toHaveBeenCalledWith({ errorName: 'TypeError' }, 'Quota poll: utraque provider report failed');
+        expect(logger.debug).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('direct Anthropic fallback'));
+    });
+
+    it('does not call the direct Anthropic fallback when an SDK-only provider report times out', async () => {
+        const { clock, fetch, poller } = harness({
+            anthropicQuotaSource: 'sdk',
+            requestTimeoutMs:     1000,
+            fetch:                (_url, init) => new Promise((_resolve, reject) => {
+                init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+            }),
+        });
+
+        poller.start();
+        const attempt = poller.poll();
+        clock.advance(1000);
+        await attempt;
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(poller.getSnapshot?.()).toBeUndefined();
+    });
+
+    it('performs no quota HTTP request in SDK-only direct-Claude mode', async () => {
+        const { fetch, poller } = harness({ anthropicQuotaSource: 'sdk', preferProviderReport: false });
+
+        poller.start();
+        await poller.poll();
+
+        expect(fetch).not.toHaveBeenCalled();
+        expect(poller.getSnapshot?.()).toBeUndefined();
+    });
+
     it('excludes surface-scoped, slotted, inactive, and already-reset Anthropic report quotas', async () => {
         const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
             source:       'anthropic', collected_at: GENERATED,

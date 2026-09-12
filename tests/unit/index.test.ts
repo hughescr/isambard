@@ -915,6 +915,20 @@ describe('createApp', () => {
                 expect(botOptions.isCostPaused!()).toBe(true);
             });
 
+            test('configures Anthropic quota as SDK-only without sending OAuth to the provider report', async () => {
+                wireHappyPath(spies, { timezone: 'UTC' });
+                const ambienceSpy = spyOn(staticSessionsModule, 'createSessionAmbience');
+                spies.push(ambienceSpy);
+
+                const { createApp } = staticIndexModule;
+                await createApp();
+
+                const quota = ambienceSpy.mock.calls[0]?.[0].quota;
+                expect(quota.anthropicQuotaSource).toBe('sdk');
+                expect(quota.headers?.()).toEqual({});
+                expect(quota.fallbackHeaders).toBeUndefined();
+            });
+
             test('the shared quota poller\'s recurring timer is armed by app.start() and cancelled by app.stop()', async () => {
                 // Without this the configured agent.quota.pollIntervalMs is dead config and an
                 // idle process never notices quota Craig's own sessions spent.

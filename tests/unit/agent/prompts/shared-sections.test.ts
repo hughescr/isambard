@@ -59,8 +59,8 @@ describe.concurrent('shared-sections', () => {
             expect(MANAGING_QUOTA_SECTION).toContain('Codex is a separate shared subscription');
             expect(MANAGING_QUOTA_SECTION).toContain('DeepSeek is pay-as-you-go');
             expect(MANAGING_QUOTA_SECTION).toContain('Never sum quota buckets');
-            expect(MANAGING_QUOTA_SECTION).toContain('`quota_lookup.status` says whether the quota reading is known');
-            expect(MANAGING_QUOTA_SECTION).toContain('`quota_values` identifies session-ledger fallback provenance and freshness');
+            expect(MANAGING_QUOTA_SECTION).toContain('`quota_lookup.status` describes quota API reports');
+            expect(MANAGING_QUOTA_SECTION).toContain('`quota_values.status` describes SDK ledger values');
             expect(MANAGING_QUOTA_SECTION).toContain('does not establish whether inference is available or quota is exhausted');
         });
 

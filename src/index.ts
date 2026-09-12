@@ -300,12 +300,11 @@ export async function createApp(): Promise<App> {
     //  - the per-`result`-frame refresh the ambience wires into each registered ledger (debounced
     //    to at most one request per 30s), which only fires while Izzy is taking turns; and
     //  - the recurring `config.agent.quota.pollIntervalMs` timer, armed in start() and cancelled
-    //    in stop() below. The subscription is shared with Craig's own Claude Code sessions, so
-    //    utilization moves while Izzy is idle and no local `result` frame ever arrives; without
-    //    the recurring poll the ledger's peak would stay stale and the perch quota ceiling
-    //    (block 5) would let a slot start well past `perchPauseAtPercent`.
+    //    in stop() below, which refreshes Codex and DeepSeek capacity while Izzy is idle.
+    // Anthropic quota comes only from Agent SDK rate-limit events. Those events cannot observe
+    // Craig's external Claude spend while Izzy is idle; the pause guard deliberately retains its
+    // prior peak until another SDK event arrives rather than weakening that safety policy here.
     const providerHeaders = (): Record<string, string> => ({
-        Authorization: `Bearer ${config.agent.oauthToken}`,
         ...(gateway.localToken === undefined ? {} : { 'X-Utraque-Token': gateway.localToken }),
     });
     const ambience = createSessionAmbience({
@@ -313,14 +312,11 @@ export async function createApp(): Promise<App> {
         clock:    systemClock,
         logger,
         quota:    {
-            fetch:           globalThis.fetch,
-            url:             `${gateway.baseUrl.replace(/\/$/, '')}/v1/utraque/providers`,
-            headers:         providerHeaders,
-            fallbackHeaders: () => ({
-                Authorization:    `Bearer ${config.agent.oauthToken}`,
-                'anthropic-beta': 'oauth-2025-04-20',
-            }),
+            fetch:                globalThis.fetch,
+            url:                  `${gateway.baseUrl.replace(/\/$/, '')}/v1/utraque/providers`,
+            headers:              providerHeaders,
             preferProviderReport: gateway.enabled,
+            anthropicQuotaSource: 'sdk',
             pollIntervalMs:       config.agent.quota.pollIntervalMs,
             requestTimeoutMs:     gateway.reportRequestTimeoutMs,
         },

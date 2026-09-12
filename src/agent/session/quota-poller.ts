@@ -1,4 +1,4 @@
-/** Process-wide provider quota polling via utraque, with a direct Anthropic fallback. */
+/** Process-wide provider quota polling via utraque, optionally with a direct Anthropic fallback. */
 import type { Logger } from '@hughescr/logger';
 import { type LedgerStore, type QuotaWindows, fileQuotaWindow, hasQuotaWindow } from './ledger';
 import type { Clock, TimerHandle } from './types';
@@ -8,6 +8,7 @@ export const DEFAULT_QUOTA_RESULT_DEBOUNCE_MS = 30_000;
 export const DEFAULT_QUOTA_REQUEST_TIMEOUT_MS = 100_000;
 export const DEFAULT_PROVIDER_REPORT_URL = 'http://127.0.0.1:8317/v1/utraque/providers';
 export const DEFAULT_ANTHROPIC_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+export type AnthropicQuotaSource = 'provider' | 'sdk';
 
 export interface QuotaFetchResponse {
     ok:     boolean
@@ -75,6 +76,8 @@ export interface CreateQuotaPollerParams {
     headers?:              () => Record<string, string>
     fallbackHeaders?:      () => Record<string, string>
     preferProviderReport?: boolean
+    /** `sdk` deliberately excludes Anthropic provider rows, adaptation, and direct HTTP fallback. */
+    anthropicQuotaSource?: AnthropicQuotaSource
     pollIntervalMs?:       number
     resultDebounceMs?:     number
     requestTimeoutMs?:     number
@@ -295,7 +298,7 @@ function anthropicWindows(observation: ProviderObservation, now: number): QuotaW
 export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller {
     const { clock, fetch, ledgers, logger, url = DEFAULT_PROVIDER_REPORT_URL, fallbackUrl = DEFAULT_ANTHROPIC_USAGE_URL,
         headers = () => ({}), fallbackHeaders = () => ({}), pollIntervalMs = DEFAULT_QUOTA_POLL_INTERVAL_MS,
-        preferProviderReport = true, resultDebounceMs = DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
+        preferProviderReport = true, anthropicQuotaSource = 'provider', resultDebounceMs = DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
         requestTimeoutMs = DEFAULT_QUOTA_REQUEST_TIMEOUT_MS } = params;
     let timer: TimerHandle | undefined;
     let running = false;
@@ -368,6 +371,9 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
         const timeout = clock.setTimer(() => controller.abort(), requestTimeoutMs);
         try {
             if(!preferProviderReport) {
+                if(anthropicQuotaSource === 'sdk') {
+                    return;
+                }
                 await directFallback(controller.signal, attemptGeneration);
                 return;
             }
@@ -388,35 +394,46 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
                                 providers:   currentSnapshot.providers,
                                 expiresAt:   currentSnapshot.expiresAt,
                             };
+                        const providerReport = anthropicQuotaSource === 'sdk'
+                            ? { ...parsed, providers: parsed.providers.filter(provider => provider.provider !== 'anthropic') }
+                            : parsed;
                         snapshot = {
-                            ...parsed,
+                            ...providerReport,
                             expiresAt: new Date(clock.now() + pollIntervalMs * 2),
                             previous,
                         };
-                        const anthropic = parsed.providers.find(provider => provider.provider === 'anthropic');
-                        const observation = anthropic?.quotaAfter;
-                        const fresh = anthropic !== undefined && !anthropic.freshness.stale
-                          && observation?.source === 'anthropic' && observation.available !== false
-                          && !anthropic.errors.some(error => error.section === 'quota_after');
-                        if(fresh) {
-                            const windows = anthropicWindows(observation, clock.now());
-                            if(windows !== undefined) {
-                                dispatch(windows, observation.collectedAt, attemptGeneration);
+                        if(anthropicQuotaSource === 'provider') {
+                            const anthropic = parsed.providers.find(provider => provider.provider === 'anthropic');
+                            const observation = anthropic?.quotaAfter;
+                            const fresh = anthropic !== undefined && !anthropic.freshness.stale
+                              && observation?.source === 'anthropic' && observation.available !== false
+                              && !anthropic.errors.some(error => error.section === 'quota_after');
+                            if(fresh) {
+                                const windows = anthropicWindows(observation, clock.now());
+                                if(windows !== undefined) {
+                                    dispatch(windows, observation.collectedAt, attemptGeneration);
+                                }
                             }
                         }
                     }
                 } else {
                     logger.debug({ status: response.status }, 'Quota poll: utraque provider report returned a non-OK status');
                     markSnapshotStale(clock.now(), attemptGeneration);
-                    useFallback = response.status === 404 || response.status === 405 || response.status >= 500;
+                    useFallback = anthropicQuotaSource === 'provider'
+                      && (response.status === 404 || response.status === 405 || response.status >= 500);
                 }
             } catch (error) {
                 if(controller.signal.aborted) {
                     throw error;
                 }
                 markSnapshotStale(clock.now(), attemptGeneration);
-                logger.debug({ errorName: error instanceof Error ? error.name : 'unknown' }, 'Quota poll: utraque provider report failed; trying direct Anthropic fallback');
-                useFallback = true;
+                useFallback = anthropicQuotaSource === 'provider';
+                logger.debug(
+                    { errorName: error instanceof Error ? error.name : 'unknown' },
+                    useFallback
+                        ? 'Quota poll: utraque provider report failed; trying direct Anthropic fallback'
+                        : 'Quota poll: utraque provider report failed'
+                );
             }
             if(useFallback && running && generation === attemptGeneration) {
                 await directFallback(controller.signal, attemptGeneration);

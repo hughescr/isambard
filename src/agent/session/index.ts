@@ -60,6 +60,7 @@ export {
     DEFAULT_QUOTA_REQUEST_TIMEOUT_MS,
     DEFAULT_PROVIDER_REPORT_URL,
     DEFAULT_ANTHROPIC_USAGE_URL,
+    type AnthropicQuotaSource,
     type CreateQuotaPollerParams,
     type QuotaFetch,
     type QuotaFetchResponse,
