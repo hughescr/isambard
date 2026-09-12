@@ -289,7 +289,7 @@ function providerBalanceData(balance: ProviderBalance): Record<string, unknown> 
 
 function quotaApiError(code: string): string {
     const normalized = code.toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
-    return normalized === 'rate_limited' || normalized === 'http_429'
+    return normalized === 'http_429'
         ? 'quota_api_rate_limited'
         : `quota_api_${normalized}`;
 }

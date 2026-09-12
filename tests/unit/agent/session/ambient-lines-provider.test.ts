@@ -73,6 +73,7 @@ describe('provider quota JSON', () => {
         ['seven-day kind', { id: 'limit', kind: 'seven_day_team' }, '1w'],
         ['weekly id', { id: 'weekly_all' }, '1w'],
         ['seven-day id', { id: 'seven_day_team' }, '1w'],
+        ['unrecognized kind', { id: 'limit', kind: 'daily_custom' }, undefined],
         ['unknown id', { id: 'monthly' }, undefined],
     ] as const)('infers the window from the %s alone', (_case, identity, expected) => {
         const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota(identity)] }) })]));
@@ -200,6 +201,42 @@ describe('provider quota JSON', () => {
             observed_at:  '2026-09-09T22:07:00.000Z',
         });
     });
+
+    it('filters known Spark-scoped Codex rows even when the quota meter is absent', () => {
+        const data = providerJson(snapshot([provider({ quotaAfter: observation({
+            balances: [
+                { kind: 'requests', scopeId: 'codex_bengalfox', total: '7' },
+                { kind: 'requests', scopeId: 'codex_shared', total: '93' },
+            ],
+            spendControls: [
+                { scopeId: 'codex_bengalfox', reached: true },
+                { scopeId: 'codex_shared', reached: true },
+            ],
+        }) })]));
+        expect(data).toEqual({
+            quota_lookup:   { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
+            observed_at:    '2026-09-09T22:07:00.000Z',
+            balances:       [{ kind: 'requests', scope_id: 'codex_shared', total: '93' }],
+            spend_controls: [{ scope_id: 'codex_shared', reached: true }],
+        });
+    });
+
+    it('retains the same scope id when it belongs to a non-Codex provider', () => {
+        const data = providerJson(snapshot([provider({
+            provider:   'other',
+            quotaAfter: observation({
+                source:        'other',
+                balances:      [{ kind: 'requests', scopeId: 'codex_bengalfox', total: '7' }],
+                spendControls: [{ scopeId: 'codex_bengalfox', reached: true }],
+            }),
+        })]), 'other');
+        expect(data).toEqual({
+            quota_lookup:   { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
+            observed_at:    '2026-09-09T22:07:00.000Z',
+            balances:       [{ kind: 'requests', scope_id: 'codex_bengalfox', total: '7' }],
+            spend_controls: [{ scope_id: 'codex_bengalfox', reached: true }],
+        });
+    });
 });
 
 describe('balances and report state', () => {
@@ -246,6 +283,18 @@ describe('balances and report state', () => {
             report_expired_at: '2026-09-09T22:06:59.999Z',
         });
         expect(data.report_status).toBe('error');
+    });
+
+    it('expires a report exactly at its expiry boundary', () => {
+        const data = providerJson(snapshot([provider({
+            quotaAfter: observation({ quotas: [quota({ id: 'fresh-until-boundary' })] }),
+        })], { expiresAt: NOW }));
+        expect(data).toEqual({
+            quota_lookup: {
+                status:            'unknown', error:             'quota_data_stale',
+                last_attempt_at:   '2026-09-09T22:07:00.000Z', report_expired_at: '2026-09-09T22:07:00.000Z',
+            },
+        });
     });
 
     it.each([
@@ -319,6 +368,17 @@ describe('balances and report state', () => {
             status: 'unknown', error: expected, last_attempt_at: '2026-09-09T22:07:00.000Z',
         });
     });
+
+    it('maps http_429 to the quota API rate-limit error', () => {
+        const data = providerJson(snapshot([provider({
+            quotaAfter: undefined, errors: [{ section: 'quota_after', code: 'http_429' }],
+        })]));
+        expect(data).toEqual({
+            quota_lookup: {
+                status: 'unknown', error: 'quota_api_rate_limited', last_attempt_at: '2026-09-09T22:07:00.000Z',
+            },
+        });
+    });
 });
 
 describe('shared burn pace', () => {
@@ -361,7 +421,9 @@ describe('shared burn pace', () => {
     });
 
     it('omits burn without a current reset, previous observation, or matching prior quota', () => {
-        const noReset = providerJson(paceReport(quota({ resetsAt: undefined }), quota({ resetsAt: undefined }), 3_600_000));
+        const noReset = providerJson(paceReport(
+            quota({ resetsAt: undefined, usedPercent: 35 }), quota({ resetsAt: undefined, usedPercent: 34 }), 3_600_000
+        ));
         const noPrevious = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota()] }) })]));
         const noPriorQuota = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota()] }) })], {
             previous: snapshot([provider({ quotaAfter: observation({ collectedAt: new Date(NOW.getTime() - 3_600_000) }) })]),
