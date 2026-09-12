@@ -45,6 +45,13 @@ function compose(overrides: Partial<ComposeAmbientLinesParams> = {}): string[] {
     return composeAmbientLines({ self: ledger('conversation'), now: NOW, timezone: TIMEZONE, ...overrides });
 }
 
+function quotaJson(line: string | undefined): Record<string, unknown> {
+    const prefix = `${QUOTA_LINE_PREFIX}\n\`\`\`json\n`;
+    expect(line?.startsWith(prefix)).toBe(true);
+    expect(line?.endsWith('\n```')).toBe(true);
+    return JSON.parse(line!.slice(prefix.length, -'\n```'.length)) as Record<string, unknown>;
+}
+
 describe('composeAmbientLines: the other-session line', () => {
     it('renders nothing at all when there is no other ledger and no quota', () => {
         expect(compose()).toEqual([]);
@@ -169,12 +176,16 @@ const QUOTA: LedgerQuota = {
 describe('composeAmbientLines: the quota line', () => {
     it('renders both windows with their reset stamps', () => {
         const self = ledger('conversation', { quota: QUOTA });
-        const line = compose({ self })[0] ?? '';
-        expect(line).toContain('"source": "sdk_rate_limit_event"');
-        expect(line).toContain('"window": "5h"');
-        expect(line).toContain('"resets_at": "2026-09-09T23:00:00.000Z"');
-        expect(line).toContain('"window": "1w"');
-        expect(line).toContain('"resets_at": "2026-09-10T17:00:00.000Z"');
+        expect(quotaJson(compose({ self })[0])).toEqual({
+            anthropic: {
+                quota_lookup: { status: 'unknown', error: 'quota_api_not_checked', source: 'sdk_rate_limit_event' },
+                source_age:   'unknown',
+                quotas:       [
+                    { id: 'five_hour', window: '5h', used_percent: 42, remaining_percent: 58, resets_at: '2026-09-09T23:00:00.000Z' },
+                    { id: 'seven_day', window: '1w', used_percent: 61, remaining_percent: 39, resets_at: '2026-09-10T17:00:00.000Z' },
+                ],
+            },
+        });
     });
 
     it('omits the quota line entirely when no window is known', () => {

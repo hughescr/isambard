@@ -142,6 +142,13 @@ describe('provider report parsing', () => {
         ]);
     });
 
+    it('leaves retry metadata undefined when the report has no valid retry timestamp', () => {
+        const snapshot = parseProviderSnapshot(providerReport({
+            errors: [{ section: 'quota_after', code: 'timed_out' }, { section: 'quota_after', code: 'rate_limited', retry_at: 'invalid' }],
+        }));
+        expect(snapshot?.providers[0]?.errors.map(error => error.retryAt)).toEqual([undefined, undefined]);
+    });
+
     it('accepts inclusive percentage boundaries and drops out-of-range or wrongly-unitized quotas', () => {
         const snapshot = parseProviderSnapshot(providerReport({ quota_after: {
             source:       'anthropic', collected_at: GENERATED,
@@ -178,6 +185,13 @@ describe('direct Anthropic fallback parsing', () => {
         expect(parsed.windows).toEqual({
             fiveHour: { utilization: 31.5, resetsAt: new Date(RESET) },
             sevenDay: { utilization: 35, resetsAt: new Date(RESET) },
+        });
+    });
+
+    it('maps a session-group limit whose kind is omitted', () => {
+        expect(parseUsageWindows({ limits: [{ group: 'session', percent: 17 }] })).toEqual({
+            windows:  { fiveHour: { utilization: 17 } },
+            rejected: false,
         });
     });
 

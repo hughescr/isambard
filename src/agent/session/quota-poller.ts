@@ -208,7 +208,10 @@ export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefin
                 const section = stringValue(error?.section);
                 const code = stringValue(error?.code);
                 const retryAt = dateValue(error?.retry_at);
-                return section === undefined || code === undefined ? [] : [{ section, code, ...(retryAt === undefined ? {} : { retryAt }) }];
+                if(section === undefined || code === undefined) {
+                    return [];
+                }
+                return [{ section, code, retryAt }];
             })
             : [];
         const observation = providerObservation(item.quota_after);
@@ -220,7 +223,7 @@ export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefin
 
 export interface ParsedUsage { windows?: QuotaWindows, rejected: boolean }
 
-function unifiedAnthropicQuotaId(id: string, group: string | undefined, scoped: boolean): string | undefined {
+function unifiedAnthropicQuotaId(id: string | undefined, group: string | undefined, scoped: boolean): string | undefined {
     if(scoped || id === 'weekly_scoped') {
         return undefined;
     }
@@ -230,7 +233,10 @@ function unifiedAnthropicQuotaId(id: string, group: string | undefined, scoped: 
     if(id === 'weekly_all') {
         return 'seven_day';
     }
-    return id === 'seven_day' || id.startsWith('seven_day_') ? id : undefined;
+    if(id === 'seven_day') {
+        return id;
+    }
+    return id?.startsWith('seven_day_') ? id : undefined;
 }
 
 /** Direct Anthropic OAuth usage percentages are already 0-100; SDK frames use another parser. */
@@ -265,7 +271,7 @@ export function parseUsageWindows(body: unknown): ParsedUsage {
             }
             const scope = asRecord(limit?.scope);
             const scoped = scopeLabel(scope?.model) !== undefined || scopeLabel(scope?.surface) !== undefined;
-            const id = unifiedAnthropicQuotaId(kind ?? 'session', group, scoped);
+            const id = unifiedAnthropicQuotaId(kind, group, scoped);
             if(id !== undefined && booleanValue(limit?.is_active) !== false) {
                 add(id, limit?.percent, limit?.resets_at);
             }

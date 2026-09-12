@@ -64,6 +64,21 @@ describe('provider quota JSON', () => {
         }
     );
 
+    it.each([
+        ['session kind', { id: 'limit', kind: 'session' }, '5h'],
+        ['five-hour kind', { id: 'limit', kind: 'five_hour' }, '5h'],
+        ['session id', { id: 'session' }, '5h'],
+        ['five-hour id', { id: 'five_hour' }, '5h'],
+        ['weekly kind', { id: 'limit', kind: 'weekly_all' }, '1w'],
+        ['seven-day kind', { id: 'limit', kind: 'seven_day_team' }, '1w'],
+        ['weekly id', { id: 'weekly_all' }, '1w'],
+        ['seven-day id', { id: 'seven_day_team' }, '1w'],
+        ['unknown id', { id: 'monthly' }, undefined],
+    ] as const)('infers the window from the %s alone', (_case, identity, expected) => {
+        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota(identity)] }) })]));
+        expect(object(array(data.quotas)[0]).window).toBe(expected);
+    });
+
     it('uses explicit UTC timestamps and preserves fractional percentages', () => {
         const data = providerJson(snapshot([provider({ quotaAfter: observation({
             quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 35.25 })],
@@ -103,13 +118,37 @@ describe('provider quota JSON', () => {
         expect(array(data.quotas).map(value => object(object(value).scope).slot)).toEqual(['primary', 'secondary']);
     });
 
-    it('uses a plain string for a single scope label and omits empty labels', () => {
+    it.each([
+        ['no slot', quota({ id: 'shared', durationSeconds: 18_000 }), quota({ id: 'shared', durationSeconds: 18_000, slot: 'secondary' })],
+        ['different id', quota({ id: 'shared', durationSeconds: 18_000, slot: 'primary' }), quota({ id: 'other', durationSeconds: 18_000, slot: 'secondary' })],
+        ['different window', quota({ id: 'shared', durationSeconds: 18_000, slot: 'primary' }), quota({ id: 'shared', durationSeconds: 604_800, slot: 'secondary' })],
+        ['same slot', quota({ id: 'shared', durationSeconds: 18_000, slot: 'primary' }), quota({ id: 'shared', durationSeconds: 18_000, slot: 'primary' })],
+    ] as const)('omits a slot when there is %s', (_case, current, candidate) => {
+        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [current, candidate] }) })]));
+        expect(object(array(data.quotas)[0]).scope).toBeUndefined();
+    });
+
+    it('retains each scope label field independently and omits empty labels', () => {
         const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [
             quota({ id: 'one', scope: { model: { id: 'o3' } } }),
+            quota({ id: 'two', scope: { surface: { displayName: 'API' } } }),
+            quota({ id: 'three', group: 'general' }),
             quota({ id: 'empty', scope: { model: {}, surface: {} } }),
         ] }) })]));
-        expect(object(object(object(array(data.quotas)[0]).scope).model).id).toBe('o3');
-        expect(object(array(data.quotas)[1]).scope).toBeUndefined();
+        expect(object(array(data.quotas)[0]).scope).toEqual({ model: { id: 'o3' } });
+        expect(object(array(data.quotas)[1]).scope).toEqual({ surface: { name: 'API' } });
+        expect(object(array(data.quotas)[2]).scope).toEqual({ group: 'general' });
+        expect(object(array(data.quotas)[3]).scope).toBeUndefined();
+    });
+
+    it('omits optional quota identity and reset fields exactly when absent or redundant', () => {
+        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [
+            quota({ id: 'same', name: 'same', resetsAt: undefined }), quota({ id: 'unnamed', name: undefined, resetsAt: undefined }),
+        ] }) })]));
+        expect(data.quotas).toEqual([
+            { id: 'same', used_percent: 35, remaining_percent: 65 },
+            { id: 'unnamed', used_percent: 35, remaining_percent: 65 },
+        ]);
     });
 
     it('renders inactive, expired, and active quota states distinctly', () => {
@@ -141,12 +180,25 @@ describe('provider quota JSON', () => {
     });
 
     it.each([
+        ['id', quota({ id: 'codex_bengalfox' })],
         ['name', quota({ id: 'different', name: 'GPT-5.3-Codex-Spark' })],
         ['model id', quota({ id: 'different', scope: { model: { id: 'gpt-5.3-codex-spark' } } })],
         ['model display name', quota({ id: 'different', scope: { model: { displayName: 'GPT-5.3-Codex-Spark' } } })],
     ] as const)('filters the verified Spark %s alias', (_case, spark) => {
         const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [spark] }) })]));
         expect(data.quotas).toBeUndefined();
+    });
+
+    it('filters balances and spend controls linked to a Spark alias with a nonstandard id', () => {
+        const data = providerJson(snapshot([provider({ quotaAfter: observation({
+            quotas:        [quota({ id: 'retired-meter', name: 'GPT-5.3-Codex-Spark' })],
+            balances:      [{ kind: 'requests', scopeId: 'retired-meter', total: '7' }],
+            spendControls: [{ scopeId: 'retired-meter', reached: true }],
+        }) })]));
+        expect(data).toEqual({
+            quota_lookup: { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
+            observed_at:  '2026-09-09T22:07:00.000Z',
+        });
     });
 });
 
@@ -247,6 +299,26 @@ describe('balances and report state', () => {
     it('adds the shared-subscription note when requested', () => {
         expect(renderJson(snapshot([provider()]), NOW, true).note).toBe('Subscription quotas are shared; provider balances are separate.');
     });
+
+    it('omits report metadata and the shared note exactly when they are absent', () => {
+        expect(renderJson(snapshot([provider()]))).toEqual({
+            codex: {
+                quota_lookup: { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
+                observed_at:  '2026-09-09T22:07:00.000Z',
+            },
+        });
+    });
+
+    it.each([
+        ['rate-limited', 'quota_api_rate_limited'],
+        ['HTTP_429', 'quota_api_rate_limited'],
+        ['Token Expired', 'quota_api_token_expired'],
+    ] as const)('normalizes the quota API error code %s', (code, expected) => {
+        const data = providerJson(snapshot([provider({ quotaAfter: undefined, errors: [{ section: 'quota_after', code }] })]));
+        expect(data.quota_lookup).toEqual({
+            status: 'unknown', error: expected, last_attempt_at: '2026-09-09T22:07:00.000Z',
+        });
+    });
 });
 
 describe('shared burn pace', () => {
@@ -272,6 +344,32 @@ describe('shared burn pace', () => {
         const data = providerJson(paceReport(current, prior, elapsedMs, priorAt));
         expect(object(array(data.quotas)[0]).shared_burn_percent_per_hour).toBeUndefined();
     });
+
+    it.each([
+        ['id', quota({ id: 'current' }), quota({ id: 'prior' })],
+        ['slot', quota({ slot: 'primary' }), quota({ slot: 'secondary' })],
+        ['duration', quota({ durationSeconds: 18_000 }), quota({ durationSeconds: 604_800 })],
+        ['reset', quota({ resetsAt: THU_0900 }), quota({ resetsAt: new Date(THU_0900.getTime() + 1) })],
+        ['model id', quota({ scope: { model: { id: 'current' } } }), quota({ scope: { model: { id: 'prior' } } })],
+        ['model name', quota({ scope: { model: { displayName: 'Current' } } }), quota({ scope: { model: { displayName: 'Prior' } } })],
+        ['surface id', quota({ scope: { surface: { id: 'current' } } }), quota({ scope: { surface: { id: 'prior' } } })],
+        ['surface name', quota({ scope: { surface: { displayName: 'Current' } } }), quota({ scope: { surface: { displayName: 'Prior' } } })],
+        ['delimiter-bearing identity', quota({ id: 'a\0b', group: 'c' }), quota({ id: 'a', group: 'b\0c' })],
+    ] as const)('does not compare burn across a different %s', (_case, current, prior) => {
+        const data = providerJson(paceReport(current, prior, 3_600_000));
+        expect(object(array(data.quotas)[0]).shared_burn_percent_per_hour).toBeUndefined();
+    });
+
+    it('omits burn without a current reset, previous observation, or matching prior quota', () => {
+        const noReset = providerJson(paceReport(quota({ resetsAt: undefined }), quota({ resetsAt: undefined }), 3_600_000));
+        const noPrevious = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota()] }) })]));
+        const noPriorQuota = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota()] }) })], {
+            previous: snapshot([provider({ quotaAfter: observation({ collectedAt: new Date(NOW.getTime() - 3_600_000) }) })]),
+        }));
+        for(const data of [noReset, noPrevious, noPriorQuota]) {
+            expect(object(array(data.quotas)[0]).shared_burn_percent_per_hour).toBeUndefined();
+        }
+    });
 });
 
 describe('direct Anthropic fallback', () => {
@@ -293,8 +391,24 @@ describe('direct Anthropic fallback', () => {
             provider({ provider: 'deepseek', quotaAfter: observation({ source: 'deepseek' }) }),
         ], { anthropicFallback: fallback({ sevenDay: { utilization: 61 } }) });
         const data = renderJson(report);
-        expect(array(object(data.anthropic).quotas)).toHaveLength(1);
+        expect(array(object(data.anthropic).quotas)).toEqual([{
+            id: 'seven_day', window: '1w', used_percent: 61, remaining_percent: 39,
+        }]);
         expect(object(data.deepseek).observed_at).toBe('2026-09-09T22:07:00.000Z');
+    });
+
+    it.each([
+        ['stale source', { freshness: { cached: false, stale: true, ageSeconds: 0 } }, {}],
+        ['missing observation', { quotaAfter: undefined }, {}],
+        ['unknown reading', { quotaAfter: observation({ source: 'anthropic', available: false }) }, {}],
+        ['quota API error', { errors: [{ section: 'quota_after', code: 'timed_out' }] }, {}],
+        ['expired report', {}, { expiresAt: new Date(NOW.getTime() - 1) }],
+    ] as const)('uses the direct fallback for an Anthropic %s', (_case, providerOverrides, snapshotOverrides) => {
+        const anthropic = provider({ provider: 'anthropic', quotaAfter: observation({ source: 'anthropic' }), ...providerOverrides });
+        const data = renderJson(snapshot([anthropic], {
+            anthropicFallback: fallback({ fiveHour: { utilization: 42 } }), ...snapshotOverrides,
+        }));
+        expect(object(object(data.anthropic).quota_lookup).source).toBe('direct_anthropic');
     });
 
     it('keeps fresh Anthropic provider data instead of replacing it', () => {
@@ -315,8 +429,12 @@ describe('direct Anthropic fallback', () => {
     it('marks an empty or expired direct observation unknown', () => {
         const empty = renderJson(snapshot([], { anthropicFallback: fallback({}) }));
         const expired = renderJson(snapshot([], { anthropicFallback: fallback({ fiveHour: { utilization: 42 } }, NOW) }));
-        expect(object(object(empty.anthropic).quota_lookup).status).toBe('unknown');
-        expect(object(object(expired.anthropic).quota_lookup).status).toBe('unknown');
+        expect(object(empty.anthropic)).toEqual({
+            quota_lookup: { status: 'unknown', error: 'quota_api_no_reading', last_attempt_at: '2026-09-09T22:07:00.000Z', source: 'direct_anthropic' },
+        });
+        expect(object(expired.anthropic)).toEqual({
+            quota_lookup: { status: 'unknown', error: 'quota_api_no_reading', last_attempt_at: '2026-09-09T22:07:00.000Z' },
+        });
     });
 
     it('marks a reset bucket expired without showing old headroom', () => {

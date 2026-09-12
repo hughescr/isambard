@@ -170,14 +170,11 @@ function roundedComplement(percent: number): number {
     return Number((100 - percent).toFixed(10));
 }
 
-function scopeLabel(label: { id?: string, displayName?: string } | undefined): Record<string, string> | undefined {
-    if(label === undefined || (label.id === undefined && label.displayName === undefined)) {
+function scopeLabel(label: { id?: string, displayName?: string } | undefined): { id?: string, name?: string } | undefined {
+    if(label?.id === undefined && label?.displayName === undefined) {
         return undefined;
     }
-    return {
-        ...(label.id === undefined ? {} : { id: label.id }),
-        ...(label.displayName === undefined ? {} : { name: label.displayName }),
-    };
+    return { id: label.id, name: label.displayName };
 }
 
 function quotaWindow(quota: ProviderQuota): string | undefined {
@@ -203,27 +200,25 @@ function isSparkQuota(provider: string, quota: ProviderQuota): boolean {
 }
 
 function needsSlot(quota: ProviderQuota, quotas: readonly ProviderQuota[]): boolean {
-    return quota.slot !== undefined && quotas.some(candidate => candidate !== quota
-      && candidate.id === quota.id && quotaWindow(candidate) === quotaWindow(quota)
+    return quotas.some(candidate => candidate.id === quota.id
+      && quotaWindow(candidate) === quotaWindow(quota)
       && candidate.slot !== quota.slot);
 }
 
 function quotaScope(quota: ProviderQuota, includeSlot: boolean): Record<string, unknown> | undefined {
     const model = scopeLabel(quota.scope?.model);
     const surface = scopeLabel(quota.scope?.surface);
-    const scope = {
-        ...(quota.group === undefined ? {} : { group: quota.group }),
-        ...(model === undefined ? {} : { model }),
-        ...(surface === undefined ? {} : { surface }),
-        ...(!includeSlot || quota.slot === undefined ? {} : { slot: quota.slot }),
-    };
-    return Object.keys(scope).length === 0 ? undefined : scope;
+    const slot = includeSlot ? quota.slot : undefined;
+    if(quota.group === undefined && model === undefined && surface === undefined && slot === undefined) {
+        return undefined;
+    }
+    return { group: quota.group, model, surface, slot };
 }
 
 function quotaIdentity(quota: ProviderQuota): string {
     const model = quota.scope?.model, surface = quota.scope?.surface;
-    return [quota.id, quota.group, quota.slot, quota.durationSeconds, quota.resetsAt?.toISOString(),
-        model?.id, model?.displayName, surface?.id, surface?.displayName].join('\u0000');
+    return JSON.stringify([quota.id, quota.group, quota.slot, quota.durationSeconds, quota.resetsAt?.toISOString(),
+        model?.id, model?.displayName, surface?.id, surface?.displayName]);
 }
 
 function burnPace(quota: ProviderQuota, currentAt: Date, previous: ProviderStatus | undefined): number | undefined {
@@ -251,10 +246,10 @@ function providerQuotaData(quota: ProviderQuota, quotas: readonly ProviderQuota[
     const window = quotaWindow(quota);
     const scope = quotaScope(quota, needsSlot(quota, quotas));
     const identity = {
-        id: quota.id,
-        ...(quota.name === undefined || quota.name === quota.id ? {} : { name: quota.name }),
-        ...(window === undefined ? {} : { window }),
-        ...(scope === undefined ? {} : { scope }),
+        id:   quota.id,
+        name: quota.name === quota.id ? undefined : quota.name,
+        window,
+        scope,
     };
     if(quota.active === false) {
         return { ...identity, status: 'inactive' };
@@ -265,17 +260,17 @@ function providerQuotaData(quota: ProviderQuota, quotas: readonly ProviderQuota[
     const pace = burnPace(quota, collectedAt, previous);
     return {
         ...identity,
-        used_percent:      quota.usedPercent,
-        remaining_percent: roundedComplement(quota.usedPercent),
-        ...(quota.resetsAt === undefined ? {} : { resets_at: iso(quota.resetsAt) }),
-        ...(pace === undefined ? {} : { shared_burn_percent_per_hour: pace }),
+        used_percent:                 quota.usedPercent,
+        remaining_percent:            roundedComplement(quota.usedPercent),
+        resets_at:                    quota.resetsAt === undefined ? undefined : iso(quota.resetsAt),
+        shared_burn_percent_per_hour: pace,
     };
 }
 
 function providerBalanceData(balance: ProviderBalance): Record<string, unknown> {
     const identity = {
-        kind: balance.kind,
-        ...(balance.scopeId === undefined ? {} : { scope_id: balance.scopeId }),
+        kind:     balance.kind,
+        scope_id: balance.scopeId,
     };
     if(balance.unlimited === true) {
         return { ...identity, status: 'unlimited' };
@@ -285,10 +280,10 @@ function providerBalanceData(balance: ProviderBalance): Record<string, unknown> 
     }
     return {
         ...identity,
-        ...(balance.currency === undefined ? {} : { currency: balance.currency }),
-        ...(balance.total === undefined ? {} : { total: balance.total }),
-        ...(balance.amountUnit === undefined ? {} : { amount_unit: balance.amountUnit }),
-        ...(balance.total === undefined ? { status: 'reported' } : {}),
+        currency:    balance.currency,
+        total:       balance.total,
+        amount_unit: balance.amountUnit,
+        status:      balance.total === undefined ? 'reported' : undefined,
     };
 }
 
@@ -299,50 +294,53 @@ function quotaApiError(code: string): string {
         : `quota_api_${normalized}`;
 }
 
-function quotaLookupData(provider: ProviderStatus, reportExpired: boolean, reportExpiresAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
+function quotaLookupData(provider: ProviderStatus, reportExpiredAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
     const quotaErrors = provider.errors.filter(error => error.section === 'quota_after');
     const elapsed = Math.max(0, (now.getTime() - generatedAt.getTime()) / 1000);
     const base = {
-        last_attempt_at: iso(provider.lastAttempt),
-        ...(provider.freshness.cached ? { cached: true, age_seconds: Math.round(provider.freshness.ageSeconds + elapsed) } : {}),
-        ...(!reportExpired || reportExpiresAt === undefined ? {} : { report_expired_at: iso(reportExpiresAt) }),
+        last_attempt_at:   iso(provider.lastAttempt),
+        cached:            provider.freshness.cached ? true : undefined,
+        age_seconds:       provider.freshness.cached ? Math.round(provider.freshness.ageSeconds + elapsed) : undefined,
+        report_expired_at: reportExpiredAt === undefined ? undefined : iso(reportExpiredAt),
     };
+    if(quotaErrors.length === 0) {
+        if(provider.freshness.stale || reportExpiredAt !== undefined) {
+            return { status: 'unknown', error: 'quota_data_stale', ...base };
+        }
+        if(provider.quotaAfter === undefined) {
+            return { status: 'unknown', error: 'quota_api_no_observation', ...base };
+        }
+        return provider.quotaAfter.available === false
+            ? { status: 'unknown', error: 'quota_api_no_reading', ...base }
+            : { status: 'ok', ...base };
+    }
     if(quotaErrors.length === 1) {
         const failure = quotaErrors[0]!;
         return {
-            status: 'unknown', error: quotaApiError(failure.code), ...base,
-            ...(failure.retryAt === undefined ? {} : { retry_at: iso(failure.retryAt) }),
+            status:   'unknown', error:    quotaApiError(failure.code), ...base,
+            retry_at: failure.retryAt === undefined ? undefined : iso(failure.retryAt),
         };
     }
-    if(quotaErrors.length > 1) {
-        return { status: 'unknown', error: 'quota_api_multiple_errors', ...base, errors: quotaErrors.map(entry => quotaApiError(entry.code)) };
-    }
-    if(provider.freshness.stale || reportExpired) {
-        return { status: 'unknown', error: 'quota_data_stale', ...base };
-    }
-    if(provider.quotaAfter === undefined) {
-        return { status: 'unknown', error: 'quota_api_no_observation', ...base };
-    }
-    if(provider.quotaAfter.available === false) {
-        return { status: 'unknown', error: 'quota_api_no_reading', ...base };
-    }
-    return { status: 'ok', ...base };
+    return { status: 'unknown', error: 'quota_api_multiple_errors', ...base, errors: quotaErrors.map(entry => quotaApiError(entry.code)) };
 }
 
-function providerData(provider: ProviderStatus, previous: ProviderStatus | undefined, reportExpired: boolean, reportExpiresAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
-    const quotaLookup = quotaLookupData(provider, reportExpired, reportExpiresAt, generatedAt, now);
-    const lookupUnknown = quotaLookup.status === 'unknown';
+function providerData(provider: ProviderStatus, previous: ProviderStatus | undefined, reportExpiredAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
+    const quotaLookup = quotaLookupData(provider, reportExpiredAt, generatedAt, now);
     const reportErrors = provider.errors.filter(error => error.section !== 'quota_after');
     const base = {
-        quota_lookup: quotaLookup,
-        ...(provider.status === 'ok' ? {} : { report_status: provider.status }),
-        ...(reportErrors.length === 0 ? {} : { errors: reportErrors }),
+        quota_lookup:  quotaLookup,
+        report_status: provider.status === 'ok' ? undefined : provider.status,
+        errors:        reportErrors.length === 0 ? undefined : reportErrors,
     };
-    if(lookupUnknown || provider.quotaAfter === undefined) {
+    if(quotaLookup.status !== 'ok') {
         return base;
     }
-    const observation = provider.quotaAfter;
-    const excludedScopeIds = new Set(provider.provider === 'codex' ? ['codex_bengalfox'] : []);
+    // `quotaLookupData` returns `ok` only for a present, available observation.
+    const observation = provider.quotaAfter!;
+    const excludedScopeIds = new Set<string>();
+    if(provider.provider === 'codex') {
+        excludedScopeIds.add('codex_bengalfox');
+    }
     const quotas = observation.quotas.filter((quota) => {
         if(isSparkQuota(provider.provider, quota)) {
             excludedScopeIds.add(quota.id);
@@ -352,20 +350,23 @@ function providerData(provider: ProviderStatus, previous: ProviderStatus | undef
     });
     const balances = observation.balances.filter(balance => balance.scopeId === undefined || !excludedScopeIds.has(balance.scopeId));
     const spendControls = observation.spendControls.filter(control => !excludedScopeIds.has(control.scopeId));
+    const reachedSpendControls = spendControls.filter(control => control.reached);
     return {
         ...base,
-        observed_at: iso(observation.collectedAt),
-        ...(quotas.length === 0 ? {} : { quotas: quotas.map(quota => providerQuotaData(quota, quotas, observation.collectedAt, previous, now)) }),
-        ...(balances.length === 0 ? {} : { balances: balances.map(balance => providerBalanceData(balance)) }),
-        ...(spendControls.some(control => control.reached)
-            ? { spend_controls: spendControls.filter(control => control.reached).map(control => ({ scope_id: control.scopeId, reached: true })) }
-            : {}),
+        observed_at:    iso(observation.collectedAt),
+        quotas:         quotas.length === 0 ? undefined : quotas.map(quota => providerQuotaData(quota, quotas, observation.collectedAt, previous, now)),
+        balances:       balances.length === 0 ? undefined : balances.map(balance => providerBalanceData(balance)),
+        spend_controls: reachedSpendControls.length === 0
+            ? undefined
+            : reachedSpendControls.map(control => ({ scope_id: control.scopeId, reached: true })),
     };
 }
 
 function providerUnavailable(provider: ProviderStatus, reportExpired: boolean): boolean {
-    return provider.freshness.stale || reportExpired || provider.quotaAfter === undefined
-      || provider.quotaAfter.available === false || provider.errors.some(error => error.section === 'quota_after');
+    if(provider.freshness.stale || reportExpired || provider.errors.some(error => error.section === 'quota_after')) {
+        return true;
+    }
+    return provider.quotaAfter?.available !== true;
 }
 
 function windowData(id: string, window: QuotaWindow, now: Date): Record<string, unknown> {
@@ -376,7 +377,7 @@ function windowData(id: string, window: QuotaWindow, now: Date): Record<string, 
             ...identity,
             used_percent:      window.utilization,
             remaining_percent: roundedComplement(window.utilization),
-            ...(window.resetsAt === undefined ? {} : { resets_at: iso(window.resetsAt) }),
+            resets_at:         window.resetsAt === undefined ? undefined : iso(window.resetsAt),
         };
 }
 
@@ -400,30 +401,28 @@ function quotaBlock(data: Record<string, unknown>): string {
 }
 
 function providerLine(snapshot: ProviderSnapshot, now: Date, _timezone: string, sharedNote: boolean): string {
-    const reportExpired = snapshot.expiresAt !== undefined && snapshot.expiresAt <= now;
+    const reportExpiredAt = snapshot.expiresAt !== undefined && snapshot.expiresAt <= now ? snapshot.expiresAt : undefined;
     const fallback = snapshot.anthropicFallback === undefined || snapshot.anthropicFallback.expiresAt <= now
         ? undefined
         : directFallbackData(snapshot.anthropicFallback.windows, snapshot.anthropicFallback.collectedAt, now);
-    const entries = snapshot.providers.map(provider => [provider.provider, provider.provider === 'anthropic' && providerUnavailable(provider, reportExpired) && fallback !== undefined
+    const entries = snapshot.providers.map(provider => [provider.provider, provider.provider === 'anthropic' && providerUnavailable(provider, reportExpiredAt !== undefined) && fallback !== undefined
         ? fallback
         : providerData(
             provider,
             snapshot.previous?.providers.find(previous => previous.provider === provider.provider),
-            reportExpired,
-            snapshot.expiresAt,
+            reportExpiredAt,
             snapshot.generatedAt,
             now
         )] as const);
-    if(!snapshot.providers.some(provider => provider.provider === 'anthropic') && fallback !== undefined) {
-        entries.unshift(['anthropic', fallback]);
+    const data: Record<string, unknown> = Object.fromEntries(entries);
+    if(!Object.hasOwn(data, 'anthropic') && fallback !== undefined) {
+        data.anthropic = fallback;
     }
-    if(entries.length === 0) {
-        entries.push(['anthropic', { quota_lookup: { status: 'unknown', error: 'quota_api_no_reading', last_attempt_at: iso(snapshot.generatedAt) } }]);
+    if(Object.keys(data).length === 0) {
+        data.anthropic = { quota_lookup: { status: 'unknown', error: 'quota_api_no_reading', last_attempt_at: iso(snapshot.generatedAt) } };
     }
-    return quotaBlock({
-        ...Object.fromEntries(entries),
-        ...(sharedNote ? { note: 'Subscription quotas are shared; provider balances are separate.' } : {}),
-    });
+    data.note = sharedNote ? 'Subscription quotas are shared; provider balances are separate.' : undefined;
+    return quotaBlock(data);
 }
 
 /** The two unified windows either session paces itself against; per-model windows are not rendered. */
@@ -497,7 +496,7 @@ function quotaLine(self: LedgerQuota | undefined, other: LedgerQuota | undefined
     }
     return quotaBlock({
         anthropic: fallback,
-        ...(sharedNote ? { note: 'Anthropic quota is shared with Craig\'s own sessions.' } : {}),
+        note:      sharedNote ? 'Anthropic quota is shared with Craig\'s own sessions.' : undefined,
     });
 }
 
