@@ -9,9 +9,11 @@
  *    digest riding on it), its running tasks, and — for a live perch slot turn — the slot fields
  *    the perch envelope's {@link import('./types').EnvelopeMeta} put on `Ledger.perch`.
  * 2. **Provider capacity** — a provider-keyed JSON block under `Quota:`. Fresh utraque reports
- *    carry explicit lookup, observation, window, reset and balance fields; the older Claude SDK
- *    ledger is the fallback. Its windows are merged PER WINDOW across both ledgers by their
- *    `quota.at` stamps — see {@link freshestDatedWindow}. Omitted entirely while nothing is known.
+ *    carry explicit lookup, observation, window, reset and balance fields; the session ledger is
+ *    the fallback. Its windows are merged PER WINDOW across both ledgers by their `quota.at`
+ *    stamps — see {@link freshestDatedWindow}. Provider-report fallback admits only ledgers whose
+ *    last quota update came from an SDK rate-limit event, and labels their per-window age unknown.
+ *    Omitted entirely while nothing is known.
  *
  * Both functions here are PURE: no clock, no I/O, no state. `now` is passed in the same way every
  * envelope builder takes it, and the once-after-boot "shared with Craig's own sessions" note is a
@@ -400,23 +402,39 @@ function quotaBlock(data: Record<string, unknown>): string {
     return `${QUOTA_LINE_PREFIX}\n\`\`\`json\n${JSON.stringify(data, undefined, 2)}\n\`\`\``;
 }
 
-function providerLine(snapshot: ProviderSnapshot, now: Date, _timezone: string, sharedNote: boolean): string {
+function providerLine(
+    snapshot: ProviderSnapshot,
+    selfQuota: LedgerQuota | undefined,
+    otherQuota: LedgerQuota | undefined,
+    now: Date,
+    _timezone: string,
+    sharedNote: boolean
+): string {
     const reportExpiredAt = snapshot.expiresAt !== undefined && snapshot.expiresAt <= now ? snapshot.expiresAt : undefined;
     const fallback = snapshot.anthropicFallback === undefined || snapshot.anthropicFallback.expiresAt <= now
         ? undefined
         : directFallbackData(snapshot.anthropicFallback.windows, snapshot.anthropicFallback.collectedAt, now);
-    const entries = snapshot.providers.map(provider => [provider.provider, provider.provider === 'anthropic' && providerUnavailable(provider, reportExpiredAt !== undefined) && fallback !== undefined
-        ? fallback
-        : providerData(
+    const sdkFallback = sdkLedgerFallbackData(selfQuota, otherQuota, now);
+    const entries = snapshot.providers.map((provider) => {
+        const unavailableAnthropic = provider.provider === 'anthropic' && providerUnavailable(provider, reportExpiredAt !== undefined);
+        if(unavailableAnthropic && fallback !== undefined) {
+            return [provider.provider, fallback] as const;
+        }
+        const data = providerData(
             provider,
             snapshot.previous?.providers.find(previous => previous.provider === provider.provider),
             reportExpiredAt,
             snapshot.generatedAt,
             now
-        )] as const);
+        );
+        return [provider.provider, unavailableAnthropic && sdkFallback !== undefined
+            ? { ...data, quota_values: sdkFallback.quota_values, quotas: sdkFallback.quotas }
+            : data] as const;
+    });
     const data: Record<string, unknown> = Object.fromEntries(entries);
-    if(!Object.hasOwn(data, 'anthropic') && fallback !== undefined) {
-        data.anthropic = fallback;
+    const anthropicFallback = fallback ?? sdkFallback;
+    if(!Object.hasOwn(data, 'anthropic') && anthropicFallback !== undefined) {
+        data.anthropic = anthropicFallback;
     }
     if(Object.keys(data).length === 0) {
         data.anthropic = { quota_lookup: { status: 'unknown', error: 'quota_api_no_reading', last_attempt_at: iso(snapshot.generatedAt) } };
@@ -432,6 +450,7 @@ type UnifiedWindowName = 'fiveHour' | 'sevenDay';
 interface DatedWindow {
     window: QuotaWindow
     at:     Date
+    source: LedgerQuota['source']
 }
 
 /** `quota`'s reading of `name`, dated by `quota.at`, or undefined when that ledger knows no such window. */
@@ -440,7 +459,7 @@ function datedWindow(quota: LedgerQuota | undefined, name: UnifiedWindowName): D
         return undefined;
     }
     const window = quota[name];
-    return window === undefined ? undefined : { window, at: quota.at };
+    return window === undefined ? undefined : { window, at: quota.at, source: quota.source };
 }
 
 /**
@@ -482,11 +501,25 @@ function ledgerFallbackData(self: LedgerQuota | undefined, other: LedgerQuota | 
     if(quotas.length === 0) {
         return undefined;
     }
+    const sources = new Set([fiveHour?.source, sevenDay?.source]);
+    sources.delete(undefined);
+    let lastUpdateSource = 'mixed';
+    if(sources.size === 1) {
+        lastUpdateSource = sources.has('headers') ? 'sdk_rate_limit_event' : 'quota_poller';
+    }
     return {
-        quota_lookup: { status: 'unknown', error: 'quota_api_not_checked', source: 'sdk_rate_limit_event' },
-        source_age:   'unknown',
+        quota_lookup: { status: 'unknown', error: 'quota_api_not_checked' },
+        quota_values: { source: 'session_ledger', last_update_source: lastUpdateSource, age: 'unknown' },
         quotas,
     };
+}
+
+function sdkLedgerFallbackData(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date): Record<string, unknown> | undefined {
+    return ledgerFallbackData(
+        self?.source === 'headers' ? self : undefined,
+        other?.source === 'headers' ? other : undefined,
+        now
+    );
 }
 
 function quotaLine(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, _timezone: string, sharedNote: boolean): string | undefined {
@@ -512,7 +545,7 @@ export function composeAmbientLines(params: ComposeAmbientLinesParams): string[]
     // Merged per window from both ledgers rather than taken from one of them — see freshestDatedWindow.
     const quota = providerSnapshot === undefined
         ? quotaLine(self.quota, other?.quota, now, timezone, sharedQuotaNote)
-        : providerLine(providerSnapshot, now, timezone, sharedQuotaNote);
+        : providerLine(providerSnapshot, self.quota, other?.quota, now, timezone, sharedQuotaNote);
     return [
         ...other === undefined ? [] : [otherSessionLine(other, now, timezone)],
         ...quota === undefined ? [] : [quota],
