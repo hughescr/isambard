@@ -204,6 +204,14 @@ describe('provider report parsing', () => {
         expect(mismatched?.providers[0]?.history).toBeUndefined();
     });
 
+    it('rejects a negative history token count even when the reported total matches', () => {
+        const history = historyReport();
+        history.seven_days.models[0].input_tokens = -1;
+        history.seven_days.models[0].total_tokens = 899;
+
+        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
+    });
+
     it('filters Spark from Codex history aggregates without dropping current Codex history', () => {
         const current = historyReport('codex').seven_days.models[0];
         const spark = { ...current, model: 'GPT-5.3-Codex-Spark', input_tokens: 1, total_tokens: 901 };
@@ -293,6 +301,12 @@ describe('provider report parsing', () => {
 
         expect(stale?.providers[0]?.prices?.stale).toBe(true);
         expect(malformed?.providers[0]?.prices).toBeUndefined();
+    });
+
+    it('rejects reference prices expressed in the wrong unit', () => {
+        const prices = { ...referencePrices(), unit: 'usd_per_token' };
+
+        expect(parseProviderSnapshot(providerReport({ reference_prices: prices }))?.providers[0]?.prices).toBeUndefined();
     });
 
     it('accepts omitted cache prices without manufacturing values', () => {
