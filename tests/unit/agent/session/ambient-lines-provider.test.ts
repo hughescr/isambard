@@ -512,7 +512,11 @@ describe('rough token estimates', () => {
         expect(object(array(data.quotas)[1]).estimate_tokens_remaining).toBe(0);
     });
 
-    it('estimates a one-percent bucket and fails closed when finite inputs overflow', () => {
+    it('estimates the one-percent boundary and suppresses lower or overflowing ratios', () => {
+        const subOnePercent = providerJson(snapshot([provider({
+            history:    history('codex'), prices:     prices('codex'),
+            quotaAfter: observation({ quotas: [quota({ id: 'sub-one-percent', durationSeconds: 604_800, usedPercent: 0.5 })] }),
+        })]));
         const onePercent = providerJson(snapshot([provider({
             history:    history('codex'), prices:     prices('codex'),
             quotaAfter: observation({ quotas: [quota({ id: 'one-percent', durationSeconds: 604_800, usedPercent: 1 })] }),
@@ -539,6 +543,10 @@ describe('rough token estimates', () => {
             quotaAfter: observation({ quotas: [quota({ id: 'rounding-overflow', durationSeconds: 604_800, usedPercent: 50 })] }),
         })]));
 
+        expect(object(array(subOnePercent.quotas)[0])).toEqual({
+            id:                'sub-one-percent', window:            '1w', used_percent:      0.5,
+            remaining_percent: 99.5, resets_at:         '2026-09-10T17:00:00.000Z',
+        });
         expect(object(array(onePercent.quotas)[0]).estimate_tokens_remaining).toBe(690_000);
         expect(object(array(overflow.quotas)[0])).toEqual({
             id:                'overflow', window:            '1w', scope:             { model: { id: 'overflowing' } },
