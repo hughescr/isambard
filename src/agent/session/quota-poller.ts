@@ -54,7 +54,7 @@ export interface ProviderStatus {
     status:      string
     lastAttempt: Date
     freshness:   { cached: boolean, stale: boolean, ageSeconds: number }
-    errors:      readonly { section: string, code: string }[]
+    errors:      readonly { section: string, code: string, retryAt?: Date }[]
     quotaAfter?: ProviderObservation
 }
 export interface ProviderSnapshot {
@@ -207,7 +207,8 @@ export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefin
                 const error = asRecord(errorEntry);
                 const section = stringValue(error?.section);
                 const code = stringValue(error?.code);
-                return section === undefined || code === undefined ? [] : [{ section, code }];
+                const retryAt = dateValue(error?.retry_at);
+                return section === undefined || code === undefined ? [] : [{ section, code, ...(retryAt === undefined ? {} : { retryAt }) }];
             })
             : [];
         const observation = providerObservation(item.quota_after);

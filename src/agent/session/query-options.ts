@@ -103,7 +103,6 @@ export const CROSS_PROVIDER_SUBAGENTS = {
     'luna-medium':         { model: 'anthropic-compat.luna', effort: 'medium', restricted: true },
     'terra-high':          { model: 'anthropic-compat.terra', effort: 'high', restricted: false },
     'sol-high':            { model: 'anthropic-compat.sol', effort: 'high', restricted: false },
-    'spark-high':          { model: 'anthropic-compat.gpt-5.3-codex-spark', effort: 'high', restricted: false },
     'deepseek-flash-low':  { model: 'anthropic-compat.deepseek-flash', effort: 'low', restricted: true },
     'deepseek-flash-high': { model: 'anthropic-compat.deepseek-flash', effort: 'high', restricted: false },
     'deepseek-pro-high':   { model: 'anthropic-compat.deepseek-v4-pro', effort: 'high', restricted: false },

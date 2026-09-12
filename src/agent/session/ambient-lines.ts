@@ -8,9 +8,9 @@
  *    the OTHER role's ledger: its open turn, that turn's phase (and the LLM-generated phase
  *    digest riding on it), its running tasks, and — for a live perch slot turn — the slot fields
  *    the perch envelope's {@link import('./types').EnvelopeMeta} put on `Ledger.perch`.
- * 2. **How much of the Claude Max subscription is spent** — `Quota: 5-hour 42% used (resets 14:00) ·
- *    week 61% used (resets Thu 09:00)`, from `Ledger.quota` (block 3: SDK `rate_limit_event` frames
- *    primarily, the usage poller secondarily), merged PER WINDOW across both ledgers by their
+ * 2. **Provider capacity** — a provider-keyed JSON block under `Quota:`. Fresh utraque reports
+ *    carry explicit lookup, observation, window, reset and balance fields; the older Claude SDK
+ *    ledger is the fallback. Its windows are merged PER WINDOW across both ledgers by their
  *    `quota.at` stamps — see {@link freshestDatedWindow}. Omitted entirely while nothing is known.
  *
  * Both functions here are PURE: no clock, no I/O, no state. `now` is passed in the same way every
@@ -149,12 +149,6 @@ function otherSessionLine(other: Ledger, now: Date, timezone: string): string {
     return `${ROLE_LABEL[other.role]}: ${clauses.join(', ')}`;
 }
 
-/** `42%`, or `42% (resets 14:00)` when the source told us when the window rolls over. */
-function renderWindow(window: QuotaWindow, now: Date, timezone: string): string {
-    const percent = `${Math.round(window.utilization)}% used`;
-    return window.resetsAt === undefined ? percent : `${percent} (resets ${formatStamp(window.resetsAt, now, timezone)})`;
-}
-
 function formatDuration(seconds: number): string {
     if(seconds % 604_800 === 0) {
         return `${seconds / 604_800}w`;
@@ -168,15 +162,62 @@ function formatDuration(seconds: number): string {
     return `${seconds}s`;
 }
 
-function quotaScope(quota: ProviderQuota): string {
-    const parts = [
-        quota.group === undefined ? undefined : `group=${quota.group}`,
-        quota.slot === undefined ? undefined : `slot=${quota.slot}`,
-        quota.scope?.model === undefined ? undefined : `model=${quota.scope.model.displayName ?? quota.scope.model.id ?? 'unknown'}`,
-        quota.scope?.surface === undefined ? undefined : `surface=${quota.scope.surface.displayName ?? quota.scope.surface.id ?? 'unknown'}`,
-        quota.durationSeconds === undefined ? undefined : `window=${formatDuration(quota.durationSeconds)}`,
-    ].filter(value => value !== undefined);
-    return parts.length === 0 ? '' : ` [${parts.join(', ')}]`;
+function iso(when: Date): string {
+    return when.toISOString();
+}
+
+function roundedComplement(percent: number): number {
+    return Number((100 - percent).toFixed(10));
+}
+
+function scopeLabel(label: { id?: string, displayName?: string } | undefined): Record<string, string> | undefined {
+    if(label === undefined || (label.id === undefined && label.displayName === undefined)) {
+        return undefined;
+    }
+    return {
+        ...(label.id === undefined ? {} : { id: label.id }),
+        ...(label.displayName === undefined ? {} : { name: label.displayName }),
+    };
+}
+
+function quotaWindow(quota: ProviderQuota): string | undefined {
+    if(quota.durationSeconds !== undefined) {
+        return formatDuration(quota.durationSeconds);
+    }
+    if(quota.kind === 'session' || quota.kind === 'five_hour' || quota.id === 'session' || quota.id === 'five_hour') {
+        return '5h';
+    }
+    if(quota.kind?.startsWith('weekly') || quota.kind?.startsWith('seven_day')
+      || quota.id.startsWith('weekly') || quota.id.startsWith('seven_day')) {
+        return '1w';
+    }
+    return undefined;
+}
+
+/** Spark was retired from Isambard; hide its dedicated meter without hiding shared Codex quota. */
+function isSparkQuota(provider: string, quota: ProviderQuota): boolean {
+    return provider === 'codex' && (quota.id === 'codex_bengalfox'
+      || quota.name === 'GPT-5.3-Codex-Spark'
+      || quota.scope?.model?.id === 'gpt-5.3-codex-spark'
+      || quota.scope?.model?.displayName === 'GPT-5.3-Codex-Spark');
+}
+
+function needsSlot(quota: ProviderQuota, quotas: readonly ProviderQuota[]): boolean {
+    return quota.slot !== undefined && quotas.some(candidate => candidate !== quota
+      && candidate.id === quota.id && quotaWindow(candidate) === quotaWindow(quota)
+      && candidate.slot !== quota.slot);
+}
+
+function quotaScope(quota: ProviderQuota, includeSlot: boolean): Record<string, unknown> | undefined {
+    const model = scopeLabel(quota.scope?.model);
+    const surface = scopeLabel(quota.scope?.surface);
+    const scope = {
+        ...(quota.group === undefined ? {} : { group: quota.group }),
+        ...(model === undefined ? {} : { model }),
+        ...(surface === undefined ? {} : { surface }),
+        ...(!includeSlot || quota.slot === undefined ? {} : { slot: quota.slot }),
+    };
+    return Object.keys(scope).length === 0 ? undefined : scope;
 }
 
 function quotaIdentity(quota: ProviderQuota): string {
@@ -185,78 +226,141 @@ function quotaIdentity(quota: ProviderQuota): string {
         model?.id, model?.displayName, surface?.id, surface?.displayName].join('\u0000');
 }
 
-function burnPace(quota: ProviderQuota, currentAt: Date, previous: ProviderStatus | undefined): string {
+function burnPace(quota: ProviderQuota, currentAt: Date, previous: ProviderStatus | undefined): number | undefined {
     if(quota.resetsAt === undefined) {
-        return '';
+        return undefined;
     }
     const priorObservation = previous?.quotaAfter;
     if(priorObservation === undefined) {
-        return '';
+        return undefined;
     }
     const prior = priorObservation.quotas.find(candidate => quotaIdentity(candidate) === quotaIdentity(quota));
     if(prior === undefined) {
-        return '';
+        return undefined;
     }
     const elapsedHours = (currentAt.getTime() - priorObservation.collectedAt.getTime()) / 3_600_000;
     const increase = quota.usedPercent - prior.usedPercent;
     if(elapsedHours < 1 / 60 || increase <= 0) {
-        return '';
+        return undefined;
     }
     const rate = increase / elapsedHours;
-    return `, +${rate.toFixed(1)}pp/h shared burn`;
+    return Number(rate.toFixed(1));
 }
 
-function providerQuotaSegment(quota: ProviderQuota, collectedAt: Date, previous: ProviderStatus | undefined, now: Date, timezone: string): string {
-    const label = quota.name === undefined || quota.name === quota.id ? quota.id : `${quota.name} (${quota.id})`;
+function providerQuotaData(quota: ProviderQuota, quotas: readonly ProviderQuota[], collectedAt: Date, previous: ProviderStatus | undefined, now: Date): Record<string, unknown> {
+    const window = quotaWindow(quota);
+    const scope = quotaScope(quota, needsSlot(quota, quotas));
+    const identity = {
+        id: quota.id,
+        ...(quota.name === undefined || quota.name === quota.id ? {} : { name: quota.name }),
+        ...(window === undefined ? {} : { window }),
+        ...(scope === undefined ? {} : { scope }),
+    };
     if(quota.active === false) {
-        return `${label}${quotaScope(quota)} inactive`;
+        return { ...identity, status: 'inactive' };
     }
     if(quota.resetsAt !== undefined && quota.resetsAt.getTime() <= now.getTime()) {
-        return `${label}${quotaScope(quota)} expired`;
+        return { ...identity, status: 'expired' };
     }
-    const reset = quota.resetsAt === undefined ? '' : `, resets ${formatStamp(quota.resetsAt, now, timezone)}`;
-    return `${label}${quotaScope(quota)} ${Math.round(quota.usedPercent)}% used/${Math.round(100 - quota.usedPercent)}% left${reset}${burnPace(quota, collectedAt, previous)}`;
+    const pace = burnPace(quota, collectedAt, previous);
+    return {
+        ...identity,
+        used_percent:      quota.usedPercent,
+        remaining_percent: roundedComplement(quota.usedPercent),
+        ...(quota.resetsAt === undefined ? {} : { resets_at: iso(quota.resetsAt) }),
+        ...(pace === undefined ? {} : { shared_burn_percent_per_hour: pace }),
+    };
 }
 
-function providerBalanceSegment(balance: ProviderBalance): string {
-    const scope = balance.scopeId === undefined ? '' : ` (${balance.scopeId})`;
+function providerBalanceData(balance: ProviderBalance): Record<string, unknown> {
+    const identity = {
+        kind: balance.kind,
+        ...(balance.scopeId === undefined ? {} : { scope_id: balance.scopeId }),
+    };
     if(balance.unlimited === true) {
-        return `${balance.kind}${scope} unlimited balance`;
+        return { ...identity, status: 'unlimited' };
     }
     if(balance.available === false) {
-        return `${balance.kind}${scope} balance unavailable`;
+        return { ...identity, status: 'unknown' };
     }
-    if(balance.currency !== undefined && balance.total !== undefined) {
-        return `${balance.kind}${scope} ${balance.currency} ${balance.total} balance`;
-    }
-    if(balance.total !== undefined) {
-        return `${balance.kind}${scope} ${balance.total} ${balance.amountUnit ?? 'units'} balance`;
-    }
-    return `${balance.kind}${scope} balance reported`;
+    return {
+        ...identity,
+        ...(balance.currency === undefined ? {} : { currency: balance.currency }),
+        ...(balance.total === undefined ? {} : { total: balance.total }),
+        ...(balance.amountUnit === undefined ? {} : { amount_unit: balance.amountUnit }),
+        ...(balance.total === undefined ? { status: 'reported' } : {}),
+    };
 }
 
-function providerName(provider: string): string {
-    return `${provider.charAt(0).toUpperCase()}${provider.slice(1)}`;
+function quotaApiError(code: string): string {
+    const normalized = code.toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
+    return normalized === 'rate_limited' || normalized === 'http_429'
+        ? 'quota_api_rate_limited'
+        : `quota_api_${normalized}`;
 }
 
-function providerStatusSegment(provider: ProviderStatus, previous: ProviderStatus | undefined, reportExpired: boolean, generatedAt: Date, now: Date, timezone: string): string {
-    const name = providerName(provider.provider);
-    const observation = provider.quotaAfter;
-    const sourceFailed = provider.errors.some(error => error.section === 'quota_after');
-    if(provider.freshness.stale || reportExpired || observation === undefined || observation.available === false || sourceFailed) {
-        const when = observation?.collectedAt ?? provider.lastAttempt;
-        const reason = provider.errors.filter(error => error.section === 'quota_after').map(error => error.code).join(', ') || provider.status;
-        return `${name} unavailable (${provider.freshness.stale || reportExpired ? 'stale; ' : ''}${reason}; ${formatStamp(when, now, timezone)})`;
-    }
-    const items = [
-        ...observation.quotas.map(quota => providerQuotaSegment(quota, observation.collectedAt, previous, now, timezone)),
-        ...observation.balances.map(balance => providerBalanceSegment(balance)),
-        ...observation.spendControls.filter(control => control.reached).map(control => `spend control reached (${control.scopeId})`),
-    ];
+function quotaLookupData(provider: ProviderStatus, reportExpired: boolean, reportExpiresAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
+    const quotaErrors = provider.errors.filter(error => error.section === 'quota_after');
     const elapsed = Math.max(0, (now.getTime() - generatedAt.getTime()) / 1000);
-    const cache = provider.freshness.cached ? `; cached ${Math.round(provider.freshness.ageSeconds + elapsed)}s old` : '';
-    const partial = provider.status === 'ok' ? '' : `; ${provider.status}`;
-    return `${name} ${items.length === 0 ? 'no quota or balance reported' : items.join(', ')} (source ${formatStamp(observation.collectedAt, now, timezone)}${cache}${partial})`;
+    const base = {
+        last_attempt_at: iso(provider.lastAttempt),
+        ...(provider.freshness.cached ? { cached: true, age_seconds: Math.round(provider.freshness.ageSeconds + elapsed) } : {}),
+        ...(!reportExpired || reportExpiresAt === undefined ? {} : { report_expired_at: iso(reportExpiresAt) }),
+    };
+    if(quotaErrors.length === 1) {
+        const failure = quotaErrors[0]!;
+        return {
+            status: 'unknown', error: quotaApiError(failure.code), ...base,
+            ...(failure.retryAt === undefined ? {} : { retry_at: iso(failure.retryAt) }),
+        };
+    }
+    if(quotaErrors.length > 1) {
+        return { status: 'unknown', error: 'quota_api_multiple_errors', ...base, errors: quotaErrors.map(entry => quotaApiError(entry.code)) };
+    }
+    if(provider.freshness.stale || reportExpired) {
+        return { status: 'unknown', error: 'quota_data_stale', ...base };
+    }
+    if(provider.quotaAfter === undefined) {
+        return { status: 'unknown', error: 'quota_api_no_observation', ...base };
+    }
+    if(provider.quotaAfter.available === false) {
+        return { status: 'unknown', error: 'quota_api_no_reading', ...base };
+    }
+    return { status: 'ok', ...base };
+}
+
+function providerData(provider: ProviderStatus, previous: ProviderStatus | undefined, reportExpired: boolean, reportExpiresAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
+    const quotaLookup = quotaLookupData(provider, reportExpired, reportExpiresAt, generatedAt, now);
+    const lookupUnknown = quotaLookup.status === 'unknown';
+    const reportErrors = provider.errors.filter(error => error.section !== 'quota_after');
+    const base = {
+        quota_lookup: quotaLookup,
+        ...(provider.status === 'ok' ? {} : { report_status: provider.status }),
+        ...(reportErrors.length === 0 ? {} : { errors: reportErrors }),
+    };
+    if(lookupUnknown || provider.quotaAfter === undefined) {
+        return base;
+    }
+    const observation = provider.quotaAfter;
+    const excludedScopeIds = new Set(provider.provider === 'codex' ? ['codex_bengalfox'] : []);
+    const quotas = observation.quotas.filter((quota) => {
+        if(isSparkQuota(provider.provider, quota)) {
+            excludedScopeIds.add(quota.id);
+            return false;
+        }
+        return true;
+    });
+    const balances = observation.balances.filter(balance => balance.scopeId === undefined || !excludedScopeIds.has(balance.scopeId));
+    const spendControls = observation.spendControls.filter(control => !excludedScopeIds.has(control.scopeId));
+    return {
+        ...base,
+        observed_at: iso(observation.collectedAt),
+        ...(quotas.length === 0 ? {} : { quotas: quotas.map(quota => providerQuotaData(quota, quotas, observation.collectedAt, previous, now)) }),
+        ...(balances.length === 0 ? {} : { balances: balances.map(balance => providerBalanceData(balance)) }),
+        ...(spendControls.some(control => control.reached)
+            ? { spend_controls: spendControls.filter(control => control.reached).map(control => ({ scope_id: control.scopeId, reached: true })) }
+            : {}),
+    };
 }
 
 function providerUnavailable(provider: ProviderStatus, reportExpired: boolean): boolean {
@@ -264,29 +368,62 @@ function providerUnavailable(provider: ProviderStatus, reportExpired: boolean): 
       || provider.quotaAfter.available === false || provider.errors.some(error => error.section === 'quota_after');
 }
 
-function providerLine(snapshot: ProviderSnapshot, now: Date, timezone: string, sharedNote: boolean): string {
-    const note = sharedNote ? ' · shared subscriptions; provider balances are separate' : '';
+function windowData(id: string, window: QuotaWindow, now: Date): Record<string, unknown> {
+    const identity = { id, window: id === 'five_hour' ? '5h' : '1w' };
+    return window.resetsAt !== undefined && window.resetsAt <= now
+        ? { ...identity, status: 'expired' }
+        : {
+            ...identity,
+            used_percent:      window.utilization,
+            remaining_percent: roundedComplement(window.utilization),
+            ...(window.resetsAt === undefined ? {} : { resets_at: iso(window.resetsAt) }),
+        };
+}
+
+function directFallbackData(windows: QuotaWindows, collectedAt: Date, now: Date): Record<string, unknown> {
+    const quotas = [
+        ...windows.fiveHour === undefined ? [] : [windowData('five_hour', windows.fiveHour, now)],
+        ...windows.sevenDay === undefined ? [] : [windowData('seven_day', windows.sevenDay, now)],
+    ];
+    if(quotas.length === 0) {
+        return { quota_lookup: { status: 'unknown', error: 'quota_api_no_reading', last_attempt_at: iso(collectedAt), source: 'direct_anthropic' } };
+    }
+    return {
+        quota_lookup: { status: 'ok', last_attempt_at: iso(collectedAt), source: 'direct_anthropic' },
+        observed_at:  iso(collectedAt),
+        quotas,
+    };
+}
+
+function quotaBlock(data: Record<string, unknown>): string {
+    return `${QUOTA_LINE_PREFIX}\n\`\`\`json\n${JSON.stringify(data, undefined, 2)}\n\`\`\``;
+}
+
+function providerLine(snapshot: ProviderSnapshot, now: Date, _timezone: string, sharedNote: boolean): string {
     const reportExpired = snapshot.expiresAt !== undefined && snapshot.expiresAt <= now;
     const fallback = snapshot.anthropicFallback === undefined || snapshot.anthropicFallback.expiresAt <= now
         ? undefined
-        : observedFallbackSegment(snapshot.anthropicFallback.windows, snapshot.anthropicFallback.collectedAt, now, timezone);
-    const segments = snapshot.providers.map(provider => (provider.provider === 'anthropic' && providerUnavailable(provider, reportExpired) && fallback !== undefined
+        : directFallbackData(snapshot.anthropicFallback.windows, snapshot.anthropicFallback.collectedAt, now);
+    const entries = snapshot.providers.map(provider => [provider.provider, provider.provider === 'anthropic' && providerUnavailable(provider, reportExpired) && fallback !== undefined
         ? fallback
-        : providerStatusSegment(
+        : providerData(
             provider,
             snapshot.previous?.providers.find(previous => previous.provider === provider.provider),
             reportExpired,
+            snapshot.expiresAt,
             snapshot.generatedAt,
-            now,
-            timezone
-        )));
+            now
+        )] as const);
     if(!snapshot.providers.some(provider => provider.provider === 'anthropic') && fallback !== undefined) {
-        segments.unshift(fallback);
+        entries.unshift(['anthropic', fallback]);
     }
-    if(segments.length === 0) {
-        segments.push(`Anthropic fallback unavailable (last attempt ${formatStamp(snapshot.generatedAt, now, timezone)})`);
+    if(entries.length === 0) {
+        entries.push(['anthropic', { quota_lookup: { status: 'unknown', error: 'quota_api_no_reading', last_attempt_at: iso(snapshot.generatedAt) } }]);
     }
-    return `${QUOTA_LINE_PREFIX}${segments.join(' · ')}${note}`;
+    return quotaBlock({
+        ...Object.fromEntries(entries),
+        ...(sharedNote ? { note: 'Subscription quotas are shared; provider balances are separate.' } : {}),
+    });
 }
 
 /** The two unified windows either session paces itself against; per-model windows are not rendered. */
@@ -336,41 +473,32 @@ function freshestDatedWindow(name: UnifiedWindowName, self: LedgerQuota | undefi
     return theirs.at.getTime() > mine.at.getTime() ? theirs : mine;
 }
 
-function fallbackWindow(label: string, window: QuotaWindow, source: string, now: Date, timezone: string): string {
-    return window.resetsAt !== undefined && window.resetsAt <= now
-        ? `${label} expired (${source})`
-        : `${label} ${renderWindow(window, now, timezone)} (${source})`;
-}
-
-function observedFallbackSegment(windows: QuotaWindows, collectedAt: Date, now: Date, timezone: string): string | undefined {
-    const source = `source ${formatStamp(collectedAt, now, timezone)}`;
-    const segments = [
-        ...windows.fiveHour === undefined ? [] : [fallbackWindow('5-hour', windows.fiveHour, source, now, timezone)],
-        ...windows.sevenDay === undefined ? [] : [fallbackWindow('week', windows.sevenDay, source, now, timezone)],
-    ];
-    return segments.length === 0 ? undefined : `Anthropic fallback (direct) ${segments.join(', ')}`;
-}
-
-function ledgerFallbackSegment(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, timezone: string): string | undefined {
+function ledgerFallbackData(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date): Record<string, unknown> | undefined {
     const fiveHour = freshestDatedWindow('fiveHour', self, other);
     const sevenDay = freshestDatedWindow('sevenDay', self, other);
-    const segments = [
-        ...fiveHour === undefined ? [] : [fallbackWindow('5-hour', fiveHour.window, 'source age unknown', now, timezone)],
-        ...sevenDay === undefined ? [] : [fallbackWindow('week', sevenDay.window, 'source age unknown', now, timezone)],
+    const quotas = [
+        ...fiveHour === undefined ? [] : [windowData('five_hour', fiveHour.window, now)],
+        ...sevenDay === undefined ? [] : [windowData('seven_day', sevenDay.window, now)],
     ];
-    if(segments.length === 0) {
+    if(quotas.length === 0) {
         return undefined;
     }
-    return `Anthropic fallback (SDK) ${segments.join(', ')}`;
+    return {
+        quota_lookup: { status: 'unknown', error: 'quota_api_not_checked', source: 'sdk_rate_limit_event' },
+        source_age:   'unknown',
+        quotas,
+    };
 }
 
-function quotaLine(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, timezone: string, sharedNote: boolean): string | undefined {
-    const fallback = ledgerFallbackSegment(self, other, now, timezone);
+function quotaLine(self: LedgerQuota | undefined, other: LedgerQuota | undefined, now: Date, _timezone: string, sharedNote: boolean): string | undefined {
+    const fallback = ledgerFallbackData(self, other, now);
     if(fallback === undefined) {
         return undefined;
     }
-    const note = sharedNote ? ' · shared with Craig\'s own sessions' : '';
-    return `${QUOTA_LINE_PREFIX}${fallback}${note}`;
+    return quotaBlock({
+        anthropic: fallback,
+        ...(sharedNote ? { note: 'Anthropic quota is shared with Craig\'s own sessions.' } : {}),
+    });
 }
 
 /**

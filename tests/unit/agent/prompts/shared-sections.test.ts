@@ -59,6 +59,12 @@ describe.concurrent('shared-sections', () => {
             expect(MANAGING_QUOTA_SECTION).toContain('Codex is a separate shared subscription');
             expect(MANAGING_QUOTA_SECTION).toContain('DeepSeek is pay-as-you-go');
             expect(MANAGING_QUOTA_SECTION).toContain('Never sum quota buckets');
+            expect(MANAGING_QUOTA_SECTION).toContain('`quota_lookup.status` says whether the quota reading is known');
+            expect(MANAGING_QUOTA_SECTION).toContain('does not establish whether inference is available or quota is exhausted');
+        });
+
+        test('does not advertise the retired Codex Spark route', () => {
+            expect(MANAGING_QUOTA_SECTION.toLowerCase()).not.toContain('spark');
         });
 
         test('is non-empty and passes prompt hygiene on its own', () => {

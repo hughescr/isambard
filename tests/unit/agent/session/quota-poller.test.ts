@@ -130,6 +130,18 @@ describe('provider report parsing', () => {
         expect(snapshot?.providers[0]?.quotaAfter?.quotas[1]?.scope).toBeUndefined();
     });
 
+    it('preserves an optional quota API retry timestamp after a rate-limited lookup', () => {
+        const retryAt = '2026-09-11T20:05:00Z';
+        const snapshot = parseProviderSnapshot(providerReport({
+            status: 'partial',
+            errors: [{ section: 'quota_after', code: 'rate_limited', retry_at: retryAt }],
+        }));
+
+        expect(snapshot?.providers[0]?.errors).toEqual([
+            { section: 'quota_after', code: 'rate_limited', retryAt: new Date(retryAt) },
+        ]);
+    });
+
     it('accepts inclusive percentage boundaries and drops out-of-range or wrongly-unitized quotas', () => {
         const snapshot = parseProviderSnapshot(providerReport({ quota_after: {
             source:       'anthropic', collected_at: GENERATED,
@@ -491,8 +503,10 @@ describe('provider polling', () => {
         const line = composeAmbientLines({
             self: ledger.get(), now: new Date(clock.now()), timezone: 'UTC', providerSnapshot: poller.getSnapshot?.(),
         })[0] ?? '';
-        expect(line).toContain('Anthropic fallback (direct) 5-hour 42% used (source 20:01)');
-        expect(line).not.toContain('week');
+        expect(line).toContain('"source": "direct_anthropic"');
+        expect(line).toContain('"observed_at": "2026-09-11T20:01:01.000Z"');
+        expect(line).toContain('"window": "5h"');
+        expect(line).not.toContain('"window": "1w"');
     });
 
     it('expires reset-less direct headroom and renews it after an identical successful observation', async () => {
@@ -506,13 +520,13 @@ describe('provider polling', () => {
 
         const expired = poller.getSnapshot?.();
         expect(composeAmbientLines({ self: initialLedger('conversation'), now: new Date(clock.now()), timezone: 'UTC', providerSnapshot: expired })[0])
-            .toContain('Anthropic fallback unavailable');
+            .toContain('"status": "unknown"');
 
         poller.start();
         await poller.poll();
         const refreshed = poller.getSnapshot?.();
         expect(composeAmbientLines({ self: initialLedger('conversation'), now: new Date(clock.now()), timezone: 'UTC', providerSnapshot: refreshed })[0])
-            .toContain('Anthropic fallback (direct) 5-hour 42% used');
+            .toContain('"source": "direct_anthropic"');
         expect(refreshed?.anthropicFallback?.expiresAt.getTime()).toBe(clock.now() + 120_000);
     });
 

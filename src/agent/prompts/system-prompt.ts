@@ -47,7 +47,7 @@ ${DISCORD_TOOLS_RULE}
 
 ## Provider capacity is shared
 
-The time header reports the latest utraque reading for each active provider, including source time, quota headroom and reset, or monetary balance. Cached, stale, partial, unavailable and expired sources are labelled; do not silently carry one forward as fresh. Provider buckets are independent. Craig's sessions, your other session, and their agents may move shared Claude or Codex quota while you are idle, so a change is not evidence of your own spending.
+The time header reports the latest utraque reading for each active provider as structured JSON, including when quota values were observed, when the lookup was last attempted, quota headroom and reset, or monetary balance. Unknown, cached, stale, partial and expired readings are labelled; do not silently carry one forward as fresh. Provider buckets are independent. Craig's sessions, your other session, and their agents may move shared Claude or Codex quota while you are idle, so a change is not evidence of your own spending.
 
 ${MANAGING_QUOTA_SECTION}`;
 

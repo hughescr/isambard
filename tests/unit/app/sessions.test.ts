@@ -1856,10 +1856,12 @@ describe('createSessionAmbience', () => {
         const first = h.ambience.timeHeaderFor('conversation')();
         const second = h.ambience.timeHeaderFor('conversation')();
 
-        expect(first).toContain('- Quota: Anthropic fallback (direct) 5-hour 42% used');
-        expect(first).toContain('shared subscriptions; provider balances are separate');
-        expect(second).toContain('- Quota: Anthropic fallback (direct) 5-hour 42% used');
-        expect(second).not.toContain('shared subscriptions; provider balances are separate');
+        expect(first).toContain('- Quota: \n```json');
+        expect(first).toContain('"source": "direct_anthropic"');
+        expect(first).toContain('Subscription quotas are shared; provider balances are separate.');
+        expect(second).toContain('- Quota: \n```json');
+        expect(second).toContain('"source": "direct_anthropic"');
+        expect(second).not.toContain('Subscription quotas are shared; provider balances are separate.');
     });
 
     it('does not spend the one-time note on a header rendered before any quota is known', async () => {
@@ -1867,11 +1869,11 @@ describe('createSessionAmbience', () => {
         h.ambience.quotaPoller.start();
         h.ambience.register(h.conversation);
 
-        expect(h.ambience.timeHeaderFor('conversation')()).not.toContain('shared subscriptions; provider balances are separate');
+        expect(h.ambience.timeHeaderFor('conversation')()).not.toContain('Subscription quotas are shared; provider balances are separate.');
 
         await h.ambience.quotaPoller.poll();
 
-        expect(h.ambience.timeHeaderFor('conversation')()).toContain('shared subscriptions; provider balances are separate');
+        expect(h.ambience.timeHeaderFor('conversation')()).toContain('Subscription quotas are shared; provider balances are separate.');
     });
 
     it('returns the same provider instance for a role every time, so the one-time note is per session, not per producer', () => {
