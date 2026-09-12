@@ -145,6 +145,42 @@ describe('provider report parsing', () => {
         });
     });
 
+    it('accepts zero-valued history usage and cost while preserving exact block model identities', () => {
+        const history = historyReport();
+        Object.assign(history.seven_days.models[0], {
+            input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: 0, cost_usd: 0,
+        });
+        Object.assign(history.blocks[0], {
+            input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: 0, cost_usd: 0,
+        });
+
+        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toEqual({
+            source:       'ccusage',
+            coverage:     'local_only',
+            costBasis:    'calculated_api_reference_usd',
+            startedAt:    new Date('2026-09-11T20:00:00Z'),
+            finishedAt:   new Date(GENERATED),
+            recentSince:  new Date('2026-09-05T00:00:00Z'),
+            recentUntil:  new Date('2026-09-11T00:00:00Z'),
+            recentDays:   7,
+            recentTokens: { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 },
+            recentModels: [{
+                model: 'claude-sonnet-5', tokens: { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 }, costUsd: 0,
+            }],
+            blocks: [{
+                startTime:      new Date('2026-09-11T17:00:00Z'),
+                endTime:        new Date(RESET),
+                active:         true,
+                gap:            false,
+                mixedProvider:  false,
+                modelNames:     ['claude-sonnet-5'],
+                modelProviders: ['anthropic'],
+                tokens:         { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 },
+                costUsd:        0,
+            }],
+        });
+    });
+
     it('drops malformed history and reference prices without rejecting live quota', () => {
         const snapshot = parseProviderSnapshot(providerReport({
             history:          { ...historyReport(), seven_days: { ...historyReport().seven_days, until: '2026-09-10T00:00:00Z' } },
@@ -186,6 +222,67 @@ describe('provider report parsing', () => {
         expect(snapshot?.providers[0]?.history?.recentModels.map(model => model.model)).toEqual(['gpt-5.6-luna']);
     });
 
+    it('retains a Spark-named history sample when it belongs to another provider', () => {
+        const history = historyReport();
+        history.seven_days.models[0].model = 'GPT-5.3-Codex-Spark';
+
+        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history?.recentModels.map(model => model.model))
+            .toEqual(['GPT-5.3-Codex-Spark']);
+    });
+
+    it('requires a cost status and rejects negative available costs', () => {
+        const missingStatus = historyReport();
+        delete (missingStatus.seven_days.models[0] as { cost_status?: string }).cost_status;
+        const negativeCost = historyReport();
+        negativeCost.seven_days.models[0].cost_usd = -0.001;
+
+        expect(parseProviderSnapshot(providerReport({ history: missingStatus }))?.providers[0]?.history).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ history: negativeCost }))?.providers[0]?.history).toBeUndefined();
+    });
+
+    it('accepts an unavailable cost status without inventing a cost sample', () => {
+        const history = historyReport();
+        const model: Record<string, unknown> = { ...history.seven_days.models[0], cost_status: 'unavailable' };
+        delete model.cost_usd;
+        history.seven_days.models = [model as typeof history.seven_days.models[number]];
+
+        const parsed = parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history?.recentModels[0];
+        expect(parsed).toEqual({
+            model:   'claude-sonnet-5',
+            tokens:  { inputTokens: 100, outputTokens: 200, cacheCreationTokens: 300, cacheReadTokens: 400, totalTokens: 1000 },
+            costUsd: undefined,
+        });
+        expect(Object.hasOwn(parsed!, 'costUsd')).toBe(true);
+    });
+
+    it('requires each history sample to name the report provider', () => {
+        const history = historyReport();
+        history.seven_days.models[0].provider = 'codex';
+
+        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
+    });
+
+    it.each([
+        ['an empty block', '2026-09-11T17:00:00Z', '2026-09-11T17:00:00Z'],
+        ['a reversed block', RESET, '2026-09-11T17:00:00Z'],
+    ])('rejects %s time interval', (_description, startTime, endTime) => {
+        const history = historyReport();
+        history.blocks[0].start_time = startTime;
+        history.blocks[0].end_time = endTime;
+
+        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
+    });
+
+    it('rejects reversed collection times and histories completed after report generation', () => {
+        const reversed = historyReport();
+        reversed.started_at = '2026-09-11T20:00:02Z';
+        const future = historyReport();
+        future.finished_at = '2026-09-11T20:00:02Z';
+
+        expect(parseProviderSnapshot(providerReport({ history: reversed }))?.providers[0]?.history).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ history: future }))?.providers[0]?.history).toBeUndefined();
+    });
+
     it('parses stale price provenance and rejects malformed optional price fields', () => {
         const stale = parseProviderSnapshot(providerReport({
             reference_prices: { ...referencePrices(), stale: true },
@@ -196,6 +293,38 @@ describe('provider report parsing', () => {
 
         expect(stale?.providers[0]?.prices?.stale).toBe(true);
         expect(malformed?.providers[0]?.prices).toBeUndefined();
+    });
+
+    it('accepts omitted cache prices without manufacturing values', () => {
+        const prices = referencePrices();
+        delete (prices.models[0] as { cache_read?: number }).cache_read;
+        delete (prices.models[0] as { cache_write?: number }).cache_write;
+
+        const parsed = parseProviderSnapshot(providerReport({ reference_prices: prices }))?.providers[0]?.prices?.models[0];
+        expect(parsed).toEqual({
+            model: 'claude-haiku-4-5-20251001', input: 1, output: 5, cacheRead: undefined, cacheWrite: undefined, eligible: true,
+        });
+        expect(Object.hasOwn(parsed!, 'cacheRead')).toBe(true);
+        expect(Object.hasOwn(parsed!, 'cacheWrite')).toBe(true);
+    });
+
+    it.each([
+        ['output', { output: 0 }],
+        ['cache-read', { cache_read: 0 }],
+        ['cache-write', { cache_write: 0 }],
+    ])('rejects a non-positive %s reference price', (_category, overrides) => {
+        const prices = referencePrices();
+        prices.models = [{ ...prices.models[0], ...overrides }];
+
+        expect(parseProviderSnapshot(providerReport({ reference_prices: prices }))?.providers[0]?.prices).toBeUndefined();
+    });
+
+    it('rejects future observations and a missing reference-price sample list', () => {
+        const future = { ...referencePrices(), observed_at: '2026-09-11T20:00:02Z' };
+        const missingModels = { ...referencePrices(), models: undefined };
+
+        expect(parseProviderSnapshot(providerReport({ reference_prices: future }))?.providers[0]?.prices).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ reference_prices: missingModels }))?.providers[0]?.prices).toBeUndefined();
     });
 
     it('rejects unknown schemas and refuses a future, negative-age, or wrong-provider source as fresh quota', () => {
