@@ -51,6 +51,7 @@ export type TimeHeaderProvider = (userTimezone?: string) => string;
 
 /** Every rendered quota line starts with this; the composition root keys its once-note off it. */
 export const QUOTA_LINE_PREFIX = 'Quota: ';
+const QUOTA_GROUP_WINDOWS: Readonly<Record<string, string>> = { session: '5h', weekly: '1w' };
 
 /** Parameters for {@link composeAmbientLines}. */
 export interface ComposeAmbientLinesParams {
@@ -186,7 +187,8 @@ function roundedComplement(percent: number): number {
 }
 
 function roundedEstimate(value: number): number | undefined {
-    return Number.isFinite(value) && value >= 0 ? Number(value.toPrecision(2)) : undefined;
+    const rounded = Number(value.toPrecision(2));
+    return Number.isFinite(rounded) ? rounded : undefined;
 }
 
 function tokenMixData(tokens: ProviderTokenMix): Record<string, number> {
@@ -209,7 +211,7 @@ function excludedEstimateModel(provider: string, model: string): boolean {
 }
 
 function blendedPrice(provider: string, price: ProviderReferencePrice, tokens: ProviderTokenMix): number | undefined {
-    if(tokens.totalTokens <= 0 || (tokens.cacheReadTokens > 0 && price.cacheRead === undefined)
+    if((tokens.cacheReadTokens > 0 && price.cacheRead === undefined)
       || (provider === 'anthropic' && tokens.cacheCreationTokens > 0 && price.cacheWrite === undefined)) {
         return undefined;
     }
@@ -259,7 +261,7 @@ function referenceCost(models: readonly ProviderHistory['recentModels'][number][
         }
         cost += model.costUsd;
     }
-    return Number.isFinite(cost) && cost > 0 ? cost : undefined;
+    return cost > 0 ? cost : undefined;
 }
 
 function combinedTokens(models: readonly ProviderHistory['recentModels'][number][]): ProviderTokenMix | undefined {
@@ -271,7 +273,7 @@ function combinedTokens(models: readonly ProviderHistory['recentModels'][number]
         total.cacheReadTokens += model.tokens.cacheReadTokens;
         total.totalTokens += model.tokens.totalTokens;
     }
-    return Number.isSafeInteger(total.totalTokens) && total.totalTokens > 0 ? total : undefined;
+    return total.totalTokens > 0 ? total : undefined;
 }
 
 interface EstimateSample {
@@ -304,11 +306,9 @@ function fiveHourEstimateSample(
 }
 
 function weeklyEstimateSample(history: ProviderHistory, modelScope: ProviderScopeLabel | undefined): EstimateSample | undefined {
-    const models = modelScope === undefined
-        ? history.recentModels
-        : history.recentModels.filter(model => matchesModelScope(model.model, modelScope));
+    const models = history.recentModels.filter(model => matchesModelScope(model.model, modelScope));
     const cost = referenceCost(models);
-    const tokens = modelScope === undefined ? history.recentTokens : combinedTokens(models);
+    const tokens = combinedTokens(models);
     return cost === undefined || tokens === undefined
         ? undefined
         : {
@@ -324,7 +324,7 @@ function estimateSample(
     history: ProviderHistory,
     modelScope: ProviderScopeLabel | undefined
 ): EstimateSample | undefined {
-    if(window === '1w' && history.recentDays === 7) {
+    if(window === '1w') {
         return weeklyEstimateSample(history, modelScope);
     }
     return window === '5h' && resetsAt !== undefined
@@ -341,11 +341,11 @@ function quotaEstimateData(
     prices: ProviderReferencePrices | undefined,
     modelScope?: ProviderScopeLabel
 ): Record<string, unknown> | undefined {
-    if(history === undefined || prices === undefined || usedPercent < 1 || usedPercent > 100) {
+    if(history === undefined || prices === undefined || usedPercent < 1) {
         return undefined;
     }
     const sample = estimateSample(provider, window, resetsAt, history, modelScope);
-    if(sample === undefined || sample.tokens.totalTokens <= 0) {
+    if(sample === undefined) {
         return undefined;
     }
     const cheapest = cheapestPrice(provider, prices, sample.tokens, modelScope);
@@ -396,16 +396,20 @@ function deepSeekRemainingData(
     quotaFresh: boolean
 ): readonly Record<string, unknown>[] {
     const prices = provider.prices;
-    const observation = provider.quotaAfter;
+    // providerData passes true only after quotaLookupData verified this observation.
+    const observation = provider.quotaAfter!;
     if(provider.provider !== 'deepseek' || history === undefined || prices === undefined || !quotaFresh
-      || observation === undefined || observation.available === false || provider.errors.some(error => error.section === 'balances')
+      || provider.errors.some(error => error.section === 'balances')
       || observation.spendControls.some(control => control.reached)) {
         return [];
     }
     const balance = observation.balances.find(candidate => candidate.currency === 'USD'
       && candidate.scopeId === undefined && candidate.available !== false && candidate.unlimited !== true && candidate.total !== undefined);
-    const balanceValue = balance?.total === undefined ? undefined : Number(balance.total);
-    if(balance === undefined || balanceValue === undefined || !Number.isFinite(balanceValue) || balanceValue < 0) {
+    if(balance?.total === undefined) {
+        return [];
+    }
+    const balanceValue = Number(balance.total);
+    if(!Number.isFinite(balanceValue) || balanceValue < 0) {
         return [];
     }
     return prices.models.flatMap((price) => {
@@ -430,12 +434,12 @@ function deepSeekRemainingData(
 function providerEstimatesData(
     provider: ProviderStatus,
     history: ProviderHistory | undefined,
-    quotaFresh = false
+    quotaFresh: boolean
 ): Record<string, unknown> | undefined {
     const historyData = historyEstimateData(history);
     const priceData = referencePriceData(provider.prices);
     const remaining = deepSeekRemainingData(provider, history, quotaFresh);
-    return historyData === undefined && priceData === undefined && remaining.length === 0
+    return historyData === undefined && priceData === undefined
         ? undefined
         : {
             history:            historyData,
@@ -541,9 +545,7 @@ function providerQuotaData(
         return { ...identity, status: 'expired' };
     }
     const pace = burnPace(quota, collectedAt, previous);
-    const groupMatchesWindow = quota.group === undefined
-      || (window === '5h' && quota.group === 'session')
-      || (window === '1w' && quota.group === 'weekly');
+    const groupMatchesWindow = quota.group === undefined || QUOTA_GROUP_WINDOWS[quota.group] === window;
     const estimate = quota.scope?.surface === undefined && groupMatchesWindow
         ? quotaEstimateData(provider, window, quota.usedPercent, quota.resetsAt, history, prices, quota.scope?.model)
         : undefined;
@@ -725,10 +727,16 @@ function sdkProviderLine(
     const data: Record<string, unknown> = Object.fromEntries(entries);
     const anthropic = snapshot.providers.find(provider => provider.provider === 'anthropic');
     const history = usableHistory(anthropic);
-    const ledger = sdkLedgerFallbackData(selfQuota, otherQuota, now, history, anthropic?.prices);
+    const ledger = sdkLedgerFallbackData(
+        selfQuota,
+        otherQuota,
+        now,
+        reportExpiredAt === undefined ? history : undefined,
+        reportExpiredAt === undefined ? anthropic?.prices : undefined
+    );
     data.anthropic = {
         ...(ledger ?? { quota_values: { status: 'unknown', reason: 'no_sdk_quota_reading' } }),
-        estimates: anthropic === undefined ? undefined : providerEstimatesData(anthropic, history),
+        estimates: anthropic === undefined ? undefined : providerEstimatesData(anthropic, history, false),
     };
     data.note = sharedNote ? 'Subscription quotas are shared; provider balances are separate.' : undefined;
     return quotaBlock(data);
