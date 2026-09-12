@@ -115,6 +115,15 @@ function bareNotificationTurnId(at: Date): string {
 }
 
 /**
+ * True only for an assistant frame emitted by the root session. The SDK sets
+ * `parent_tool_use_id` to the launching tool id on every subagent assistant frame; those frames
+ * remain observable but cannot start or adopt the root session's turn.
+ */
+function isRootAssistantFrame(frame: SDKMessage): boolean {
+    return frame.type === 'assistant' && frame.parent_tool_use_id === null;
+}
+
+/**
  * One adoption waiting to be attached to the next spontaneous assistant frame: a background-work
  * wake (R2) or a peer message (session-peers block 2).
  *
@@ -1071,7 +1080,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             warnPendingAdoptionExpired(entry);
             return false;
         });
-        if(currentTurn === null && frame.type === 'assistant') {
+        if(currentTurn === null && isRootAssistantFrame(frame)) {
             if(awaitingTurnEnd) {
                 // The conductor must NOT claim `currentTurn` here — a `/compact` turn may be
                 // moments from taking it (see afterResult). The LEDGER has no such constraint,

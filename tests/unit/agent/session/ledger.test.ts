@@ -206,6 +206,29 @@ describe('reduceLedger: sdk_frame assistant + latency', () => {
         expect(ledger.latency.bySource).toEqual({});
     });
 
+    it('opens an idle root assistant turn but ignores an idle child assistant frame', () => {
+        const initial = initialLedger('conversation');
+        const child = reduceLedger(initial, frozenEvent({
+            type: 'sdk_frame', frame: frames.assistantText('child progress', { parent_tool_use_id: 'toolu-parent' }), at: T1,
+        }));
+        const root = reduceLedger(initial, frozenEvent({
+            type: 'sdk_frame', frame: frames.assistantText('root reply', { parent_tool_use_id: null }), at: T2,
+        }));
+
+        expect(child).toBe(initial);
+        expect(child.turn).toBeNull();
+        expect(root.turn).toMatchObject({ kind: 'notification', startedAt: T2, phase: { type: 'responding', startedAt: T2 } });
+    });
+
+    it('keeps child assistant progress on an already-open root turn', () => {
+        const child = reduceLedger(submitted(), frozenEvent({
+            type: 'sdk_frame', frame: frames.assistantText('child progress', { parent_tool_use_id: 'toolu-parent' }), at: T3,
+        }));
+
+        expect(child.turn).toMatchObject({ kind: 'discord', firstTokenAt: T3, phase: { type: 'responding', startedAt: T3 } });
+        expect(child.latency.bySource.discord).toBe(T3.getTime() - T1.getTime());
+    });
+
     it('stamps a spontaneously-opened notification turn with a non-empty id', () => {
         const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('unsolicited'), at: T1 }));
 

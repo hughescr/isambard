@@ -303,10 +303,13 @@ function stopForegroundTasks(ledger: Ledger, at: Date): Ledger {
 }
 
 /**
- * An assistant frame with no turn open spontaneously opens a `'notification'` turn. With a turn
- * open, the first assistant frame stamps `firstTokenAt` and, when the turn carries a `queuedAt`,
- * the queue-to-first-token latency for its `kind`. Every assistant frame also updates
- * `turn.phase` via {@link phaseFromFrame}.
+ * A ROOT assistant frame with no turn open spontaneously opens a `'notification'` turn. A child
+ * assistant frame (`parent_tool_use_id` non-null) cannot open the root ledger's turn: subagents
+ * can emit their final assistant frame while the session is idle immediately before the native
+ * task-notification wake starts its root turn. With a turn open, child and root assistant frames
+ * both continue to update the turn: the first stamps `firstTokenAt` and, when the turn carries a
+ * `queuedAt`, the queue-to-first-token latency for its `kind`; every frame updates `turn.phase`
+ * via {@link phaseFromFrame}.
  *
  * The null-turn branch is now a defensive backstop rather than a routine path: `conductor.ts`
  * dispatches `spontaneous_turn_opened` before an assistant frame reaches this reducer for BOTH
@@ -318,6 +321,9 @@ function stopForegroundTasks(ledger: Ledger, at: Date): Ledger {
  */
 function reduceAssistantFrame(ledger: Ledger, frame: AssistantFrame, at: Date): Ledger {
     if(ledger.turn === null) {
+        if(frame.parent_tool_use_id !== null) {
+            return ledger;
+        }
         const phase = phaseFromFrame(frame, null, at);
         return { ...ledger, turn: { id: `notification-${at.getTime()}`, kind: 'notification', startedAt: at, phase, interrupting: false } };
     }

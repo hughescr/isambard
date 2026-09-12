@@ -5,7 +5,7 @@
  * the P3/P7 in-memory port doubles ({@link FakeJournal}, {@link FakeResumeStore}).
  */
 import { afterEach, describe, expect, it, jest } from 'bun:test';
-import type { SDKNotificationMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SDKNotificationMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { FakeClock } from '../../../helpers/fake-clock';
 import { FakeJournal } from '../../../helpers/fake-journal';
 import { fakeQueryFn, type FakeQuery, type FakeQueryFnOptions } from '../../../helpers/fake-query';
@@ -2020,6 +2020,26 @@ describe('createConductor', () => {
             expect(received).toEqual(['none']);
         });
 
+        it('keeps a child assistant frame observable on an already-open root turn', async () => {
+            const h = build();
+            await openWith(h);
+            const received: string[] = [];
+            h.conductor.subscribeTurn(turnId => received.push(turnId));
+            const result = h.conductor.submit(discordEnvelope({ id: 'env-root' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.instances[0].emit(frames.assistantText('child progress', { parent_tool_use_id: 'toolu-parent' }));
+            await flush();
+
+            expect(received).toEqual(['env-root']);
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'discord', envelopeId: 'env-root' });
+            expect(h.ledgerStore.get().turn).toMatchObject({ id: 'env-root', kind: 'discord', phase: { type: 'responding' } });
+
+            h.instances[0].emit(frames.resultSuccess());
+            await result;
+            await flush();
+        });
+
         it('a bare spontaneous turn reports the ledger turn\'s own minted id, never the literal kind', async () => {
             const h = build();
             await openWith(h);
@@ -2105,6 +2125,26 @@ describe('createConductor', () => {
             await priorResult;
         });
 
+        it('a child assistant frame inside the awaitingTurnEnd window opens neither conductor nor ledger turn', async () => {
+            const h = build();
+            await openWith(h);
+            const deferredUsage = h.instances[0].deferContextUsage();
+            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            h.instances[0].emit(frames.assistantText('child result racing the compaction decision', { parent_tool_use_id: 'toolu-parent' }));
+            await flush();
+
+            expect(h.conductor.status().turn).toBeNull();
+            expect(h.ledgerStore.get().turn).toBeNull();
+
+            deferredUsage.resolve(frames.contextUsage({ percentage: 10 }));
+            await flush();
+            await priorResult;
+        });
+
         it('the awaitingTurnEnd window: the ledger keeps the turn its own frame opened, while turnIdFor reports the newer minted id', async () => {
             const h = build();
             await openWith(h);
@@ -2157,6 +2197,69 @@ describe('createConductor', () => {
     });
 
     describe('adoptWakeTurn() (R2: background-work wake turns adopt the launching envelope)', () => {
+        it('does not let an idle child assistant frame steal the following adopted root wake turn', async () => {
+            const journal = new FakeJournal();
+            const registry = createTaskLaunchRegistry({ journal });
+            const onWakeTurnSettled = jest.fn();
+            const h = build({ journal, taskLaunches: registry, onWakeTurnSettled });
+            const observed: { turnId: string, frame: SDKMessage }[] = [];
+            h.conductor.subscribeTurn((turnId, frame) => observed.push({ turnId, frame }));
+            await openWith(h);
+
+            const launchEnvelope = discordEnvelope({ channelId: 'chan-C', authorId: 'user-U' });
+            const launchResult = h.conductor.submit(launchEnvelope, { priority: 'human', requestingChannelId: 'chan-C' });
+            await flush();
+            registry.record({
+                taskId: 'agent-X', toolUseId: 'tool-T', toolName: 'Agent', envelopeId: launchEnvelope.id, kind: 'discord', channelId: 'chan-C', authorId: 'user-U', launchedAt: new Date(h.clock.now()),
+            });
+            h.instances[0].emit(frames.resultSuccess({ result: 'LAUNCHED' }));
+            await launchResult;
+            await flush();
+
+            const childFrame = frames.assistantText('child final emitted before the wake prompt', { parent_tool_use_id: 'tool-T' });
+            h.instances[0].emit(childFrame);
+            await flush();
+
+            expect(h.conductor.status().turn).toBeNull();
+            expect(h.ledgerStore.get().turn).toBeNull();
+            expect(observed.at(-1)).toEqual({ turnId: 'none', frame: childFrame });
+            expect(journal.byKind('envelope_submitted').filter(entry => entry.kind === 'task')).toEqual([]);
+
+            h.conductor.adoptWakeTurn({ taskId: 'agent-X', toolUseId: 'tool-T', summary: 'done' });
+            const childAfterWake = frames.assistantText('another child frame after the wake hook', { parent_tool_use_id: 'tool-T' });
+            h.instances[0].emit(childAfterWake);
+            await flush();
+
+            expect(h.conductor.status().turn).toBeNull();
+            expect(h.ledgerStore.get().turn).toBeNull();
+            expect(observed.at(-1)).toEqual({ turnId: 'none', frame: childAfterWake });
+            expect(registry.lookup({ taskId: 'agent-X', toolUseId: 'tool-T' })).toBeDefined();
+            expect(journal.byKind('envelope_submitted').filter(entry => entry.kind === 'task')).toEqual([]);
+
+            h.instances[0].emit(frames.assistantText('root wake reply', { parent_tool_use_id: null }));
+            await flush();
+
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'task', channelId: 'chan-C', authorId: 'user-U' });
+            expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'task', channelId: 'chan-C' });
+            expect(registry.lookup({ taskId: 'agent-X', toolUseId: 'tool-T' })).toBeUndefined();
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'root wake reply' }));
+            await flush();
+
+            const submitted = journal.byKind('envelope_submitted').filter(entry => entry.kind === 'task');
+            expect(submitted).toEqual([
+                { type: 'envelope_submitted', at: expect.any(Date), envelopeId: expect.any(String), kind: 'task', channelId: 'chan-C' },
+            ]);
+            expect(journal.byKind('turn_completed').at(-1)).toEqual({
+                type: 'turn_completed', at: expect.any(Date), envelopeId: submitted[0]?.envelopeId, kind: 'task', responseText: 'root wake reply',
+            });
+            expect(onWakeTurnSettled).toHaveBeenCalledTimes(1);
+            expect(onWakeTurnSettled).toHaveBeenCalledWith(
+                expect.objectContaining({ id: submitted[0]?.envelopeId, kind: 'task', channelId: 'chan-C', authorId: 'user-U' }),
+                expect.objectContaining({ response: 'root wake reply', isError: false })
+            );
+        });
+
         it('unit-level end-to-end: a launch recorded from a discord turn is adopted by its wake, opening a task turn delivered back to the launching channel/author, with no SDK push', async () => {
             const journal = new FakeJournal();
             const registry = createTaskLaunchRegistry({ journal });
