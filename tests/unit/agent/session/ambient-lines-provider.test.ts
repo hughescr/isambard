@@ -358,6 +358,23 @@ describe('rough token estimates', () => {
         });
     });
 
+    it('matches a model-scoped quota by its stable model id alone', () => {
+        const sample = tokens();
+        const data = providerJson(snapshot([provider({
+            history: history('codex', {
+                recentModels: [{ model: 'gpt-5.6-sol', tokens: sample, costUsd: 0.002 }],
+            }),
+            prices:     prices('codex', [{ model: 'gpt-5.6-sol', input: 2, output: 4, cacheRead: 0.2, eligible: true }]),
+            quotaAfter: observation({ quotas: [quota({
+                id: 'sol-weekly', durationSeconds: 604_800, scope: { model: { id: 'GPT-5.6-SOL' } },
+            })] }),
+        })]));
+
+        expect(object(array(data.quotas)[0])).toMatchObject({
+            estimate_model: 'gpt-5.6-sol', estimate_tokens_remaining: 2200,
+        });
+    });
+
     it.each([
         ['surface', { group: undefined, scope: { surface: { id: 'cli' } } }],
         ['unknown group', { group: 'special' }],
@@ -425,7 +442,9 @@ describe('rough token estimates', () => {
         ['inactive', { active: false }],
         ['gap', { gap: true }],
         ['mixed provider', { mixedProvider: true }],
-        ['different reset', { endTime: new Date(ESTIMATE_RESET.getTime() + 1) }],
+        ['different reset', {
+            startTime: new Date(ESTIMATE_RESET.getTime() - 5 * 3_600_000 + 1), endTime: new Date(ESTIMATE_RESET.getTime() + 1),
+        }],
         ['four-hour duration', { startTime: new Date(ESTIMATE_RESET.getTime() - 4 * 3_600_000) }],
         ['missing provider', { modelProviders: [] }],
         ['different provider', { modelProviders: ['anthropic'] }],
@@ -521,8 +540,14 @@ describe('rough token estimates', () => {
         })]));
 
         expect(object(array(onePercent.quotas)[0]).estimate_tokens_remaining).toBe(690_000);
-        expect(object(array(overflow.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
-        expect(object(array(roundingOverflow.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
+        expect(object(array(overflow.quotas)[0])).toEqual({
+            id:                'overflow', window:            '1w', scope:             { model: { id: 'overflowing' } },
+            used_percent:      35, remaining_percent: 65, resets_at:         '2026-09-10T17:00:00.000Z',
+        });
+        expect(object(array(roundingOverflow.quotas)[0])).toEqual({
+            id:                'rounding-overflow', window:            '1w', used_percent:      50,
+            remaining_percent: 50, resets_at:         '2026-09-10T17:00:00.000Z',
+        });
     });
 
     it('uses Anthropic cache-write pricing while Codex treats cache creation as input', () => {
@@ -570,10 +595,29 @@ describe('rough token estimates', () => {
         const missingUsedRate = provider({
             ...usable,
             history: history('anthropic'),
+            prices:  prices('anthropic', [{ ...price, cacheRead: 1 }]),
         });
 
         expect(object(array(providerJson(snapshot([usable]), 'anthropic').quotas)[0]).estimate_tokens_remaining).toBe(560);
         expect(object(array(providerJson(snapshot([missingUsedRate]), 'anthropic').quotas)[0]).estimate_tokens_remaining).toBeUndefined();
+    });
+
+    it('skips an underflowed price and uses the next finite positive candidate', () => {
+        const underflowMix = tokens({ inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 2 });
+        const data = providerJson(snapshot([provider({
+            history: history('codex', {
+                recentModels: [{ model: 'observed', tokens: underflowMix, costUsd: 0.001 }],
+            }),
+            prices: prices('codex', [
+                { model: 'underflow', input: Number.MIN_VALUE, output: Number.MIN_VALUE, eligible: true },
+                { model: 'usable', input: 1, output: 1, eligible: true },
+            ]),
+            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+        })]));
+
+        expect(object(array(data.quotas)[0])).toMatchObject({
+            estimate_model: 'usable', estimate_tokens_remaining: 3700,
+        });
     });
 
     it('renders stale and empty optional reference-price provenance exactly', () => {
@@ -598,6 +642,21 @@ describe('rough token estimates', () => {
             recent_7d_tokens: { input: 700, output: 1400, cache_creation: 2100, cache_read: 2800, total: 7000 },
             recent_7d_period: { since: '2026-09-03T00:00:00.000Z', until: '2026-09-09T00:00:00.000Z' },
         });
+    });
+
+    it('keeps price provenance and live quota when local history is absent', () => {
+        const data = providerJson(snapshot([provider({
+            prices:     prices('codex'),
+            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+        })]));
+
+        expect(data.estimates).toEqual({
+            reference_prices: {
+                source:      'models.dev', observed_at: '2026-09-09T22:07:00.000Z', unit:        'usd_per_million_tokens',
+                assumptions: ['base_tier'],
+            },
+        });
+        expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
     });
 
     it('keeps live quota but suppresses estimates when the local history section failed', () => {
@@ -769,6 +828,20 @@ describe('rough token estimates', () => {
         }
     });
 
+    it('retains DeepSeek remaining estimates after an unrelated report section fails', () => {
+        const data = providerJson(snapshot([provider({
+            provider:   'deepseek', history:    history('deepseek'), prices:     prices('deepseek'),
+            errors:     [{ section: 'spend_controls', code: 'timed_out' }],
+            quotaAfter: observation({ source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '1' }] }),
+        })]), 'deepseek');
+
+        expect(object(data.estimates).remaining_by_model).toEqual([{
+            estimate_model:            'deepseek-cheap', currency:                  'USD', balance:                   '1',
+            estimate_tokens_remaining: 1_000_000, estimate_tokens_per_usd:   1_000_000,
+            basis:                     'models_dev_observed_mix',
+        }]);
+    });
+
     it('keeps Anthropic history for SDK quota estimates without exposing the skipped quota lookup', () => {
         const anthropic = provider({
             provider:   'anthropic', status:     'error', quotaAfter: undefined,
@@ -785,7 +858,7 @@ describe('rough token estimates', () => {
             },
         };
         const line = composeAmbientLines({
-            self, now: NOW, timezone: TIMEZONE, providerSnapshot: snapshot([anthropic]), anthropicQuotaSource: 'sdk',
+            self, now: NOW, timezone: TIMEZONE, providerSnapshot: snapshot([provider(), anthropic]), anthropicQuotaSource: 'sdk',
         })[0] ?? '';
         const data = object(quotaLineJson(line).anthropic);
 

@@ -251,9 +251,6 @@ function cheapestPrice(
 
 function referenceCost(models: readonly ProviderHistory['recentModels'][number][]): number | undefined {
     const usedModels = models.filter(model => model.tokens.totalTokens > 0);
-    if(usedModels.length === 0) {
-        return undefined;
-    }
     let cost = 0;
     for(const model of usedModels) {
         if(model.costUsd === undefined) {
@@ -264,7 +261,7 @@ function referenceCost(models: readonly ProviderHistory['recentModels'][number][
     return cost > 0 ? cost : undefined;
 }
 
-function combinedTokens(models: readonly ProviderHistory['recentModels'][number][]): ProviderTokenMix | undefined {
+function combinedTokens(models: readonly ProviderHistory['recentModels'][number][]): ProviderTokenMix {
     const total: ProviderTokenMix = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 };
     for(const model of models) {
         total.inputTokens += model.tokens.inputTokens;
@@ -273,7 +270,7 @@ function combinedTokens(models: readonly ProviderHistory['recentModels'][number]
         total.cacheReadTokens += model.tokens.cacheReadTokens;
         total.totalTokens += model.tokens.totalTokens;
     }
-    return total.totalTokens > 0 ? total : undefined;
+    return total;
 }
 
 interface EstimateSample {
@@ -309,7 +306,7 @@ function weeklyEstimateSample(history: ProviderHistory, modelScope: ProviderScop
     const models = history.recentModels.filter(model => matchesModelScope(model.model, modelScope));
     const cost = referenceCost(models);
     const tokens = combinedTokens(models);
-    return cost === undefined || tokens === undefined
+    return cost === undefined
         ? undefined
         : {
             basis: 'recent_7d_local_ratio', tokens, cost,
@@ -434,11 +431,10 @@ function deepSeekRemainingData(
 function providerEstimatesData(
     provider: ProviderStatus,
     history: ProviderHistory | undefined,
-    quotaFresh: boolean
+    remaining: readonly Record<string, unknown>[]
 ): Record<string, unknown> | undefined {
     const historyData = historyEstimateData(history);
     const priceData = referencePriceData(provider.prices);
-    const remaining = deepSeekRemainingData(provider, history, quotaFresh);
     return historyData === undefined && priceData === undefined
         ? undefined
         : {
@@ -446,6 +442,14 @@ function providerEstimatesData(
             reference_prices:   priceData,
             remaining_by_model: remaining.length === 0 ? undefined : remaining,
         };
+}
+
+function freshEstimateContext(
+    provider: ProviderStatus | undefined,
+    history: ProviderHistory | undefined,
+    reportExpiredAt: Date | undefined
+): { history?: ProviderHistory, prices?: ProviderReferencePrices } {
+    return reportExpiredAt === undefined ? { history, prices: provider?.prices } : {};
 }
 
 function scopeLabel(label: { id?: string, displayName?: string } | undefined): { id?: string, name?: string } | undefined {
@@ -620,11 +624,12 @@ function providerData(provider: ProviderStatus, previous: ProviderStatus | undef
     const quotaLookup = quotaLookupData(provider, reportExpiredAt, generatedAt, now);
     const reportErrors = provider.errors.filter(error => error.section !== 'quota_after');
     const history = usableHistory(provider);
+    const remaining = deepSeekRemainingData(provider, history, quotaLookup.status === 'ok');
     const base = {
         quota_lookup:  quotaLookup,
         report_status: provider.status === 'ok' ? undefined : provider.status,
         errors:        reportErrors.length === 0 ? undefined : reportErrors,
-        estimates:     providerEstimatesData(provider, history, quotaLookup.status === 'ok'),
+        estimates:     providerEstimatesData(provider, history, remaining),
     };
     if(quotaLookup.status !== 'ok') {
         return base;
@@ -727,16 +732,17 @@ function sdkProviderLine(
     const data: Record<string, unknown> = Object.fromEntries(entries);
     const anthropic = snapshot.providers.find(provider => provider.provider === 'anthropic');
     const history = usableHistory(anthropic);
+    const estimateContext = freshEstimateContext(anthropic, history, reportExpiredAt);
     const ledger = sdkLedgerFallbackData(
         selfQuota,
         otherQuota,
         now,
-        reportExpiredAt === undefined ? history : undefined,
-        reportExpiredAt === undefined ? anthropic?.prices : undefined
+        estimateContext.history,
+        estimateContext.prices
     );
     data.anthropic = {
         ...(ledger ?? { quota_values: { status: 'unknown', reason: 'no_sdk_quota_reading' } }),
-        estimates: anthropic === undefined ? undefined : providerEstimatesData(anthropic, history, false),
+        estimates: anthropic === undefined ? undefined : providerEstimatesData(anthropic, history, []),
     };
     data.note = sharedNote ? 'Subscription quotas are shared; provider balances are separate.' : undefined;
     return quotaBlock(data);
@@ -760,12 +766,13 @@ function providerLine(
         : directFallbackData(snapshot.anthropicFallback.windows, snapshot.anthropicFallback.collectedAt, now);
     const anthropicReport = snapshot.providers.find(provider => provider.provider === 'anthropic');
     const anthropicHistory = usableHistory(anthropicReport);
+    const estimateContext = freshEstimateContext(anthropicReport, anthropicHistory, reportExpiredAt);
     const sdkFallback = sdkLedgerFallbackData(
         selfQuota,
         otherQuota,
         now,
-        reportExpiredAt === undefined ? anthropicHistory : undefined,
-        reportExpiredAt === undefined ? anthropicReport?.prices : undefined
+        estimateContext.history,
+        estimateContext.prices
     );
     const entries = snapshot.providers.map((provider) => {
         const unavailableAnthropic = provider.provider === 'anthropic' && providerUnavailable(provider, reportExpiredAt !== undefined);
