@@ -760,7 +760,13 @@ function providerLine(
         : directFallbackData(snapshot.anthropicFallback.windows, snapshot.anthropicFallback.collectedAt, now);
     const anthropicReport = snapshot.providers.find(provider => provider.provider === 'anthropic');
     const anthropicHistory = usableHistory(anthropicReport);
-    const sdkFallback = sdkLedgerFallbackData(selfQuota, otherQuota, now, anthropicHistory, anthropicReport?.prices);
+    const sdkFallback = sdkLedgerFallbackData(
+        selfQuota,
+        otherQuota,
+        now,
+        reportExpiredAt === undefined ? anthropicHistory : undefined,
+        reportExpiredAt === undefined ? anthropicReport?.prices : undefined
+    );
     const entries = snapshot.providers.map((provider) => {
         const unavailableAnthropic = provider.provider === 'anthropic' && providerUnavailable(provider, reportExpiredAt !== undefined);
         if(unavailableAnthropic && fallback !== undefined) {

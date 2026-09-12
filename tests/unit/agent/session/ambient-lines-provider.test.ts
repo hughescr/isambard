@@ -851,6 +851,35 @@ describe('rough token estimates', () => {
             estimate_model: 'anthropic-cheap', estimate_tokens_remaining: 13_000,
         });
     });
+
+    it('does not enrich a legacy SDK-ledger fallback from an expired provider report', () => {
+        const self = {
+            ...initialLedger('conversation'),
+            quota: {
+                sevenDay: { utilization: 35, resetsAt: THU_0900 },
+                source:   'headers' as const,
+                at:       NOW,
+            },
+        };
+        const anthropic = provider({
+            provider:   'anthropic', status:     'error', quotaAfter: undefined,
+            errors:     [{ section: 'quota_after', code: 'credential_unavailable' }],
+            history:    history('anthropic'), prices:     prices('anthropic'),
+        });
+        const line = composeAmbientLines({
+            self,
+            now:                  NOW,
+            timezone:             TIMEZONE,
+            providerSnapshot:     snapshot([anthropic], { expiresAt: NOW }),
+            anthropicQuotaSource: 'provider',
+        })[0] ?? '';
+        const data = object(quotaLineJson(line).anthropic);
+
+        expect(array(data.quotas)).toEqual([{
+            id:                'seven_day', window:            '1w', used_percent:      35, remaining_percent: 65,
+            resets_at:         '2026-09-10T17:00:00.000Z',
+        }]);
+    });
 });
 
 describe('balances and report state', () => {
