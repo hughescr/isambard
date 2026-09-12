@@ -43,10 +43,10 @@ time header) and one data source (the session ledgers).
 
 - `query-options.ts`: `title` per role, `Izzy-main` for conversation and `Izzy-perch` for perch.
 - `src/agent/prompts/system-prompt.ts`: each role prompt states its own name, the other's name,
-  that `SendMessage` to that name reaches the other session and arrives there as a `[PEER …]`
-  envelope, and the rule: any listed session without the `Izzy-` prefix is most likely one of
-  Craig's own Claude sessions; Izzy may talk to it when that clearly makes sense, but doing so
-  can confuse that agent's own work. Also the shared-quota reminder (block 5).
+  that `SendMessage` to that name reaches the other session as the SDK's raw
+  `<cross-session-message>` wrapper, and the rule: any listed session without the `Izzy-` prefix
+  is most likely one of Craig's own Claude sessions; Izzy may talk to it when that clearly makes
+  sense, but doing so can confuse that agent's own work. Also the shared-quota reminder (block 5).
 - `src/agent/hooks/agent-naming.ts`: a `PreToolUse` hook on `Agent` that sets or prefixes
   `name` so it starts with `Izzy-` (missing name → `Izzy-<subagent_type or 'agent'>-<n>`), and on
   `Workflow` that rewrites the `name:` literal inside `meta = { … }` in `script` to carry an
@@ -66,8 +66,8 @@ time header) and one data source (the session ledgers).
 
 - `EnvelopeKind` gains `'peer'`; `Envelope` gains `peer?: { from: string, fromName?: string }`.
 - `src/agent/session/envelope.ts`: `buildPeerEnvelope({ from, fromName, text, now, timezone,
-  timeHeader })` rendering `[PEER · <fromName> · <stamp>]` plus the text, and one sentence:
-  reply with `SendMessage` to `<fromName>`.
+  timeHeader })` renders a host-only `[PEER · <fromName> · <stamp>]` journal/ledger record plus
+  the text. The SDK-visible input remains the raw `<cross-session-message>` wrapper.
 - `src/agent/hooks/task-launch.ts`'s `UserPromptSubmit` matcher (or a sibling
   `peer-message.ts`): parse the cross-session tag; on a match call
   `conductor.adoptPeerTurn({ from, fromName, text })`, modelled on `adoptWakeTurn`: the SDK has
@@ -82,6 +82,20 @@ time header) and one data source (the session ledgers).
   arrival order; a peer never jumps a wake or the wake's Discord delivery lands on the wrong turn.
   Peer messages queue (cap 8, oldest dropped with a warn) rather than overwrite each other; a wake
   stays single-slot but keeps its place in arrival order when replaced.
+- **Amended (routing fix, 2026-09-11):** an idle peer turn has no automatic outbound delivery.
+  Its `UserPromptSubmit` hook injects `hookSpecificOutput.additionalContext` telling the model to
+  call `SendMessage` to the wrapper's exact `from` address only when a peer reply is needed;
+  messages needing no response are not acknowledged. Discord origin carried in a peer message is
+  preserved in replies and handoffs but creates no duty by itself. A result that completes a
+  follow-up this session already owes or promised, or one the peer explicitly requests, is
+  delivered with the known channel/user and optional message id. Ordinary, malformed, and failed
+  hook inputs inject no context. A peer folded into an active turn still fires no hook and retains
+  that turn's existing route; a matching route carries an owed/requested response without a
+  duplicate tool send, while a different or absent route requires explicit `sendDiscordMessage`.
+  Missing channel/user origin never defaults to a general or recent channel. Discord envelope
+  headers expose their exact `channelId`, `authorId`, and every source `messageId` supplied to the
+  builder. The live debounce adapter currently supplies its first representative message id,
+  while multi-context callers such as catch-up preserve the full supplied id list.
 
 ## Block 3: quota into the ledger
 

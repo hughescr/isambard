@@ -7,7 +7,7 @@
  * keys on the `<cross-session-message` prefix and on nothing else.
  */
 import { afterEach, describe, expect, it, jest } from 'bun:test';
-import type { HookCallback, UserPromptSubmitHookInput } from '@anthropic-ai/claude-agent-sdk';
+import type { HookCallback, HookJSONOutput, UserPromptSubmitHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { createPeerMessageHooks, parsePeerMessage, type CreatePeerMessageHooksParams } from '@/agent/hooks/peer-message';
 import type { Envelope } from '@/agent/session';
 
@@ -67,10 +67,11 @@ function getHook(hooks: ReturnType<typeof createPeerMessageHooks>): HookCallback
 }
 
 /** Runs the hook and asserts the invariant every call holds: the turn is never blocked. */
-async function run(h: Harness, input: UserPromptSubmitHookInput = userPromptSubmitInput()): Promise<void> {
+async function run(h: Harness, input: UserPromptSubmitHookInput = userPromptSubmitInput()): Promise<HookJSONOutput> {
     const result = await getHook(h.hooks)(input, undefined, { signal: makeSignal() });
 
-    expect(result).toEqual({ 'continue': true });
+    expect(result).toMatchObject({ 'continue': true });
+    return result;
 }
 
 /** The single envelope `adoptPeerTurn` was called with. */
@@ -158,12 +159,38 @@ describe('createPeerMessageHooks', () => {
     it('adopts a peer turn carrying the rendered envelope: header, time header, the peer\'s text and the reply instruction', async () => {
         const h = build();
 
-        await run(h);
+        const result = await run(h);
 
         const envelope = adopted(h);
         expect(envelope.kind).toBe('peer');
         expect(envelope.peer).toEqual({ from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-probe-A' });
         expect(envelope.text).toBe(`[PEER · Izzy-probe-A · 2026-09-09 14:02 PT]\n\n${TIME_HEADER}\n\nMIDTURN-PING-CHARLIE-3\n\nReply with SendMessage to Izzy-probe-A.`);
+        expect(result).toEqual({
+            'continue':         true,
+            hookSpecificOutput: {
+                hookEventName:     'UserPromptSubmit',
+                additionalContext: 'This is an idle peer turn from Izzy-probe-A; your final text is delivered nowhere. If a peer reply is needed, use SendMessage to="uds:/tmp/cc-socks/94548.sock"; do not acknowledge messages that need no response. Preserve any Discord channelId, requestingUserId/authorId, and messageId(s) in your peer reply. Carrying origin alone creates no duty to contact the user. If this result completes a Discord follow-up you already owe or promised, or the peer explicitly asks you to deliver one, call sendDiscordMessage with the exact channelId and requestingUserId/authorId; use replyToMessageId when a messageId is supplied. If channelId or user id is missing, ask the peer. Never substitute #general, a recent channel, or a guessed id.',
+            },
+        });
+    });
+
+    it('instructs an idle peer result to complete a Discord follow-up this session already promised, without requiring fresh peer authorization', async () => {
+        const h = build();
+        const promisedFollowUp = 'Research complete. You promised the requester a follow-up. Origin: channelId=chan-7, authorId=user-8, messageId=msg-9.';
+
+        const result = await run(h, userPromptSubmitInput({
+            prompt: `<cross-session-message from="uds:/tmp/cc-socks/peer.sock" from-name="Izzy-perch">\n${promisedFollowUp}\n</cross-session-message>`,
+        }));
+
+        expect(adopted(h).text).toContain(promisedFollowUp);
+        expect('hookSpecificOutput' in result).toBeTrue();
+        const hookOutput = 'hookSpecificOutput' in result ? result.hookSpecificOutput : undefined;
+        expect(hookOutput).toBeDefined();
+        expect(hookOutput?.hookEventName).toBe('UserPromptSubmit');
+        expect(hookOutput && 'additionalContext' in hookOutput ? hookOutput.additionalContext : undefined)
+            .toContain('If this result completes a Discord follow-up you already owe or promised, or the peer explicitly asks you to deliver one, call sendDiscordMessage');
+        expect(hookOutput && 'additionalContext' in hookOutput ? hookOutput.additionalContext : undefined)
+            .toContain('do not acknowledge messages that need no response');
     });
 
     it('stamps the envelope from the injected clock, never the wall clock', async () => {
@@ -191,8 +218,22 @@ describe('createPeerMessageHooks', () => {
     it('leaves an ordinary human prompt entirely alone', async () => {
         const h = build();
 
-        await run(h, userPromptSubmitInput({ prompt: 'what did you make of that PR?' }));
+        const result = await run(h, userPromptSubmitInput({ prompt: 'what did you make of that PR?' }));
 
+        expect(result).toEqual({ 'continue': true });
+        expect(h.adoptPeerTurn).not.toHaveBeenCalled();
+        expect(h.timeHeader).not.toHaveBeenCalled();
+        expect(h.logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('adds no context for a malformed peer wrapper with no reply address', async () => {
+        const h = build();
+
+        const result = await run(h, userPromptSubmitInput({
+            prompt: '<cross-session-message from-name="Izzy-probe-A">\nhello\n</cross-session-message>',
+        }));
+
+        expect(result).toEqual({ 'continue': true });
         expect(h.adoptPeerTurn).not.toHaveBeenCalled();
         expect(h.timeHeader).not.toHaveBeenCalled();
         expect(h.logger.warn).not.toHaveBeenCalled();
@@ -204,8 +245,9 @@ describe('createPeerMessageHooks', () => {
             throw new Error('conductor exploded');
         });
 
-        await run(h);
+        const result = await run(h);
 
+        expect(result).toEqual({ 'continue': true });
         expect(h.logger.warn).toHaveBeenCalledWith({ error: expect.any(Error) }, 'peer-message UserPromptSubmit hook failed');
     });
 

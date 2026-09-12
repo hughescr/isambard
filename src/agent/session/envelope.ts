@@ -155,8 +155,8 @@ export interface BuildDiscordEnvelopeParams {
 }
 
 /**
- * Builds a Discord turn envelope: `[DISCORD #channel · stamp · @author]` (or
- * `[DISCORD DM · stamp · @author]` for a direct message), followed by the caller-supplied time
+ * Builds a Discord turn envelope: `[DISCORD #channel · stamp · @author · channelId=... ·
+ * authorId=... · messageIds=[...]]` (or the corresponding `DISCORD DM` form), followed by the caller-supplied time
  * header, the optional `[Service health]`/`[About this user]`/`[Recent events]`/`[State
  * changed]`/`[Calendar]`/`[Channels]` sections (each rendered only when its input is
  * provided/non-empty), then the message texts in order.
@@ -171,7 +171,8 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Envelo
 
     const stamp = formatEnvelopeStamp(now, timezone);
     const channelSegment = formatDiscordChannelSegment(isDM, channelName, guildName);
-    const header = `[DISCORD ${channelSegment} · ${stamp} · @${authorName}]`;
+    const sourceMessageIds = messages.map(message => message.messageId);
+    const header = `[DISCORD ${channelSegment} · ${stamp} · @${authorName} · channelId=${channelId} · authorId=${authorId} · messageIds=[${sourceMessageIds.join(', ')}]]`;
 
     const messageText = messages.map(message => message.content).join('\n');
     const text = joinSections([

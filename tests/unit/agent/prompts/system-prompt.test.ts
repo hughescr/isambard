@@ -121,20 +121,46 @@ describe.concurrent('system-prompt', () => {
             // R2: a finished background task now wakes the conductor into a real turn whose
             // ordinary final text is delivered to the launching channel/author, rather than
             // arriving as a separate notification envelope.
-            expect(SESSION_BASE_PROMPT).toContain('When it finishes, the host wakes you with its result in a new turn; whatever you write in that turn is delivered to the channel and person the work was launched for, exactly like a normal reply — so report as you would to them, or write nothing if there is nothing worth saying.');
+            expect(SESSION_BASE_PROMPT).toContain('When it finishes, the host wakes you with its result in a new turn; whatever you write in that task-wake turn is delivered to the channel and person the work was launched for, exactly like a normal reply — so report as you would to them, or write nothing if there is nothing worth saying.');
             expect(SESSION_BASE_PROMPT).not.toContain('its result arrives as its own envelope, a notification, rather than as a continuation of the turn that launched it.');
         });
 
         test.each([
             ['conversation', 'Izzy-main', 'Izzy-perch'],
             ['perch', 'Izzy-perch', 'Izzy-main'],
-        ] as const)('role=%s names itself %s and its peer %s, and says SendMessage to the peer arrives as a [PEER ...] envelope', (role, self, other) => {
+        ] as const)('role=%s names itself %s and its peer %s, and describes the SDK-visible raw peer wrapper separately from the host record', (role, self, other) => {
             const prompt = buildSessionSystemPrompt({ role, identity: 'id' });
 
             expect(prompt).toContain(`You are running as \`${self}\``);
             expect(prompt).toContain(`\`SendMessage\` to \`${other}\``);
-            expect(prompt).toContain(`[PEER · ${self} · `);
+            expect(prompt).toContain("SDK's raw `<cross-session-message>` wrapper");
+            expect(prompt).toContain('final text is delivered nowhere');
+            expect(prompt).not.toContain(`arrives there as a \`[PEER · ${self} · stamp]\` envelope`);
             assertPromptHygiene(prompt);
+        });
+
+        test('both roles distinguish idle peer routing from folded active-turn routing and forbid an origin fallback', () => {
+            for(const role of ['conversation', 'perch'] as const) {
+                const prompt = buildSessionSystemPrompt({ role, identity: 'id' });
+
+                expect(prompt).toContain('If a peer reply is needed, call `SendMessage` to the exact reply target');
+                expect(prompt).toContain('do not acknowledge a message that needs no response');
+                expect(prompt).toContain('SDK folds it into that active turn and adds no routing note');
+                expect(prompt).toContain('The active turn keeps its existing delivery route');
+                expect(prompt).toContain('completes a Discord follow-up you already owe or promised');
+                expect(prompt).toContain('let the final response use that route instead of sending a duplicate');
+                expect(prompt).toContain('Never substitute `#general`, a recently used channel, or a guessed id');
+                assertPromptHygiene(prompt);
+            }
+        });
+
+        test('Discord instructions preserve exact user-request origin through handoffs and replies', () => {
+            expect(SESSION_BASE_PROMPT).toContain('`channelId`, `authorId`, and the source `messageIds`');
+            expect(SESSION_BASE_PROMPT).toContain('pass `authorId` as `requestingUserId`');
+            expect(SESSION_BASE_PROMPT).toContain('every available source `messageId`');
+            expect(SESSION_BASE_PROMPT).toContain('use the latest applicable source id as `replyToMessageId`');
+            expect(SESSION_BASE_PROMPT).toContain('Carrying origin alone creates no duty to contact the user');
+            expect(SESSION_BASE_PROMPT).toContain('`replyToMessageId` is optional');
         });
 
         test('the names in the prompt are the same names query-options gives the SDK, not a second hard-coded copy', () => {
@@ -213,8 +239,9 @@ describe.concurrent('system-prompt', () => {
             expect(prompt).toContain(`${SESSION_BASE_PROMPT}\n\n${PERCH_ROLE_PROMPT}`);
         });
 
-        test('SESSION_BASE_PROMPT catalogues the [PEER ...] envelope kind alongside the others', () => {
-            expect(SESSION_BASE_PROMPT).toContain('[PEER ·');
+        test('SESSION_BASE_PROMPT catalogues the raw peer wrapper rather than claiming the model receives the host-only [PEER ...] record', () => {
+            expect(SESSION_BASE_PROMPT).toContain('A raw `<cross-session-message>` wrapper');
+            expect(SESSION_BASE_PROMPT).not.toContain('`[PEER · name · stamp]`');
         });
 
         test('buildPeerPrompt passes hygiene on its own for both roles', () => {

@@ -49,7 +49,7 @@ describe('buildDiscordEnvelope', () => {
             timeHeader,
         });
 
-        const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig]';
+        const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig · channelId=chan-1 · authorId=author-1 · messageIds=[msg-1]]';
         expect(envelope.text.startsWith(`${header}\n\n${timeHeader}`)).toBe(true);
     });
 
@@ -66,7 +66,7 @@ describe('buildDiscordEnvelope', () => {
             timeHeader,
         });
 
-        expect(envelope.text.startsWith('[DISCORD DM · 2026-09-04 14:07 PT · @craig]')).toBe(true);
+        expect(envelope.text.startsWith('[DISCORD DM · 2026-09-04 14:07 PT · @craig · channelId=dm-1 · authorId=author-1 · messageIds=[msg-1]]')).toBe(true);
     });
 
     test('includes the guild name in the channel header when provided', () => {
@@ -74,7 +74,7 @@ describe('buildDiscordEnvelope', () => {
             messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', guildName: 'Home Server', isDM: false, now, timezone, timeHeader,
         });
 
-        expect(envelope.text.startsWith('[DISCORD #general (Home Server) · 2026-09-04 14:07 PT · @craig]')).toBe(true);
+        expect(envelope.text.startsWith('[DISCORD #general (Home Server) · 2026-09-04 14:07 PT · @craig · channelId=c · authorId=a · messageIds=[msg-1]]')).toBe(true);
     });
 
     test('joins only the sections that are actually present, with no blank-line gaps for absent optional sections', () => {
@@ -82,7 +82,7 @@ describe('buildDiscordEnvelope', () => {
             messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
 
-        const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig]';
+        const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig · channelId=c · authorId=a · messageIds=[msg-1]]';
         expect(envelope.text).toBe(`${header}\n\n${timeHeader}\n\nhello there`);
     });
 
@@ -176,7 +176,7 @@ describe('buildDiscordEnvelope', () => {
             calendarChanged: { agenda: '', added: [], removed: ['09:00–10:00 Standup'], changed: [], isFirst: false },
         });
 
-        const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig]';
+        const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig · channelId=c · authorId=a · messageIds=[msg-1]]';
         expect(envelope.text).toBe(`${header}\n\n${timeHeader}\n\n[Calendar]\n-09:00–10:00 Standup\n\nhello there`);
     });
 
@@ -346,7 +346,7 @@ describe('buildDiscordEnvelope', () => {
             channelList:     '#general, #random',
         });
 
-        const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig]';
+        const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig · channelId=c · authorId=a · messageIds=[msg-1]]';
         expect(envelope.text.startsWith(`${header}\n\n${timeHeader}\n\n[Service health]\nMCP degraded`)).toBe(true);
         expect(envelope.text).toContain('[Service health]\nMCP degraded');
         expect(envelope.text).toContain('[About this user]\nCraig likes TypeScript.');
@@ -402,6 +402,21 @@ describe('buildDiscordEnvelope', () => {
         const secondIndex = envelope.text.indexOf('second message');
         expect(firstIndex).toBeGreaterThan(-1);
         expect(secondIndex).toBeGreaterThan(firstIndex);
+    });
+
+    test('renders every source message id supplied for a batch without inventing a singular origin', () => {
+        const envelope = buildDiscordEnvelope({
+            messages: [
+                makeMessage({ messageId: 'msg-1', content: 'first message' }),
+                makeMessage({ messageId: 'msg-2', content: 'second message' }),
+                makeMessage({ messageId: 'msg-3', content: 'third message' }),
+            ],
+            authorId: 'author-9', authorName: 'craig', channelId: 'chan-9', channelName: 'general', isDM: false, now, timezone, timeHeader,
+        });
+
+        expect(envelope.text.split('\n', 1)[0]).toBe(
+            '[DISCORD #general · 2026-09-04 14:07 PT · @craig · channelId=chan-9 · authorId=author-9 · messageIds=[msg-1, msg-2, msg-3]]'
+        );
     });
 
     test('sets origin, channelId, authorId, hostPriority human, shouldQuery true, kind discord, createdAt now', () => {
