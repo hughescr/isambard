@@ -1,0 +1,65 @@
+diff --git a/dist/src/process/4-mutation-test-executor.js b/dist/src/process/4-mutation-test-executor.js
+index 84059c9260bc7ea048b8131076424f150d248e3e..69f823512b7e178ace7125a1f0c0b631887d0683 100644
+--- a/dist/src/process/4-mutation-test-executor.js
++++ b/dist/src/process/4-mutation-test-executor.js
+@@ -1,11 +1,12 @@
+ import { from, partition, merge, lastValueFrom, EMPTY, concat, bufferTime, mergeMap, } from 'rxjs';
+-import { toArray, map, shareReplay, tap } from 'rxjs/operators';
++import { toArray, filter, map, shareReplay, tap } from 'rxjs/operators';
+ import { tokens, commonTokens } from '@stryker-mutator/api/plugin';
+ import { PlanKind, } from '@stryker-mutator/api/core';
+ import { CheckStatus } from '@stryker-mutator/api/check';
+ import { coreTokens } from '../di/index.js';
+ import { isEarlyResult } from '../mutants/index.js';
+ const CHECK_BUFFER_MS = 10_000;
++const CHECK_MAX_BATCH_SIZE = 4_096;
+ /**
+  * Sorting the tests just before running them can yield a significant performance boost,
+  * because it can reduce the number of times a test runner process needs to be recreated.
+@@ -119,7 +120,7 @@ export class MutationTestExecutor {
+      */
+     executeSingleChecker(checkerName, input$) {
+         const group$ = this.checkerPool
+-            .schedule(input$.pipe(bufferTime(CHECK_BUFFER_MS)), (checker, mutants) => checker.group(checkerName, mutants))
++            .schedule(input$.pipe(bufferTime(CHECK_BUFFER_MS, undefined, CHECK_MAX_BATCH_SIZE), filter((mutants) => mutants.length > 0)), (checker, mutants) => checker.group(checkerName, mutants))
+             .pipe(mergeMap((mutantGroups) => mutantGroups));
+         const checkTask$ = this.checkerPool
+             .schedule(group$, (checker, group) => checker.check(checkerName, group))
+diff --git a/src/process/4-mutation-test-executor.ts b/src/process/4-mutation-test-executor.ts
+index 187a08ecbf4e0444814f69ee976511c32cfe9c77..db5720793bbae3cb5f308669ddbefdeb6371c2c3 100644
+--- a/src/process/4-mutation-test-executor.ts
++++ b/src/process/4-mutation-test-executor.ts
+@@ -9,7 +9,7 @@ import {
+   bufferTime,
+   mergeMap,
+ } from 'rxjs';
+-import { toArray, map, shareReplay, tap } from 'rxjs/operators';
++import { toArray, filter, map, shareReplay, tap } from 'rxjs/operators';
+ import { tokens, commonTokens } from '@stryker-mutator/api/plugin';
+ import {
+   MutantResult,
+@@ -46,6 +46,7 @@ export interface MutationTestContext extends DryRunContext {
+ }
+ 
+ const CHECK_BUFFER_MS = 10_000;
++const CHECK_MAX_BATCH_SIZE = 4_096;
+ 
+ /**
+  * Sorting the tests just before running them can yield a significant performance boost,
+@@ -229,8 +230,14 @@ export class MutationTestExecutor {
+     input$: Observable<MutantRunPlan>,
+   ): Observable<MutantTestPlan> {
+     const group$ = this.checkerPool
+-      .schedule(input$.pipe(bufferTime(CHECK_BUFFER_MS)), (checker, mutants) =>
+-        checker.group(checkerName, mutants),
++      .schedule(
++        input$.pipe(
++          // Mutant plans are commonly emitted synchronously, so the time window
++          // alone can otherwise become one unbounded JSON IPC message.
++          bufferTime(CHECK_BUFFER_MS, undefined, CHECK_MAX_BATCH_SIZE),
++          filter((mutants) => mutants.length > 0),
++        ),
++        (checker, mutants) => checker.group(checkerName, mutants),
+       )
+       .pipe(mergeMap((mutantGroups) => mutantGroups));
+     const checkTask$ = this.checkerPool

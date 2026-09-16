@@ -1,4 +1,3 @@
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import { withLlmMutators } from '@hughescr/stryker-llm-mutator';
 
 const isCI = Boolean(process.env.GITHUB_SHA);
@@ -24,13 +23,15 @@ const strykerConfig = await withMutators({
     reporters:        isCI ? ['clear-text', 'progress', 'dashboard'] : ['llm-mutator', 'progress', 'json', 'html'],
     testRunner:       'bun',
     bun:              { inspectorTimeout: isCI ? 30_000 : 5000, timeout: isCI ? 60_000 : 30_000 },
-    plugins:          isCI ? ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker'] : ['@hughescr/stryker-bun-runner', '@stryker-mutator/*', '@hughescr/stryker-llm-mutator'],
+    plugins:          isCI ? ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker'] : ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker', '@hughescr/stryker-llm-mutator'],
     coverageAnalysis: 'perTest',
-    disableBail:      true, // Do not stop with first failing test, so we can get complete map of mutant:killer-tests
+    // Bun runner's dry run remains full; mutant runs stop after the first failing test.
+    // An exhaustive mutant-to-killer-test map is optional.
+    disableBail:      false,
     mutate:           ['src/**/*.ts', '!src/index.ts', 'tools/**/*.ts'], // Do not mutate the entry point; tools/ included so disable comments take effect
     ignorePatterns:   ['**', '!src/**/*.ts', '!tests/**/*.ts', '!tests/**/*.json', '!tools/**/*.ts', '!bunfig.toml', '!tsconfig.json', '!*.ts', '!*.mjs', '!sst/**/*.ts', '!.ast-grep/**', '!package.json', '!scripts/**/*.ts'], // Only include source and test files in the mutation testing process, plus .ast-grep/ (ast-grep-rules.test.ts reads rule YAML from RULE_PATH inside the sandbox — without this the dry run fails with ENOENT before any mutant can run), package.json (tests/unit/helpers/sdk-frames.test.ts imports it directly) and scripts/**/*.ts (tests/unit/scripts/spike-argv.test.ts imports scripts/spike-argv) — without these two the sandbox throws "Cannot find module" for any mutant run that loads those tests, which Stryker reports as RuntimeError (excluded from the mutation score) rather than Killed/Survived, silently hiding real survivors. LOAD-BEARING breadth: these patterns must stay BROADER than any --mutate scope (incl. the CI bootstrap shards) — the incremental differ preserves out-of-scope baseline entries only for files it can still read; narrow this and out-of-scope files look deleted, silently discarding their cached verdicts (degrades to re-execution, not unsoundness).
     thresholds:       { high: 100, low: 100, 'break': 100 },
-    concurrency:      isCI ? 2 : 12,
+    concurrency:      isCI ? 2 : 18,
     tempDirName:      '.stryker-tmp',
     warnings:         { slow: false },
     llmMutator:       {

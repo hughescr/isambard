@@ -1,0 +1,63 @@
+diff --git a/dist/src/grouping/create-groups.js b/dist/src/grouping/create-groups.js
+index 8088437e..a0409fc9 100644
+--- a/dist/src/grouping/create-groups.js
++++ b/dist/src/grouping/create-groups.js
+@@ -40,0 +41 @@ export function createGroups(mutants, nodes) {
++    const parentReferencesByNode = new Map();
+@@ -48 +49 @@ export function createGroups(mutants, nodes) {
+-                !parentsHaveOverlapWith(currentNode, groupNodes)) {
++                !parentsHaveOverlapWith(currentNode, groupNodes, parentReferencesByNode)) {
+@@ -52 +53 @@ export function createGroups(mutants, nodes) {
+-                addRangeOfNodesToSet(nodesToIgnore, currentNode.getAllParentReferencesIncludingSelf());
++                addRangeOfNodesToSet(nodesToIgnore, parentReferencesIncludingSelf(currentNode, parentReferencesByNode));
+@@ -71,2 +72,2 @@ function findNode(fileName, nodes) {
+-function parentsHaveOverlapWith(currentNode, groupNodes) {
+-    for (const parentNode of currentNode.getAllParentReferencesIncludingSelf()) {
++function parentsHaveOverlapWith(currentNode, groupNodes, parentReferencesByNode) {
++    for (const parentNode of parentReferencesIncludingSelf(currentNode, parentReferencesByNode)) {
+@@ -78,0 +80,8 @@ function parentsHaveOverlapWith(currentNode, groupNodes) {
++function parentReferencesIncludingSelf(node, parentReferencesByNode) {
++    let parentReferences = parentReferencesByNode.get(node);
++    if (parentReferences == null) {
++        parentReferences = node.getAllParentReferencesIncludingSelf();
++        parentReferencesByNode.set(node, parentReferences);
++    }
++    return parentReferences;
++}
+diff --git a/src/grouping/create-groups.ts b/src/grouping/create-groups.ts
+index 96d37d2d..09caed53 100644
+--- a/src/grouping/create-groups.ts
++++ b/src/grouping/create-groups.ts
+@@ -48,0 +49 @@ export function createGroups(
++  const parentReferencesByNode = new Map<TSFileNode, Set<TSFileNode>>();
+@@ -59 +60,5 @@ export function createGroups(
+-        !parentsHaveOverlapWith(currentNode, groupNodes)
++        !parentsHaveOverlapWith(
++          currentNode,
++          groupNodes,
++          parentReferencesByNode,
++        )
+@@ -66 +71 @@ export function createGroups(
+-          currentNode.getAllParentReferencesIncludingSelf(),
++          parentReferencesIncludingSelf(currentNode, parentReferencesByNode),
+@@ -95,0 +101 @@ function parentsHaveOverlapWith(
++  parentReferencesByNode: Map<TSFileNode, Set<TSFileNode>>,
+@@ -97 +103,4 @@ function parentsHaveOverlapWith(
+-  for (const parentNode of currentNode.getAllParentReferencesIncludingSelf()) {
++  for (const parentNode of parentReferencesIncludingSelf(
++    currentNode,
++    parentReferencesByNode,
++  )) {
+@@ -104,0 +114,12 @@ function parentsHaveOverlapWith(
++
++function parentReferencesIncludingSelf(
++  node: TSFileNode,
++  parentReferencesByNode: Map<TSFileNode, Set<TSFileNode>>,
++) {
++  let parentReferences = parentReferencesByNode.get(node);
++  if (parentReferences == null) {
++    parentReferences = node.getAllParentReferencesIncludingSelf();
++    parentReferencesByNode.set(node, parentReferences);
++  }
++  return parentReferences;
++}
