@@ -1,4 +1,5 @@
 import { describe, test, expect, mock } from 'bun:test';
+import type { InvariantViolationError } from '@/errors';
 import { type ContactBackend } from '@/storage/contacts/backend';
 import { findOrCreateContact } from '@/storage/contacts/find-or-create';
 import { createContactId, type Contact } from '@/storage/contacts/types';
@@ -55,6 +56,23 @@ describe('findOrCreateContact', () => {
 
         expect(result).toBe(ALICE.personId);
         expect((backend.putContact as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
+    });
+
+    test('rejects a sparse nonempty match array from the backend', async () => {
+        const sparseMatches: Contact[] = [];
+        sparseMatches.length = 1;
+        const backend = makeBackend({
+            resolveIdentifier: mock(async (): Promise<Contact[]> => sparseMatches),
+        });
+
+        await expect(findOrCreateContact(backend, 'email', 'alice@example.com', 'Alice'))
+            .rejects.toMatchObject({
+                name:    'InvariantViolationError',
+                context: {
+                    location:  'findOrCreateContact',
+                    invariant: 'matches[0] undefined despite matches.length > 0',
+                },
+            } satisfies Partial<InvariantViolationError>);
     });
 
     test('creates new contact when no match found', async () => {

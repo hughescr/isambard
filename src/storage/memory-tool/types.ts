@@ -58,8 +58,7 @@ export const memoryToolItemSchema = z.object({
     createdAt:      z.iso.datetime(),
     // "Last touched" — updated on both content edits and deliberate memory access (recordAccess)
     updatedAt:      z.iso.datetime(),
-    // Stryker disable next-line ConditionalExpression: Zod custom validator for Set<string> type checking
-    tags:           z.custom<Set<string>>(val => val === undefined || val instanceof Set).optional(),
+    tags:           z.custom<Set<string>>(val => val instanceof Set).optional(),
     contentPreview: z.string().max(100).optional(), // First 100 chars of content for tag index preview
 });
 
@@ -75,6 +74,14 @@ export interface MemoryToolItem extends MemoryToolItemData {
     GSI1SK: string   // UPDATED#{timestamp} - time-based sorting within layer
 }
 
+/** DynamoDB may still contain legacy rows with absent or null metadata. */
+export type StoredMemoryToolItem = Omit<MemoryToolItem, 'metadata'> & { metadata?: Record<string, unknown> | null };
+
+/** Apply only the schema's metadata default at the DynamoDB read boundary. */
+export function normalizeStoredMemoryToolItem(item: StoredMemoryToolItem): MemoryToolItem {
+    return { ...item, metadata: item.metadata ?? {} };
+}
+
 /**
  * DynamoDB item structure for tag index entries.
  * Fat pointer carrying preview data to enable search results without fetching full items.
@@ -88,6 +95,9 @@ export interface TagIndexItem {
     tags:           Set<string>  // Full normalized tags set
     contentPreview: string       // First 100 chars of content
 }
+
+/** Legacy DynamoDB tag rows may predate the content preview field. */
+export type TagIndexReadItem = Omit<TagIndexItem, 'contentPreview'> & { contentPreview?: string };
 
 /**
  * Creates a validated MemoryPath from a string.
@@ -139,17 +149,8 @@ export function isLayerName(value: unknown): value is LayerName {
  * @returns LayerName if path starts with a valid layer, null otherwise
  */
 export function extractLayerFromPath(path: MemoryPath): LayerName | null {
-    // Match layer at start of path with word boundary
-    // Pattern: /^\/({layer})(?:\/|$)/
-    // Stryker disable next-line Regex: MemoryPath is guaranteed to start with /, making ^ anchor redundant but kept for clarity
-    const regex = /^\/(\w+)(?:\/|$)/;
-    const match = regex.exec(path);
-
-    if(!match) {
-        return null;
-    }
-
-    const candidate = match[1];
+    // MemoryPath starts with '/', so the first component is the only layer candidate.
+    const candidate = path.split('/')[1];
     const result = layerNameSchema.safeParse(candidate);
 
     return result.success ? result.data : null;

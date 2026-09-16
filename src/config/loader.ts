@@ -77,12 +77,10 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
             homeGuildId:   resources.DiscordHomeGuildId.value,
             // Discord presence configuration controls how bot status updates are displayed.
             // These values balance responsiveness with API rate limit compliance.
-            // Stryker disable next-line ObjectLiteral: Default config values tested via integration
             presence:      {
                 updateThrottleMs:      12_000,       // Throttle Discord API calls to avoid rate limiting (12s cooldown)
                 idleTimeoutMs:         60_000,        // Transition to idle after 1 minute of inactivity
                 idleRefreshIntervalMs: 300_000,       // Refresh idle status every 5 minutes to maintain visibility
-                // Stryker disable next-line ObjectLiteral: idle signal flags tested via loader unit tests
                 idleSignals:           {
                     bskyDiscoverEnabled:      true,
                     bskyForYouEnabled:        false,  // 10-item payload would dominate the snapshot menu
@@ -90,15 +88,8 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
                     activityLogEnabled:       true,
                 },
             },
-            // Live task board: edits are throttled to one per 3s per board (trailing edge, so the
-            // last state always lands), and a 10s re-compose keeps elapsed times moving while
-            // something is still running.
-            // Stryker disable next-line ObjectLiteral: Default config values tested via loader unit tests
-            taskBoard: {
-                enabled:           true,
-                editIntervalMs:    3000,
-                refreshIntervalMs: 10_000,
-            },
+            // Let TaskBoardConfigSchema supply the task board defaults.
+            taskBoard: {},
         },
         perch: env.get('PERCH_ENABLED').default('true').asBool()
             ? {
@@ -141,7 +132,6 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
                 appPassword: resources.BskyAppPassword.value,
             }
             : undefined,
-        // Stryker disable ObjectLiteral,BooleanLiteral,StringLiteral,ArithmeticOperator: contactReconciliation config defaults — env-var driven, not testable in unit tests
         contactReconciliation: env.get('CONTACT_RECONCILIATION_ENABLED').default('false').asBool()
             ? {
                 enabled:                   true,
@@ -152,13 +142,10 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
                 strayLookupAgeThresholdMs: env.get('CONTACT_RECONCILIATION_STRAY_LOOKUP_AGE_THRESHOLD_MS').default('300000').asInt(),
             }
             : undefined,
-        // Stryker restore ObjectLiteral,BooleanLiteral,StringLiteral,ArithmeticOperator
         // Browser config: unconditionally provide an empty object so Zod fills in all defaults.
         // Feature gating is done at runtime (process.platform === 'darwin') in src/index.ts.
-        // Stryker disable next-line ObjectLiteral: empty object so Zod applies schema defaults — no fields to mutate
         browser:     {},
         // Vector index config: provide env-var overrides or let Zod fill in all defaults.
-        // Stryker disable next-line ObjectLiteral: config object so Zod applies schema defaults — individual fields are env-var overrides
         vectorIndex: {
             enabled:    env.get('VECTOR_INDEX_ENABLED').default('true').asBool(),
             dbPath:     env.get('VECTOR_INDEX_DB_PATH').asString(),
@@ -190,7 +177,6 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
                 message: isSensitive ? '[REDACTED]' : issue.message,
             };
         });
-        // Stryker disable next-line StringLiteral: error prefix is informational only
         throw new ConfigValidationError('Config validation failed', safeErrors);
     }
 
@@ -205,8 +191,8 @@ export function loadDynamoDBConfig(resources: DynamoDBResourceProvider): DynamoD
     const result = dynamoDBConfigSchema.safeParse(rawConfig);
 
     if(!result.success) {
-        // Stryker disable next-line StringLiteral: error prefix is informational only
-        throw new ConfigValidationError('DynamoDB config validation failed', result.error.issues.map(issue => ({ path: issue.path.join('.'), message: issue.message })));
+        // dynamoDBConfigSchema has one flat field; every issue belongs to tableName.
+        throw new ConfigValidationError('DynamoDB config validation failed', result.error.issues.map(issue => ({ path: 'tableName', message: issue.message })));
     }
 
     return result.data;

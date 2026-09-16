@@ -226,6 +226,24 @@ describe('createConductorProcessor', () => {
         expect(contextBuilder.loadUserMemories).toHaveBeenCalledWith('user-1');
     });
 
+    it('builds the envelope with the current time and the message timestamp in ISO format', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        const now = new Date('2026-04-05T06:07:08.901Z');
+        const messageTimestamp = '2025-03-04T05:06:07.890Z';
+        jest.setSystemTime(now);
+
+        coordinator.handleMessage(
+            makeContext({ timestamp: messageTimestamp }),
+            makeDiscordMessage('chan-1', 'msg-1', 'hello')
+        );
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            now,
+            messages: [expect.objectContaining({ timestamp: messageTimestamp })],
+        }));
+    });
+
     it('debounce-interrupts a held envelope into exactly one merged resubmission — no duplicate submit', async () => {
         coordinator.handleMessage(makeContext({ messageId: 'msg-A1', content: 'first' }), makeDiscordMessage('chan-1', 'msg-A1', 'first'));
         await flush();
@@ -320,7 +338,7 @@ describe('createConductorProcessor', () => {
 
         expect(result).toEqual({ response: null, wasInterrupted: false, streamTracker: expect.any(StreamTracker) });
         expect(conductor.submitCalls).toHaveLength(0);
-        expect(logger.warn).toHaveBeenCalledWith(expect.any(String));
+        expect(logger.warn).toHaveBeenCalledWith('createConductorProcessor: processor called with an empty context batch');
     });
 
     it('logs contextUsagePercent on every settled result, including a withdrawn one', async () => {
@@ -444,6 +462,20 @@ describe('createConductorProcessor', () => {
         expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ newEvents: events }));
     });
 
+    it('passes a singleton event delta through to the envelope', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        const events = ['- one new event'];
+        contextPolicy = makeContextPolicy({ eventsDelta: jest.fn(() => Promise.resolve(events)) });
+        coordinator.setProcessor(createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        }));
+
+        coordinator.handleMessage(makeContext(), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ newEvents: events }));
+    });
+
     it('passes channelList as undefined to buildDiscordEnvelope when the resolved channel list is empty', async () => {
         const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
         envelopeProvider = makeEnvelopeProvider({ channelList: jest.fn(() => Promise.resolve([])) });
@@ -466,6 +498,19 @@ describe('createConductorProcessor', () => {
         await flush();
 
         expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ channelList: 'general\nrandom' }));
+    });
+
+    it('includes a singleton resolved channel list in the envelope', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        envelopeProvider = makeEnvelopeProvider({ channelList: jest.fn(() => Promise.resolve(['general'])) });
+        coordinator.setProcessor(createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        }));
+
+        coordinator.handleMessage(makeContext(), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ channelList: 'general' }));
     });
 
     it('fetches stateTopSetDelta() alongside eventsDelta() and passes its resolved value through to buildDiscordEnvelope\'s stateChanged param', async () => {

@@ -51,12 +51,11 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
         logger,
     } = deps;
 
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: default value fallback — undefined branch never reached when caller provides value
     const baseIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
     // Stryker disable next-line BooleanLiteral: initial value is always overwritten by start() which sets stopped = false; mutation has no observable effect
     let stopped          = false;
-    let generation       = 0;
+    let generation: object = {};
     let currentIntervalMs = baseIntervalMs;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -69,70 +68,63 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
             const requiredService = getRequiredService(saga.type);
 
             if(!registry.isAvailable(requiredService)) {
-                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                 logger.info({ sagaId: saga.id, type: saga.type, service: requiredService }, 'Skipping saga — required service unavailable');
                 // Stryker restore ObjectLiteral,StringLiteral
                 continue;
             }
 
             try {
-                // eslint-disable-next-line no-await-in-loop -- Sequential saga execution required for ordering guarantees
+                // eslint-disable-next-line no-await-in-loop -- Later external actions must wait for this saga's durable outcome.
                 await executors[saga.type](saga.params);
-                // eslint-disable-next-line no-await-in-loop -- Sequential saga execution required for ordering guarantees
-                await backend.updateState(saga.id, 'executed');
-                result.executed += 1;
-                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-                logger.info({ sagaId: saga.id, type: saga.type }, 'Saga executed successfully');
-                // Stryker restore ObjectLiteral,StringLiteral
             } catch (err: unknown) {
                 const message = err instanceof Error ? err.message : String(err);
-                // eslint-disable-next-line no-await-in-loop -- Sequential saga execution required for ordering guarantees
+                // eslint-disable-next-line no-await-in-loop -- Persist failure before the next action; a failed write propagates and stops this loop.
                 await backend.updateState(saga.id, 'failed', { lastError: message });
-                result.failed += 1;
-                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+                result.failed++;
                 logger.error({ sagaId: saga.id, type: saga.type, error: message }, 'Saga execution failed');
                 // Stryker restore ObjectLiteral,StringLiteral
+                continue;
             }
+
+            // eslint-disable-next-line no-await-in-loop -- Persist success before starting the next external action; a failed write stops this loop.
+            await backend.updateState(saga.id, 'executed');
+            result.executed++;
+            logger.info({ sagaId: saga.id, type: saga.type }, 'Saga executed successfully');
+            // Stryker restore ObjectLiteral,StringLiteral
         }
 
         return result;
     }
 
     function scheduleNextTick(): void {
-        // Stryker disable next-line BlockStatement,ConditionalExpression: stopped guard prevents rescheduling after stop(); path unreachable in fake-timer tests — microtasks flush synchronously after advanceTimersByTime so stop() always precedes the .then() callback
         if(stopped) {
             return;
         }
-        const myGen = generation;
+        const scheduledGeneration = generation;
         timeoutId = setTimeout(() => {
             void (async () => {
                 try {
                     const result = await executeOnce();
                     if(result.executed > 0 || result.failed > 0) {
-                        // Stryker disable next-line BlockStatement,ConditionalExpression,EqualityOperator: debug log guard — only suppresses noise when already at base; equivalent mutant (log content is observability-only)
                         if(currentIntervalMs !== baseIntervalMs) {
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: debug-level logging for tuning observability only
                             logger.debug({ intervalMs: baseIntervalMs }, 'Saga poll interval reset to base');
                         }
                         currentIntervalMs = baseIntervalMs;
                     } else {
                         const next = Math.min(currentIntervalMs * 2, MAX_POLL_INTERVAL_MS);
-                        // Stryker disable next-line BlockStatement,ConditionalExpression,EqualityOperator: debug log guard — only suppresses noise when already at cap; equivalent mutant (log content is observability-only)
                         if(next !== currentIntervalMs) {
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: debug-level logging for tuning observability only
                             logger.debug({ intervalMs: next }, 'Saga poll interval extended');
                         }
                         currentIntervalMs = next;
                     }
                 } catch (err: unknown) {
                     const message = err instanceof Error ? err.message : String(err);
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: debug-level logging for observability only
                     logger.debug({ error: message }, 'Saga poll tick threw unexpectedly; rescheduling');
                 }
                 // Only reschedule if this tick's generation still matches the current generation.
-                // If stop()+start() ran while this tick was mid-flight, generation was bumped and
+                // If stop()+start() ran while this tick was mid-flight, generation was replaced and
                 // start() already scheduled a new timer — skip to prevent a leaked duplicate timer.
-                if(generation === myGen) {
+                if(generation === scheduledGeneration) {
                     scheduleNextTick();
                 }
             })();
@@ -141,25 +133,19 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
 
     return {
         start(): void {
-            // Stryker disable next-line ConditionalExpression: → true direction (guard always fires) is the equivalent mutant — would prevent restarts even after stop(); → false direction (guard never fires) is killed by the redundant-start tests that verify generation is not bumped on a second start() while already running
             if(timeoutId !== undefined) {
                 return;
             }
             stopped = false; // Allow restart after stop()
-            // Stryker disable next-line AssignmentOperator: generation +=1 and -=1 are equivalent — both change the value away from myGen (captured at schedule time), ensuring the staleness check fires; only the direction of delta differs
-            generation += 1; // Invalidate any mid-flight tick's trailing reschedule
+            generation = {}; // Invalidate any mid-flight tick's trailing reschedule
             currentIntervalMs = baseIntervalMs;
             scheduleNextTick();
         },
 
         stop(): void {
-            // Stryker disable next-line BooleanLiteral: clearTimeout always runs below so stopped flag change is only observable via the timeout callback, which is already cleared; equivalent mutant
             stopped = true;
-            // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op so →true mutation is equivalent
-            if(timeoutId !== undefined) {
-                clearTimeout(timeoutId);
-                timeoutId = undefined;
-            }
+            clearTimeout(timeoutId);
+            timeoutId = undefined;
         },
 
         executeOnce,

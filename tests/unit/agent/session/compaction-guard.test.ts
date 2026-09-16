@@ -59,6 +59,8 @@ describe('createCompactionGuard', () => {
 
         expect(submitCompact).not.toHaveBeenCalled();
         expect(logger.info).toHaveBeenCalledWith({ percentage: 59 }, expect.any(String));
+        expect(logger.info).toHaveBeenCalledWith({ percentage: 59 }, 'Compaction guard: context usage polled');
+        expect(getContextUsage).toHaveBeenCalledWith({ detail: 'summary' });
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'context_usage_polled' }));
     });
 
@@ -95,6 +97,7 @@ describe('createCompactionGuard', () => {
         await guard.onTurnEnd({ queueEmpty: true });
 
         guard.onFrame(frames.compactBoundary());
+        expect(clock.pending()).toBe(0);
         await guard.onTurnEnd({ queueEmpty: true });
 
         expect(submitCompact).toHaveBeenCalledTimes(2);
@@ -119,6 +122,18 @@ describe('createCompactionGuard', () => {
         guard.onFrame(frames.resultSuccess());
 
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed', reason: 'no-boundary' }));
+        expect(logger.error).toHaveBeenCalledWith({ reason: 'no-boundary' }, 'Compaction guard: compaction failed');
+    });
+
+    it('a stray success signal after a failed attempt does not erase the armed backoff', async () => {
+        getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
+        submitCompact.mockRejectedValueOnce(new Error('CLI refused /compact'));
+        await guard.onTurnEnd({ queueEmpty: true });
+
+        guard.onCompactionFinished();
+        await guard.onTurnEnd({ queueEmpty: true });
+
+        expect(submitCompact).toHaveBeenCalledTimes(1);
     });
 
     it('onCompactionFinished when nothing is in flight is a no-op — no dispatch, no logger call', () => {
@@ -256,7 +271,7 @@ describe('createCompactionGuard', () => {
 
         await guard.onTurnEnd({ queueEmpty: true });
 
-        expect(logger.warn).toHaveBeenCalledWith({ error: failure }, expect.any(String));
+        expect(logger.warn).toHaveBeenCalledWith({ error: failure }, 'Compaction guard: getContextUsage rejected');
         expect(dispatch).not.toHaveBeenCalled();
         expect(submitCompact).not.toHaveBeenCalled();
     });
@@ -268,7 +283,7 @@ describe('createCompactionGuard', () => {
 
         await guard.onTurnEnd({ queueEmpty: true });
 
-        expect(logger.warn).toHaveBeenCalledWith({ error: failure }, expect.any(String));
+        expect(logger.warn).toHaveBeenCalledWith({ error: failure }, 'Compaction guard: submitCompact rejected');
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed', reason: 'submit-rejected' }));
     });
 

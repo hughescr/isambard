@@ -154,6 +154,7 @@ describe('event-summarizer', () => {
             expect(call).toContain('/events/meeting');
             expect(call).toContain('1h ago');
             expect(call).toContain('Discussed project roadmap and priorities for Q1');
+            expect(call).toContain('Discussed project roadmap and priorities for Q1\n[/events/decision]');
             expect(call).toContain('/events/decision');
             expect(call).toContain('30m ago');
             expect(call).toContain('Decided to use TypeScript for the new service');

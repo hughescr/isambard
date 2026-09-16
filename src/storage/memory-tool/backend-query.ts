@@ -7,9 +7,11 @@ import { sigmoidScore } from './sigmoid';
 import {
     type MemoryToolItemData,
     type MemoryToolItem,
+    type StoredMemoryToolItem,
     type LayerName,
-    type TagIndexItem,
-    createLayerName
+    type TagIndexReadItem,
+    createLayerName,
+    normalizeStoredMemoryToolItem
 } from './types';
 import { InvariantViolationError } from '@/errors';
 
@@ -55,9 +57,7 @@ export class MemoryToolBackendQuery {
      */
     private getDateBounds(options: ListOptions | undefined): { startDate: string, endDate: string } {
         return {
-            // Stryker disable next-line OptionalChaining: Defensive coding for undefined options
             startDate: options?.startDate ?? MIN_DATE,
-            // Stryker disable next-line OptionalChaining: Defensive coding for undefined options
             endDate:   options?.endDate ?? MAX_DATE,
         };
     }
@@ -80,14 +80,12 @@ export class MemoryToolBackendQuery {
                     Buffer.from(options.cursor, 'base64').toString('utf8')
                 );
             } catch (err) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: logger call is observability only — warn + skip is the correct graceful fallback for a malformed cursor
                 logger.warn({ err, cursor: options.cursor }, 'Malformed pagination cursor — skipping ExclusiveStartKey; query will restart from the beginning');
                 return;
             }
             const cursorSchema = z.record(z.string(), z.unknown());
             const cursorResult = cursorSchema.safeParse(parsed);
             if(!cursorResult.success) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: logger call is observability only — warn + skip is the correct graceful fallback for a wrong-shape cursor
                 logger.warn({ err: cursorResult.error.issues, cursor: options.cursor }, 'Invalid cursor shape — skipping ExclusiveStartKey; query will restart from the beginning');
                 return;
             }
@@ -124,7 +122,7 @@ export class MemoryToolBackendQuery {
             })
         );
 
-        let items = ((result.Items ?? []) as MemoryToolItem[]).map(item => this.stripKeys(item));
+        let items = ((result.Items ?? []) as StoredMemoryToolItem[]).map(item => this.stripKeys(normalizeStoredMemoryToolItem(item)));
 
         // Sort by createdAt ascending (oldest first, newest last)
         items = items.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -146,9 +144,8 @@ export class MemoryToolBackendQuery {
         tags: Set<string>,
         layer?: LayerName,
         options?: ListOptions
-    ): Promise<ListResult<TagIndexItem>> {
+    ): Promise<ListResult<TagIndexReadItem>> {
         if(!this.tagIndex) {
-            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
             throw new InvariantViolationError('MemoryToolBackendQuery.searchByTags', 'Tag index not configured');
         }
         // queryByTags still takes string[], so spread the Set
@@ -167,7 +164,6 @@ export class MemoryToolBackendQuery {
             ExpressionAttributeValues: {
                 ':pk': `LAYER#${layer}`,
             },
-            // Stryker disable next-line BooleanLiteral: Sort order is observational - both ascending/descending orderings are valid for layer listing
             ScanIndexForward: false, // Newest first (descending by GSI1SK)
         };
 
@@ -190,7 +186,7 @@ export class MemoryToolBackendQuery {
             })
         );
 
-        const items = ((result.Items ?? []) as MemoryToolItem[]).map(item => this.stripKeys(item));
+        const items = ((result.Items ?? []) as StoredMemoryToolItem[]).map(item => this.stripKeys(normalizeStoredMemoryToolItem(item)));
         const nextCursor = this.encodeCursor(result.LastEvaluatedKey);
 
         return { items, nextCursor };
@@ -219,11 +215,9 @@ export class MemoryToolBackendQuery {
                     ':start': `UPDATED#${startTime}`,
                     ':end':   `UPDATED#${endTime}`,
                 },
-                // Stryker disable next-line BooleanLiteral: Sort order is observational - both ascending/descending orderings are valid for time range queries
                 ScanIndexForward: false, // Newest first
             };
 
-            // Stryker disable next-line ConditionalExpression: Guard is defensive — setting Limit to undefined is equivalent to not setting it
             if(perLayerLimit) {
                 queryParams.Limit = perLayerLimit;
             }
@@ -235,7 +229,7 @@ export class MemoryToolBackendQuery {
         }));
 
         for(const result of layerResults) {
-            allItems.push(...((result.Items ?? []) as MemoryToolItem[]).map(item => this.stripKeys(item)));
+            allItems.push(...((result.Items ?? []) as StoredMemoryToolItem[]).map(item => this.stripKeys(normalizeStoredMemoryToolItem(item))));
         }
 
         // Items arrive newest-first per layer; merge, sort descending, take limit, reverse to ascending
@@ -271,11 +265,9 @@ export class MemoryToolBackendQuery {
                     ':pk':    `LAYER#${l}`,
                     ':start': `UPDATED#${startTime}`,
                 },
-                // Stryker disable next-line BooleanLiteral: Sort order is observational - descending reads from tail of GSI without full scan
                 ScanIndexForward: false, // Newest first
             };
 
-            // Stryker disable next-line ConditionalExpression: Guard is defensive — setting Limit to undefined is equivalent to not setting it
             if(perLayerLimit) {
                 queryParams.Limit = perLayerLimit;
             }
@@ -287,7 +279,7 @@ export class MemoryToolBackendQuery {
         }));
 
         for(const result of layerResults) {
-            allItems.push(...((result.Items ?? []) as MemoryToolItem[]).map(item => this.stripKeys(item)));
+            allItems.push(...((result.Items ?? []) as StoredMemoryToolItem[]).map(item => this.stripKeys(normalizeStoredMemoryToolItem(item))));
         }
 
         // Items arrive newest-first per layer; merge, sort descending, take limit, reverse to ascending
@@ -309,10 +301,9 @@ export class MemoryToolBackendQuery {
         const maxStateItems = options?.maxStateItems ?? 50;
         const nowMs = (options?.now ?? new Date()).getTime();
 
-        // Get identity items (all items from /identity layer)
+        // Get the newest identity items from the bounded layer query.
         const identityResult = await this.listByLayer(createLayerName('identity'), { limit: maxIdentityItems });
-        // Stryker disable next-line MethodExpression: slice is defensive — listByLayer already limits results via { limit: maxIdentityItems }
-        const identityItems = identityResult.items.slice(0, maxIdentityItems);
+        const identityItems = identityResult.items;
 
         // Get state items (all items from /state layer)
         const stateResult = await this.listByLayer(createLayerName('state'), { limit: maxStateItems });
@@ -320,9 +311,7 @@ export class MemoryToolBackendQuery {
 
         // Score state items using sigmoid function for frequency × recency
         const scoredItems = stateItems.map((item) => {
-            // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
             const accessCount = (item.metadata.accessCount as number | undefined) ?? 0;
-            // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
             const lastAccessed = (item.metadata.lastAccessed as string | undefined) ?? item.updatedAt;
             const timeSinceLastAccessMs = nowMs - new Date(lastAccessed).getTime();
             return { item, score: sigmoidScore(accessCount, timeSinceLastAccessMs) };
@@ -336,9 +325,7 @@ export class MemoryToolBackendQuery {
     async getStateItemsScored(
         options?: { maxItems?: number, now?: Date }
     ): Promise<ScoredMemoryItem[]> {
-        // Stryker disable next-line LogicalOperator,OptionalChaining: ?? operator is correct for default values
         const maxItems = options?.maxItems ?? 50;
-        // Stryker disable next-line LogicalOperator,OptionalChaining: ?? operator is correct for default values
         const nowMs = (options?.now ?? new Date()).getTime();
 
         // Invariant: GSI1SK is UPDATED#{updatedAt}, descending, so this query returns the
@@ -351,9 +338,7 @@ export class MemoryToolBackendQuery {
 
         // Score items using sigmoid function for frequency × recency
         const scoredItems = stateItems.map((item) => {
-            // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
             const accessCount = (item.metadata.accessCount as number | undefined) ?? 0;
-            // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
             const lastAccessed = (item.metadata.lastAccessed as string | undefined) ?? item.updatedAt;
             const timeSinceLastAccessMs = nowMs - new Date(lastAccessed).getTime();
             return { item, score: sigmoidScore(accessCount, timeSinceLastAccessMs) };

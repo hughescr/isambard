@@ -1,10 +1,16 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
 import { describe, test, expect, beforeEach, afterEach, jest, spyOn } from 'bun:test';
-import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand, type BatchWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
+import { mockLogger } from '../../../setup';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
-import type { MemoryPath, TagIndexItem } from '@/storage/memory-tool/types';
+import type { MemoryPath, TagIndexItem, TagIndexReadItem } from '@/storage/memory-tool/types';
+
+/** Model the test table as optional even when the SDK's string index signature says otherwise. */
+const firstTestTableRequest = (input: BatchWriteCommandInput | undefined) => {
+    const requestItems: Partial<NonNullable<BatchWriteCommandInput['RequestItems']>> | undefined = input?.RequestItems;
+    return requestItems?.TestTable?.at(0);
+};
 
 describe('MemoryToolBackendTagIndex', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -13,6 +19,8 @@ describe('MemoryToolBackendTagIndex', () => {
     beforeEach(() => {
         jest.useFakeTimers();
         ddbMock.reset();
+        mockLogger.debug.mockClear();
+        mockLogger.warn.mockClear();
         backend = new MemoryToolBackendTagIndex(
             ddbMock as unknown as DynamoDBDocumentClient,
             'TestTable'
@@ -106,7 +114,9 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(jest.getTimerCount()).toBe(1);
 
             // Second retry delay should be 200ms (BASE_DELAY_MS * 2^1)
-            jest.advanceTimersByTime(200);
+            jest.advanceTimersByTime(199);
+            expect(callCount).toBe(2);
+            jest.advanceTimersByTime(1);
             await new Promise((resolve) => {
                 // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher priority than Promise microtasks; needed to observe DynamoDB mock callback completion
                 process.nextTick(resolve);
@@ -312,7 +322,9 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(jest.getTimerCount()).toBe(1);
 
             // Second retry delay should be 200ms (BASE_DELAY_MS * 2^1)
-            jest.advanceTimersByTime(200);
+            jest.advanceTimersByTime(199);
+            expect(batchCallCount).toBe(2);
+            jest.advanceTimersByTime(1);
             await new Promise((resolve) => {
                 // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher microtask priority for DynamoDB mock callback completion
                 process.nextTick(resolve);
@@ -536,6 +548,9 @@ describe('MemoryToolBackendTagIndex', () => {
             // Should not increment any tags since all failed
             const updateCalls = ddbMock.commandCalls(UpdateCommand);
             expect(updateCalls).toHaveLength(0);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Batch write threw exception - treating current batch as failed',
+            }));
         });
 
         test('should retry unprocessed items until all succeed', async () => {
@@ -652,16 +667,82 @@ describe('MemoryToolBackendTagIndex', () => {
             });
             ddbMock.on(UpdateCommand).resolves({});
 
+            const startedAt = Date.now();
             const promise = backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
             await drainTimers();
             await promise;
 
             const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
             expect(batchCalls).toHaveLength(3); // MAX_RETRIES
+            expect(Date.now() - startedAt).toBe(300);
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Batch write retry 2/3',
+            }));
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Batch write failed after 3 attempts',
+            }));
 
             // Should not increment tag count since it failed
             const updateCalls = ddbMock.commandCalls(UpdateCommand);
             expect(updateCalls).toHaveLength(0);
+        });
+
+        test('rejects a failed write without a valid TAG key before updating counts', async () => {
+            ddbMock.on(BatchWriteCommand).resolves({
+                UnprocessedItems: { TestTable: [{ PutRequest: { Item: { PK: 123 } } }] },
+            });
+            const promise = backend.createTagIndexItems(
+                '/identity/values.md' as MemoryPath,
+                new Set(['stuck-tag']),
+                '2024-01-01T00:00:00.000Z',
+                'My values',
+                'identity'
+            );
+            await drainTimers();
+            await expect(promise).rejects.toThrow('without a TAG# key');
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+        });
+
+        test('rejects a failed write with a non-tag string key and identifies the validation boundary', async () => {
+            ddbMock.on(BatchWriteCommand).resolves({
+                UnprocessedItems: { TestTable: [{ PutRequest: { Item: { PK: 'FILE#wrong' } } }] },
+            });
+            const promise = backend.createTagIndexItems(
+                '/identity/values.md' as MemoryPath,
+                new Set(['stuck-tag']),
+                '2024-01-01T00:00:00.000Z',
+                'My values',
+                'identity'
+            );
+            await drainTimers();
+            await expect(promise).rejects.toMatchObject({
+                context: { location: 'failedTagFromRequest' },
+            });
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+        });
+
+        test('rejects an explicitly undefined table request list in UnprocessedItems', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            ddbMock.on(BatchWriteCommand).resolves({
+                UnprocessedItems: { TestTable: undefined } as never,
+            });
+
+            const promise = backend.createTagIndexItems(
+                path,
+                new Set(['stuck-tag']),
+                '2024-01-01T00:00:00.000Z',
+                'My values',
+                'identity'
+            );
+            await drainTimers();
+
+            await expect(promise).rejects.toMatchObject({
+                context: {
+                    location:  'collectFailedRequests',
+                    invariant: 'unprocessedItems[tableName] undefined despite tableName from Object.keys()',
+                },
+            });
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
         });
     });
 
@@ -819,9 +900,9 @@ describe('MemoryToolBackendTagIndex', () => {
             // Find the batch call containing DeleteRequest
 
             const deleteRequests = batchCalls.find(call =>
-                call.args[0].input.RequestItems?.TestTable?.[0]?.DeleteRequest);
+                firstTestTableRequest(call.args[0].input)?.DeleteRequest);
             expect(deleteRequests).toBeDefined();
-            expect((deleteRequests as unknown as { args: [{ input: { RequestItems?: Record<string, { DeleteRequest?: { Key?: Record<string, unknown> } }[]> } }] }).args[0].input.RequestItems?.TestTable?.[0]?.DeleteRequest?.Key?.PK).toBe('TAG#old');
+            expect(firstTestTableRequest(deleteRequests?.args[0].input)?.DeleteRequest?.Key?.PK).toBe('TAG#old');
         });
 
         test('should refresh unchanged tags with current data', async () => {
@@ -838,7 +919,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
             const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
             expect(batchCalls).toHaveLength(1);
-            const item = batchCalls[0].args[0].input.RequestItems?.TestTable?.[0]?.PutRequest?.Item;
+            const item = firstTestTableRequest(batchCalls[0].args[0].input)?.PutRequest?.Item;
             expect(item?.updatedAt).toBe(updatedAt);
             expect(item?.contentPreview).toBe(contentPreview);
         });
@@ -933,6 +1014,7 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(calls[0].args[0].input.KeyConditionExpression).toBe('PK = :pk AND begins_with(SK, :skPrefix)');
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':pk']).toBe('TAG#important');
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':skPrefix']).toBe('PATH#');
+            expect(calls[0].args[0].input.FilterExpression).toBeUndefined();
         });
 
         test('should return items from query', async () => {
@@ -953,6 +1035,23 @@ describe('MemoryToolBackendTagIndex', () => {
 
             expect(result.items).toHaveLength(1);
             expect(result.items[0].memoryPath).toBe('/identity/values.md');
+        });
+
+        test('should return legacy tag rows without a content preview', async () => {
+            const legacyItem: TagIndexReadItem = {
+                PK:         'TAG#important',
+                SK:         'PATH#/identity/legacy.md',
+                memoryPath: '/identity/legacy.md',
+                layer:      'identity',
+                updatedAt:  '2024-01-01T00:00:00.000Z',
+                tags:       new Set(['important']),
+            };
+            ddbMock.on(QueryCommand).resolves({ Items: [legacyItem] });
+
+            const result = await backend.queryByTag('important');
+
+            expect(result.items).toEqual([legacyItem]);
+            expect(Object.hasOwn(result.items[0], 'contentPreview')).toBe(false);
         });
 
         test('should return empty list when no matches', async () => {
@@ -1129,9 +1228,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
             const calls = ddbMock.commandCalls(QueryCommand);
             const filterExpression = calls[0]?.args[0]?.input.FilterExpression;
-            expect(filterExpression).toContain('layer = :layer');
-            expect(filterExpression).toContain('updatedAt BETWEEN :startDate AND :endDate');
-            expect(filterExpression).toContain(' AND ');
+            expect(filterExpression).toBe('layer = :layer AND updatedAt BETWEEN :startDate AND :endDate');
             expect(calls[0]?.args[0]?.input.ExpressionAttributeValues?.[':layer']).toBe('identity');
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':startDate']).toBe('2024-01-01T00:00:00.000Z');
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':endDate']).toBe('2024-01-31T23:59:59.999Z');
@@ -1155,6 +1252,55 @@ describe('MemoryToolBackendTagIndex', () => {
     });
 
     describe('queryByTags', () => {
+        test('requires every requested tag across pages and stops at the requested result count', async () => {
+            const item = (path: string, tags: string[]): TagIndexItem => ({
+                PK:             'TAG#alpha',
+                SK:             `PATH#${path}`,
+                memoryPath:     path,
+                layer:          'identity',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(tags),
+                contentPreview: path,
+            });
+            const firstCursor = { PK: 'TAG#alpha', SK: 'PATH#/identity/a-partial.md' };
+            const secondCursor = { PK: 'TAG#alpha', SK: 'PATH#/identity/b-first.md' };
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({
+                    Items:            [item('/identity/a-partial.md', ['alpha', 'beta'])],
+                    LastEvaluatedKey: firstCursor,
+                })
+                .resolvesOnce({
+                    Items:            [item('/identity/b-first.md', ['alpha', 'beta', 'gamma'])],
+                    LastEvaluatedKey: secondCursor,
+                })
+                .resolvesOnce({ Items: [item('/identity/c-second.md', ['alpha', 'beta', 'gamma'])] });
+
+            const result = await backend.queryByTags(['alpha', 'beta', 'gamma'], undefined, { limit: 1 });
+
+            expect(result.items.map(entry => entry.memoryPath)).toEqual(['/identity/b-first.md']);
+            expect(result.nextCursor).toBeUndefined();
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(2);
+            expect(calls[0]?.args[0].input.Limit).toBeUndefined();
+            expect(calls[1]?.args[0].input.ExclusiveStartKey).toEqual(firstCursor);
+        });
+
+        test('excludes a malformed driving-index row whose tag set omits the queried tag', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [{
+                PK:             'TAG#alpha',
+                SK:             'PATH#/identity/stale.md',
+                memoryPath:     '/identity/stale.md',
+                layer:          'identity',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['beta', 'gamma']),
+                contentPreview: 'Stale pointer',
+            }] });
+
+            const result = await backend.queryByTags(['alpha', 'beta', 'gamma']);
+
+            expect(result.items).toEqual([]);
+        });
+
         test('should return empty for empty tags array', async () => {
             const result = await backend.queryByTags([]);
 
@@ -1375,6 +1521,18 @@ describe('MemoryToolBackendTagIndex', () => {
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             expect(calls).toHaveLength(2);
+            expect(calls.map(call => call.args[0].input.Key)).toEqual([
+                { PK: 'TAG#important', SK: 'META_COUNT' },
+                { PK: 'TAG#core', SK: 'META_COUNT' },
+            ]);
+        });
+
+        test('does not delete a count record when the decrement response has no numeric count', async () => {
+            ddbMock.on(UpdateCommand).resolves({ Attributes: { count: null } });
+
+            await backend.decrementTagCounts(new Set(['important']));
+
+            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
         });
 
         test('should set correct PK/SK/GSI2PK/GSI2SK', async () => {
@@ -1434,6 +1592,10 @@ describe('MemoryToolBackendTagIndex', () => {
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             expect(calls.length).toBeGreaterThan(1);
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                context: 'incrementTagCount:important',
+                msg:     'Tag index retry 1/3',
+            }));
         });
 
         test('should retry exactly MAX_RETRIES times and succeed on last attempt', async () => {
@@ -1464,6 +1626,9 @@ describe('MemoryToolBackendTagIndex', () => {
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             expect(calls).toHaveLength(3); // Exactly MAX_RETRIES attempts
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Tag index operation failed after 3 attempts',
+            }));
         });
 
         test('should verify UpdateCommand has correct ExpressionAttributeNames', async () => {
@@ -1492,6 +1657,10 @@ describe('MemoryToolBackendTagIndex', () => {
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             expect(calls).toHaveLength(2);
+            expect(calls.map(call => call.args[0].input.Key)).toEqual([
+                { PK: 'TAG#important', SK: 'META_COUNT' },
+                { PK: 'TAG#core', SK: 'META_COUNT' },
+            ]);
         });
 
         test('should delete META_COUNT item when count reaches 0', async () => {
@@ -1566,6 +1735,26 @@ describe('MemoryToolBackendTagIndex', () => {
 
             const calls = ddbMock.commandCalls(UpdateCommand);
             expect(calls.length).toBeGreaterThan(1);
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                context: 'decrementTagCount:important',
+                msg:     'Tag index retry 1/3',
+            }));
+        });
+
+        test('identifies a failed META_COUNT delete in retry diagnostics', async () => {
+            ddbMock.on(UpdateCommand).resolves({ Attributes: { count: 0 } });
+            ddbMock.on(DeleteCommand)
+                .rejectsOnce(new Error('Transient delete failure'))
+                .resolvesOnce({});
+
+            const promise = backend.decrementTagCounts(new Set(['important']));
+            await drainTimers();
+            await promise;
+
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                context: 'deleteMetaCount:important',
+                msg:     'Tag index retry 1/3',
+            }));
         });
 
         test('should use ConditionExpression on DeleteCommand when count reaches 0', async () => {
@@ -1713,7 +1902,7 @@ describe('MemoryToolBackendTagIndex', () => {
             await backend.refreshTagIndexItems(path, tags, updatedAt, contentPreview, layer);
 
             const calls = ddbMock.commandCalls(BatchWriteCommand);
-            const item = calls[0].args[0].input.RequestItems?.TestTable?.[0]?.PutRequest?.Item;
+            const item = firstTestTableRequest(calls[0].args[0].input)?.PutRequest?.Item;
             expect(item).toEqual({
                 PK:         'TAG#important',
                 SK:         'PATH#/identity/values.md',
@@ -1776,6 +1965,29 @@ describe('MemoryToolBackendTagIndex', () => {
                 { tag: 'tag1', count: 10 },
                 { tag: 'tag2', count: 20 },
             ]);
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(2);
+            expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
+            expect(calls[1].args[0].input.ExclusiveStartKey).toEqual({
+                GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag1',
+            });
+        });
+
+        test('should stop after an empty terminal page', async () => {
+            const cursor = { GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag1' };
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({
+                    Items:            [{ GSI2SK: 'TAG#tag1', count: 10 }],
+                    LastEvaluatedKey: cursor,
+                })
+                .resolvesOnce({ Items: [] });
+
+            expect(await backend.listTagCounts()).toEqual([{ tag: 'tag1', count: 10 }]);
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(2);
+            expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
+            expect(calls[1].args[0].input.ExclusiveStartKey).toEqual(cursor);
         });
 
         test('should return empty array when no tags', async () => {
@@ -1810,6 +2022,44 @@ describe('MemoryToolBackendTagIndex', () => {
         }
 
         describe('createTagIndexItems', () => {
+            test('signals drift once for malformed failed writes, preserves the error, and skips counts', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                const tags = new Set(Array.from({ length: 26 }, (_, i) => `tag${i}`));
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: { TestTable: [{ PutRequest: { Item: { PK: 123 } } }] },
+                });
+
+                const promise = b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                await drainTimers();
+                await expect(promise).rejects.toThrow('without a TAG# key');
+                expect(onDrift).toHaveBeenCalledTimes(1);
+                expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    path, operation: 'createTagIndexItems',
+                }));
+            });
+
+            test('signals drift when the final retry response has an undefined table list', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                const pendingRequest = { PutRequest: { Item: { PK: 'TAG#important', SK: `PATH#${path}` } } };
+                ddbMock.on(BatchWriteCommand)
+                    .resolvesOnce({ UnprocessedItems: { TestTable: [pendingRequest] } })
+                    .resolvesOnce({ UnprocessedItems: { TestTable: [pendingRequest] } })
+                    .resolvesOnce({ UnprocessedItems: { TestTable: undefined } as never });
+
+                const promise = b.createTagIndexItems(
+                    path, new Set(['important']), '2024-01-01T00:00:00.000Z', 'preview', 'identity'
+                );
+                await drainTimers();
+
+                await expect(promise).rejects.toThrow('Invariant violated in collectFailedRequests: unprocessedItems[tableName] undefined despite tableName from Object.keys()');
+                expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(3);
+                expect(onDrift).toHaveBeenCalledTimes(1);
+                expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+            });
+
             test('should call onDriftDetected when batchWrite returns leftover items', async () => {
                 const { backend: b, onDrift } = makeBackendWithCallback();
                 const path = '/identity/values.md' as MemoryPath;
@@ -1876,6 +2126,23 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         describe('deleteTagIndexItems', () => {
+            test('signals drift for malformed retry lists before decrementing counts', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: { TestTable: undefined } as never,
+                });
+
+                const promise = b.deleteTagIndexItems(path, new Set(['important']));
+                await drainTimers();
+                await expect(promise).rejects.toThrow('unprocessedItems[tableName] undefined');
+                expect(onDrift).toHaveBeenCalledTimes(1);
+                expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    path, operation: 'deleteTagIndexItems',
+                }));
+            });
+
             test('should call onDriftDetected when batchWrite returns leftover items', async () => {
                 const { backend: b, onDrift } = makeBackendWithCallback();
                 const path = '/identity/values.md' as MemoryPath;
@@ -1915,6 +2182,41 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         describe('refreshTagIndexItems', () => {
+            test('rejects malformed failed requests and schedules reconciliation', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: { TestTable: [{ PutRequest: { Item: { PK: 'FILE#invalid' } } }] },
+                });
+
+                const promise = b.refreshTagIndexItems(path, new Set(['important']), '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                await drainTimers();
+
+                await expect(promise).rejects.toThrow('without a TAG# key');
+                expect(onDrift).toHaveBeenCalledTimes(1);
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    path,
+                    operation: 'refreshTagIndexItems',
+                    msg:       'Invalid tag index BatchWrite response; scheduling reconciliation',
+                }));
+            });
+
+            test('signals drift and retains the malformed retry error', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: { TestTable: undefined } as never,
+                });
+
+                const promise = b.refreshTagIndexItems(path, new Set(['important']), '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                await drainTimers();
+                await expect(promise).rejects.toThrow('unprocessedItems[tableName] undefined');
+                expect(onDrift).toHaveBeenCalledTimes(1);
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    path, operation: 'refreshTagIndexItems',
+                }));
+            });
+
             test('should call onDriftDetected when batchWrite returns leftover items', async () => {
                 const { backend: b, onDrift } = makeBackendWithCallback();
                 const path = '/identity/values.md' as MemoryPath;

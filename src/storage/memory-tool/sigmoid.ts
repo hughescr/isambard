@@ -29,7 +29,6 @@ export interface SigmoidParams {
     lambda: number
 }
 
-/* Stryker disable ObjectLiteral: Sigmoid parameter defaults — config values are not behavioral */
 /**
  * Default parameters for sigmoid scoring
  */

@@ -13,6 +13,7 @@ import * as channelRegistryModule from '@/integrations/discord/channel-registry/
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
 import * as handlersModule from '@/integrations/discord/handlers';
+import * as utilsModule from '@/utils';
 import type { IngressGate } from '@/integrations/discord/ingress-gate';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
@@ -144,6 +145,22 @@ describe('initializeChannelRegistry', () => {
         expect(discoverSpy).toHaveBeenCalledWith(client, registry);
     });
 
+    test('records the health CONFIGURE event and discovery audit payload', async () => {
+        const registry = makeRegistry(Promise.resolve());
+        const client = makeClient();
+        const healthRegistry = makeHealthRegistry();
+        const infoSpy = spyOn(loggerModule.logger, 'info');
+        spies.push(infoSpy, spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({ discovered: 2, updated: 3, errors: [{ guildId: 'guild-1', error: 'partial' }] }), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+        initializeChannelRegistry(client, registry, makeResponseRouter(), undefined, healthRegistry);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(healthRegistry.sendEvent).toHaveBeenCalledWith('discord-channel-registry', 'CONFIGURE');
+        expect(infoSpy).toHaveBeenCalledWith(expect.objectContaining({ discovered: 2, updated: 3, errors: 1, msg: 'Channel discovery completed: 2 new, 3 updated' }));
+    });
+
     test('setupChannelEventHandlers is called after discovery succeeds', async () => {
         const registry = makeRegistry(Promise.resolve());
         const client   = makeClient();
@@ -230,6 +247,47 @@ describe('initializeChannelRegistry', () => {
         const calledContent: string = routeToFallbackMock.mock.calls[0]?.[0] ?? '';
         expect(calledContent).toContain('dns failure');
         expect(calledContent).toContain('Channel Registry Error');
+    });
+
+    test('does not send a fallback notification when routing says not to send', async () => {
+        const registry = makeRegistry(Promise.resolve());
+        const client = makeClient();
+        const responseRouter = makeResponseRouter();
+        (responseRouter.routeToFallback as ReturnType<typeof mock>).mockResolvedValue({ shouldSend: false, targetChannelId: 'fallback-ch', content: 'error', isFallback: true });
+        const rateLimiter = { sendToChannel: mock(async () => ({} as Message)) } as unknown as DiscordRateLimiter;
+        spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+        initializeChannelRegistry(client, registry, responseRouter, rateLimiter);
+        for(let i = 0; i < 8; i++) await Promise.resolve();
+
+        expect((client.channels as unknown as { fetch: ReturnType<typeof mock> }).fetch).not.toHaveBeenCalled();
+        expect(rateLimiter.sendToChannel).not.toHaveBeenCalled();
+    });
+
+    test('does not send when the fetched fallback channel has no send method', async () => {
+        const registry = makeRegistry(Promise.resolve());
+        const client = makeClient();
+        (client.channels as unknown as { fetch: ReturnType<typeof mock> }).fetch.mockResolvedValue({});
+        const rateLimiter = { sendToChannel: mock(async () => ({} as Message)) } as unknown as DiscordRateLimiter;
+        spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+        initializeChannelRegistry(client, registry, makeResponseRouter(), rateLimiter);
+        for(let i = 0; i < 8; i++) await Promise.resolve();
+
+        expect(rateLimiter.sendToChannel).not.toHaveBeenCalled();
+    });
+
+    test('logs the fallback notification payload after a successful send', async () => {
+        const registry = makeRegistry(Promise.resolve());
+        const client = makeClient();
+        const infoSpy = spyOn(loggerModule.logger, 'info');
+        const rateLimiter = { sendToChannel: mock(async () => ({} as Message)) } as unknown as DiscordRateLimiter;
+        spies.push(infoSpy, spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+        initializeChannelRegistry(client, registry, makeResponseRouter(), rateLimiter);
+        for(let i = 0; i < 8; i++) await Promise.resolve();
+
+        expect(infoSpy).toHaveBeenCalledWith({ targetChannelId: 'fallback-ch', msg: 'Channel registry error notification sent to fallback channel' });
     });
 
     // ---------------------------------------------------------------------------
@@ -375,6 +433,15 @@ describe('initializeChannelRegistry', () => {
         const calledContent: string = routeToFallbackMock.mock.calls[0]?.[0] ?? '';
         expect(calledContent).toContain('Channel Registry Error');
 
+        // A fourth consecutive failure must not re-notify after notificationSent is set.
+        spyOn(Math, 'random').mockReturnValue(0.5);
+        jest.advanceTimersByTime(8000);
+        for(let i = 0; i < 10; i++) {
+            // eslint-disable-next-line no-await-in-loop -- drains retry and notification microtasks in order
+            await Promise.resolve();
+        }
+        expect(routeToFallbackMock).toHaveBeenCalledTimes(1);
+
         // Clean up
         (receivedLoop.stop as () => void)();
     });
@@ -508,11 +575,13 @@ describe('initializeChannelRegistry', () => {
             // eslint-disable-next-line no-await-in-loop -- flush microtasks between attempts
             await Promise.resolve();
         }
+        expect(routeToFallbackMock).toHaveBeenCalledTimes(1);
         await (receivedLoop.triggerNow as () => Promise<boolean>)(); // attempt 6 (fail, consecutiveFailureCount=2)
         for(let i = 0; i < 4; i++) {
             // eslint-disable-next-line no-await-in-loop -- flush microtasks between attempts
             await Promise.resolve();
         }
+        expect(routeToFallbackMock).toHaveBeenCalledTimes(1);
         await (receivedLoop.triggerNow as () => Promise<boolean>)(); // attempt 7 (fail, consecutiveFailureCount=3 → notify)
         for(let i = 0; i < 8; i++) {
             // eslint-disable-next-line no-await-in-loop -- flush sendRegistryErrorNotification async path
@@ -663,15 +732,12 @@ describe('initializeChannelRegistry', () => {
 
 // Helper to build a minimal Client mock that captures event handlers
 function makeClientMock() {
-    const handlers: Record<string, ((...args: unknown[]) => unknown)[]> = {};
+    const handlers: Partial<Record<string, ((...args: unknown[]) => unknown)[]>> = {};
 
     const client = {
         on: mock((event: string, handler: (...args: unknown[]) => unknown) => {
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- handlers[event] may not exist yet
-            if(!handlers[event]) {
-                handlers[event] = [];
-            }
-            handlers[event].push(handler);
+            const eventHandlers = handlers[event] ??= [];
+            eventHandlers.push(handler);
             return client;
         }),
     } as unknown as Client;
@@ -694,6 +760,13 @@ function makeClientMock() {
 }
 
 describe('setupChannelCleanupHandlers', () => {
+    test('labels the guild cleanup safe handler for error reporting', () => {
+        const safeAsyncHandlerSpy = spyOn(utilsModule, 'safeAsyncHandler');
+        const { client } = makeClientMock();
+        setupChannelCleanupHandlers({ client, coordinator: undefined, channelRegistry: {} as ChannelRegistryManager });
+        expect(safeAsyncHandlerSpy).toHaveBeenCalledWith(expect.any(Function), expect.anything(), 'guildDelete handler');
+    });
+
     describe('channelDelete handler', () => {
         test('calls coordinator.removeChannel() with channel id when channel has id', () => {
             const mockRemoveChannel = mock(() => undefined);
@@ -847,6 +920,7 @@ describe('setupMessageProcessing', () => {
     });
 
     test('forwards the ingress gate to createMessageHandler', () => {
+        const safeAsyncHandlerSpy = spyOn(utilsModule, 'safeAsyncHandler');
         const createMessageHandlerSpy = spyOn(handlersModule, 'createMessageHandler');
         const { client } = makeClientMock();
         const readyClient = { user: { id: '999999999999999999' } } as unknown as Client;
@@ -870,6 +944,7 @@ describe('setupMessageProcessing', () => {
         expect(createMessageHandlerSpy).toHaveBeenCalledTimes(1);
         const callArgs = createMessageHandlerSpy.mock.calls[0][0];
         expect(callArgs.ingressGate).toBe(ingressGate);
+        expect(safeAsyncHandlerSpy).toHaveBeenCalledWith(expect.any(Function), expect.anything(), 'messageCreate handler');
     });
 
     test('forwards perch routing deps to createMessageHandler when supplied', () => {

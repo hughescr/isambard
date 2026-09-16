@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, mock } from 'bun:test';
 import { FakeClock } from '../../../../helpers/fake-clock';
 import { type Ledger, initialLedger  } from '@/agent';
 import {
@@ -316,6 +316,14 @@ describe('presence-view', () => {
             expect(plan).toEqual({ kind: 'idle' });
             // Recording resets the window: a subsequent active plan right after is blocked.
             expect(planPresenceUpdate(activeView, throttle)).toBeNull();
+        });
+
+        test('idle records exactly once on the supplied throttle', () => {
+            const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
+
+            expect(planPresenceUpdate(idleView, throttle)).toEqual({ kind: 'idle' });
+            expect(throttle.record).toHaveBeenCalledTimes(1);
+            expect(throttle.shouldUpdate).not.toHaveBeenCalled();
         });
 
         test('active is blocked inside the throttle window and does not record', () => {

@@ -106,7 +106,6 @@ export async function buildLedgerThinkingSynopsis(
     if(!canGenerateSynopsis(dynamicStatusGenerator, throttle)) {
         return undefined;
     }
-    // Stryker disable BlockStatement: catch body returns undefined; empty catch also returns undefined — equivalent mutant
     try {
         return await dynamicStatusGenerator.generateSynopsis({
             phase: 'thinking',
@@ -114,8 +113,8 @@ export async function buildLedgerThinkingSynopsis(
         }) ?? undefined;
     } catch{
         // Fallback handled by the ledger's own base phase (no generatedStatus) — empty catch is intentional
-        return undefined;
     }
+    return undefined;
     // Stryker restore BlockStatement
 }
 
@@ -160,11 +159,8 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
     const MAX_THINKING_CONTENT_LENGTH = 1500;
     const MAX_RECENT_TOOLS = 3;
 
-    /** Dispatches a `phase_synopsis` for `phaseType`, unless `complete()` has already fired for this turn. */
+    /** Dispatches a `phase_synopsis` after the async caller has checked this turn is still live. */
     function dispatchSynopsis(phaseType: ActivityPhase['type'], text: string): void {
-        if(completed) {
-            return;
-        }
         anySynopsisDispatched = true;
         const event: LedgerEvent = {
             type: 'phase_synopsis', turnId, phaseType, text, at: new Date(),
@@ -291,79 +287,97 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
         }
     }
 
-    // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- branching is inherent to the SDK frame shapes handled
+    interface AssistantContentBlock {
+        type:      string
+        thinking?: string
+        text?:     string
+    }
+    const collectAssistantText = (event: Extract<AgentStreamEvent, { type: 'assistant' }>): string => {
+        const content: AssistantContentBlock[] | undefined = event.message?.content;
+        let completeText = '';
+        for(const block of content ?? []) {
+            if(block.type === 'thinking' && block.thinking) {
+                accumulatedThinkingContent = (accumulatedThinkingContent + block.thinking).slice(-MAX_THINKING_CONTENT_LENGTH);
+                onThinkingContentUpdate?.(accumulatedThinkingContent);
+            }
+            if(block.type === 'text' && block.text) {
+                completeText += block.text;
+            }
+        }
+        return completeText;
+    };
+
+    const handleAssistantTools = (event: Extract<AgentStreamEvent, { type: 'assistant' }>): boolean => {
+        let hadToolUseUpdate = false;
+        for(const toolUse of extractToolUses(event)) {
+            pendingToolInputs.set(toolUse.name, redactSensitiveArgs(toolUse.input));
+            if(handleToolPhaseTransition(toolUse.name)) {
+                hadToolUseUpdate = true;
+            }
+        }
+        return hadToolUseUpdate;
+    };
+
+    const handleAssistantEvent = (event: Extract<AgentStreamEvent, { type: 'assistant' }>): void => {
+        // Complete frames concatenate every text block in order; partial frames use delta.
+        const completeText = collectAssistantText(event);
+        const hadToolUseUpdate = handleAssistantTools(event);
+
+        // Partial frames carry the text as a delta, complete ones as a text block; either
+        // way it is response text, so it both accumulates and marks the responding phase.
+        // `||`, not `??`: a delta of '' is not text, and must not mask a real text block
+        // on the same frame.
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty-string delta must fall through to the frame's text blocks, which ?? would not do
+        const responseText = event.delta?.text || completeText;
+        accumulatedText = (accumulatedText + responseText).slice(-200);
+
+        if(hadToolUseUpdate) {
+            return;
+        }
+
+        const newPhase = responseText ? 'responding' : 'thinking';
+
+        if(newPhase !== currentPhase) {
+            currentPhase = newPhase;
+
+            if(newPhase === 'thinking') {
+                handleThinkingTransition();
+            } else {
+                generateAndDispatch({
+                    phase:           'responding',
+                    userMessage,
+                    accumulatedText: accumulatedText || undefined,
+                    subagentSummary: latestSubagentSummary,
+                }, 'responding');
+            }
+        }
+    };
+
+    const handleSystemEvent = (event: Extract<AgentStreamEvent, { type: 'system' }>): void => {
+        if(event.subtype === 'task_progress' && event.summary) {
+            const taskKey = event.task_id ?? '';
+            if(lastSummaryByTask.get(taskKey) === event.summary) {
+                return;
+            }
+            lastSummaryByTask.set(taskKey, event.summary);
+            latestSubagentSummary = event.summary;
+
+            const synopsisPhase = currentPhase === 'responding' ? 'responding' as const : 'thinking' as const;
+
+            generateAndDispatch({
+                phase:           synopsisPhase,
+                userMessage,
+                subagentSummary: event.summary,
+                thinkingContent: accumulatedThinkingContent || undefined,
+                recentToolCalls: [...recentToolCalls],
+            }, synopsisPhase);
+        }
+    };
+
     const onStreamEvent = (event: AgentStreamEvent): void => {
         switch(event.type) {
             case 'assistant': {
-                interface ContentBlock {
-                    type:      string
-                    thinking?: string
-                    text?:     string
-                }
-                const content: ContentBlock[] | undefined = event.message?.content;
-                // Every non-empty text block on a COMPLETE assistant message, concatenated in the
-                // order the model wrote them — a reply split across several text blocks (thinking
-                // interleaved between them) is one reply, so keeping only the first would drop
-                // everything after the first interruption. `event.delta` exists only on partial
-                // stream events, so without this every complete reply frame registered as a
-                // thinking transition (and fired an unnecessary Haiku call). The phase
-                // classification mirrors `phaseFromAssistant` in
-                // `src/agent/session/activity-phase.ts`, which the ledger already uses; the text
-                // accumulation here deliberately takes ALL blocks, not just the first.
-                let completeText = '';
-                if(content) {
-                    for(const block of content) {
-                        if(block.type === 'thinking' && block.thinking) {
-                            accumulatedThinkingContent = (accumulatedThinkingContent + block.thinking).slice(-MAX_THINKING_CONTENT_LENGTH);
-                            onThinkingContentUpdate?.(accumulatedThinkingContent);
-                        }
-                        if(block.type === 'text' && block.text) {
-                            completeText += block.text;
-                        }
-                    }
-                }
-
-                const toolUses = extractToolUses(event);
-                let hadToolUseUpdate = false;
-                for(const toolUse of toolUses) {
-                    pendingToolInputs.set(toolUse.name, redactSensitiveArgs(toolUse.input));
-                    if(handleToolPhaseTransition(toolUse.name)) {
-                        hadToolUseUpdate = true;
-                    }
-                }
-
-                // Partial frames carry the text as a delta, complete ones as a text block; either
-                // way it is response text, so it both accumulates and marks the responding phase.
-                // `||`, not `??`: a delta of '' is not text, and must not mask a real text block
-                // on the same frame.
-                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty-string delta must fall through to the frame's text blocks, which ?? would not do
-                const responseText = event.delta?.text || completeText;
-                // Stryker disable next-line ConditionalExpression: `if(true)` is an equivalent mutant — `responseText` is always a string (`event.delta?.text || completeText`, and `completeText` is initialised to ''), so the guarded body degenerates to `accumulatedText = (accumulatedText + '').slice(-200)`, which is the identity on an already-capped string. Only the `if(false)` variant is observable, and a test kills it.
-                if(responseText) {
-                    accumulatedText = (accumulatedText + responseText).slice(-200);
-                }
-
-                if(hadToolUseUpdate) {
-                    return;
-                }
-
-                const newPhase = responseText ? 'responding' : 'thinking';
-
-                if(newPhase !== currentPhase) {
-                    currentPhase = newPhase;
-
-                    if(newPhase === 'thinking') {
-                        handleThinkingTransition();
-                    } else {
-                        generateAndDispatch({
-                            phase:           'responding',
-                            userMessage,
-                            accumulatedText: accumulatedText || undefined,
-                            subagentSummary: latestSubagentSummary,
-                        }, 'responding');
-                    }
-                }
-
+                handleAssistantEvent(event);
                 break;
             }
             case 'tool_progress': {
@@ -380,24 +394,7 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
                 break;
             }
             case 'system': {
-                if(event.subtype === 'task_progress' && event.summary) {
-                    const taskKey = event.task_id ?? '';
-                    if(lastSummaryByTask.get(taskKey) === event.summary) {
-                        break;
-                    }
-                    lastSummaryByTask.set(taskKey, event.summary);
-                    latestSubagentSummary = event.summary;
-
-                    const synopsisPhase = currentPhase === 'responding' ? 'responding' as const : 'thinking' as const;
-
-                    generateAndDispatch({
-                        phase:           synopsisPhase,
-                        userMessage,
-                        subagentSummary: event.summary,
-                        thinkingContent: accumulatedThinkingContent || undefined,
-                        recentToolCalls: [...recentToolCalls],
-                    }, synopsisPhase);
-                }
+                handleSystemEvent(event);
                 break;
             }
         }

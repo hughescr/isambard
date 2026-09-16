@@ -29,11 +29,9 @@ export class ReviewHandler {
         this.allowlistInteractionHandler = deps.allowlistInteractionHandler;
     }
 
-    // eslint-disable-next-line complexity -- approval handler has inherent branching: allow/reject/allowlist x auth x error paths
     async handleButton(interaction: ButtonInteraction): Promise<void> {
         if(interaction.user.id !== this.adminDiscordUserId) {
             await interaction.reply({
-                // Stryker disable next-line StringLiteral: Error message is UI configuration
                 content: 'Only the admin can review emails.',
                 flags:   MessageFlags.Ephemeral,
             });
@@ -49,7 +47,7 @@ export class ReviewHandler {
             return;
         }
 
-        // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
+        // Stryker disable next-line StringLiteral: absent UID parses as NaN with either empty or nonnumeric fallback and exits before any action
         const uid = Number.parseInt(uidStr ?? '', 10);
         if(Number.isNaN(uid)) {
             return;
@@ -58,7 +56,6 @@ export class ReviewHandler {
         const validFolderSet = new Set<string>(Object.values(EmailFolder));
         if(!folderStr || !validFolderSet.has(folderStr)) {
             await interaction.reply({
-                // Stryker disable next-line StringLiteral: Error message is UI configuration
                 content: 'Invalid folder in button interaction.',
                 flags:   MessageFlags.Ephemeral,
             });
@@ -70,44 +67,38 @@ export class ReviewHandler {
         // All subsequent responses must use editReply() instead of update().
         await interaction.deferUpdate();
 
-        // Stryker disable BlockStatement: try-catch wraps button handler - error handling
         try {
-            switch(prefix) {
-                case 'email-trash': {
-                    await this.handleTrash(interaction, uid, sourceFolder);
-
-                    break;
-                }
-                case 'email-junk': {
-                    await this.handleJunk(interaction, uid, sourceFolder);
-
-                    break;
-                }
-                case 'email-allow': {
-                    await this.handleAllow(interaction, uid, sourceFolder);
-
-                    break;
-                }
-                // eslint-disable-next-line unicorn/no-useless-switch-case -- needed for switch exhaustiveness check
-                case 'email-allowlist':
-                default: {
-                    await this.handleAllowlist(interaction, uid, sourceFolder);
-                }
-            }
+            await this.dispatchReviewAction(prefix, interaction, uid, sourceFolder);
         } catch (err) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({ err, uid, prefix, msg: 'Review button handler failed' });
-            // Stryker disable BlockStatement: try-catch wraps editReply - best-effort error reply
             try {
                 await interaction.editReply({
-                    // Stryker disable next-line StringLiteral: Error message is UI configuration
                     content:    'An error occurred processing your request. Please try again.',
                     embeds:     [],
                     components: [],
                 });
             } catch (error) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.error({ err: error, msg: 'Failed to send error editReply' });
+            }
+        }
+    }
+
+    private async dispatchReviewAction(prefix: string, interaction: ButtonInteraction, uid: number, sourceFolder: EmailFolder): Promise<void> {
+        switch(prefix) {
+            case 'email-trash': {
+                await this.handleTrash(interaction, uid, sourceFolder);
+                break;
+            }
+            case 'email-junk': {
+                await this.handleJunk(interaction, uid, sourceFolder);
+                break;
+            }
+            case 'email-allow': {
+                await this.handleAllow(interaction, uid, sourceFolder);
+                break;
+            }
+            default: {
+                await this.handleAllowlist(interaction, uid, sourceFolder);
             }
         }
     }
@@ -116,7 +107,6 @@ export class ReviewHandler {
         await this.wildDuckClient.moveMessage(sourceFolder, uid, EmailFolder.Trash);
 
         const updatedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
             .setTitle('Trashed')
             .setColor(RED);
 
@@ -130,7 +120,6 @@ export class ReviewHandler {
         await this.wildDuckClient.moveMessage(sourceFolder, uid, EmailFolder.Junk);
 
         const updatedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
             .setTitle('Junked')
             .setColor(RED);
 
@@ -144,7 +133,6 @@ export class ReviewHandler {
         await this.wildDuckClient.moveMessage(sourceFolder, uid, EmailFolder.CleanInbox);
 
         const updatedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
             .setTitle('Allowed')
             .setColor(GREEN);
 
@@ -158,7 +146,6 @@ export class ReviewHandler {
         // Fetch email to get sender address for allowlist
         const email = await this.wildDuckClient.getFullMessage(sourceFolder, uid);
         if(!email) {
-            // Stryker disable StringLiteral,ObjectLiteral: Error message and context are debug-only metadata
             throw new EmailProcessingError(`Message UID ${uid} not found in ${sourceFolder}`, { uid, sourceFolder });
             // Stryker restore StringLiteral,ObjectLiteral
         }
@@ -173,7 +160,6 @@ export class ReviewHandler {
         await this.allowlistInteractionHandler.startFromApproval(interaction, 'email', senderAddress, senderName);
 
         const updatedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
             .setTitle('Allowed \u2713')
             .setColor(GREEN);
 

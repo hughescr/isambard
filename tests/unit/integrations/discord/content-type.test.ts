@@ -115,6 +115,10 @@ describe('inferImageContentType', () => {
         it('handles mixed case extensions (.JpEg)', () => {
             expect(inferImageContentType('photo.JpEg', null)).toBe('image/jpeg');
         });
+
+        it('does not turn a dotless i in an unknown extension into GIF', () => {
+            expect(inferImageContentType('photo.gıf', null)).toBe('application/octet-stream');
+        });
     });
 
     describe('fallback behavior', () => {

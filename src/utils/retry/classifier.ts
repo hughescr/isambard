@@ -44,7 +44,6 @@ function getRetryAfter(error: unknown): number | undefined {
     }
 
     // Check response body first (already in ms)
-    // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: Property check for retryAfter field, return undefined on missing property
     if('retryAfter' in error) {
         const retryAfter = typeof error.retryAfter === 'string'
             ? Number.parseInt(error.retryAfter, 10)
@@ -54,7 +53,6 @@ function getRetryAfter(error: unknown): number | undefined {
     }
 
     // Check headers (in seconds, needs conversion to ms)
-    // Stryker disable next-line ConditionalExpression: type-narrowing guards — typeof/null checks are defensive; headers is always an object when 'headers' in error passes
     if('headers' in error && typeof error.headers === 'object' && error.headers !== null) {
         const headers = error.headers as Record<string, unknown>;
         if('retry-after' in headers && typeof headers['retry-after'] === 'string') {
@@ -86,6 +84,7 @@ export function classifyHttpStatus(
 
     // Check custom permanent statuses first — use Set for O(1) lookup with correct typing
     const permanentStatusSet = new Set<number>(permanentStatuses);
+    // Stryker disable next-line llm: Set.has and number[].includes both use SameValueZero membership; the Set is not otherwise observed.
     if(permanentStatusSet.has(status)) {
         return { category: 'permanent', message };
     }
@@ -99,15 +98,14 @@ export function classifyHttpStatus(
         };
     }
 
+    // Client errors (4xx except 429) - permanent
+    if(status >= 400 && status < 500) {
+        return { category: 'permanent', message };
+    }
+
     // Server errors (5xx) - transient
     if(status >= 500 && status < 600) {
         return { category: 'transient', message };
-    }
-
-    // Client errors (4xx except 429) - permanent
-    // Stryker disable next-line EqualityOperator: status <= 500 is equivalent — 5xx check above catches 500 first, so this boundary is never reached with status=500
-    if(status >= 400 && status < 500) {
-        return { category: 'permanent', message };
     }
 
     return undefined;
@@ -118,12 +116,10 @@ export function classifyHttpStatus(
  */
 
 export function classifyNetworkError(error: unknown, fallbackMessage = 'Unknown error'): ErrorClassification | undefined {
-    // Stryker disable next-line ConditionalExpression,BlockStatement,LogicalOperator: defensive type guard — non-objects have no .code/.name, so all branch mutations are equivalent (non-object inputs always return undefined either way)
     if(!(typeof error === 'object' && error !== null)) {
         return undefined;
     }
 
-    // Stryker disable next-line StringLiteral: Network error code configuration — exact strings are protocol/SDK constants
     // POSIX codes: ETIMEDOUT, ECONNRESET, ECONNREFUSED
     // Smithy/AWS-SDK codes: FailedToOpenSocket (transient socket failure), TimeoutError (throwOnRequestTimeout), NetworkingError (general)
     // NOTE: NetworkingError covers DNS NXDOMAIN and other permanent failures; those exhaust the retry budget before surfacing.
@@ -135,7 +131,6 @@ export function classifyNetworkError(error: unknown, fallbackMessage = 'Unknown 
     const code = typeof errorRecord.code === 'string' ? errorRecord.code : undefined;
     const name = typeof errorRecord.name === 'string' ? errorRecord.name : undefined;
 
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Either code or name field may carry the classification — both are required for full Smithy coverage
     if((code !== undefined && networkErrorCodes.has(code)) || (name !== undefined && networkErrorCodes.has(name))) {
         const message = typeof errorRecord.message === 'string' && errorRecord.message
             ? errorRecord.message
@@ -159,17 +154,10 @@ export const createHttpStatusClassifier = (
     const { permanentStatuses = [] } = options;
 
     return (error: unknown): ErrorClassification => {
-        if(!(typeof error === 'object' && error !== null)) {
-            return defaultClassifier(error);
-        }
-
-        // Try HTTP status classification
-        // Stryker disable next-line ConditionalExpression: always-true mutant is equivalent — classifyHttpStatus with no status returns undefined, falling through to same behavior
-        if('status' in error) {
-            const result = classifyHttpStatus(error, permanentStatuses);
-            if(result) {
-                return result;
-            }
+        // Both classifiers validate their inputs, including primitive and nullish values.
+        const result = classifyHttpStatus(error, permanentStatuses);
+        if(result) {
+            return result;
         }
 
         // Try network error classification

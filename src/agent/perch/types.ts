@@ -33,7 +33,6 @@ export type PerchSlot
 /**
  * Zod schema for PerchSlot validation.
  */
-/* Stryker disable all: Enum values are configuration - runtime behavior validated by schema tests */
 export const PerchSlotSchema = z.enum([
     'pre-dawn',
     'mid-morning',
@@ -53,7 +52,6 @@ export type SuggestionLevel = 'strongly_suggestive' | 'moderate' | 'open' | 'lig
 /**
  * Zod schema for SuggestionLevel validation.
  */
-/* Stryker disable all: Enum values are configuration - runtime behavior validated by schema tests */
 export const SuggestionLevelSchema = z.enum([
     'strongly_suggestive',
     'moderate',
@@ -81,7 +79,6 @@ export interface PerchSlotConfig {
 /**
  * Zod schema for PerchSlotConfig validation.
  */
-/* Stryker disable ObjectLiteral,MethodExpression: Schema structure is configuration - validated by tests */
 export const PerchSlotConfigSchema = z.object({
     slot:      PerchSlotSchema,
     startHour: z.number().int().min(0).max(23),

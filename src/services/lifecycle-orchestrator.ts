@@ -21,7 +21,6 @@ type ServiceLifecycleEvent
       | { type: 'RECOVERY_FAIL', error?: string };
 
 export const serviceLifecycleMachine = setup({
-    // Stryker disable next-line ObjectLiteral: xstate types property is compile-time only
     types: {
         context: {} as ServiceLifecycleContext,
         events:  {} as ServiceLifecycleEvent,
@@ -51,7 +50,6 @@ export const serviceLifecycleMachine = setup({
         }),
     },
 }).createMachine({
-    // Stryker disable StringLiteral: machine id and initial state are xstate identity constants — mutating causes XState runtime error
     id:      'serviceLifecycle',
     initial: 'disabled',
     // Stryker restore StringLiteral
@@ -109,8 +107,7 @@ export const serviceLifecycleMachine = setup({
 export type ServiceLifecycleActor = ReturnType<typeof createActor<typeof serviceLifecycleMachine>>;
 
 export function createServiceActor(initialState?: HealthState): ServiceLifecycleActor {
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: disabled path creates a simpler actor — both disabled and undefined are equivalent starting points
-    if(initialState === undefined || initialState === 'disabled') {
+    if(initialState === undefined) {
         return createActor(serviceLifecycleMachine);
     }
 

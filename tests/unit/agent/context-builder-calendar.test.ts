@@ -76,6 +76,42 @@ describe('createContextBuilder calendar context injection', () => {
             expect(result).toContain('Team meeting');
         });
 
+        test('should include failed-event notes from every perch calendar user', async () => {
+            setupBackendMocks();
+            mockCalendarRegistry.listRegisteredUserIds = mock(async () => ['user-alice']);
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({
+                events: [fakeEvent],
+                failed: [{ uid: 'bad-uid', reason: 'Malformed RRULE' }],
+            }));
+
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildPerchContext(new Date('2026-03-18T10:00:00Z'));
+
+            expect(result).toContain('Team meeting');
+            expect(result).toContain("1 recurring event couldn't be parsed");
+        });
+
+        test('shows recurrence failures when perch has no displayable calendar events', async () => {
+            setupBackendMocks();
+            mockCalendarRegistry.listRegisteredUserIds = mock(async () => ['user-alice']);
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({
+                events: [],
+                failed: [{ uid: 'bad-uid', reason: 'Malformed RRULE' }],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend, calendarService: { client: mockCalDAVClient, registry: mockCalendarRegistry } });
+            const result = await contextBuilder.buildPerchContext(new Date('2026-03-18T10:00:00Z'));
+
+            expect(result).toContain('## Calendar\nNo calendar events could be displayed.');
+            expect(result).toContain("1 recurring event couldn't be parsed");
+            expect(result).not.toContain('Team meeting');
+        });
+
         test('should NOT include calendar section when calendarService is not configured for perch', async () => {
             setupBackendMocks();
 
@@ -178,6 +214,124 @@ describe('createContextBuilder calendar context injection', () => {
             expect(mockCalendarRegistry.getAllCalendars).toHaveBeenCalledWith('user-bob');
         });
 
+        test('bounds independent registry reads before ordered, sequential CalDAV calls', async () => {
+            setupBackendMocks();
+            const userIds = Array.from({ length: 10 }, (_, index) => `user-${index}`);
+            mockCalendarRegistry.listRegisteredUserIds = mock(async () => userIds);
+            const started: string[] = [];
+            const release = new Map<string, () => void>();
+            let activeRegistry = 0;
+            let maxActiveRegistry = 0;
+            let firstBatchReady!: () => void;
+            let allReady!: () => void;
+            const firstBatch = new Promise<void>((resolve) => {
+                firstBatchReady = resolve;
+            });
+            const allStarted = new Promise<void>((resolve) => {
+                allReady = resolve;
+            });
+            mockCalendarRegistry.getAllCalendars = mock((userId: string) => new Promise<CalendarServerEntry[]>((resolve) => {
+                started.push(userId);
+                activeRegistry++;
+                maxActiveRegistry = Math.max(maxActiveRegistry, activeRegistry);
+                release.set(userId, () => {
+                    activeRegistry--;
+                    resolve([{ ...fakeServer, description: userId }]);
+                });
+                if(started.length === 8) {
+                    firstBatchReady();
+                }
+                if(started.length === userIds.length) {
+                    allReady();
+                }
+            }));
+            const clientOrder: string[] = [];
+            let activeClient = 0;
+            let maxActiveClient = 0;
+            mockCalDAVClient.getContextEvents = mock(async (servers: CalendarServerEntry[]): Promise<CalendarEventsResult> => {
+                activeClient++;
+                maxActiveClient = Math.max(maxActiveClient, activeClient);
+                clientOrder.push(servers[0].description);
+                await Promise.resolve();
+                activeClient--;
+                return { events: [fakeEvent], failed: [] };
+            });
+
+            const contextBuilder = createContextBuilder({ backend, calendarService: { client: mockCalDAVClient, registry: mockCalendarRegistry } });
+            const building = contextBuilder.buildPerchContext(new Date('2026-03-18T10:00:00Z'));
+            await firstBatch;
+            expect(started).toEqual(userIds.slice(0, 8));
+            expect(maxActiveRegistry).toBe(8);
+            expect(mockCalDAVClient.getContextEvents).not.toHaveBeenCalled();
+            for(const userId of userIds.slice(0, 8).toReversed()) {
+                release.get(userId)!();
+            }
+            await allStarted;
+            expect(mockCalDAVClient.getContextEvents).not.toHaveBeenCalled();
+            for(const userId of userIds.slice(8)) {
+                release.get(userId)!();
+            }
+            expect(await building).toContain('## Calendar');
+            expect(clientOrder).toEqual(userIds);
+            expect(maxActiveClient).toBe(1);
+        });
+
+        test('drains held registry reads, then preserves successful CalDAV prefix and input-order error', async () => {
+            setupBackendMocks();
+            const userIds = ['first', 'second', 'third', 'fourth'];
+            mockCalendarRegistry.listRegisteredUserIds = mock(async () => userIds);
+            const started: string[] = [];
+            let activeRegistry = 0;
+            let thirdReady!: () => void;
+            let rejectThird!: (error: Error) => void;
+            const thirdStarted = new Promise<void>((resolve) => {
+                thirdReady = resolve;
+            });
+            mockCalendarRegistry.getAllCalendars = mock(async (userId: string) => {
+                started.push(userId);
+                activeRegistry++;
+                try {
+                    if(userId === 'third') {
+                        const held = new Promise<CalendarServerEntry[]>((_resolve, reject) => {
+                            rejectThird = reject;
+                            thirdReady();
+                        });
+                        return await held;
+                    }
+                    if(userId === 'second') {
+                        throw new Error('second registry failed');
+                    }
+                    return [{ ...fakeServer, description: userId }];
+                } finally {
+                    activeRegistry--;
+                }
+            });
+            const clientOrder: string[] = [];
+            mockCalDAVClient.getContextEvents = mock(async (servers: CalendarServerEntry[]): Promise<CalendarEventsResult> => {
+                clientOrder.push(servers[0].description);
+                return { events: [fakeEvent], failed: [] };
+            });
+
+            const contextBuilder = createContextBuilder({ backend, calendarService: { client: mockCalDAVClient, registry: mockCalendarRegistry } });
+            const building = contextBuilder.buildPerchContext(new Date('2026-03-18T10:00:00Z'));
+            let settled = false;
+            void building.then(() => {
+                settled = true;
+                return undefined;
+            });
+            await thirdStarted;
+            await Bun.sleep(0);
+            expect(started).toEqual(userIds);
+            expect(settled).toBe(false);
+            expect(clientOrder).toEqual([]);
+
+            rejectThird(new Error('third registry failed'));
+            const result = await building;
+            expect(result).toContain('[Calendar unavailable: second registry failed]');
+            expect(clientOrder).toEqual(['first']);
+            expect(activeRegistry).toBe(0);
+        });
+
         test('should merge events from multiple users', async () => {
             setupBackendMocks();
 
@@ -196,6 +350,26 @@ describe('createContextBuilder calendar context injection', () => {
             // Should include calendar section (events from both users merged)
             expect(result).toContain('## Calendar');
             expect(result).toContain('Team meeting');
+        });
+
+        test('preserves registered-user aggregation order when events have equal start times', async () => {
+            setupBackendMocks();
+            mockCalendarRegistry.listRegisteredUserIds = mock(async () => ['user-alice', 'user-bob']);
+            mockCalendarRegistry.getAllCalendars = mock(async userId => [{ ...fakeServer, description: userId }]);
+            mockCalDAVClient.getContextEvents = mock(async (servers): Promise<CalendarEventsResult> => ({
+                events: [{ ...fakeEvent, uid: servers[0]!.description, summary: `${servers[0]!.description} meeting` }],
+                failed: [],
+            }));
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                calendarService: { client: mockCalDAVClient, registry: mockCalendarRegistry },
+            });
+            const result = await contextBuilder.buildPerchContext(new Date('2026-03-18T10:00:00Z'));
+
+            // Calendar formatting uses a stable time sort, so equal-time events retain the
+            // returned registry order through the combined perch agenda.
+            expect(result.indexOf('user-alice meeting')).toBeLessThan(result.indexOf('user-bob meeting'));
         });
 
         test('should skip user if getAllCalendars returns empty array', async () => {
@@ -319,6 +493,7 @@ describe('createContextBuilder calendar context injection', () => {
             const result = await contextBuilder.buildUserMessagePrefix('user123');
 
             expect(result).not.toContain('## Calendar');
+            expect(result).not.toContain('[Calendar unavailable:');
         });
 
         test('should NOT include calendar section when user has no calendars', async () => {
@@ -351,6 +526,21 @@ describe('createContextBuilder calendar context injection', () => {
             const result = await contextBuilder.buildUserMessagePrefix('user123');
 
             expect(result).not.toContain('## Calendar');
+        });
+
+        test('shows recurrence failures when a user has no displayable calendar events', async () => {
+            setupBackendMocks();
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({
+                events: [],
+                failed: [{ uid: 'bad-uid', reason: 'Malformed RRULE' }],
+            }));
+
+            const contextBuilder = createContextBuilder({ backend, calendarService: { client: mockCalDAVClient, registry: mockCalendarRegistry } });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain('## Calendar\nNo calendar events could be displayed.');
+            expect(result).toContain("1 recurring event couldn't be parsed");
+            expect(result).not.toContain('Team meeting');
         });
 
         test('calendar section should appear after user memories and before hot state', async () => {
@@ -513,6 +703,22 @@ describe('createContextBuilder calendar context injection', () => {
             expect(result).toContain('[Calendar unavailable: connection to calendar server timed out after 15000ms]');
         });
 
+        test('describes a timeout without duration metadata as unknown', async () => {
+            setupBackendMocks();
+            mockCalendarRegistry.getAllCalendars = mock(async () => {
+                throw new CaldavTimeoutError('Calendar request timed out');
+            });
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain('[Calendar unavailable: connection to calendar server timed out after unknownms]');
+        });
+
         test('should return auth-specific message on CaldavAuthError', async () => {
             setupBackendMocks();
 
@@ -630,6 +836,7 @@ describe('createContextBuilder calendar context injection', () => {
             const result = await contextBuilder.buildUserMessagePrefix('user123');
 
             expect(result).toContain('## Calendar');
+            expect(result).toContain('Team meeting');
             expect(result).toContain("1 recurring event couldn't be parsed");
         });
 

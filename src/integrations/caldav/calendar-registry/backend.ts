@@ -4,7 +4,6 @@ import {
     type CalendarRegistryRecord,
     type CalendarServerEntry
 } from './types';
-import { InvariantViolationError } from '@/errors';
 import { BaseRepository, type DynamoDBClientHolder } from '@/storage';
 import { stripDynamoKeys } from '@/utils';
 
@@ -151,7 +150,6 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
      * Acceptable scan for a personal assistant with very few users (~1-5).
      */
     async listRegisteredUserIds(): Promise<string[]> {
-        // Stryker disable StringLiteral,ObjectLiteral: DynamoDB scan configuration — filter expression and attribute values are API config, not behavior
         const items = await this.scan<Record<string, unknown>>(
             {
                 FilterExpression:          'begins_with(PK, :prefix) AND SK = :sk',
@@ -222,12 +220,7 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
             return false;
         }
 
-        const server = existing.servers[serverIndex];
-        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — serverIndex !== -1 from findIndex guarantees valid index; unreachable in practice
-        if(server === undefined) {
-            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
-            throw new InvariantViolationError('removeCalendar', 'servers[serverIndex] undefined despite serverIndex !== -1 from findIndex');
-        }
+        const server = existing.servers[serverIndex]!;
         const originalCalendarLength = server.calendars.length;
         const updatedCalendars = server.calendars.filter(c => c.calendarPath !== calendarPath);
         if(updatedCalendars.length === originalCalendarLength) {

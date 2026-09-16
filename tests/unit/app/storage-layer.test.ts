@@ -124,6 +124,8 @@ describe('createStorageLayer', () => {
         expect(result.sessionJournalBackend).toBe(mockSessionJournalBackend);
         expect(typeof result.createJournal).toBe('function');
         expect(typeof result.createResumeStore).toBe('function');
+        expect(mockLogger.info).toHaveBeenCalledWith('Memory system initialized with DynamoDB: TestTable');
+        expect(mockLogger.info).toHaveBeenCalledWith('Tag index reconciliation scheduler configured');
     });
 
     describe('P8: sessionJournalBackend, createJournal, createResumeStore', () => {
@@ -374,13 +376,14 @@ describe('createStorageLayer', () => {
 
         // Import and call createStorageLayer - should throw
         const { createStorageLayer } = staticStorageLayerModule;
-        expect(() => createStorageLayer(mockDynamoDBConfig)).toThrow('DynamoDB connection failed');
+        await expect(createStorageLayer(mockDynamoDBConfig)).rejects.toThrow('DynamoDB connection failed');
     });
 
     test('should throw when MemoryToolBackend constructor throws', async () => {
         // Mock createDynamoDBClient to succeed
+        const destroy = mock(() => undefined);
         spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as unknown as DynamoDBClient,
+            client:    { destroy } as unknown as DynamoDBClient,
             docClient: {} as unknown as DynamoDBDocumentClient,
             tableName: 'TestTable',
         }));
@@ -394,7 +397,95 @@ describe('createStorageLayer', () => {
 
         // Import and call createStorageLayer - should throw
         const { createStorageLayer } = staticStorageLayerModule;
-        expect(() => createStorageLayer(mockDynamoDBConfig)).toThrow('Memory backend initialization failed');
+        await expect(createStorageLayer(mockDynamoDBConfig)).rejects.toThrow('Memory backend initialization failed');
+        expect(destroy).toHaveBeenCalledTimes(1);
+    });
+
+    test('releases the DynamoDB holder if opening the vector index rejects', async () => {
+        const openError = new Error('vector open failed');
+        const destroy = mock(() => undefined);
+        spies.push(
+            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    { destroy } as unknown as DynamoDBClient,
+                docClient: {} as unknown as DynamoDBDocumentClient,
+                tableName: 'TestTable',
+            }),
+            spyOn(staticVecStoreModule.VectorIndex, 'open').mockRejectedValue(openError)
+        );
+        const embedder = { encode: mock(async () => ({ data: new Uint8Array(128) })), close: mock(async () => {}) };
+
+        await expect(staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+            enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
+        }, embedder)).rejects.toBe(openError);
+        expect(destroy).toHaveBeenCalledTimes(1);
+        expect(embedder.close).not.toHaveBeenCalled();
+    });
+
+    test('unwinds indexer, vector, and holder after a later constructor fails', async () => {
+        const constructionError = new Error('backend failed');
+        const cleanupOrder: string[] = [];
+        const destroy = mock(() => {
+            cleanupOrder.push('holder');
+        });
+        const vectorClose = mock(() => {
+            cleanupOrder.push('vector');
+            throw new Error('vector close failed');
+        });
+        const embedder = {
+            encode: mock(async () => ({ data: new Uint8Array(128) })),
+            close:  mock(async () => {
+                cleanupOrder.push('embedder');
+                throw new Error('partial embedder disposal failed');
+            }),
+        };
+        const onIndexerEmbedderCloseAttempt = mock(() => {
+            cleanupOrder.push('transfer');
+        });
+        spies.push(
+            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    { destroy } as unknown as DynamoDBClient,
+                docClient: {} as unknown as DynamoDBDocumentClient,
+                tableName: 'TestTable',
+            }),
+            spyOn(staticVecStoreModule.VectorIndex, 'open').mockResolvedValue({ close: vectorClose } as unknown as typeof staticVecStoreModule.VectorIndex.prototype),
+            // @ts-expect-error - Deliberately failing backend constructor
+            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => { throw constructionError; })
+        );
+
+        await expect(staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+            enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
+        }, embedder, undefined, onIndexerEmbedderCloseAttempt)).rejects.toBe(constructionError);
+        expect(cleanupOrder).toEqual(['transfer', 'embedder', 'vector', 'holder']);
+        expect(embedder.close).toHaveBeenCalledTimes(1);
+        expect(onIndexerEmbedderCloseAttempt).toHaveBeenCalledTimes(1);
+    });
+
+    test('stops both schedulers before releasing the client when a later backend fails', async () => {
+        const failure = new Error('task session backend failed');
+        const released: string[] = [];
+        const scheduler = { start: mock(() => {}), stop:  mock(() => {
+            released.push('reconciliation');
+        }), notifyDrift: mock(() => {}) };
+        const contactScheduler = { start: mock(() => {}), stop:  mock(() => {
+            released.push('contact');
+        }) };
+        spies.push(
+            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    { destroy: mock(() => { released.push('holder'); }) } as unknown as DynamoDBClient,
+                docClient: {} as unknown as DynamoDBDocumentClient,
+                tableName: 'TestTable',
+            }),
+            // @ts-expect-error -- mocking constructor
+            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({ getTagIndexBackend: mock(() => ({})) })),
+            spyOn(staticReconciliationModule, 'createReconciliationScheduler').mockReturnValue(scheduler as unknown as ReconciliationScheduler),
+            spyOn(staticContactReconciliationModule, 'createContactReconciliationScheduler').mockReturnValue(contactScheduler as unknown as ContactReconciliationScheduler),
+            // @ts-expect-error -- deliberate constructor failure
+            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => { throw failure; })
+        );
+        await expect(staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig, {
+            enabled: true, intervalMs: 60_000, operationDelayMs: 0, scanPageSize: 25, strayLookupAgeThresholdMs: 300_000,
+        })).rejects.toBe(failure);
+        expect(released).toEqual(['contact', 'reconciliation', 'holder']);
     });
 
     test('should NOT create vector index or asyncIndexer when vectorIndexConfig is undefined', async () => {
@@ -528,6 +619,11 @@ describe('createStorageLayer', () => {
         expect(VectorIndexOpenSpy).toHaveBeenCalledWith('memory-vec.sqlite');
         expect(result.vectorIndex).toBeDefined();
         expect(result.asyncIndexer).toBeDefined();
+        expect(mockLogger.info).toHaveBeenCalledWith('Vector index initialized at memory-vec.sqlite');
+        expect(mockEmbedder.close).not.toHaveBeenCalled();
+        await result.asyncIndexer?.close();
+        await result.asyncIndexer?.close();
+        expect(mockEmbedder.close).toHaveBeenCalledTimes(1);
     });
 
     test('drift callback calls notifyDrift on the reconciliation scheduler when set', async () => {
@@ -539,8 +635,14 @@ describe('createStorageLayer', () => {
 
         // Capture the drift callback passed to MemoryToolBackend
         let capturedDriftCallback: (() => void) | undefined;
-        // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation((_holder, _tableName, _indexer, driftCallback: (() => void) | undefined) => {
+        type MemoryToolConstructorArgs = ConstructorParameters<typeof staticMemoryToolModule.MemoryToolBackend>;
+        // @ts-expect-error -- Bun types constructor-only spy implementations as never
+        spies.push(spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation((
+            _holder: MemoryToolConstructorArgs[0],
+            _tableName: MemoryToolConstructorArgs[1],
+            _indexer: MemoryToolConstructorArgs[2],
+            driftCallback: MemoryToolConstructorArgs[3]
+        ) => {
             capturedDriftCallback = driftCallback;
             return {
                 getTagIndexBackend: mock(() => ({})),
@@ -616,6 +718,7 @@ describe('createStorageLayer', () => {
 
         expect(createContactSchedulerSpy).toHaveBeenCalledTimes(1);
         expect(result.contactReconciliationScheduler).toBeDefined();
+        expect(mockLogger.info).toHaveBeenCalledWith('Contact reconciliation scheduler configured');
     });
 
     // ======================================================================
@@ -653,8 +756,7 @@ describe('createStorageLayer', () => {
                 triggerNow: mock(async () => undefined),
             };
             spies.push(spyOn(staticContactReconciliationModule, 'createContactReconciliationScheduler').mockImplementation((opts) => {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic capture of injected sleep
-                capturedSleep = (opts.reconcilerDeps as any).sleep as (ms: number, signal?: AbortSignal) => Promise<void>;
+                capturedSleep = opts.reconcilerDeps.sleep;
                 return mockContactScheduler;
             }));
 
@@ -719,11 +821,55 @@ describe('createStorageLayer', () => {
             expect((rejected as DOMException).message).toBe('something');
         });
 
+        test('preserves an existing AbortError reason and wraps a different DOMException', async () => {
+            const sleep = await captureSleep();
+            const existing = new DOMException('already cancelled', 'AbortError');
+            const first = new AbortController();
+            first.abort(existing);
+            await expect(sleep(10, first.signal)).rejects.toBe(existing);
+
+            const second = new AbortController();
+            second.abort(new DOMException('connection lost', 'NetworkError'));
+            await expect(sleep(10, second.signal)).rejects.toMatchObject({ name: 'AbortError', message: 'connection lost' });
+        });
+
+        test('uses the default abort message when a signal has no reason', async () => {
+            const sleep = await captureSleep();
+            const signal = { aborted: true, reason: undefined } as AbortSignal;
+            await expect(sleep(10, signal)).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
+        });
+
+        test('an in-flight abort cancels the timer and rejects with the caller reason', async () => {
+            jest.useFakeTimers();
+            const sleep = await captureSleep();
+            const controller = new AbortController();
+            const addListener = spyOn(controller.signal, 'addEventListener');
+            const clearTimer = spyOn(globalThis, 'clearTimeout');
+            try {
+                const pending = sleep(10_000, controller.signal);
+                let settled = 'pending';
+                void pending.catch(() => {
+                    settled = 'rejected';
+                });
+                expect(addListener).toHaveBeenCalledWith('abort', expect.any(Function), { once: true });
+                controller.abort('interrupted');
+                jest.advanceTimersByTime(10_000);
+                await Promise.resolve();
+                expect(settled).toBe('rejected');
+                await expect(pending).rejects.toMatchObject({ name: 'AbortError', message: 'interrupted' });
+                expect(clearTimer).toHaveBeenCalledTimes(1);
+            } finally {
+                addListener.mockRestore();
+                clearTimer.mockRestore();
+            }
+        });
+
         test('Fix 5+6: sleep completes normally (no abort) — once:true listener auto-removes; no double-cleanup error', async () => {
             jest.useFakeTimers();
             const sleep = await captureSleep();
 
             const controller = new AbortController();
+            const removeListener = spyOn(controller.signal, 'removeEventListener');
 
             // Call sleep 100 times with the same signal and advance the timer each time
             const sleepPromises: Promise<void>[] = [];
@@ -733,6 +879,8 @@ describe('createStorageLayer', () => {
             // Advance time past all sleeps — all timers fire, all abort listeners are removed
             jest.advanceTimersByTime(100);
             await Promise.all(sleepPromises);
+            expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+            removeListener.mockRestore();
 
             // If Fix 5 is correct, the signal should have no accumulated listeners.
             // We can't directly query listener count, but aborting after all sleeps complete

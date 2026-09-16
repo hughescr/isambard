@@ -119,6 +119,14 @@ describe.concurrent('createPrefixedKey', () => {
 });
 
 describe.concurrent('parsePrefixedKey', () => {
+    test('records the failing parser as the invariant location', () => {
+        try {
+            parsePrefixedKey('CONTACT', 'OTHER#id');
+            throw new Error('expected parsePrefixedKey to reject a mismatched prefix');
+        } catch (error) {
+            expect(error).toMatchObject({ context: { location: 'parsePrefixedKey' } });
+        }
+    });
     describe('single-part keys', () => {
         test('parses CONTACT#craig-hughes to craig-hughes', () => {
             expect(parsePrefixedKey('CONTACT', 'CONTACT#craig-hughes')).toBe('craig-hughes');
@@ -156,6 +164,12 @@ describe.concurrent('parsePrefixedKey', () => {
     });
 
     describe('error handling', () => {
+        test('rejects the expected prefix when it appears only in the key interior', () => {
+            expect(() => parsePrefixedKey('CONTACT', 'OTHER#CONTACT#id')).toThrow(
+                'Invalid key format: expected CONTACT#..., got OTHER#CONTACT#id'
+            );
+        });
+
         test('throws when key does not start with prefix#', () => {
             expect(() => parsePrefixedKey('CONTACT', 'CHANNEL#123')).toThrow(
                 'Invalid key format: expected CONTACT#..., got CHANNEL#123'

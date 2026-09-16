@@ -37,16 +37,12 @@ export async function fetchImage(
     }
 
     try {
-        // Stryker disable next-line ObjectLiteral: Fetch timeout options are not unit-testable without flaky timing dependencies
-
         const response = await fetch(metadata.url, {
-
             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
 
         if(!response.ok) {
             const errorMessage = `HTTP ${response.status} ${response.statusText}`;
-            // Stryker disable all: logging statement
             logger.error({
                 filename:    metadata.filename,
                 contentType: metadata.contentType,
@@ -54,7 +50,6 @@ export async function fetchImage(
                 error:       errorMessage,
                 msg:         `Failed to fetch image: ${metadata.filename}`,
             });
-            // Stryker restore all
             return {
                 success: false,
                 failure: {
@@ -94,7 +89,6 @@ export async function fetchImage(
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        // Stryker disable all: logging statement
         logger.error({
             filename:    metadata.filename,
             contentType: metadata.contentType,
@@ -102,7 +96,6 @@ export async function fetchImage(
             error:       errorMessage,
             msg:         `Failed to fetch/convert image: ${metadata.filename}`,
         });
-        // Stryker restore all
         return {
             success: false,
             failure: {

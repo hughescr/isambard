@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test uses ?? operator on typed values that may be undefined at runtime despite non-nullable types */
 import { describe, test, expect } from 'bun:test';
 import {
     getToolDescription,
@@ -135,13 +134,13 @@ describe.concurrent('types.ts', () => {
             // Simulate how ToolStatusMap is used in status-generator-active.ts
             // const statusText = phase.generatedStatus ?? ToolStatusMap[phase.toolName] ?? 'Working...';
 
-            // When generatedStatus is undefined, should use ToolStatusMap value
-            // Nullish coalescing (??) only checks for null/undefined, not falsy values
-            // So even empty string would be used if that's the value in the map
-            const generatedStatus: string | undefined = undefined;
-            const statusForStoreUserMemory = generatedStatus ?? ToolStatusMap.mcp__memory__storeUserMemory ?? 'Working...';
-            const statusForLogEvent = generatedStatus ?? ToolStatusMap.mcp__memory__logEvent ?? 'Working...';
-            const statusForSearch = generatedStatus ?? ToolStatusMap.mcp__memory__search ?? 'Working...';
+            // When generatedStatus is undefined, use ToolStatusMap's value.
+            // The helper preserves the production chain's nullish behavior for typed optional inputs.
+            const resolveStatus = (generatedStatus: string | undefined, toolStatus: string | undefined): string =>
+                generatedStatus ?? toolStatus ?? 'Working...';
+            const statusForStoreUserMemory = resolveStatus(undefined, ToolStatusMap.mcp__memory__storeUserMemory);
+            const statusForLogEvent = resolveStatus(undefined, ToolStatusMap.mcp__memory__logEvent);
+            const statusForSearch = resolveStatus(undefined, ToolStatusMap.mcp__memory__search);
 
             // Verify the values are meaningful (not empty strings)
             // These assertions kill the StringLiteral mutants on lines 85, 86, 87

@@ -32,12 +32,10 @@ export function createHealthMCPServer(options: HealthMCPServerOptions) {
                 'getServiceHealth',
                 'Get the current health status of every integrated service (Discord, email, Bluesky, CalDAV, DynamoDB, etc). Returns per-service state, epoch, and last error, plus a human-readable summary when there is anything to report. Answers even during an outage.',
                 {},
-                // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                 withToolErrorHandling('getServiceHealth', (): Promise<CallToolResult> => Promise.resolve(mcpJsonResult({
                     services: healthRegistry.getAll(),
                     summary:  healthRegistry.buildStatusSummary(),
                 }))),
-                // Stryker disable next-line ObjectLiteral,StringLiteral: title is configuration; the boolean hints are asserted below
                 { annotations: { title: 'Get Service Health', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
         ],

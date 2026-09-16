@@ -264,15 +264,7 @@ async function loadEventsSection(
 
     const nowDate = new Date(now());
     const items = await contextBuilder.loadRecentEventsSince(windowMs, bootEventsLimit, nowDate);
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: forcing the zero-items
-    // branch to always take the truthy path (or `length >= 0`, always true) makes `items.map(...)`
-    // run over `[]`, so `.join('\n')` still yields `''` — every caller (`build()` above) feeds this
-    // return value straight into `formatBootBundle`'s `parts.events`, which only ever reaches
-    // `renderHeadingSection(heading, parts.events)`; that treats `''` and `undefined` identically
-    // (`body ? ... : undefined`), so there is no test that can observe a difference.
-    return items.length > 0
-        ? items.map(item => formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, nowDate)).join('\n')
-        : undefined;
+    return items.map(item => formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, nowDate)).join('\n') || undefined;
 }
 
 /**

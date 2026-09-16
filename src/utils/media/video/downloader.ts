@@ -2,7 +2,6 @@ import path from 'node:path';
 import type { SpawnRunner } from './types';
 import { MediaProcessingError } from '@/errors';
 
-// Stryker disable next-line ArithmeticOperator: 5-minute download timeout is configuration
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 
 const OUTPUT_FILENAME = 'video-original.mp4';
@@ -25,14 +24,12 @@ export async function downloadVideo(
     const outputPath = path.join(outputDir, OUTPUT_FILENAME);
 
     if(isHlsUrl(url)) {
-        // Stryker disable StringLiteral,ObjectLiteral: ffmpeg command arguments and options are configuration
         const result = await run([
             'ffmpeg',
             '-i', url,
             '-c', 'copy',
             outputPath,
         ], { timeout: DOWNLOAD_TIMEOUT_MS });
-        // Stryker restore StringLiteral,ObjectLiteral
 
         if(result.exitCode !== 0) {
             throw new MediaProcessingError(
@@ -46,7 +43,6 @@ export async function downloadVideo(
     }
 
     // Direct HTTP download via fetch
-    // Stryker disable next-line ObjectLiteral: AbortSignal timeout option is configuration
     const response = await fetch(url, {
         signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
     });

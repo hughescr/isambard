@@ -18,7 +18,7 @@ export interface DynamoDBClients {
 export const SLOW_READ_MS = 200;
 
 /** Command names that are routine, high-frequency reads whose success we suppress below SLOW_READ_MS. */
-export const ROUTINE_READ_COMMANDS = new Set(['DescribeTableCommand', 'QueryCommand']);
+export const ROUTINE_READ_COMMANDS: ReadonlySet<string | undefined> = new Set(['DescribeTableCommand', 'QueryCommand']);
 
 /**
  * Returns an AWS SDK middleware that records DynamoDB operation duration and emits a
@@ -38,8 +38,7 @@ export function buildTimingMiddleware() {
                 // eslint-disable-next-line n/callback-return -- result must be awaited before success-path logging; cannot use return-immediately form
                 const result = await next(args);
                 const duration = Date.now() - startTime;
-                // Stryker disable next-line ConditionalExpression,LogicalOperator,StringLiteral: filter predicate — routine reads suppressed below SLOW_READ_MS; writes always log; '' fallback is equivalent to any non-Set string
-                const isRoutineRead = ROUTINE_READ_COMMANDS.has(context.commandName ?? '');
+                const isRoutineRead = ROUTINE_READ_COMMANDS.has(context.commandName);
                 if(!isRoutineRead || duration > SLOW_READ_MS) {
                     logger.debug({
                         operation:  context.commandName,
@@ -80,16 +79,7 @@ export function buildClientConfig() {
 export function createDynamoDBClient(config: DynamoDBConfig): DynamoDBClients {
     const clientConfig = buildClientConfig();
 
-    const client = new DynamoDBClient(clientConfig);
-
-    // Add timing middleware to log operation durations
-    // This provides visibility into DynamoDB performance and AWS SDK retry behavior
-    // Stryker disable StringLiteral,ObjectLiteral: middleware registration options are observability config, not testable logic
-    client.middlewareStack.add(buildTimingMiddleware(), {
-        step: 'initialize',
-        name: 'timingMiddleware',
-    });
-    // Stryker restore StringLiteral,ObjectLiteral
+    const client = registerTimingMiddleware(new DynamoDBClient(clientConfig));
 
     const docClient = DynamoDBDocumentClient.from(client, {
         marshallOptions: {
@@ -106,6 +96,19 @@ export function createDynamoDBClient(config: DynamoDBConfig): DynamoDBClients {
         docClient,
         tableName: config.tableName,
     };
+}
+
+/** Register the storage timing middleware and return the same client for composition. */
+export function registerTimingMiddleware(client: DynamoDBClient): DynamoDBClient {
+    // Add timing middleware to log operation durations
+    // This provides visibility into DynamoDB performance and AWS SDK retry behavior
+    client.middlewareStack.add(buildTimingMiddleware(), {
+        step: 'initialize',
+        name: 'timingMiddleware',
+    });
+    // Stryker restore StringLiteral,ObjectLiteral
+
+    return client;
 }
 
 /**

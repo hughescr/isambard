@@ -25,6 +25,12 @@ interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<CallToolResult>
     description: string
     annotations: Record<string, boolean>
+    inputSchema: {
+        shape: {
+            layer: { unwrap: () => { safeParse: (value: unknown) => { success: boolean } } }
+            limit: { parse: (value: unknown) => number }
+        }
+    }
 }
 interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool | undefined> }
 
@@ -111,6 +117,24 @@ describe('semantic_search MCP tool', () => {
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.semantic_search;
             expect(registeredTool).toBeUndefined();
         });
+    });
+
+    test('semantic layer schema accepts only the three supported layers', () => {
+        const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
+        const layer = (server.instance as unknown as RegisteredToolInstance)._registeredTools.semantic_search?.inputSchema.shape.layer.unwrap();
+        expect(layer).toBeDefined();
+        for(const name of ['identity', 'state', 'events']) {
+            expect(layer!.safeParse(name).success).toBe(true);
+        }
+        expect(layer!.safeParse('').success).toBe(false);
+    });
+
+    test('semantic search publishes and applies its documented default result limit', () => {
+        const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
+        const limit = (server.instance as unknown as RegisteredToolInstance)._registeredTools.semantic_search?.inputSchema.shape.limit;
+
+        expect(limit).toBeDefined();
+        expect(limit!.parse(undefined)).toBe(5);
     });
 
     describe('empty results', () => {
@@ -294,10 +318,8 @@ describe('semantic_search MCP tool', () => {
             // Two items joined with \n\n means splitting on \n\n gives exactly 2 parts
             const parts = text.split('\n\n');
             expect(parts).toHaveLength(2);
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- noUncheckedIndexedAccess; parts has exactly 2 items per check above
-            expect(parts[0]!).toContain('FIRST_ITEM');
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- noUncheckedIndexedAccess; parts has exactly 2 items per check above
-            expect(parts[1]!).toContain('SECOND_ITEM');
+            expect(parts[0]).toContain('FIRST_ITEM');
+            expect(parts[1]).toContain('SECOND_ITEM');
         });
 
         test('resolves paths from DynamoDB pk/sk via MemoryToolKeyGenerator.parsePath', async () => {
@@ -414,6 +436,23 @@ describe('semantic_search MCP tool', () => {
             expect(recordAccess).not.toHaveBeenCalled();
         });
 
+        test('does NOT record paths whose first segment merely starts with state', async () => {
+            (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
+                makeQueryResult('DIR#/stateful', 'FILE#note', 10, 'identity'),
+            ]);
+            (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(
+                makeItem({ path: '/stateful/note' as MemoryPath, content: 'not state-layer data' })
+            );
+
+            const recordAccess = mock(async (): Promise<void> => undefined);
+            const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder, recordAccess });
+            const handler = getToolHandler(server, 'semantic_search');
+            await handler({ query: 'test', limit: 5 });
+            await Promise.resolve();
+
+            expect(recordAccess).not.toHaveBeenCalled();
+        });
+
         test('does NOT call recordAccess when results are empty', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([]);
 
@@ -439,7 +478,7 @@ describe('semantic_search MCP tool', () => {
             const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
             const handler = getToolHandler(server, 'semantic_search');
             // Should not throw even without recordAccess
-            expect(handler({ query: 'test', limit: 5 })).resolves.toBeDefined();
+            await expect(handler({ query: 'test', limit: 5 })).resolves.toBeDefined();
         });
 
         test('logs a warning when recordAccess rejects', async () => {
@@ -486,8 +525,7 @@ describe('semantic_search MCP tool', () => {
 
             expect(recordAccess).toHaveBeenCalledTimes(1);
             const calledWith = (recordAccess as ReturnType<typeof mock>).mock.calls[0] as [MemoryPath[]];
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- noUncheckedIndexedAccess; calledWith has 1 element per toHaveBeenCalledTimes(1) above
-            const paths = calledWith[0]!;
+            const paths = calledWith[0];
             expect(paths).toContain(createMemoryPath('/state/mood'));
             expect(paths).toContain(createMemoryPath('/state/goals'));
             expect(paths).toHaveLength(2);

@@ -48,8 +48,7 @@ describe.concurrent('calculateDelay', () => {
 
         it('should handle zero jitterFraction', () => {
             const policy: RetryPolicy = { ...defaultPolicy, jitterFraction: 0 };
-            // eslint-disable-next-line sonarjs/pseudo-random -- Math.random() intentional here: this test verifies zero-jitter override regardless of random value
-            const random = () => Math.random(); // Any random value
+            const random = () => 0.37; // Nonzero fixed value: jitter is disabled
             const delay = calculateDelay(1, policy, random);
 
             expect(delay).toBe(1000); // No jitter applied

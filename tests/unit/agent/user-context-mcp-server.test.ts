@@ -3,7 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { PersonHistoryCoordinator } from '../../../src/agent/history-providers';
 import { createUserContextMCPServer } from '../../../src/agent/user-context-mcp-server';
 import type { Contact, ContactId } from '../../../src/storage/contacts';
-import { textContent } from '../../setup';
+import { mockLogger, textContent } from '../../setup';
 
 interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<CallToolResult>
@@ -59,6 +59,13 @@ describe.concurrent('createUserContextMCPServer', () => {
         const tool = getTool(server, 'getPersonContext');
         expect(tool).toBeDefined();
         expect(tool.description).toContain('cross-platform interaction history');
+    });
+
+    test('accepts a one-character person identifier', () => {
+        const server = createUserContextMCPServer({ coordinator: asCoordinator(mockCoordinator) });
+        const tool = getTool(server, 'getPersonContext');
+        const schema = tool.inputSchema.shape.identifier as { safeParse: (value: unknown) => { success: boolean } };
+        expect(schema.safeParse('x').success).toBe(true);
     });
 
     describe('getPersonContext tool', () => {
@@ -175,6 +182,8 @@ describe.concurrent('createUserContextMCPServer', () => {
             expect(result.isError).toBe(true);
             const text = textContent(result.content[0]);
             expect(text).toContain('Database connection failed');
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                { tool: 'getPersonContext', error: 'Database connection failed' }, 'MCP tool error');
         });
 
         test('tool has readOnlyHint and idempotentHint annotations', () => {

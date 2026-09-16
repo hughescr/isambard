@@ -437,17 +437,14 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
     let browserMcpServer: McpServerConfig | undefined;
     if(params.role === 'conversation' && options.browserAdapter) {
         if(options.browserMaxScreenshotBytes === undefined || options.browserMaxTextBytes === undefined) {
-            // Stryker disable next-line StringLiteral: log message is informational only
             logger.error('browserMaxScreenshotBytes and browserMaxTextBytes are required when browserAdapter is provided; skipping browser MCP server');
             // browserMcpServer stays undefined — rest of startup continues without browser tools
         } else {
             if(options.browserPolicy === undefined) {
-                // Stryker disable next-line StringLiteral: log message is informational only
                 logger.warn('browserPolicy not provided; defaulting to permissive (no allowlist). Consider passing a browserPolicy explicitly.');
             }
             browserMcpServer = createBrowserMCPServer({
                 adapter:            options.browserAdapter,
-                // Stryker disable next-line ObjectLiteral: fallback policy object — callers always pass browserPolicy when they provide browserAdapter
                 policy:             options.browserPolicy ?? { allowlist: undefined },
                 maxScreenshotBytes: options.browserMaxScreenshotBytes,
                 maxTextBytes:       options.browserMaxTextBytes,

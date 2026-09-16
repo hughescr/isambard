@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Client, Channel } from 'discord.js';
+import { mockLogger } from '../../../../setup';
 import type { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { ChannelMetadata } from '@/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
+import type { ReconnectionLoop } from '@/services';
 
 describe('ChannelRegistryManager', () => {
     let backend: ChannelRegistryBackend;
@@ -46,6 +48,9 @@ describe('ChannelRegistryManager', () => {
     };
 
     beforeEach(() => {
+        mockLogger.info.mockClear();
+        mockLogger.debug.mockClear();
+        mockLogger.warn.mockClear();
         // Create mock backend
         backend = {
             getAllChannels:      mock(() => Promise.resolve([])),
@@ -116,6 +121,22 @@ describe('ChannelRegistryManager', () => {
             expect(cached2?.channelName).toBe('random');
             // Backend should not have been called again (cache hit)
             expect(backend.getChannel).not.toHaveBeenCalled();
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                guildChannels: 2,
+                dmChannels:    2,
+                msg:           'Warming channel cache...',
+            });
+            expect(mockLogger.debug).toHaveBeenCalledTimes(4);
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                index: 1,
+                total: 4,
+                msg:   'Warming channel...',
+            }));
+            expect((mockLogger.debug as ReturnType<typeof mock>).mock.calls.map(([entry]) => (entry as { index: number }).index)).toEqual([1, 2, 3, 4]);
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                channelCount: 4,
+                msg:          'Channel cache warmed',
+            });
         });
 
         it('should build name index during cache warming', async () => {
@@ -153,6 +174,22 @@ describe('ChannelRegistryManager', () => {
             expect(backend.getChannelsByGuild).toHaveBeenCalledWith(homeGuildId);
             expect(backend.getChannelsByGuild).toHaveBeenCalledWith(createGuildId('DM'));
         });
+
+        it.each([homeGuildId, createGuildId('DM')])(
+            'should not hydrate channels when backend query for %s fails', async (failingGuildId) => {
+                const record = createMockStorageRecord({ channelId: createChannelId('channel-1'), guildId: homeGuildId });
+                backend.getChannelsByGuild = mock(async (guildId: string) => {
+                    if(guildId === failingGuildId) {
+                        throw new Error('DynamoDB channel query failed');
+                    }
+                    return [record];
+                });
+
+                await expect(manager.warmCache()).rejects.toThrow('DynamoDB channel query failed');
+                expect(client.channels.fetch).not.toHaveBeenCalled();
+                expect(manager.isReady()).toBe(false);
+            }
+        );
 
         it('should load DM channels into cache', async () => {
             const dmChannel = createMockChannel({
@@ -225,9 +262,9 @@ describe('ChannelRegistryManager', () => {
             await manager.warmCache();
             // After successful warmCache, ready should be resolved — direct await won't hang
             let resolved = false;
-            // eslint-disable-next-line promise/always-return -- callback is a side-effect setter, no return needed
             void manager.ready.then(() => {
                 resolved = true;
+                return undefined;
             });
             // Flush microtasks so the .then() callback runs
             await Promise.resolve();
@@ -375,6 +412,28 @@ describe('ChannelRegistryManager', () => {
             await manager.getChannelsByGuild(homeGuildId);
             expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(1);
         });
+
+        it('should clear the well-known cache', async () => {
+            const wellKnown = createMockChannel({ isWellKnown: 'general' });
+            mockDiscordChannels([wellKnown]);
+            backend.getChannelsByGuild = mock(() => Promise.resolve([
+                createMockStorageRecord({
+                    channelId:   wellKnown.channelId,
+                    guildId:     wellKnown.guildId,
+                    isMuted:     wellKnown.isMuted,
+                    isWellKnown: wellKnown.isWellKnown,
+                }),
+            ]));
+            await manager.warmCache();
+            expect(await manager.getWellKnownChannel('general')).not.toBeNull();
+
+            manager.clearCache();
+            expect((manager as unknown as { wellKnownCache: Map<string, unknown> }).wellKnownCache).toHaveLength(0);
+            backend.getWellKnownChannel = mock(() => Promise.resolve(null));
+
+            expect(await manager.getWellKnownChannel('general')).toBeNull();
+            expect(backend.getWellKnownChannel).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe('getChannel', () => {
@@ -425,6 +484,31 @@ describe('ChannelRegistryManager', () => {
             expect(result).toBeNull();
         });
 
+        it('warns with channel identity when a stored channel was deleted remotely', async () => {
+            const channelId = createChannelId('deleted-channel');
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({ channelId })));
+            client.channels.fetch = mock(() => Promise.resolve(null));
+
+            await expect(manager.getChannel(channelId)).resolves.toBeNull();
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                channelId,
+                msg: 'Channel not found on Discord (possibly deleted)',
+            });
+        });
+
+        it('warns with the API error when a stored channel fetch rejects', async () => {
+            const channelId = createChannelId('unavailable-channel');
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({ channelId })));
+            client.channels.fetch = mock(() => Promise.reject(new Error('forbidden')));
+
+            await expect(manager.getChannel(channelId)).resolves.toBeNull();
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                channelId,
+                error: 'forbidden',
+                msg:   'Failed to fetch channel from Discord API',
+            });
+        });
+
         it('should use @Unknown name for DM channel with non-object Discord channel (type guard — non-object)', async () => {
             // Mock Discord fetch to return a primitive string — exercises isDMChannelWithRecipient
             // and hasChannelName type guards with a non-object value
@@ -447,6 +531,42 @@ describe('ChannelRegistryManager', () => {
             // hasChannelName('truthy-non-object') → false (not an object)
             // Falls through to default '@Unknown'
             expect(result?.channelName).toBe('@Unknown');
+        });
+
+        it('filters a malformed primitive channel even when its prototype exposes a recipient', async () => {
+            const dmChannelId = createChannelId('dm-prototype-recipient');
+            const originalRecipient = Object.getOwnPropertyDescriptor(String.prototype, 'recipient');
+            Object.defineProperty(String.prototype, 'recipient', {
+                configurable: true,
+                value:        { username: 'unexpected-recipient' },
+            });
+            try {
+                backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({
+                    channelId: dmChannelId,
+                    guildId:   'DM' as const,
+                })));
+                client.channels.fetch = mock((): Promise<Channel | null> => Promise.resolve('malformed-channel' as unknown as Channel));
+
+                const result = await manager.getChannel(dmChannelId);
+
+                expect(result?.channelName).toBe('@Unknown');
+            } finally {
+                if(originalRecipient === undefined) {
+                    delete (String.prototype as { recipient?: unknown }).recipient;
+                } else {
+                    Object.defineProperty(String.prototype, 'recipient', originalRecipient);
+                }
+            }
+        });
+
+        it('uses a guild channel name instead of treating a recipient-less channel as a DM', async () => {
+            const channelId = createChannelId('guild-channel');
+            backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({ channelId, guildId: homeGuildId })));
+            client.channels.fetch = mock(() => Promise.resolve({ id: channelId, name: 'engineering' } as unknown as Channel));
+
+            const result = await manager.getChannel(channelId);
+
+            expect(result?.channelName).toBe('engineering');
         });
     });
 
@@ -704,6 +824,45 @@ describe('ChannelRegistryManager', () => {
         });
     });
 
+    it.each(['getChannelsByGuild', 'getUnmutedChannels'] as const)(
+        '%s fallback preserves record order for well-known cache writes', async (method) => {
+            const firstId = createChannelId('first');
+            const secondId = createChannelId('second');
+            backend.getChannelsByGuild = mock(() => Promise.resolve([
+                createMockStorageRecord({ channelId: firstId, isWellKnown: 'general' }),
+                createMockStorageRecord({ channelId: secondId, isWellKnown: 'general' }),
+            ]));
+
+            let releaseFirst: ((channel: Channel | null) => void) | undefined;
+            client.channels.fetch = mock((channelId: string): Promise<Channel | null> => {
+                if(channelId === firstId) {
+                    return new Promise((resolve) => {
+                        releaseFirst = resolve;
+                    });
+                }
+                return Promise.resolve({ id: channelId, name: channelId } as unknown as Channel);
+            });
+
+            const pending = method === 'getChannelsByGuild'
+                ? manager.getChannelsByGuild(homeGuildId)
+                : manager.getUnmutedChannels();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(client.channels.fetch).toHaveBeenCalledTimes(1);
+            if(!releaseFirst) {
+                throw new Error('First channel fetch did not start');
+            }
+            releaseFirst({ id: firstId, name: 'first' } as unknown as Channel);
+
+            const results = await pending;
+            expect(results.map(channel => channel.channelId)).toEqual([firstId, secondId]);
+            expect(client.channels.fetch).toHaveBeenCalledTimes(2);
+            const wellKnown = await manager.getWellKnownChannel('general');
+            expect(wellKnown?.channelId).toBe(secondId);
+            expect(backend.getWellKnownChannel).not.toHaveBeenCalled();
+        }
+    );
+
     describe('getWellKnownChannel', () => {
         it('should return from cache if available', async () => {
             const wellKnown = createMockChannel({ isWellKnown: 'general' });
@@ -753,6 +912,33 @@ describe('ChannelRegistryManager', () => {
             const result = await manager.getWellKnownChannel('general');
 
             expect(result).toBeNull();
+        });
+
+        it('warns with well-known type when a stored well-known channel was deleted remotely', async () => {
+            const channelId = createChannelId('deleted-well-known');
+            backend.getWellKnownChannel = mock(() => Promise.resolve(createMockStorageRecord({ channelId, isWellKnown: 'general' })));
+            client.channels.fetch = mock(() => Promise.resolve(null));
+
+            await expect(manager.getWellKnownChannel('general')).resolves.toBeNull();
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                channelId,
+                wellKnownType: 'general',
+                msg:           'Well-known channel not found on Discord (possibly deleted)',
+            });
+        });
+
+        it('warns with well-known type and API error when its fetch rejects', async () => {
+            const channelId = createChannelId('unavailable-well-known');
+            backend.getWellKnownChannel = mock(() => Promise.resolve(createMockStorageRecord({ channelId, isWellKnown: 'general' })));
+            client.channels.fetch = mock(() => Promise.reject(new Error('forbidden')));
+
+            await expect(manager.getWellKnownChannel('general')).resolves.toBeNull();
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                channelId,
+                wellKnownType: 'general',
+                error:         'forbidden',
+                msg:           'Failed to fetch well-known channel from Discord API',
+            });
         });
     });
 
@@ -1367,6 +1553,66 @@ describe('ChannelRegistryManager', () => {
 
             // Should prefer recipient username
             expect(result?.channelName).toBe('@recipient-user');
+        });
+
+        it('preserves per-record warning context while warmCache skips unavailable channels', async () => {
+            const deleted = createChannelId('deleted-during-warmup');
+            const failing = createChannelId('failing-during-warmup');
+            backend.getChannelsByGuild = mock(() => Promise.resolve([
+                createMockStorageRecord({ channelId: deleted }),
+                createMockStorageRecord({ channelId: failing }),
+            ]));
+            client.channels.fetch = mock((channelId: string) => {
+                if(channelId === deleted) {
+                    return Promise.resolve(null);
+                }
+                return Promise.reject(new Error('rate limited'));
+            });
+
+            await manager.warmCache();
+
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                channelId: deleted,
+                msg:       'Skipping channel: not found on Discord (possibly deleted)',
+            });
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                channelId: failing,
+                error:     'rate limited',
+                msg:       'Skipping channel: Discord API error',
+            });
+        });
+    });
+
+    describe('hydration lifecycle', () => {
+        it('does not invoke an unregistered ready callback after restarting the ready gate', async () => {
+            const callback = mock((): void => {});
+            manager.onReady(callback);
+
+            manager.stop();
+            manager.offReady(callback);
+            await manager.warmCache();
+            await Bun.sleep(0);
+
+            expect(callback).not.toHaveBeenCalled();
+        });
+
+        it('starts the first hydration loop and rejects a second concurrent loop', () => {
+            const firstLoop = {
+                start: mock((): void => {}),
+                stop:  mock((): void => {}),
+            } as unknown as ReconnectionLoop;
+            const secondLoop = {
+                start: mock((): void => {}),
+                stop:  mock((): void => {}),
+            } as unknown as ReconnectionLoop;
+
+            manager.startHydration(firstLoop);
+
+            expect(firstLoop.start).toHaveBeenCalledTimes(1);
+            expect(() => manager.startHydration(secondLoop)).toThrow(
+                'ChannelRegistryManager: hydration loop already started — call stop() first'
+            );
+            expect(secondLoop.start).not.toHaveBeenCalled();
         });
     });
 });

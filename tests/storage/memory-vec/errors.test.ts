@@ -129,6 +129,13 @@ describe('IncompatibleLlamaCppError', () => {
         const err = new IncompatibleLlamaCppError(null, 8950);
         expect(err).toBeInstanceOf(IncompatibleLlamaCppError);
         expect(err.message).toContain('8950');
+        expect(err.message).toContain('unknown (version file missing)');
+        expect(err.context).toEqual({ currentBuild: null, minimumBuild: 8950 });
+    });
+
+    it('preserves current and minimum build numbers in context', () => {
+        const err = new IncompatibleLlamaCppError(8390, 8950);
+        expect(err.context).toEqual({ currentBuild: 8390, minimumBuild: 8950 });
     });
 });
 

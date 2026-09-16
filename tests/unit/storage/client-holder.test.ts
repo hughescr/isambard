@@ -140,6 +140,7 @@ describe.concurrent('DynamoDBClientHolder', () => {
             // Now advance past client2's full grace period (5 s from second swap = 3001 ms more)
             jest.advanceTimersByTime(5001);
 
+            expect(destroy1).toHaveBeenCalledTimes(1);
             expect(destroy2).toHaveBeenCalledTimes(1);
         });
 

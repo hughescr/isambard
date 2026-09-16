@@ -649,6 +649,7 @@ describe('buildResumeEnvelope', () => {
         expect(envelope.text).toBe('[RESUME NOTE]\nsomething');
         expect(envelope.kind).toBe('resume');
         expect(envelope.hostPriority).toBe('wake');
+        expect(envelope.shouldQuery).toBe(true);
     });
 });
 

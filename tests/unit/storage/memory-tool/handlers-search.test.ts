@@ -157,6 +157,26 @@ describe('Memory Tool Handlers - Search Operations', () => {
         });
 
         describe('output formatting', () => {
+            test('should format a legacy tag row without contentPreview', async () => {
+                const backend = createMockBackend();
+                backend.searchByTags = mock<MemoryToolBackend['searchByTags']>(async () => ({
+                    items: [{
+                        PK:         'TAG#tag1',
+                        SK:         'PATH#/state/legacy.md',
+                        memoryPath: '/state/legacy.md',
+                        layer:      'state',
+                        updatedAt:  '2025-01-01T00:00:00.000Z',
+                        tags:       new Set(['tag1']),
+                    }],
+                    nextCursor: undefined,
+                }));
+
+                const result = await searchHandler(backend, { tags: ['tag1'] });
+
+                expect(result).toContain('/state/legacy.md');
+                expect(result).toContain('No content');
+            });
+
             test('should truncate content preview to 100 characters', async () => {
                 const backend = createMockBackend();
                 const longContent = 'A'.repeat(200);
@@ -382,9 +402,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 expect(result).toContain('Current state');
             });
 
-            test('should show "[no content]" when item has null content in recall', async () => {
-                // This test specifically targets the mutant that changes
-                // `item.content ?? '[no content]'` at line 423.
+            test('should show "[no content]" when a legacy item has missing content in recall', async () => {
                 const backend = createMockBackend();
                 backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
@@ -401,6 +419,24 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 const result = await recallHandler(backend, {});
 
                 expect(result).toContain('/identity/empty.md');
+                expect(result).toContain('[no content]');
+            });
+
+            test('should show "[no content]" when a legacy item has null content in recall', async () => {
+                const backend = createMockBackend();
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
+                    {
+                        path:        '/identity/null.md' as MemoryPath,
+                        content:     null as unknown as string,
+                        contentType: 'text/markdown',
+                        metadata:    {},
+                        createdAt:   '2025-01-01T00:00:00.000Z',
+                        updatedAt:   '2025-01-01T00:00:00.000Z',
+                    },
+                ]);
+
+                const result = await recallHandler(backend, {});
+                expect(result).toContain('/identity/null.md');
                 expect(result).toContain('[no content]');
             });
 
@@ -837,6 +873,25 @@ describe('Memory Tool Handlers - Search Operations', () => {
             params: { tags?: string[], layer?: string, time_range?: { start: string, end: string }, limit?: number }
         ): Promise<string> => search(backend, params as Parameters<typeof search>[1]);
 
+        it('passes a requested result limit through time and layer searches', async () => {
+            mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => []);
+            mockBackend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({ items: [], nextCursor: undefined }));
+
+            await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-01T00:00:00.000Z', end: '2025-02-01T00:00:00.000Z' },
+                limit:      3,
+            });
+            await searchHandler(mockBackend, { layer: 'identity', limit: 4 });
+
+            expect(mockBackend.searchByTimeRange).toHaveBeenCalledWith(
+                '2025-01-01T00:00:00.000Z',
+                '2025-02-01T00:00:00.000Z',
+                undefined,
+                { limit: 3 }
+            );
+            expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity', { limit: 4 });
+        });
+
         it('should log search with tags joined by comma as query', async () => {
             mockBackend.searchByTags = mock(async () => ({
                 items: [
@@ -974,6 +1029,26 @@ describe('Memory Tool Handlers - Search Operations', () => {
             expect(result).not.toContain('...');
         });
 
+        it('does not mark an exactly 100-character content fallback as truncated', async () => {
+            mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => [
+                {
+                    path:        '/events/exact.md' as MemoryPath,
+                    content:     'E'.repeat(100),
+                    contentType: 'text/markdown',
+                    metadata:    {},
+                    createdAt:   '2025-01-15T00:00:00.000Z',
+                    updatedAt:   '2025-01-15T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
+            });
+
+            expect(result).toContain('E'.repeat(100));
+            expect(result).not.toContain(`${'E'.repeat(100)}...`);
+        });
+
         it('should format time_range search with no content', async () => {
             mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => [
                 {
@@ -1014,6 +1089,37 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             expect(result).toContain('Preview text from field');
             expect(result).not.toContain('Full content');
+        });
+
+        it('marks a full-length stored preview as truncated while leaving a short one plain', async () => {
+            mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => [
+                {
+                    path:           '/events/full-preview.md' as MemoryPath,
+                    content:        'full body',
+                    contentPreview: 'A'.repeat(100),
+                    contentType:    'text/markdown',
+                    metadata:       {},
+                    createdAt:      '2025-01-15T00:00:00.000Z',
+                    updatedAt:      '2025-01-15T00:00:00.000Z',
+                },
+                {
+                    path:           '/events/short-preview.md' as MemoryPath,
+                    content:        'full body',
+                    contentPreview: 'Brief preview',
+                    contentType:    'text/markdown',
+                    metadata:       {},
+                    createdAt:      '2025-01-15T00:00:00.000Z',
+                    updatedAt:      '2025-01-15T00:00:00.000Z',
+                },
+            ]);
+
+            const result = await searchHandler(mockBackend, {
+                time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
+            });
+
+            expect(result).toContain(`${'A'.repeat(100)}...`);
+            expect(result).toContain('Brief preview');
+            expect(result).not.toContain('Brief preview...');
         });
 
         it('should join time_range search results with double newline', async () => {

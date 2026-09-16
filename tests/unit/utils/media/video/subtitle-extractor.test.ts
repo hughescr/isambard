@@ -52,6 +52,17 @@ const METADATA_WITH_SUBTITLES: VideoMetadata = {
 };
 
 describe('extractEmbeddedSubtitles', () => {
+    it('passes the selected track and pipe output as exact ffmpeg arguments', async () => {
+        const calls: string[][] = [];
+        const run: SpawnRunner = async (args) => {
+            calls.push(args);
+            return { stdout: SAMPLE_SRT, stderr: '', exitCode: 0 };
+        };
+
+        await extractEmbeddedSubtitles('/test/video.mp4', 2, run);
+        expect(calls).toEqual([['ffmpeg', '-i', '/test/video.mp4', '-map', '0:s:2', '-f', 'srt', 'pipe:1']]);
+    });
+
     it('returns SRT text from ffmpeg stdout', async () => {
         const result = await extractEmbeddedSubtitles('/test/video.mp4', 0, makeTextRunner(SAMPLE_SRT));
         expect(result).toBe(SAMPLE_SRT);
@@ -71,6 +82,17 @@ describe('extractEmbeddedSubtitles', () => {
 });
 
 describe('transcribeWithWhisperKit', () => {
+    it('passes audio and report paths as exact WhisperKit arguments', async () => {
+        const calls: string[][] = [];
+        const run: SpawnRunner = async (args) => {
+            calls.push(args);
+            return { stdout: '', stderr: '', exitCode: 0 };
+        };
+
+        await transcribeWithWhisperKit('/test/video.mp4', '/tmp/report', run);
+        expect(calls).toEqual([['whisperkit-cli', 'transcribe', '--audio-path', '/test/video.mp4', '--diarization', '--report', '--report-path', '/tmp/report']]);
+    });
+
     it('parses timestamped segments from whisperkit output', async () => {
         const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(SAMPLE_WHISPERKIT_OUTPUT));
         expect(result.segments).toHaveLength(2);
@@ -101,11 +123,47 @@ describe('transcribeWithWhisperKit', () => {
         });
     });
 
+    it('parses comma fractional timestamps as numeric seconds', async () => {
+        const commaOutput = '[01:23:45,125 --> 01:23:46,875]  SPEAKER_00: Comma fraction\n';
+        const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(commaOutput));
+        expect(result.segments).toHaveLength(1);
+        expect(result.segments[0]).toMatchObject({
+            startTime: 5025.125,
+            endTime:   5026.875,
+            text:      'Comma fraction',
+        });
+    });
+
     it('parses segments without speaker labels', async () => {
         const noSpeakerOutput = '[00:00:10.000 --> 00:00:12.000]  Just plain text\n';
         const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(noSpeakerOutput));
         expect(result.segments).toHaveLength(1);
         expect(result.segments[0]).toMatchObject({ text: 'Just plain text' });
+        expect(result.segments[0]).not.toHaveProperty('speaker');
+    });
+
+    it('accepts timestamp lines without padding around the arrow or after the bracket', async () => {
+        const compactOutput = '[00:00:10.000-->00:00:12.000]Compact text\n';
+        const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(compactOutput));
+        expect(result.segments).toHaveLength(1);
+        expect(result.segments[0]).toMatchObject({ startTime: 10, endTime: 12, text: 'Compact text' });
+    });
+
+    it('trims trailing whitespace from unlabelled segment text', async () => {
+        const output = '[00:00:10.000 --> 00:00:12.000]  Plain text   \n';
+        const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(output));
+        expect(result.segments[0]).toMatchObject({ text: 'Plain text' });
+        expect(result.segments[0]).not.toHaveProperty('speaker');
+    });
+
+    it.each([
+        'UPPER!: body',
+        '!UPPER: body',
+        ': body',
+    ])('does not classify invalid speaker label %s', async (rawText) => {
+        const output = `[00:00:10.000 --> 00:00:12.000]  ${rawText}\n`;
+        const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(output));
+        expect(result.segments[0]).toMatchObject({ text: rawText });
         expect(result.segments[0]).not.toHaveProperty('speaker');
     });
 
@@ -121,6 +179,16 @@ describe('transcribeWithWhisperKit', () => {
         expect(result.fullText).toContain('Transcription unavailable');
     });
 
+    it('reports the exit code when WhisperKit fails with empty stderr', async () => {
+        const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeFailRunner('', 7));
+        expect(result).toEqual({ segments: [], fullText: 'Transcription unavailable: whisperkit-cli exited with code 7' });
+    });
+
+    it('reports nonempty WhisperKit stderr without replacing it with an exit-code message', async () => {
+        const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeFailRunner('model unavailable', 7));
+        expect(result).toEqual({ segments: [], fullText: 'Transcription unavailable: model unavailable' });
+    });
+
     it('returns empty segments for output with no matching timestamp lines', async () => {
         const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner('Processing audio...'));
         expect(result.segments).toHaveLength(0);
@@ -134,6 +202,19 @@ describe('getSubtitlesOrTranscription', () => {
         const result = await getSubtitlesOrTranscription('/test/video.mp4', METADATA_WITH_SUBTITLES, '/tmp/out', runner);
         expect(result.subtitles).toBe(SAMPLE_SRT);
         expect(result.transcription).toBeUndefined();
+    });
+
+    it('extracts the first embedded stream for exactly one subtitle track without WhisperKit fallback', async () => {
+        const calls: string[][] = [];
+        const runner: SpawnRunner = async (args) => {
+            calls.push(args);
+            return { stdout: SAMPLE_SRT, stderr: '', exitCode: 0 };
+        };
+
+        const result = await getSubtitlesOrTranscription('/test/video.mp4', METADATA_WITH_SUBTITLES, '/tmp/out', runner);
+
+        expect(result).toEqual({ subtitles: SAMPLE_SRT });
+        expect(calls).toEqual([['ffmpeg', '-i', '/test/video.mp4', '-map', '0:s:0', '-f', 'srt', 'pipe:1']]);
     });
 
     it('falls back to WhisperKit transcription when no subtitle tracks', async () => {

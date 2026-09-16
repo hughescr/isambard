@@ -33,7 +33,6 @@ function buildRetryPart(nextRetryAt: Date, now: Date): string | undefined {
         return undefined;
     }
     const retrySec = Math.ceil(retryMs / 1000);
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: boundary between seconds and minutes display
     return retrySec >= 60
         ? `retry in ~${Math.ceil(retrySec / 60)}m`
         : `retry in ~${retrySec}s`;
@@ -81,7 +80,6 @@ function snapshotToEntry(actor: ServiceLifecycleActor): ServiceHealthEntry {
 export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
     private readonly actors:         Record<ServiceName, ServiceLifecycleActor>;
     private readonly listeners =     new Set<HealthChangeListener>();
-    private readonly subscriptions:  (() => void)[] = [];
     private readonly previousStates: Partial<Record<ServiceName, HealthState>> = {};
 
     constructor(private readonly deps: ServiceHealthRegistryDeps) {
@@ -92,12 +90,8 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
             this.actors[name] = actor;
             actor.start();
 
-            const subscription = actor.subscribe((snapshot) => {
+            actor.subscribe((snapshot) => {
                 this.handleStateChange(name, snapshot.value, snapshot.context.epoch);
-            });
-            // Stryker disable next-line BlockStatement: equivalent — actor.stop() in stop() prevents events from firing regardless of whether unsubscribe is called
-            this.subscriptions.push(() => {
-                subscription.unsubscribe();
             });
         }
     }
@@ -110,7 +104,6 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
             return;
         }
 
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: optimization — skipping notification when no listeners
         if(this.listeners.size === 0) {
             return;
         }
@@ -127,7 +120,6 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
             try {
                 listener(change);
             } catch (error) {
-                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                 this.deps.logger.error({ error }, 'Error in health change listener');
                 // Stryker restore ObjectLiteral,StringLiteral
             }
@@ -183,7 +175,6 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
             }
         }
 
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: optimization guard — both paths produce same result for empty lines
         if(lines.length === 0) {
             return undefined;
         }
@@ -191,14 +182,9 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
         return lines.join('\n');
     }
 
-    // Stryker disable BlockStatement: cleanup loop — unsubscribe and stop are both void calls; effect visible only post-stop which causes xstate internal state inaccessible from outside
     stop(): void {
-        for(const unsub of this.subscriptions) {
-            unsub();
-        }
         for(const name of SERVICE_NAMES) {
             this.actors[name].stop();
         }
     }
-    // Stryker restore BlockStatement
 }

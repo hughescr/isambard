@@ -1,7 +1,8 @@
 /**
  * Phase 0 spike for the long-lived session design (docs: Izzy Long-Lived Session artifact).
  *
- * Runs against the REAL Agent SDK and spends real tokens. Not a test; never run under `bun test`.
+ * Running the CLI questions uses the REAL Agent SDK and spends real tokens; tests inject stub
+ * question runners into runSpikeTasks instead of running real questions.
  *
  *   env -u ANTHROPIC_BASE_URL bun scripts/spike-long-lived-session.ts [q1,q2,...] [--record[=dir]]
  *
@@ -21,10 +22,10 @@
  * and every hook-callback `input` argument (<dir>/hook-inputs/<label>.json). Volatile fields
  * (ids, timestamps, model/tool lists, transcript paths, compaction summary text — see
  * normaliseVolatileFields below) are rewritten to stable placeholders before writing so fixtures
- * diff cleanly across re-recordings. RE-RECORD THESE FIXTURES ON EVERY @anthropic-ai/claude-agent-sdk
- * BUMP: run `env -u ANTHROPIC_BASE_URL bun scripts/spike-long-lived-session.ts q1,q2,q3 --record`
- * again and commit the result — the fixture drift guard (tests/unit/helpers/sdk-frames.test.ts)
- * compares each written `sdkVersion` against the installed SDK version and fails loudly on drift.
+ * diff cleanly across re-recordings. Each fixture retains the recording SDK's `sdkVersion` as
+ * historical provenance. Re-record when an SDK change affects a frame shape or protocol behavior:
+ * run `env -u ANTHROPIC_BASE_URL bun scripts/spike-long-lived-session.ts q1,q2,q3 --record` and
+ * commit the result.
  * Recording never writes unless --record is passed; nothing else about the spike's behaviour changes.
  */
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -43,7 +44,7 @@ const MODEL = 'haiku';
 const { recording, recordDir: RECORD_DIR, questionArg } = parseSpikeArgs(process.argv.slice(2));
 const wanted = new Set(questionArg.split(','));
 
-// eslint-disable-next-line n/no-sync -- startup-only: read the installed SDK's exact version so recorded fixtures carry real provenance for the drift guard
+// eslint-disable-next-line n/no-sync -- startup-only: read the installed SDK's exact version so recorded fixtures carry real provenance
 const SDK_VERSION = (JSON.parse(readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'package.json'),
     'utf8'
@@ -642,24 +643,49 @@ async function q6(): Promise<void> {
 }
 
 // ---------------------------------------------------------------- main
-log('spike', 'workdir', WORKDIR, 'model', MODEL, 'questions', [...wanted].join(','), 'record', recording ? RECORD_DIR : 'off');
-try {
-    if(wanted.has('q1') || wanted.has('q2')) {
-        await q1q2();
-    }
-    if(wanted.has('q3')) {
-        await q3();
-    }
-    if(wanted.has('q4') || wanted.has('q5')) {
-        await q4q5();
-    }
-    if(wanted.has('q6')) {
-        await q6();
-    }
-} catch (e) {
-    log('spike', 'FAILED', e instanceof Error ? e.stack : String(e));
+interface SpikeTasks {
+    q1q2:          () => Promise<void>
+    q3:            () => Promise<void>
+    q4q5:          () => Promise<void>
+    q6:            () => Promise<void>
+    writeFixtures: () => void
 }
-writeFixtures();
-log('spike', 'done');
-// eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the SDK's child processes keep the event loop alive; exit is deliberate
-process.exit(0);
+
+/** Run selected questions and save partial recordings even if a question fails. */
+export async function runSpikeTasks(selected: ReadonlySet<string>, tasks: SpikeTasks, reportFailure: (error: unknown) => void): Promise<number> {
+    let failed = false;
+    try {
+        if(selected.has('q1') || selected.has('q2')) {
+            await tasks.q1q2();
+        }
+        if(selected.has('q3')) {
+            await tasks.q3();
+        }
+        if(selected.has('q4') || selected.has('q5')) {
+            await tasks.q4q5();
+        }
+        if(selected.has('q6')) {
+            await tasks.q6();
+        }
+    } catch (error) {
+        failed = true;
+        reportFailure(error);
+    }
+    try {
+        tasks.writeFixtures();
+    } catch (error) {
+        failed = true;
+        reportFailure(error);
+    }
+    return failed ? 1 : 0;
+}
+
+if(import.meta.main) {
+    log('spike', 'workdir', WORKDIR, 'model', MODEL, 'questions', [...wanted].join(','), 'record', recording ? RECORD_DIR : 'off');
+    const status = await runSpikeTasks(wanted, { q1q2, q3, q4q5, q6, writeFixtures }, (error) => {
+        log('spike', 'FAILED', error instanceof Error ? error.stack : String(error));
+    });
+    log('spike', 'done');
+    // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the SDK's child processes keep the event loop alive; exit is deliberate
+    process.exit(status);
+}

@@ -21,6 +21,7 @@ describe.concurrent('createBskyClassifier', () => {
 
             expect(result.category).toBe('rate_limited');
             expect(result.retryAfterMs).toBeUndefined();
+            expect(Object.hasOwn(result, 'retryAfterMs')).toBe(false);
         });
 
         it('classifies BskyRateLimitError with retryAfterMs in context as rate_limited with retryAfterMs', () => {
@@ -63,6 +64,11 @@ describe.concurrent('createBskyClassifier', () => {
     });
 
     describe.concurrent('BskyError classification', () => {
+        it('supplies a message for a domain error with an empty message', () => {
+            expect(createBskyClassifier()(new BskyError(''))).toEqual({
+                category: 'permanent', message: 'Bluesky error',
+            });
+        });
         it('classifies base BskyError as permanent (domain errors should not be retried)', () => {
             const classifier = createBskyClassifier();
             const error      = new BskyError('Post not found');

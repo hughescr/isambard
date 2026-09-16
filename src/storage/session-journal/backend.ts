@@ -73,7 +73,6 @@ export class SessionJournalBackend extends BaseRepository<SessionJournalItem> {
         for(const raw of rawItems) {
             const parsed = journalEntrySchema.safeParse(raw);
             if(!parsed.success) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
                 logger.warn({ role, raw, error: parsed.error, msg: 'SessionJournalBackend.readSince(): skipping malformed journal row' });
                 continue;
             }

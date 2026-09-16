@@ -1,0 +1,659 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "22dfa9ba0d3f2e2a7f1400b895fa020083fd1e56",
+  "purpose": "Private utils/services/tools/scripts repair branch handoff; frozen audit records remain unchanged.",
+  "cases": [
+    {
+      "id": "eslint-0470a084aed0a699373f",
+      "path": "tools/backfill-contact-lookup-gsi2-core.ts",
+      "originalLine": 144,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line no-await-in-loop -- sequential: each update is independent; retry handles throttle",
+      "baselineBlob": "5ff3f4f0436b4aa70107c3b8a7a67a465b334240",
+      "preBlob": "5ff3f4f0436b4aa70107c3b8a7a67a465b334240",
+      "postBlob": "326235ac189ded06465a891787fe9cc0b7bf2987"
+    },
+    {
+      "id": "eslint-13315a02eac5d59727ea",
+      "path": "tools/backfill-contact-lookup-gsi2-core.ts",
+      "originalLine": 49,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-line @typescript-eslint/no-unnecessary-condition -- arg is 'string | undefined' under noUncheckedIndexedAccess; optional chain required for runtime correctness",
+      "baselineBlob": "5ff3f4f0436b4aa70107c3b8a7a67a465b334240",
+      "preBlob": "5ff3f4f0436b4aa70107c3b8a7a67a465b334240",
+      "postBlob": "326235ac189ded06465a891787fe9cc0b7bf2987"
+    },
+    {
+      "id": "eslint-1dc99fefae18e08633d2",
+      "path": "tools/backfill-vectors.ts",
+      "originalLine": 137,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- val may be undefined when --model-quant is the last arg; we check both to provide a clear error message",
+      "baselineBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "preBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "postBlob": "26352bac0e40643da317f33ab1de28cf73e5adfb"
+    },
+    {
+      "id": "eslint-2730e8dcef77a67cae39",
+      "path": "tools/backfill-vectors.ts",
+      "originalLine": 149,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- arg is 'string | undefined' under noUncheckedIndexedAccess (tsconfig.src.json); ESLint uses tsconfig.json without that flag so it sees arg as always 'string'; optional chain is required for runtime correctness",
+      "baselineBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "preBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "postBlob": "26352bac0e40643da317f33ab1de28cf73e5adfb"
+    },
+    {
+      "id": "eslint-3b3299fd632bbb0dc665",
+      "path": "tools/backfill-vectors.ts",
+      "originalLine": 159,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line sonarjs/cognitive-complexity, complexity -- sequential batch processing loop with rate limiting and force/dry-run branches is inherently complex for a CLI tool",
+      "baselineBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "preBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "postBlob": "26352bac0e40643da317f33ab1de28cf73e5adfb"
+    },
+    {
+      "id": "eslint-49e00f8b16767f0e5f91",
+      "path": "src/services/approval-saga/executor.ts",
+      "originalLine": 79,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "replaced-with-durable-ordering-rationale",
+      "priorDirective": "// eslint-disable-next-line no-await-in-loop -- Sequential saga execution required for ordering guarantees",
+      "baselineBlob": "855b51b721d52c0c36ed3b0c8e1ff1361dc4c12b",
+      "preBlob": "855b51b721d52c0c36ed3b0c8e1ff1361dc4c12b",
+      "postBlob": "65dae0c4a949b779ce6c74de2e053467347e4402"
+    },
+    {
+      "id": "eslint-4b0a70506c09c5015601",
+      "path": "tools/backfill-vectors.ts",
+      "originalLine": 90,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line sonarjs/cognitive-complexity, complexity -- CLI arg parser is inherently complex; each branch handles one flag's required value",
+      "baselineBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "preBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "postBlob": "26352bac0e40643da317f33ab1de28cf73e5adfb"
+    },
+    {
+      "id": "eslint-5f4dd289f184f01f9df1",
+      "path": "tools/backfill-vectors.ts",
+      "originalLine": 130,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- val may be undefined when --model-slug is the last arg; we check both to provide a clear error message",
+      "baselineBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "preBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "postBlob": "26352bac0e40643da317f33ab1de28cf73e5adfb"
+    },
+    {
+      "id": "eslint-6137778d7a1567b216ca",
+      "path": "src/services/approval-saga/executor.ts",
+      "originalLine": 81,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "replaced-with-durable-ordering-rationale",
+      "priorDirective": "// eslint-disable-next-line no-await-in-loop -- Sequential saga execution required for ordering guarantees",
+      "baselineBlob": "855b51b721d52c0c36ed3b0c8e1ff1361dc4c12b",
+      "preBlob": "855b51b721d52c0c36ed3b0c8e1ff1361dc4c12b",
+      "postBlob": "65dae0c4a949b779ce6c74de2e053467347e4402"
+    },
+    {
+      "id": "eslint-7012fe829d286938e1a4",
+      "path": "tools/backfill-vectors.ts",
+      "originalLine": 145,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- val may be undefined when --rate-limit-rcu-per-sec is the last arg; we check both to provide a clear error message",
+      "baselineBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "preBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "postBlob": "26352bac0e40643da317f33ab1de28cf73e5adfb"
+    },
+    {
+      "id": "eslint-85f071617df871cb1823",
+      "path": "tools/backfill-vectors.ts",
+      "originalLine": 249,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line no-await-in-loop -- sequential embedding is intentional to avoid OOM from parallel model inference",
+      "baselineBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "preBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "postBlob": "26352bac0e40643da317f33ab1de28cf73e5adfb"
+    },
+    {
+      "id": "eslint-8ddcdce9695fb1e087cc",
+      "path": "tools/backfill-vectors.ts",
+      "originalLine": 223,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line no-await-in-loop -- sequential hash-check per item is intentional",
+      "baselineBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "preBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "postBlob": "26352bac0e40643da317f33ab1de28cf73e5adfb"
+    },
+    {
+      "id": "eslint-993bc5e478792c992f51",
+      "path": "src/services/approval-saga/executor.ts",
+      "originalLine": 89,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "replaced-with-durable-ordering-rationale",
+      "priorDirective": "// eslint-disable-next-line no-await-in-loop -- Sequential saga execution required for ordering guarantees",
+      "baselineBlob": "855b51b721d52c0c36ed3b0c8e1ff1361dc4c12b",
+      "preBlob": "855b51b721d52c0c36ed3b0c8e1ff1361dc4c12b",
+      "postBlob": "65dae0c4a949b779ce6c74de2e053467347e4402"
+    },
+    {
+      "id": "eslint-b4191557c99759566f6f",
+      "path": "tools/backfill-vectors.ts",
+      "originalLine": 108,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line unicorn/prefer-switch -- complexity is in the value-consuming branches, not the discriminant alone; switch doesn't help here",
+      "baselineBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "preBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "postBlob": "26352bac0e40643da317f33ab1de28cf73e5adfb"
+    },
+    {
+      "id": "eslint-c94da6c9bce279f8a7f2",
+      "path": "scripts/mark-well-known-channels.ts",
+      "originalLine": 53,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: args[2] may be undefined despite WellKnownChannel cast",
+      "baselineBlob": "ac084f615d677675e55190eac0895b5554c7d4e0",
+      "preBlob": "ac084f615d677675e55190eac0895b5554c7d4e0",
+      "postBlob": "a683e771354b03571a48fae0362eb9197966bc73"
+    },
+    {
+      "id": "eslint-ddd0736d774db07505b4",
+      "path": "src/services/allowlist-saga/starter.ts",
+      "originalLine": 18,
+      "family": "eslint",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// eslint-disable-next-line @typescript-eslint/no-explicit-any -- structural duck type for Discord interaction; discord.js followUp overload doesn't match exact structural type",
+      "baselineBlob": "9003cf1cbd96c05e1213f9ce135a3713da0b7bf9",
+      "preBlob": "9003cf1cbd96c05e1213f9ce135a3713da0b7bf9",
+      "postBlob": "a1dbb5d23a7b9b15e01a5fd24fc0701f1f8ec13e"
+    },
+    {
+      "id": "stryker-000d10e6b91dbfa7a684",
+      "path": "src/utils/media/video/frame-extractor.ts",
+      "originalLine": 61,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line StringLiteral: filename template is informational",
+      "baselineBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "preBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "postBlob": "583aba021f80b7a4c96dc70a14b435ef9d733905"
+    },
+    {
+      "id": "stryker-05f60545d9456d8263c6",
+      "path": "src/utils/media/video/subtitle-extractor.ts",
+      "originalLine": 9,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "narrowed-to-proven-equivalent",
+      "priorDirective": "// Stryker disable next-line LogicalOperator,StringLiteral: fallback defaults — never reached for well-formed timestamps",
+      "baselineBlob": "2e4e56a49ac60496c2c1b5dfaf3405a4b757f6da",
+      "preBlob": "2e4e56a49ac60496c2c1b5dfaf3405a4b757f6da",
+      "postBlob": "d4db2c8bbcf22876ac1c8ddef670258e67ed3da9"
+    },
+    {
+      "id": "stryker-1019a9e61f98a4efe800",
+      "path": "src/utils/media/video/frame-extractor.ts",
+      "originalLine": 32,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line ArrayDeclaration,MethodExpression: Array.from structural initialization — Math.min/max produce same results (both yield all items), min just avoids excess workers",
+      "baselineBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "preBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "postBlob": "583aba021f80b7a4c96dc70a14b435ef9d733905"
+    },
+    {
+      "id": "stryker-12e99a883439ee55ee5c",
+      "path": "src/utils/media/fetcher.ts",
+      "originalLine": 97,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable all: logging statement",
+      "baselineBlob": "1c1740f8507c70cc1cb2b42b06bee9f45312b93f",
+      "preBlob": "1c1740f8507c70cc1cb2b42b06bee9f45312b93f",
+      "postBlob": "68f09ce38539df75dda648331d32ffe5e313503a"
+    },
+    {
+      "id": "stryker-14df790dcb0b690db952",
+      "path": "src/utils/filename.ts",
+      "originalLine": 43,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line UpdateOperator: counter++ → counter-- creates infinite retry loop",
+      "baselineBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "preBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "postBlob": "d82b6b50ba36b614a376e22128c52c92c7ef9133"
+    },
+    {
+      "id": "stryker-1eb37980d112e825b382",
+      "path": "src/utils/filename.ts",
+      "originalLine": 19,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable EqualityOperator,ConditionalExpression,StringLiteral,ArithmeticOperator,BlockStatement: trailing dot/space trimming — same boundary equivalence; end+1 reads undefined which exits loop immediately; BlockStatement removal causes test timeout",
+      "baselineBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "preBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "postBlob": "d82b6b50ba36b614a376e22128c52c92c7ef9133"
+    },
+    {
+      "id": "stryker-29c3d08f13e3789defa8",
+      "path": "src/utils/media/video/markdown-builder.ts",
+      "originalLine": 41,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line StringLiteral: empty string return for missing audioChannels — covered by unit tests of buildMetadataMarkdown with audioChannels undefined",
+      "baselineBlob": "c041fe53288e16055d0b48305e32ac212fb7c172",
+      "preBlob": "c041fe53288e16055d0b48305e32ac212fb7c172",
+      "postBlob": "b5df563f6c49d9ddb17eccc1f0c39d841addd330"
+    },
+    {
+      "id": "stryker-60a7467cea93d9ffee2d",
+      "path": "src/utils/media/video/frame-extractor.ts",
+      "originalLine": 78,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line ConditionalExpression,EqualityOperator: frameRate <= 0 guard — both branches produce same result for valid non-negative frameRate",
+      "baselineBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "preBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "postBlob": "583aba021f80b7a4c96dc70a14b435ef9d733905"
+    },
+    {
+      "id": "stryker-68b60dafe9371385917a",
+      "path": "src/utils/media/video/subtitle-extractor.ts",
+      "originalLine": 7,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "narrowed-to-proven-equivalent",
+      "priorDirective": "// Stryker disable next-line LogicalOperator,StringLiteral: fallback defaults — never reached for well-formed timestamps",
+      "baselineBlob": "2e4e56a49ac60496c2c1b5dfaf3405a4b757f6da",
+      "preBlob": "2e4e56a49ac60496c2c1b5dfaf3405a4b757f6da",
+      "postBlob": "d4db2c8bbcf22876ac1c8ddef670258e67ed3da9"
+    },
+    {
+      "id": "stryker-6963ef6bef5f51489685",
+      "path": "src/utils/time.ts",
+      "originalLine": 98,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "narrowed-to-proven-equivalent",
+      "priorDirective": "// Stryker disable next-line ConditionalExpression,EqualityOperator: Complex time boundary check, both conditions needed for correct bucketing, <= boundary is equivalent",
+      "baselineBlob": "d293ad28091f32de298eed09b0f47622f679616c",
+      "preBlob": "d293ad28091f32de298eed09b0f47622f679616c",
+      "postBlob": "3284643d619fc0a8b7fcf3bd7b19696d7e298b14"
+    },
+    {
+      "id": "stryker-6d00b2e6e899ee1725ca",
+      "path": "src/utils/media/video/frame-extractor.ts",
+      "originalLine": 43,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable StringLiteral: ffmpeg command arguments are configuration",
+      "baselineBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "preBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "postBlob": "583aba021f80b7a4c96dc70a14b435ef9d733905"
+    },
+    {
+      "id": "stryker-778f86bac6853aaf4b1e",
+      "path": "src/utils/media/video/frame-extractor.ts",
+      "originalLine": 5,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line ArithmeticOperator: concurrency limit is configuration",
+      "baselineBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "preBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "postBlob": "583aba021f80b7a4c96dc70a14b435ef9d733905"
+    },
+    {
+      "id": "stryker-802422861cbaf188ae91",
+      "path": "tools/backfill-contact-lookup-gsi2-core.ts",
+      "originalLine": 43,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable OptionalChaining: arg is never undefined in for-of over string[]; the optional chain is required for runtime correctness under noUncheckedIndexedAccess but cannot be killed by tests",
+      "baselineBlob": "5ff3f4f0436b4aa70107c3b8a7a67a465b334240",
+      "preBlob": "5ff3f4f0436b4aa70107c3b8a7a67a465b334240",
+      "postBlob": "326235ac189ded06465a891787fe9cc0b7bf2987"
+    },
+    {
+      "id": "stryker-81d277f6391bef4bfa67",
+      "path": "src/utils/media/video/downloader.ts",
+      "originalLine": 28,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable StringLiteral,ObjectLiteral: ffmpeg command arguments and options are configuration",
+      "baselineBlob": "5ee19435a8bda9df6f9fe3e7fdd06dc91c05ce87",
+      "preBlob": "5ee19435a8bda9df6f9fe3e7fdd06dc91c05ce87",
+      "postBlob": "e8124ca590f0848043e7b73309cbb17e826e1a60"
+    },
+    {
+      "id": "stryker-83c68b649045888fd677",
+      "path": "src/utils/media/fetcher.ts",
+      "originalLine": 49,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable all: logging statement",
+      "baselineBlob": "1c1740f8507c70cc1cb2b42b06bee9f45312b93f",
+      "preBlob": "1c1740f8507c70cc1cb2b42b06bee9f45312b93f",
+      "postBlob": "68f09ce38539df75dda648331d32ffe5e313503a"
+    },
+    {
+      "id": "stryker-9a96d1b6b70b8beac2d7",
+      "path": "src/utils/media/video/downloader.ts",
+      "originalLine": 5,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line ArithmeticOperator: 5-minute download timeout is configuration",
+      "baselineBlob": "5ee19435a8bda9df6f9fe3e7fdd06dc91c05ce87",
+      "preBlob": "5ee19435a8bda9df6f9fe3e7fdd06dc91c05ce87",
+      "postBlob": "e8124ca590f0848043e7b73309cbb17e826e1a60"
+    },
+    {
+      "id": "stryker-abdc07919ff2c2e37e00",
+      "path": "src/utils/filename.ts",
+      "originalLine": 8,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line StringLiteral: '_' replacement is equivalent to '' — tests only verify dangerous chars are absent, not what replaced them",
+      "baselineBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "preBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "postBlob": "d82b6b50ba36b614a376e22128c52c92c7ef9133"
+    },
+    {
+      "id": "stryker-b19bcad281a0df1333f0",
+      "path": "src/utils/assert-never.ts",
+      "originalLine": 26,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line StringLiteral: invariant location label is informational only",
+      "baselineBlob": "8389ecdfd59906e20cf47bde9f4c59cdc9165c70",
+      "preBlob": "8389ecdfd59906e20cf47bde9f4c59cdc9165c70",
+      "postBlob": "1161544be5100c5a3c1ccac182fa1d4f05ea444e"
+    },
+    {
+      "id": "stryker-d0ed378a8d6b3d35c614",
+      "path": "src/utils/media/video/downloader.ts",
+      "originalLine": 49,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line ObjectLiteral: AbortSignal timeout option is configuration",
+      "baselineBlob": "5ee19435a8bda9df6f9fe3e7fdd06dc91c05ce87",
+      "preBlob": "5ee19435a8bda9df6f9fe3e7fdd06dc91c05ce87",
+      "postBlob": "e8124ca590f0848043e7b73309cbb17e826e1a60"
+    },
+    {
+      "id": "stryker-dc3049d25a72725a35df",
+      "path": "src/utils/filename.ts",
+      "originalLine": 41,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line StringLiteral: deduplication format template — mutating causes test timeout (format change breaks used-set lookup, infinite retry)",
+      "baselineBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "preBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "postBlob": "d82b6b50ba36b614a376e22128c52c92c7ef9133"
+    },
+    {
+      "id": "stryker-ecbb186c0e86c625dd66",
+      "path": "src/services/approval-saga/executor.ts",
+      "originalLine": 158,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op so →true mutation is equivalent",
+      "baselineBlob": "855b51b721d52c0c36ed3b0c8e1ff1361dc4c12b",
+      "preBlob": "855b51b721d52c0c36ed3b0c8e1ff1361dc4c12b",
+      "postBlob": "65dae0c4a949b779ce6c74de2e053467347e4402"
+    },
+    {
+      "id": "stryker-f4850faf05841b919f8d",
+      "path": "src/utils/media/video/frame-extractor.ts",
+      "originalLine": 131,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line UpdateOperator: i-- infinite loop — Stryker cannot test decrementing loop counters",
+      "baselineBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "preBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "postBlob": "583aba021f80b7a4c96dc70a14b435ef9d733905"
+    },
+    {
+      "id": "stryker-f4cff6f7bb06b3c9ea7e",
+      "path": "src/utils/filename.ts",
+      "originalLine": 10,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line StringLiteral: '_' replacement is equivalent to '' for dotdot sequences given upstream char substitution already ran",
+      "baselineBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "preBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "postBlob": "d82b6b50ba36b614a376e22128c52c92c7ef9133"
+    },
+    {
+      "id": "stryker-f4d984aba9c82a02d59d",
+      "path": "src/utils/media/fetcher.ts",
+      "originalLine": 40,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable next-line ObjectLiteral: Fetch timeout options are not unit-testable without flaky timing dependencies",
+      "baselineBlob": "1c1740f8507c70cc1cb2b42b06bee9f45312b93f",
+      "preBlob": "1c1740f8507c70cc1cb2b42b06bee9f45312b93f",
+      "postBlob": "68f09ce38539df75dda648331d32ffe5e313503a"
+    },
+    {
+      "id": "stryker-fc3cbc3d3c4ee601634f",
+      "path": "src/utils/filename.ts",
+      "originalLine": 14,
+      "family": "stryker",
+      "originalStatus": "repair-pending",
+      "disposition": "removed",
+      "priorDirective": "// Stryker disable EqualityOperator,ConditionalExpression,StringLiteral,BlockStatement: leading dot/space trimming — boundary operator mutations (< vs <=) converge to same result; space literal removal equivalent when test inputs use dots only; BlockStatement removal causes test timeout",
+      "baselineBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "preBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "postBlob": "d82b6b50ba36b614a376e22128c52c92c7ef9133"
+    }
+  ],
+  "retains": [
+    {
+      "id": "stryker-68b60dafe9371385917a",
+      "operator": "StringLiteral",
+      "reason": "Regex-matched HH:MM:SS hours component is present; the fallback string is unreachable.",
+      "currentDirective": "// Stryker disable next-line StringLiteral: matched timestamp components cannot use this fallback"
+    },
+    {
+      "id": "stryker-05f60545d9456d8263c6",
+      "operator": "StringLiteral",
+      "reason": "Regex-matched HH:MM:SS minutes component is present; the fallback string is unreachable.",
+      "currentDirective": "// Stryker disable next-line StringLiteral: matched timestamp components cannot use this fallback"
+    },
+    {
+      "id": "stryker-6963ef6bef5f51489685",
+      "operator": "EqualityOperator",
+      "reason": "A five-week interval exceeds any calendar month, so weeks <= 5 cannot change output while months < 1.",
+      "currentDirective": "// Stryker disable next-line EqualityOperator: weeks <= 5 is equivalent to weeks < 5 while months < 1"
+    },
+    {
+      "id": "eslint-49e00f8b16767f0e5f91",
+      "operator": "no-await-in-loop",
+      "reason": "An external saga action must finish before its durable outcome is written and any later action starts.",
+      "currentDirective": "// eslint-disable-next-line no-await-in-loop -- Later external actions must wait for this saga's durable outcome."
+    },
+    {
+      "id": "eslint-6137778d7a1567b216ca",
+      "operator": "no-await-in-loop",
+      "reason": "A success-state write must complete before the next external action; a failed write stops the loop.",
+      "currentDirective": "// eslint-disable-next-line no-await-in-loop -- Persist success before starting the next external action; a failed write stops this loop."
+    },
+    {
+      "id": "eslint-993bc5e478792c992f51",
+      "operator": "no-await-in-loop",
+      "reason": "A failure-state write must complete before the next external action; a failed write stops the loop.",
+      "currentDirective": "// eslint-disable-next-line no-await-in-loop -- Persist failure before the next action; a failed write propagates and stops this loop."
+    }
+  ],
+  "changedFiles": [
+    {
+      "path": "scripts/mark-well-known-channels.ts",
+      "preBlob": "ac084f615d677675e55190eac0895b5554c7d4e0",
+      "postBlob": "a683e771354b03571a48fae0362eb9197966bc73"
+    },
+    {
+      "path": "src/services/allowlist-saga/starter.ts",
+      "preBlob": "9003cf1cbd96c05e1213f9ce135a3713da0b7bf9",
+      "postBlob": "a1dbb5d23a7b9b15e01a5fd24fc0701f1f8ec13e"
+    },
+    {
+      "path": "src/services/approval-saga/executor.ts",
+      "preBlob": "855b51b721d52c0c36ed3b0c8e1ff1361dc4c12b",
+      "postBlob": "65dae0c4a949b779ce6c74de2e053467347e4402"
+    },
+    {
+      "path": "src/utils/assert-never.ts",
+      "preBlob": "8389ecdfd59906e20cf47bde9f4c59cdc9165c70",
+      "postBlob": "1161544be5100c5a3c1ccac182fa1d4f05ea444e"
+    },
+    {
+      "path": "src/utils/filename.ts",
+      "preBlob": "7175bc892687823dfc39b95ef79732409eb3742c",
+      "postBlob": "d82b6b50ba36b614a376e22128c52c92c7ef9133"
+    },
+    {
+      "path": "src/utils/media/fetcher.ts",
+      "preBlob": "1c1740f8507c70cc1cb2b42b06bee9f45312b93f",
+      "postBlob": "68f09ce38539df75dda648331d32ffe5e313503a"
+    },
+    {
+      "path": "src/utils/media/video/downloader.ts",
+      "preBlob": "5ee19435a8bda9df6f9fe3e7fdd06dc91c05ce87",
+      "postBlob": "e8124ca590f0848043e7b73309cbb17e826e1a60"
+    },
+    {
+      "path": "src/utils/media/video/frame-extractor.ts",
+      "preBlob": "e6a645d231eb76750d5059e474ce2b5340810fc9",
+      "postBlob": "583aba021f80b7a4c96dc70a14b435ef9d733905"
+    },
+    {
+      "path": "src/utils/media/video/markdown-builder.ts",
+      "preBlob": "c041fe53288e16055d0b48305e32ac212fb7c172",
+      "postBlob": "b5df563f6c49d9ddb17eccc1f0c39d841addd330"
+    },
+    {
+      "path": "src/utils/media/video/subtitle-extractor.ts",
+      "preBlob": "2e4e56a49ac60496c2c1b5dfaf3405a4b757f6da",
+      "postBlob": "d4db2c8bbcf22876ac1c8ddef670258e67ed3da9"
+    },
+    {
+      "path": "src/utils/time.ts",
+      "preBlob": "d293ad28091f32de298eed09b0f47622f679616c",
+      "postBlob": "3284643d619fc0a8b7fcf3bd7b19696d7e298b14"
+    },
+    {
+      "path": "tests/unit/services/approval-saga/executor.test.ts",
+      "preBlob": "47642f243a7c97c653e79dc3094816a1bb75bc56",
+      "postBlob": "148ac3d85c3516e8cc2dece5ea49e74728240627"
+    },
+    {
+      "path": "tests/unit/tools/backfill-contact-lookup-gsi2.test.ts",
+      "preBlob": "95d6a5f865031d892720e009c58a952de38435fb",
+      "postBlob": "5290a9e457790a43598648697fcb0fd60b414c37"
+    },
+    {
+      "path": "tests/unit/tools/backfill-vectors.test.ts",
+      "preBlob": null,
+      "postBlob": "62b1479014a625f78800e08fc3c7018302e86c73"
+    },
+    {
+      "path": "tests/unit/utils/assert-never.test.ts",
+      "preBlob": "0de050ca7f779d80bc18bc92c2ca952ca7eb6edd",
+      "postBlob": "2e604dff886a8546d26fd4886a3bc1b0dbbc9471"
+    },
+    {
+      "path": "tests/unit/utils/filename.test.ts",
+      "preBlob": "bebc42810dc33ec89bab0e8004cfa679853038e7",
+      "postBlob": "a2f755dac191c73f441a306f3f620002afe92153"
+    },
+    {
+      "path": "tests/unit/utils/media/fetcher.test.ts",
+      "preBlob": "e7761a0754fd4fc5bf50c9b6d2e0e616bc426857",
+      "postBlob": "219c0fa62f7b055580fba46b64b9ab65cc412472"
+    },
+    {
+      "path": "tests/unit/utils/media/video/downloader.test.ts",
+      "preBlob": "006f9c4c328e53c00611cea7e213eb3c025470a9",
+      "postBlob": "02545db55f3640af1f6b317010a60e7ab1b3a15b"
+    },
+    {
+      "path": "tests/unit/utils/media/video/frame-extractor.test.ts",
+      "preBlob": "e3fa7662646a51d2977e1ee54d0b9206002ff052",
+      "postBlob": "59a12555b3ef74e331974fc9c620764b655e1603"
+    },
+    {
+      "path": "tests/unit/utils/media/video/markdown-builder.test.ts",
+      "preBlob": "9fa940d4422139a5e7ee11b166d4605ab0bd95f9",
+      "postBlob": "bd1c69c4d605ae52c3083101414f794dd9a487e3"
+    },
+    {
+      "path": "tools/backfill-contact-lookup-gsi2-core.ts",
+      "preBlob": "5ff3f4f0436b4aa70107c3b8a7a67a465b334240",
+      "postBlob": "326235ac189ded06465a891787fe9cc0b7bf2987"
+    },
+    {
+      "path": "tools/backfill-contact-lookup-gsi2.ts",
+      "preBlob": "6b07d3790f977d44f8999878f0c544f3f38faede",
+      "postBlob": "3f504330e2cf83f28d1b71de45f6f223c1b74c62"
+    },
+    {
+      "path": "tools/backfill-vectors.ts",
+      "preBlob": "007759ac33c5af53cf724ac0ca66a8fbfe987389",
+      "postBlob": "26352bac0e40643da317f33ab1de28cf73e5adfb"
+    }
+  ],
+  "verification": [
+    "bun run typecheck",
+    "Focused ESLint on all changed TypeScript files",
+    "170 focused tests across ten suites"
+  ]
+}

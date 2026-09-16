@@ -110,6 +110,23 @@ describe('createOutboxDrainer', () => {
     });
 
     describe('drain() — successful delivery', () => {
+        test('does not start a second drain while delivery is in flight', async () => {
+            const item = makeItem();
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            const gate = Promise.withResolvers<void>();
+            deliverFn.mockImplementation((): Promise<void> => gate.promise);
+
+            const first = drainer.drain(SERVICE);
+            await Promise.resolve();
+            await Promise.resolve();
+            const second = drainer.drain(SERVICE);
+            gate.resolve();
+            expect(await second).toEqual({ delivered: 0, failed: 0, skipped: 0 });
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+            const result = await first;
+            expect(result.delivered).toBe(1);
+        });
+
         test('delivers items and marks them sent', async () => {
             const item = makeItem();
             outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
@@ -178,7 +195,7 @@ describe('createOutboxDrainer', () => {
 
             expect(logger.error).toHaveBeenCalledWith(
                 expect.objectContaining({ service: SERVICE, itemId: item.id, error: 'Boom' }),
-                expect.any(String)
+                'Failed to deliver outbox item'
             );
         });
     });
@@ -218,7 +235,7 @@ describe('createOutboxDrainer', () => {
 
             expect(logger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({ service: SERVICE, itemId: futureItem.id }),
-                expect.any(String)
+                'Deleting outbox item from future epoch'
             );
         });
     });
@@ -243,7 +260,7 @@ describe('createOutboxDrainer', () => {
             expect(outboxBackend.markSent).not.toHaveBeenCalled();
             expect(logger.info).toHaveBeenCalledWith(
                 expect.objectContaining({ service: SERVICE }),
-                expect.any(String)
+                'Service went offline mid-drain, stopping'
             );
         });
     });

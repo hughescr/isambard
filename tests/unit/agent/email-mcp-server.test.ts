@@ -1,14 +1,14 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access; casts are non-nullable but ?. provides safety */
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { buildAdminRejectedSubsection, buildGaveUpSubsection } from '../../../src/agent/context-builder';
-import { createEmailMCPServer, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
+import { buildAttachments, createEmailMCPServer, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
 import type { WildDuckClient, WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
 import type { ServiceHealthRegistry } from '../../../src/services/health-registry';
 import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters/token-bucket';
 import type { ServiceHealthEntry } from '../../../src/services/types';
 import type { PersonAllowlist } from '../../../src/storage';
+import * as utils from '../../../src/utils';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 
 /** Minimal offline-state ServiceHealthRegistry double for the getRejectedDrafts health-guard test. */
@@ -32,7 +32,9 @@ interface RegisteredTool {
     description: string
     inputSchema: {
         shape:          Record<string, unknown>
-        safeParseAsync: (args: unknown) => Promise<{ success: boolean }>
+        safeParseAsync: (args: unknown) => Promise<
+            { success: true } | { success: false, error: { issues: { path: PropertyKey[], message: string }[] } }
+        >
     }
     annotations: Record<string, boolean>
 }
@@ -94,17 +96,107 @@ describe('createEmailMCPServer', () => {
         return (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName].handler;
     };
 
+    const firstMockCall = <TArgs extends readonly unknown[]>(calls: readonly TArgs[]): TArgs | undefined => calls.at(0);
+
     // Helper to extract text from CallToolResult
     const getText = (result: CallToolResult): string => {
-        const content = result.content[0];
-        const record = content as Record<string, unknown>;
-        if(record && 'text' in record && typeof record.text === 'string') {
+        const record: unknown = result.content[0];
+        if(record !== null && typeof record === 'object' && 'text' in record && typeof record.text === 'string') {
             return record.text;
         }
         return '';
     };
 
+    test('attachment read failures preserve the missing path in message and context', async () => {
+        mockFsPromises.readFile.mockImplementation(async () => {
+            throw new Error('ENOENT');
+        });
+        try {
+            await buildAttachments(['/tmp/missing-003.txt']);
+            throw new Error('Expected attachment read to fail');
+        } catch (error) {
+            expect(error).toMatchObject({
+                message: 'Attachment file not found: /tmp/missing-003.txt',
+                context: { filePath: '/tmp/missing-003.txt' },
+            });
+        }
+    });
+
     describe('createEmailMCPServer function', () => {
+        test('registers every email capability with agent-readable parameter guidance', () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const registered = (server.instance as unknown as RegisteredToolInstance)._registeredTools;
+            expect(Object.keys(registered).toSorted((a, b) => a.localeCompare(b))).toEqual([
+                'amendAndResubmitDraft', 'archiveEmail', 'checkInbox', 'deleteDraft',
+                'getEmailContent', 'getRejectedDrafts', 'replyToEmail', 'searchEmail', 'sendEmail',
+            ]);
+            const undocumented: string[] = [];
+            for(const [name, definition] of Object.entries(registered)) {
+                expect(definition.description.length).toBeGreaterThan(0);
+                for(const [parameter, schema] of Object.entries(definition.inputSchema.shape)) {
+                    if(!((schema as { description?: string }).description?.length)) {
+                        undocumented.push(`${name}.${parameter}`);
+                    }
+                }
+            }
+            const header = registered.searchEmail.inputSchema.shape.header as { unwrap: () => { shape: Record<string, { description?: string }> } };
+            for(const [field, schema] of Object.entries(header.unwrap().shape)) {
+                if(!schema.description?.length) {
+                    undocumented.push(`searchEmail.header.${field}`);
+                }
+            }
+            expect(undocumented).toEqual([]);
+        });
+
+        test.each([
+            ['getEmailContent', { message: 'CleanInbox:42' }, { message: ':42' }, 'MailboxName:UID'],
+            ['archiveEmail', { message: 'CleanInbox:42' }, { message: 'CleanInbox:42x' }, 'MailboxName:UID'],
+            ['replyToEmail', { message: 'CleanInbox:42', body: 'reply', mode: 'reply', identity: 'formal' }, { message: 'CleanInbox:42x', body: 'reply', mode: 'reply', identity: 'formal' }, 'MailboxName:UID'],
+            ['deleteDraft', { message: 'Drafts:42' }, { message: 'NotDrafts:42' }, 'Drafts:UID'],
+            ['amendAndResubmitDraft', { message: 'Drafts:42' }, { message: 'Drafts:42x' }, 'Drafts:UID'],
+        ])('%s validates mailbox references with a useful schema error', async (toolName, valid, invalid, format) => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const schema = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName].inputSchema;
+            const validResult = await schema.safeParseAsync(valid);
+            expect(validResult.success).toBe(true);
+            const result = await schema.safeParseAsync(invalid);
+            expect(result.success).toBe(false);
+            if(!result.success) {
+                expect(result.error.issues.some(issue => issue.path.includes('message') && issue.message.includes(format))).toBe(true);
+            }
+        });
+
+        test('rejects missing fields in a structured recipient', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const schema = (server.instance as unknown as RegisteredToolInstance)._registeredTools.sendEmail.inputSchema;
+            const validResult = await schema.safeParseAsync({
+                to: { name: 'Alice', email_address: 'alice@example.com' }, subject: 'Hello', body: 'Hi', identity: 'formal',
+            });
+            const invalidResult = await schema.safeParseAsync({ to: { unknown: 'alice@example.com' }, subject: 'Hello', body: 'Hi', identity: 'formal' });
+            expect(validResult.success).toBe(true);
+            expect(invalidResult.success).toBe(false);
+        });
+
+        test('mailbox UID schemas reject partial regex matches', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const tools = (server.instance as unknown as RegisteredToolInstance)._registeredTools;
+            const mailbox = tools.getEmailContent.inputSchema;
+            const drafts = tools.deleteDraft.inputSchema;
+            const mailboxResults = await Promise.all(['junk\nCleanInbox:42', 'CleanInbox:42x'].map(message => mailbox.safeParseAsync({ message })));
+            const draftResults = await Promise.all(['XDrafts:42', 'Drafts:42x'].map(message => drafts.safeParseAsync({ message })));
+            expect(mailboxResults.every(result => !result.success)).toBe(true);
+            expect(draftResults.every(result => !result.success)).toBe(true);
+        });
+
+        test('search mailbox scope accepts regular, all, and named folders', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const schema = (server.instance as unknown as RegisteredToolInstance)._registeredTools.searchEmail.inputSchema;
+            const validResults = await Promise.all(['all-regular', 'all', 'CleanInbox', 'Trash'].map(mailbox => schema.safeParseAsync({ mailbox })));
+            const invalidResult = await schema.safeParseAsync({ mailbox: 'NotAFolder' });
+            expect(validResults.every(result => result.success)).toBe(true);
+            expect(invalidResult.success).toBe(false);
+        });
+
         test('should create MCP server with correct properties', () => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
 
@@ -130,6 +222,11 @@ describe('createEmailMCPServer', () => {
             ['checkInbox',       { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
             ['getEmailContent',  { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
             ['archiveEmail',     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+            ['searchEmail',      { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
+            ['sendEmail',        { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
+            ['replyToEmail',     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
+            ['deleteDraft',      { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: false }],
+            ['amendAndResubmitDraft', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
             ['getRejectedDrafts', { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
         ])('should have %s tool with correct annotations', (toolName, expectedAnnotations) => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
@@ -205,6 +302,7 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('Error: listMessages connection failed');
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'checkInbox' }), 'MCP tool error');
         });
 
         test('should handle WildDuck getMailboxCounts error gracefully', async () => {
@@ -297,6 +395,16 @@ describe('createEmailMCPServer', () => {
     });
 
     describe('getEmailContent tool', () => {
+        test('logs the read tool identity when WildDuck fails', async () => {
+            mockWildDuck.getFullMessage = mock(async () => {
+                throw new Error('read failed');
+            });
+            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: mockWildDuck }), 'getEmailContent');
+            const result = await handler({ message: 'CleanInbox:42' });
+            expect(result.isError).toBe(true);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'getEmailContent', error: 'read failed' }), 'MCP tool error');
+        });
+
         test('should fetch email and return formatted content using Mailbox:UID format', async () => {
             mockWildDuck.getFullMessage = mock(async () => ({
                 uid:            42,
@@ -306,7 +414,7 @@ describe('createEmailMCPServer', () => {
                 cc:             [],
                 subject:        'Meeting tomorrow',
                 date:           new Date('2025-01-15T09:00:00.000Z'),
-                bodyText:       'Let us meet at noon.',
+                bodyText:       'Let us meet at noon.  ',
                 hasAttachments: false,
                 headers:        {},
                 attachments:    [],
@@ -324,6 +432,7 @@ describe('createEmailMCPServer', () => {
             expect(text).toContain('To: Bob <bob@example.com>');
             expect(text).toContain('Subject: Meeting tomorrow');
             expect(text).toContain('Let us meet at noon.');
+            expect(text).toBe('From: Alice Smith <alice@example.com>\nTo: Bob <bob@example.com>\nSubject: Meeting tomorrow\nDate: 2025-01-15T09:00:00.000Z\n\nLet us meet at noon.');
         });
 
         test('should mark email as Seen using Mailbox:UID', async () => {
@@ -419,6 +528,10 @@ describe('createEmailMCPServer', () => {
             // Still returns error to agent even if notification fails
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('Quarantine');
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                error: 'Discord channel send failed',
+                msg:   'Failed to send restricted mailbox notification',
+            });
         });
 
         test('should include message reference in admin notification', async () => {
@@ -831,11 +944,12 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             expect(mockFsPromises.mkdir).toHaveBeenCalledTimes(1);
+            expect(mockFsPromises.mkdir).toHaveBeenCalledWith(expect.stringContaining('/attachments/email-'), { recursive: true });
             expect(mockFsPromises.writeFile).toHaveBeenCalledTimes(1);
             // Check that getAttachment was called with correct params
             expect(mockWildDuck.getAttachment).toHaveBeenCalledWith('CleanInbox', 42, 'att-1');
             // Check that writeFile was called with correct path and data
-            const writeFileCall = mockFsPromises.writeFile.mock.calls[0];
+            const writeFileCall = firstMockCall(mockFsPromises.writeFile.mock.calls);
             expect(writeFileCall?.[0]).toContain('report.pdf');
             expect(writeFileCall?.[0]).toContain('email-');
             expect(writeFileCall?.[1] as unknown as Buffer).toEqual(pdfData);
@@ -844,6 +958,7 @@ describe('createEmailMCPServer', () => {
             expect(text).toContain('Attachments:');
             expect(text).toContain('report.pdf');
             expect(text).toContain('application/pdf');
+            expect(text.split('\nAttachments:\n').at(1)?.split('\n')).toEqual([`- ${String(writeFileCall?.[0]).slice(process.cwd().length + 1)} (application/pdf)`]);
         });
 
         test('should skip writing file if it already exists', async () => {
@@ -922,13 +1037,68 @@ describe('createEmailMCPServer', () => {
             expect(text).toContain('image/jpeg');
         });
 
-        test('should use sha1 of messageId for attachment directory name', async () => {
-            const messageId = '<unique-msg-id@example.com>';
+        test('fetches independent attachments with a bound of two and keeps display order', async () => {
+            const firstGate = Promise.withResolvers<void>();
+            const thirdStarted = Promise.withResolvers<void>();
+            let active = 0;
+            let maxActive = 0;
+            mockWildDuck.getFullMessage = mock(async () => ({
+                uid:            66,
+                messageId:      '<concurrent@example.com>',
+                from:           { address: 'sender@example.com' },
+                to:             [{ address: 'recipient@example.com' }],
+                cc:             [],
+                subject:        'Three files',
+                date:           new Date('2025-01-01T00:00:00.000Z'),
+                bodyText:       'See files',
+                hasAttachments: true,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: ['first.pdf', 'second.pdf', 'third.pdf'].map((filename, index) => ({
+                    id:          `att-${index + 1}`,
+                    filename,
+                    contentType: 'application/pdf',
+                    sizeKb:      1,
+                })),
+            }));
+            mockFsPromises.access.mockRejectedValue(new Error('ENOENT'));
+            mockWildDuck.getAttachment = mock(async (_mailbox: string, _uid: number, id: string) => {
+                active++;
+                maxActive = Math.max(maxActive, active);
+                if(id === 'att-1') {
+                    await firstGate.promise;
+                }
+                if(id === 'att-3') {
+                    thirdStarted.resolve();
+                }
+                active--;
+                return Buffer.from(id);
+            });
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'getEmailContent');
+            const pending = handler({ message: 'CleanInbox:66' });
+
+            try {
+                await Promise.race([
+                    thirdStarted.promise,
+                    Bun.sleep(1000).then(() => { throw new Error('third attachment did not start before the first completed'); }),
+                ]);
+                expect(maxActive).toBe(2);
+            } finally {
+                firstGate.resolve();
+            }
+
+            const text = getText(await pending);
+            const attachmentLines = text.split('\nAttachments:\n')[1]?.split('\n') ?? [];
+            expect(attachmentLines.map(line => /(?:first|second|third)\.pdf/.exec(line)?.[0])).toEqual(['first.pdf', 'second.pdf', 'third.pdf']);
+        });
+
+        test('should use the mailbox and UID for the attachment directory name', async () => {
             // eslint-disable-next-line sonarjs/hashing -- sha1 used here for non-security directory naming (matching production code), not cryptographic purposes
-            const expectedHash = createHash('sha1').update(messageId).digest('hex');
+            const expectedHash = createHash('sha1').update(JSON.stringify(['CleanInbox', 99])).digest('hex');
             mockWildDuck.getFullMessage = mock(async () => ({
                 uid:            99,
-                messageId,
+                messageId:      '<unique-msg-id@example.com>',
                 from:           { address: 'sender@example.com' },
                 to:             [{ address: 'recipient@example.com' }],
                 cc:             [],
@@ -947,17 +1117,18 @@ describe('createEmailMCPServer', () => {
 
             await handler({ message: 'CleanInbox:99' });
 
-            const mkdirCall = mockFsPromises.mkdir.mock.calls[0];
+            const mkdirCall = firstMockCall(mockFsPromises.mkdir.mock.calls);
             expect(mkdirCall?.[0]).toContain(`email-${expectedHash}`);
         });
 
         test('should include email- prefix in attachment path in output text', async () => {
-            const messageId = '<prefix-test@example.com>';
             // eslint-disable-next-line sonarjs/hashing -- sha1 used here for non-security directory naming (matching production code), not cryptographic purposes
-            const expectedHash = createHash('sha1').update(messageId).digest('hex');
+            const expectedHash = createHash('sha1').update(JSON.stringify(['CleanInbox', 77])).digest('hex');
+            // eslint-disable-next-line sonarjs/hashing -- sha1 used here for non-security directory naming (matching production code), not cryptographic purposes
+            const expectedAttachmentHash = createHash('sha1').update('att-1').digest('hex');
             mockWildDuck.getFullMessage = mock(async () => ({
                 uid:            77,
-                messageId,
+                messageId:      '<prefix-test@example.com>',
                 from:           { address: 'sender@example.com' },
                 to:             [{ address: 'recipient@example.com' }],
                 cc:             [],
@@ -977,7 +1148,162 @@ describe('createEmailMCPServer', () => {
             const result: CallToolResult = await handler({ message: 'CleanInbox:77' });
 
             const text = getText(result);
-            expect(text).toContain(`attachments/email-${expectedHash}/doc.pdf`);
+            expect(text).toContain(`attachments/email-${expectedHash}/attachment-${expectedAttachmentHash}/doc.pdf`);
+        });
+
+        test('should fetch distinct bytes for reused or missing Message-IDs and reuse the same attachment', async () => {
+            const bytesByMessage = new Map([
+                ['CleanInbox:41', Buffer.from('first document')],
+                ['CleanInbox:42', Buffer.from('second document')],
+                ['Archive:41', Buffer.from('archived document')],
+            ]);
+            mockWildDuck.getFullMessage = mock(async (mailboxName: string, uid: number) => ({
+                uid,
+                messageId:      mailboxName === 'Archive' ? '' : '<reused@example.com>',
+                from:           { address: 'sender@example.com' },
+                to:             [{ address: 'recipient@example.com' }],
+                cc:             [],
+                subject:        'Document',
+                date:           new Date('2025-01-01T00:00:00.000Z'),
+                bodyText:       'See attached',
+                hasAttachments: true,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: [{ id: 'att-1', filename: 'doc.pdf', contentType: 'application/pdf', sizeKb: 1 }],
+            }));
+            mockWildDuck.getAttachment = mock(async (mailboxName: string, uid: number) => bytesByMessage.get(`${mailboxName}:${uid}`)!);
+
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'getEmailContent');
+            const first = await handler({ message: 'CleanInbox:41' });
+            const second = await handler({ message: 'CleanInbox:42' });
+            const archived = await handler({ message: 'Archive:41' });
+            const paths = mockFsPromises.writeFile.mock.calls.map(call => call[0]);
+
+            expect(paths).toHaveLength(3);
+            expect(new Set(paths).size).toBe(3);
+            expect(mockWildDuck.getAttachment).toHaveBeenCalledTimes(3);
+            for(const [index, result] of [first, second, archived].entries()) {
+                expect(result.isError).toBeUndefined();
+                expect(getText(result)).toContain(String(paths[index]).slice(process.cwd().length + 1));
+            }
+            expect(mockFsPromises.writeFile.mock.calls.map(call => call[1] as unknown as Buffer)).toEqual([...bytesByMessage.values()]);
+
+            const firstAgain = await handler({ message: 'CleanInbox:41' });
+            expect(firstAgain.isError).toBeUndefined();
+            expect(getText(firstAgain)).toContain(String(paths[0]).slice(process.cwd().length + 1));
+            expect(mockWildDuck.getAttachment).toHaveBeenCalledTimes(3);
+            expect(mockFsPromises.writeFile).toHaveBeenCalledTimes(3);
+        });
+
+        test('should fetch a new attachment ID even when its filename is unchanged', async () => {
+            let attachmentId = 'att-first';
+            mockWildDuck.getFullMessage = mock(async () => ({
+                uid:            50,
+                messageId:      '<same@example.com>',
+                from:           { address: 'sender@example.com' },
+                to:             [{ address: 'recipient@example.com' }],
+                cc:             [],
+                subject:        'Document',
+                date:           new Date('2025-01-01T00:00:00.000Z'),
+                bodyText:       'See attached',
+                hasAttachments: true,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: [{ id: attachmentId, filename: 'doc.pdf', contentType: 'application/pdf', sizeKb: 1 }],
+            }));
+            mockWildDuck.getAttachment = mock(async (_mailboxName: string, _uid: number, id: string) => Buffer.from(id));
+
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'getEmailContent');
+            const first = await handler({ message: 'CleanInbox:50' });
+            attachmentId = 'att-second';
+            const second = await handler({ message: 'CleanInbox:50' });
+            const paths = mockFsPromises.writeFile.mock.calls.map(call => call[0]);
+
+            expect(paths).toHaveLength(2);
+            expect(paths[0]).not.toBe(paths[1]);
+            expect(mockFsPromises.writeFile.mock.calls.map(call => call[1] as unknown as Buffer)).toEqual([Buffer.from('att-first'), Buffer.from('att-second')]);
+            expect(getText(first)).toContain(String(paths[0]).slice(process.cwd().length + 1));
+            expect(getText(second)).toContain(String(paths[1]).slice(process.cwd().length + 1));
+        });
+
+        test('should continue saving later attachments when a remote attachment ID is malformed', async () => {
+            mockWildDuck.getFullMessage = mock(async () => ({
+                uid:            51,
+                messageId:      '',
+                from:           { address: 'sender@example.com' },
+                to:             [{ address: 'recipient@example.com' }],
+                cc:             [],
+                subject:        'Documents',
+                date:           new Date('2025-01-01T00:00:00.000Z'),
+                bodyText:       'See attached',
+                hasAttachments: true,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: [
+                    { id: undefined as unknown as string, filename: 'broken.pdf', contentType: 'application/pdf', sizeKb: 1 },
+                    { id: 'valid-id', filename: 'valid.pdf', contentType: 'application/pdf', sizeKb: 1 },
+                ],
+            }));
+
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'getEmailContent');
+            const result = await handler({ message: 'CleanInbox:51' });
+
+            expect(result.isError).toBeUndefined();
+            expect(getText(result)).toContain('could not save attachment broken.pdf');
+            expect(getText(result)).toContain('/valid.pdf (application/pdf)');
+            expect(mockWildDuck.getAttachment).toHaveBeenCalledTimes(1);
+            expect(mockWildDuck.getAttachment).toHaveBeenCalledWith('CleanInbox', 51, 'valid-id');
+            expect(mockFsPromises.writeFile).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ filename: 'broken.pdf', msg: 'Failed to save attachment (best-effort)' }));
+        });
+
+        test('should show processed video frames and fall back to the saved file after processing fails', async () => {
+            mockWildDuck.getFullMessage = mock(async () => ({
+                uid:            52,
+                messageId:      '',
+                from:           { address: 'sender@example.com' },
+                to:             [{ address: 'recipient@example.com' }],
+                cc:             [],
+                subject:        'Video',
+                date:           new Date('2025-01-01T00:00:00.000Z'),
+                bodyText:       'See attached',
+                hasAttachments: true,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: [{ id: 'video-id', filename: 'clip.mp4', contentType: 'video/mp4', sizeKb: 1 }],
+            }));
+            const processSpy = spyOn(utils, 'processLocalVideo')
+                .mockResolvedValueOnce({
+                    metadata:         { duration: 1, width: 10, height: 10, videoCodec: 'h264', frameRate: 30, subtitleTracks: [] },
+                    frames:           [{ filename: 'frame-001.jpg', mediaType: 'image/jpeg', base64Data: 'AA==', originalSize: 1 }],
+                    metadataMarkdown: 'Duration: 1s',
+                    outputDir:        'unused',
+                })
+                .mockRejectedValueOnce(new Error('probe failed'));
+            try {
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+                const handler = getToolHandler(server, 'getEmailContent');
+                const first = await handler({ message: 'CleanInbox:52' });
+                const second = await handler({ message: 'CleanInbox:52' });
+                const savedPath = String(mockFsPromises.writeFile.mock.calls[0]?.[0]);
+                const videoOutputDir = savedPath.replace(/\/clip\.mp4$/, '/video-clip.mp4');
+
+                expect(first.isError).toBeUndefined();
+                expect(getText(first)).toContain('- Video: clip.mp4 — Duration: 1s');
+                expect(getText(first)).toContain(`  - Frame: ${videoOutputDir}/frame-001.jpg`);
+                expect(getText(first)).not.toContain(`- ${savedPath.slice(process.cwd().length + 1)} (video/mp4)`);
+                expect(second.isError).toBeUndefined();
+                expect(getText(second)).toContain(`- ${savedPath.slice(process.cwd().length + 1)} (video/mp4)`);
+                expect(processSpy).toHaveBeenCalledTimes(2);
+                expect(processSpy).toHaveBeenCalledWith(savedPath, videoOutputDir, { run: expect.any(Function), binaryRun: expect.any(Function) });
+                expect(mockWildDuck.getAttachment).toHaveBeenCalledTimes(1);
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ error: 'probe failed', filename: 'clip.mp4', msg: 'Video processing failed, using generic attachment reference' }));
+            } finally {
+                processSpy.mockRestore();
+            }
         });
 
         test('should sanitize path-traversal characters in attachment filename', async () => {
@@ -1004,7 +1330,7 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             // The path written to disk should NOT contain the path-traversal sequence
-            const writeFileCall = mockFsPromises.writeFile.mock.calls[0];
+            const writeFileCall = firstMockCall(mockFsPromises.writeFile.mock.calls);
             const writtenPath = writeFileCall?.[0];
             expect(writtenPath).toBeDefined();
             expect(writtenPath).not.toContain('..');
@@ -1241,6 +1567,7 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('Error: Move failed: folder not found');
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'archiveEmail' }), 'MCP tool error');
         });
 
         test('should handle non-Error move failure gracefully', async () => {
@@ -1492,6 +1819,7 @@ describe('createEmailMCPServer', () => {
             expect(result.isError).toBeUndefined();
             const text = getText(result);
             expect(text).toContain('Found 2 emails:');
+            expect(text.split('\n')).toHaveLength(3);
             expect(text).toContain('- CleanInbox:42 | From: Alice <alice@example.com> | To: me@example.com | Subject: Hello world | Date: 2025-01-01T10:00:00.000Z');
             expect(text).toContain('- Archive:17 | From: bob@example.com | To: me@example.com, other@example.com | Subject: Second email | Date: 2025-01-02T10:00:00.000Z');
         });
@@ -1548,6 +1876,7 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('Error: WildDuck API unavailable');
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'searchEmail' }), 'MCP tool error');
         });
 
         test('should handle non-Error WildDuck failure gracefully', async () => {
@@ -1611,6 +1940,56 @@ describe('createEmailMCPServer', () => {
                 isAllowed: mock((_platform: string, _value: string) => false),
             } as unknown as PersonAllowlist;
             mockSendApprovalRequest = mock(() => undefined);
+        });
+
+        test('encodes attachment bytes in input order before uploading the draft', async () => {
+            mockAllowlist.isAllowed = mock(() => true);
+            mockFsPromises.readFile.mockImplementation(async (filePath) => {
+                // The shared filesystem mock is typed for text reads; this call intentionally returns bytes.
+                return Buffer.from(filePath.endsWith('first.txt') ? 'first bytes' : 'second bytes') as unknown as string;
+            });
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist });
+            const handler = getToolHandler(server, 'sendEmail');
+
+            const result = await handler({
+                to:          'alice@example.com',
+                subject:     'Files',
+                body:        'See attached',
+                identity:    'formal',
+                attachments: ['/tmp/first.txt', '/tmp/second.bin'],
+            });
+
+            expect(result.isError).toBeUndefined();
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, { attachments: unknown[] }];
+            expect(payload.attachments).toEqual([
+                { filename: 'first.txt', contentType: 'text/plain', content: Buffer.from('first bytes').toString('base64') },
+                { filename: 'second.bin', contentType: 'application/octet-stream', content: Buffer.from('second bytes').toString('base64') },
+            ]);
+        });
+
+        test('assigns standard MIME types to supported attachment extensions', async () => {
+            const expected: Record<string, string> = {
+                pdf:  'application/pdf', doc:  'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                xls:  'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                ppt:  'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                txt:  'text/plain', csv:  'text/csv', html: 'text/html', htm:  'text/html', xml:  'application/xml',
+                json: 'application/json', zip:  'application/zip', tar:  'application/x-tar', gz:   'application/gzip',
+                png:  'image/png', jpg:  'image/jpeg', jpeg: 'image/jpeg', gif:  'image/gif', webp: 'image/webp',
+                svg:  'image/svg+xml', mp4:  'video/mp4', mp3:  'audio/mpeg', wav:  'audio/wav',
+            };
+            mockAllowlist.isAllowed = mock(() => true);
+            mockFsPromises.readFile.mockImplementation(async () => Buffer.from('file') as unknown as string);
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist });
+            const handler = getToolHandler(server, 'sendEmail');
+
+            const result = await handler({
+                to:          'alice@example.com', subject:     'Files', body:        'Attached', identity:    'formal',
+                attachments: Object.keys(expected).map(ext => `/tmp/file.${ext}`),
+            });
+
+            expect(result.isError).toBeUndefined();
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, { attachments: { filename: string, contentType: string }[] }];
+            expect(Object.fromEntries(payload.attachments.map(attachment => [attachment.filename.split('.').at(-1), attachment.contentType]))).toEqual(expected);
         });
 
         test('should upload to Drafts and submit immediately when recipient is on allowlist', async () => {
@@ -1803,6 +2182,16 @@ describe('createEmailMCPServer', () => {
             expect(mockSendApprovalRequest).toHaveBeenCalledWith('bob@example.com', 'Test', 99, undefined);
         });
 
+        test('without an allowlist, the uploaded draft requires approval', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, sendApprovalRequest: mockSendApprovalRequest });
+            const result = await getToolHandler(server, 'sendEmail')({ to: 'bob@example.com', subject: 'Test', body: 'Body', identity: 'formal' });
+            expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 99).');
+            expect(mockSubmitMessage).not.toHaveBeenCalled();
+            expect(mockSendApprovalRequest).toHaveBeenCalledWith('bob@example.com', 'Test', 99, undefined);
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload).not.toHaveProperty('attachments');
+        });
+
         test('should accept an array of to addresses and upload all to WildDuck', async () => {
             mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
@@ -1818,6 +2207,7 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('Sent successfully');
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.to).toEqual([{ address: 'alice@example.com' }, { address: 'bob@example.com' }]);
+            expect(payload).not.toHaveProperty('attachments');
         });
 
         test('should route to approval when array to has any recipient not on allowlist', async () => {
@@ -1904,6 +2294,7 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('WildDuck upload failed');
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'sendEmail' }), 'MCP tool error');
         });
 
         test('should return failure message when sendApprovalRequest fails', async () => {
@@ -1925,6 +2316,9 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('failed to notify admin');
             expect(getText(result)).toContain('check pending drafts manually');
             expect(mockLogger.warn).toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                error: 'Discord unavailable', msg: 'Failed to send outbound approval request',
+            });
             // No flag setting — outbox handles retry now
             expect(mockSendWildDuck.updateMessageFlags).not.toHaveBeenCalledWith('Drafts', 99, { addFlags: ['DiscordNotifyFailed'] });
         });
@@ -1960,8 +2354,7 @@ describe('createEmailMCPServer', () => {
 
             // When limit is NOT reached, result text should not contain warning
             const text = getText(result);
-            expect(text).not.toContain('send rate limit reached');
-            expect(text).toContain('Sent successfully');
+            expect(text).toBe('Sent successfully.');
         });
 
         test('should retry getUserAddresses on second sendEmail call after first call fails', async () => {
@@ -1985,6 +2378,10 @@ describe('createEmailMCPServer', () => {
             // Second call — getUserAddresses should be called AGAIN (not skipped)
             await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
             expect(mockGetUserAddresses).toHaveBeenCalledTimes(2);
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                err: expect.any(Error),
+                msg: 'Failed to load WildDuck user addresses',
+            });
         });
 
         test('should NOT retry getUserAddresses on second sendEmail call after first call succeeds', async () => {
@@ -2009,9 +2406,18 @@ describe('createEmailMCPServer', () => {
             const server  = createEmailMCPServer({ wildDuckClient: mockSendWildDuck });
             const toolDef = (server.instance as unknown as RegisteredToolInstance)._registeredTools.sendEmail;
 
-            const result = await toolDef.inputSchema.safeParseAsync({ to: [], subject: 'Hi', body: 'Hello' });
+            const valid = await toolDef.inputSchema.safeParseAsync({
+                to: ['alice@example.com'], subject: 'Hi', body: 'Hello', identity: 'formal',
+            });
+            expect(valid.success).toBe(true);
 
+            const result = await toolDef.inputSchema.safeParseAsync({
+                to: [], subject: 'Hi', body: 'Hello', identity: 'formal',
+            });
             expect(result.success).toBe(false);
+            if(!result.success) {
+                expect(result.error.issues.map(issue => issue.path)).toEqual([['to']]);
+            }
         });
     });
 
@@ -2158,8 +2564,8 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
-            expect((payload.reference as Record<string, unknown>)?.action).toBe('reply');
-            expect((payload.reference as Record<string, unknown>)?.id).toBe(42);
+            expect((payload.reference as Record<string, unknown> | undefined)?.action).toBe('reply');
+            expect((payload.reference as Record<string, unknown> | undefined)?.id).toBe(42);
         });
 
         test('should build reference object with replyAll action for replyAll mode', async () => {
@@ -2172,7 +2578,7 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
-            expect((payload.reference as Record<string, unknown>)?.action).toBe('replyAll');
+            expect((payload.reference as Record<string, unknown> | undefined)?.action).toBe('replyAll');
         });
 
         test('should NOT include flags field in replyToEmail upload payload', async () => {
@@ -2199,6 +2605,44 @@ describe('createEmailMCPServer', () => {
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.draft).toBe(true);
+            expect(payload).not.toHaveProperty('attachments');
+        });
+
+        test('reply upload and approval preserve subject and attachment details', async () => {
+            mockAllowlist.isAllowed = mock(() => false);
+            const requestApproval = mock(async () => {});
+            mockFsPromises.readFile.mockImplementation(async () => Buffer.from('reply file') as unknown as string);
+            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, sendApprovalRequest: requestApproval });
+            await getToolHandler(server, 'replyToEmail')({
+                message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal', attachments: ['/tmp/reply.txt'],
+            });
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.subject).toBe('Re: Re: Hello');
+            expect(payload.attachments).toEqual([{ filename: 'reply.txt', contentType: 'text/plain', content: Buffer.from('reply file').toString('base64') }]);
+            expect(requestApproval).toHaveBeenCalledWith('alice@example.com', 'Re: Re: Hello', 88, undefined);
+        });
+
+        test('reply with missing sender and subject retains empty fallbacks', async () => {
+            mockGetMessage = mock(async () => ({ ...originalEmail, from: undefined, replyTo: undefined, subject: undefined }));
+            mockReplyWildDuck.getMessage = mockGetMessage;
+            mockAllowlist.isAllowed = mock(() => false);
+            const requestApproval = mock(async () => {});
+            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, sendApprovalRequest: requestApproval });
+            const result = await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            expect(result.isError).toBeUndefined();
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.subject).toBe('Re: ');
+            expect(payload).not.toHaveProperty('attachments');
+            expect(requestApproval).toHaveBeenCalledWith('', 'Re: ', 88, undefined);
+        });
+
+        test('a plain reply without an allowlist remains pending approval', async () => {
+            const requestApproval = mock(async () => {});
+            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, sendApprovalRequest: requestApproval });
+            const result = await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 88).');
+            expect(mockSubmitMessage).not.toHaveBeenCalled();
+            expect(requestApproval).toHaveBeenCalledWith('alice@example.com', 'Re: Re: Hello', 88, undefined);
         });
 
         test('should use informalAddress from getUserAddresses for informal identity in reply', async () => {
@@ -2262,7 +2706,7 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
-            expect((payload.reference as Record<string, unknown>)?.mailbox).toBe('mbx-clean-resolved');
+            expect((payload.reference as Record<string, unknown> | undefined)?.mailbox).toBe('mbx-clean-resolved');
         });
 
         test('should upload to Drafts and NOT submit when recipient not on allowlist', async () => {
@@ -2298,6 +2742,7 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('getMessage failed');
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'replyToEmail' }), 'MCP tool error');
         });
 
         test('should return error when getMessage returns null', async () => {
@@ -2558,6 +3003,15 @@ describe('createEmailMCPServer', () => {
             expect(mockSendApprovalRequestReplyAll).toHaveBeenCalledWith(primaryTo, subject, uid, ['bob@example.com']);
         });
 
+        test('replyAll with no original Cc sends an empty approval Cc list', async () => {
+            mockWildDuckReplyAll.getMessage = mock(async () => ({ ...originalEmailWithCc, cc: undefined }));
+            const server = createEmailMCPServer({
+                wildDuckClient: mockWildDuckReplyAll, allowlist: mockAllowlistReplyAll, sendApprovalRequest: mockSendApprovalRequestReplyAll,
+            });
+            await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
+            expect(mockSendApprovalRequestReplyAll).toHaveBeenCalledWith('alice@example.com', 'Re: Group Discussion', 88, []);
+        });
+
         test('replyAll upload payload should not contain cc (WildDuck derives recipients from reference object)', async () => {
             const server = createEmailMCPServer({
                 wildDuckClient:      mockWildDuckReplyAll,
@@ -2620,7 +3074,7 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('WildDuck delete failed');
-            expect(mockLogger.warn).toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'deleteDraft' }), 'MCP tool error');
         });
 
         test('should have destructiveHint: true annotation', () => {
@@ -2662,6 +3116,15 @@ describe('createEmailMCPServer', () => {
             } as unknown as WildDuckClient;
         });
 
+        test('amend schema accepts multiple recipients and either identity', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const schema = (server.instance as unknown as RegisteredToolInstance)._registeredTools.amendAndResubmitDraft.inputSchema;
+            const validResults = await Promise.all(['formal', 'informal'].map(identity => schema.safeParseAsync({ message: 'Drafts:42', identity, to: ['one@example.com', 'two@example.com'] })));
+            const invalidResult = await schema.safeParseAsync({ message: 'Drafts:42', to: [] });
+            expect(validResults.every(result => result.success)).toBe(true);
+            expect(invalidResult.success).toBe(false);
+        });
+
         test('should read original draft, amend, and re-upload with replacePrevious', async () => {
             const server = createEmailMCPServer({
                 wildDuckClient:      mockWildDuckAmend,
@@ -2675,6 +3138,7 @@ describe('createEmailMCPServer', () => {
             // Routes through approval — result contains pending admin approval message with the UID
             expect(getText(result)).toContain('pending admin approval');
             expect(getText(result)).toContain('55');
+            expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
             expect(mockGetMessageAmend).toHaveBeenCalledWith('Drafts', 42);
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.subject).toBe('Updated Subject');
@@ -2841,7 +3305,7 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('WildDuck unavailable');
-            expect(mockLogger.warn).toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'amendAndResubmitDraft' }), 'MCP tool error');
         });
 
         test('should return failure message when sendApprovalRequest fails', async () => {
@@ -2945,6 +3409,15 @@ describe('createEmailMCPServer', () => {
     });
 
     describe('getRejectedDrafts tool', () => {
+        test('reports the registered tool name when search fails', async () => {
+            const wildDuckClient = { searchByKeyword: mock(async () => {
+                throw new Error('search unavailable');
+            }) } as unknown as WildDuckClient;
+            const server = createEmailMCPServer({ wildDuckClient });
+            const result = await getToolHandler(server, 'getRejectedDrafts')({});
+            expect(result.isError).toBe(true);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'getRejectedDrafts' }), 'MCP tool error');
+        });
         test('should return an empty-but-valid result when both searches are empty', async () => {
             const wildDuckClient = {
                 searchByKeyword: mock(async () => []),
@@ -3067,6 +3540,244 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(wildDuckClient.searchByKeyword).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('mutation regression contracts', () => {
+        test('buildAttachments never exceeds two active reads and eventually returns every attachment', async () => {
+            const gate = Promise.withResolvers<void>();
+            let active = 0;
+            let maxActive = 0;
+            mockFsPromises.readFile.mockImplementation(async (filePath: string) => {
+                active += 1;
+                maxActive = Math.max(maxActive, active);
+                try {
+                    await gate.promise;
+                    return Buffer.from(filePath) as unknown as string;
+                } finally {
+                    active -= 1;
+                }
+            });
+            const pending = buildAttachments(['/tmp/a0.txt', '/tmp/a1.txt', '/tmp/a2.txt']);
+            try {
+                await Bun.sleep(0);
+                expect(maxActive).toBeLessThanOrEqual(2);
+                gate.resolve();
+                expect(await pending).toEqual([
+                    { filename: 'a0.txt', contentType: 'text/plain', content: Buffer.from('/tmp/a0.txt').toString('base64') },
+                    { filename: 'a1.txt', contentType: 'text/plain', content: Buffer.from('/tmp/a1.txt').toString('base64') },
+                    { filename: 'a2.txt', contentType: 'text/plain', content: Buffer.from('/tmp/a2.txt').toString('base64') },
+                ]);
+            } finally {
+                gate.resolve();
+                await pending.catch(() => undefined);
+            }
+        });
+
+        test('attachment downloads never exceed two active requests and eventually return every attachment', async () => {
+            const gate = Promise.withResolvers<void>();
+            let active = 0;
+            let maxActive = 0;
+            mockWildDuck.getFullMessage = mock(async () => ({
+                uid:            7,
+                messageId:      '<m>',
+                from:           { address: 'from@example.com' },
+                to:             [],
+                cc:             [],
+                subject:        '',
+                date:           new Date(0),
+                bodyText:       '',
+                hasAttachments: true,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: [
+                    { id: 'a', filename: 'a.txt', contentType: 'text/plain', sizeKb: 1 },
+                    { id: 'b', filename: 'b.txt', contentType: 'text/plain', sizeKb: 1 },
+                    { id: 'c', filename: 'c.txt', contentType: 'text/plain', sizeKb: 1 },
+                ],
+            }));
+            mockFsPromises.access.mockRejectedValue(new Error('missing'));
+            mockWildDuck.getAttachment = mock(async (_mailbox: string, _uid: number, id: string) => {
+                active += 1;
+                maxActive = Math.max(maxActive, active);
+                try {
+                    await gate.promise;
+                    return Buffer.from(id);
+                } finally {
+                    active -= 1;
+                }
+            });
+            const pending = getToolHandler(createEmailMCPServer({ wildDuckClient: mockWildDuck }), 'getEmailContent')({ message: 'CleanInbox:7' });
+            try {
+                await Bun.sleep(0);
+                expect(maxActive).toBeLessThanOrEqual(2);
+                gate.resolve();
+                const result = await pending;
+                expect(getText(result)).toContain('a.txt');
+                expect(getText(result)).toContain('b.txt');
+                expect(getText(result)).toContain('c.txt');
+            } finally {
+                gate.resolve();
+                await pending.catch(() => undefined);
+            }
+        });
+
+        test('embedded video text in an audio MIME type is handled as a generic attachment', async () => {
+            mockWildDuck.getFullMessage = mock(async () => ({
+                uid:            7,
+                messageId:      '<m>',
+                from:           { address: 'from@example.com' },
+                to:             [],
+                cc:             [],
+                subject:        '',
+                date:           new Date(0),
+                bodyText:       '',
+                hasAttachments: true,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: [{ id: 'a', filename: 'a.mid', contentType: 'audio/x-video/midi', sizeKb: 1 }],
+            }));
+            mockFsPromises.access.mockRejectedValue(new Error('missing'));
+            mockWildDuck.getAttachment = mock(async () => Buffer.from('midi'));
+            const videoSpy = spyOn(utils, 'processLocalVideo').mockResolvedValue({
+                metadata:         { duration: 1, width: 1, height: 1, videoCodec: 'midi', frameRate: 1, subtitleTracks: [] },
+                frames:           [],
+                metadataMarkdown: 'not a video',
+                outputDir:        'unused',
+            });
+            try {
+                const result = await getToolHandler(createEmailMCPServer({ wildDuckClient: mockWildDuck }), 'getEmailContent')({ message: 'CleanInbox:7' });
+                expect(videoSpy).not.toHaveBeenCalled();
+                expect(getText(result)).toContain('audio/x-video/midi');
+            } finally {
+                videoSpy.mockRestore();
+            }
+        });
+
+        test('concurrent sends await the shared address load and an allowed send awaits submission', async () => {
+            const addressGate = Promise.withResolvers<{ address: string, tags: string[] }[]>();
+            const submitGate = Promise.withResolvers<void>();
+            const client = {
+                ...mockWildDuck,
+                getUserAddresses: mock(() => addressGate.promise),
+                uploadMessage:    mock(() => Promise.resolve(10)),
+                submitMessage:    mock(() => submitGate.promise),
+            } as unknown as WildDuckClient;
+            const allowlist = { isAllowed: mock(() => true) } as unknown as PersonAllowlist;
+            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: client, allowlist }), 'sendEmail');
+            let settled = false;
+            const first = handler({ to: 'a@example.com', subject: 'A', body: 'A', identity: 'formal' }).finally(() => {
+                settled = true;
+            });
+            const second = handler({ to: 'b@example.com', subject: 'B', body: 'B', identity: 'formal' });
+            try {
+                await Bun.sleep(0);
+                expect(client.uploadMessage).not.toHaveBeenCalled();
+                addressGate.resolve([{ address: 'me@example.com', tags: ['formal'] }]);
+                await Bun.sleep(0);
+                expect(client.uploadMessage).toHaveBeenCalledTimes(2);
+                expect(settled).toBe(false);
+                submitGate.resolve();
+                await Promise.all([first, second]);
+            } finally {
+                addressGate.resolve([{ address: 'me@example.com', tags: ['formal'] }]);
+                submitGate.resolve();
+                await Promise.allSettled([first, second]);
+            }
+        });
+
+        test('getEmailContent awaits the Seen update before returning', async () => {
+            const seenGate = Promise.withResolvers<void>();
+            mockWildDuck.updateMessageFlags = mock(() => seenGate.promise);
+            let settled = false;
+            const pending = getToolHandler(createEmailMCPServer({ wildDuckClient: mockWildDuck }), 'getEmailContent')({ message: 'CleanInbox:1' }).finally(() => {
+                settled = true;
+            });
+            try {
+                await Bun.sleep(0);
+                expect(settled).toBe(false);
+                seenGate.resolve();
+                await pending;
+            } finally {
+                seenGate.resolve();
+                await pending.catch(() => undefined);
+            }
+        });
+
+        test('search preserves omitted fields, mixed-case content, and empty producer fields', async () => {
+            const search = mock(async () => [{
+                message: 'CleanInbox:1',
+                from:    '',
+                to:      [],
+                subject: '',
+                date:    '',
+            }]);
+            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: { search } as unknown as WildDuckClient }), 'searchEmail');
+            const result = await handler({ content: 'MiXeD' });
+            expect(search).toHaveBeenCalledWith(expect.objectContaining({
+                query: expect.objectContaining({ content: 'MiXeD' }) as unknown,
+            }));
+            expect(getText(result)).toBe('Found 1 email:\n- CleanInbox:1 | From:  | To: (none) | Subject:  | Date: ');
+        });
+
+        test('one send attachment is uploaded with its exact name, type, and content', async () => {
+            mockFsPromises.readFile.mockResolvedValue(Buffer.from('file') as unknown as string);
+            const client = {
+                ...mockWildDuck,
+                getUserAddresses: mock(() => Promise.resolve([{ address: 'me@example.com', tags: ['formal'] }])),
+                uploadMessage:    mock(() => Promise.resolve(10)),
+                getMessage:       mock(() => Promise.resolve(null)),
+            } as unknown as WildDuckClient;
+            await getToolHandler(createEmailMCPServer({ wildDuckClient: client }), 'sendEmail')({ to: 'a@example.com', subject: 'A', body: 'A', identity: 'formal', attachments: ['/tmp/one.txt'] });
+            expect(client.uploadMessage).toHaveBeenCalledWith('Drafts', expect.objectContaining({
+                attachments: [{
+                    filename:    'one.txt',
+                    contentType: 'text/plain',
+                    content:     Buffer.from('file').toString('base64'),
+                }],
+            }));
+        });
+
+        test('a missing reply names its requested identifier', async () => {
+            const client = {
+                ...mockWildDuck,
+                getUserAddresses: mock(() => Promise.resolve([{ address: 'me@example.com', tags: ['formal'] }])),
+                getMessage:       mock(() => Promise.resolve(null)),
+            } as unknown as WildDuckClient;
+            const missing = await getToolHandler(createEmailMCPServer({ wildDuckClient: client }), 'replyToEmail')({ message: 'Archive:987', body: 'x', mode: 'reply', identity: 'formal' });
+            expect(getText(missing)).toBe("Cannot reply: message 'Archive:987' not found.");
+        });
+
+        test('an allowlisted reply identifies its recipient and includes one attachment', async () => {
+            mockFsPromises.readFile.mockResolvedValue(Buffer.from('file') as unknown as string);
+            const uploadMessage = mock(() => Promise.resolve(44));
+            const client = {
+                ...mockWildDuck,
+                getUserAddresses: mock(() => Promise.resolve([{ address: 'me@example.com', tags: ['formal'] }])),
+                getMessage:       mock(() => Promise.resolve({ from: { address: 'sender@example.com' }, replyTo: undefined, cc: [], subject: 'S' })),
+                getMailboxId:     mock(() => 'mailbox-id'),
+                uploadMessage,
+                submitMessage:    mock(() => Promise.resolve()),
+            } as unknown as WildDuckClient;
+            const allowlist = { isAllowed: mock(() => true) } as unknown as PersonAllowlist;
+            const result = await getToolHandler(createEmailMCPServer({ wildDuckClient: client, allowlist }), 'replyToEmail')({ message: 'CleanInbox:2', body: 'reply', mode: 'reply', identity: 'formal', attachments: ['/tmp/one.txt'] });
+            expect(getText(result)).toBe('Reply sent to sender@example.com.');
+            expect(uploadMessage).toHaveBeenCalledWith('Drafts', expect.objectContaining({
+                attachments: [{
+                    filename:    'one.txt',
+                    contentType: 'text/plain',
+                    content:     Buffer.from('file').toString('base64'),
+                }],
+            }));
+        });
+
+        test('amend accepts a single recipient in its recipient array', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const registered = (server.instance as unknown as RegisteredToolInstance)._registeredTools.amendAndResubmitDraft;
+            await expect(registered.inputSchema.safeParseAsync({
+                message: 'Drafts:1',
+                to:      ['one@example.com'],
+            })).resolves.toMatchObject({ success: true });
         });
     });
 });

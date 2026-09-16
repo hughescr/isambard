@@ -12,6 +12,7 @@ import {
     type MemoryPath,
     type ContentType,
     type LayerName,
+    type MemoryToolItemData,
     extractLayerFromPath
 } from './types';
 import {
@@ -148,6 +149,10 @@ export async function str_replace(
         throw new PathNotFoundError(params.path);
     }
 
+    if(params.old_str === '') {
+        throw new TextNotUniqueError(params.path, params.old_str, item.content.length + 1);
+    }
+
     // Count occurrences
     const occurrences = item.content.split(params.old_str).length - 1;
 
@@ -244,7 +249,8 @@ export async function search(
         }
 
         const formatted = result.items.map((item) => {
-            const preview = item.contentPreview.length > 100 ? `${item.contentPreview.slice(0, 100)}...` : item.contentPreview;
+            const contentPreview = item.contentPreview ?? 'No content';
+            const preview = contentPreview.length > 100 ? `${contentPreview.slice(0, 100)}...` : contentPreview;
             const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
             return `${item.memoryPath} (${timestamp})\n  ${preview}`;
         });
@@ -256,12 +262,10 @@ export async function search(
             params.time_range.start,
             params.time_range.end,
             params.layer,
-            // Stryker disable next-line ObjectLiteral: { limit: undefined } is equivalent to {}
             { limit: params.limit }
         );
     } else if(params.layer) {
         // Layer-only search
-        // Stryker disable next-line ObjectLiteral: { limit: undefined } is equivalent to {}
         const result = await backend.listByLayer(params.layer, { limit: params.limit });
         items = result.items;
     } else {
@@ -281,13 +285,13 @@ export async function search(
     // Use contentPreview with fallback for migration period
     const formatted = items.map((item) => {
         const getPreviewFromContent = () => {
+            // Stryker disable next-line llm: content is a string, null, or undefined; both added empty-string checks duplicate the falsy case already covered by !content.
             if(!item.content) {
                 return '[no content]';
             }
-            // Stryker disable next-line EqualityOperator: Boundary difference for 100-char content cutoff is cosmetic
-            return item.content.length > 100 ? `${item.content.slice(0, 100)}...` : item.content;
+            const contentPreview = item.content.slice(0, 100);
+            return item.content.length > contentPreview.length ? `${contentPreview}...` : contentPreview;
         };
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,StringLiteral: Preview truncation indicator is cosmetic formatting
         const getPreviewFromField = () => (item.contentPreview && item.contentPreview.length >= 100 ? `${item.contentPreview}...` : item.contentPreview);
         const preview = item.contentPreview ? getPreviewFromField() : getPreviewFromContent();
         const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
@@ -314,7 +318,8 @@ export async function recall(
         }
         : undefined;
 
-    const items = await backend.getAutoLoadItems(options);
+    // Legacy DynamoDB rows can lack content even though writes require it.
+    const items: (Omit<MemoryToolItemData, 'content'> & { content?: string | null })[] = await backend.getAutoLoadItems(options);
 
     if(items.length === 0) {
         return 'No auto-load memories found';
@@ -323,6 +328,7 @@ export async function recall(
     // Group by layer
     const grouped = Object.groupBy(items, (item): string => {
         const layer = extractLayerFromPath(item.path);
+        // Stryker disable next-line llm: extractLayerFromPath returns a non-empty LayerName or null, so ?? and || select the same value.
         return layer ?? 'other';
     });
 
@@ -335,20 +341,17 @@ export async function recall(
         const layerItems = grouped[layer];
 
         // Skip empty layers
-        // Stryker disable next-line ConditionalExpression: layerItems.length === 0 vs false produces equivalent behavior since both skip the layer
 
-        if(!layerItems || layerItems.length === 0) {
+        if(!layerItems) {
             continue;
         }
 
         // Skip if not in include_layers filter
-        // Stryker disable next-line EqualityOperator: 'other' layer exception — mutating !== to === causes test timeout (layer filter inverted, wrong layers included)
         if(params.include_layers && layer !== 'other' && !new Set<string>(params.include_layers).has(layer)) {
             continue;
         }
 
         const formatted = layerItems.map((item) => {
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: content may be absent at runtime despite types
             return `  ${item.path}\n    ${item.content ?? '[no content]'}`;
         });
 
@@ -423,7 +426,7 @@ export async function consolidate(
         const failedDeletions: string[] = [];
         for(const sourcePath of sourcePaths) {
             try {
-                // eslint-disable-next-line no-await-in-loop -- sequential: best-effort DynamoDB delete per source path
+                // eslint-disable-next-line no-await-in-loop -- Duplicate source paths and delete's get/tag/vector/identity effects require ordered attempts.
                 await backend.delete(sourcePath);
             } catch (error: unknown) {
                 failedDeletions.push(sourcePath);

@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createWikipediaMCPServer } from '../../../src/agent/wikipedia-mcp-server';
-import { textContent } from '../../setup';
+import { mockLogger, textContent } from '../../setup';
 
 interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<CallToolResult>
@@ -133,6 +133,7 @@ describe.concurrent('createWikipediaMCPServer', () => {
             expect(result.isError).toBe(true);
             expect(result.content).toHaveLength(1);
             expect(textContent(result.content[0])).toContain('Network failure');
+            expect(mockLogger.warn).toHaveBeenCalledWith({ tool: 'getRandomArticle', error: 'Network failure' }, 'MCP tool error');
         });
 
         test('should send correct User-Agent headers', async () => {
@@ -212,6 +213,7 @@ describe.concurrent('createWikipediaMCPServer', () => {
             expect(result.isError).toBe(true);
             expect(result.content).toHaveLength(1);
             expect(textContent(result.content[0])).toContain('Network failure');
+            expect(mockLogger.warn).toHaveBeenCalledWith({ tool: 'getArticle', error: 'Network failure' }, 'MCP tool error');
         });
 
         test('should send correct User-Agent headers', async () => {

@@ -124,6 +124,28 @@ describe('generateText', () => {
 
             expect(result).toBe('Hello, world');
         });
+
+        test('ignores non-assistant text and non-text blocks that carry text', async () => {
+            async function* mixedGenerator() {
+                yield { type: 'user', message: { content: [{ type: 'text', text: 'private user input' }] } };
+                yield { type:    'assistant', message: { content: [
+                    { type: 'thinking', text: 'private thought' },
+                    { type: 'text', text: 'public answer' },
+                ] } };
+                yield { type: 'result', subtype: 'success' };
+            }
+            mockQuery.mockImplementation(() => mixedGenerator());
+            expect(await generateText('Test prompt')).toBe('public answer');
+        });
+
+        test('treats a text block without text as empty content', async () => {
+            async function* emptyTextGenerator() {
+                yield { type: 'assistant', message: { content: [{ type: 'text' }] } };
+                yield { type: 'result', subtype: 'success' };
+            }
+            mockQuery.mockImplementation(() => emptyTextGenerator() as unknown as ReturnType<typeof makeQueryGenerator>);
+            expect(await generateText('Test prompt')).toBe('');
+        });
     });
 
     describe('error result handling', () => {
@@ -148,6 +170,13 @@ describe('generateText', () => {
     });
 
     describe('result.result fallback', () => {
+        test('returns an empty string when a success result has no streamed or canonical text', async () => {
+            async function* emptySuccessGenerator() {
+                yield { type: 'result', subtype: 'success' };
+            }
+            mockQuery.mockImplementation(() => emptySuccessGenerator());
+            expect(await generateText('Test prompt')).toBe('');
+        });
         test('should use result.result as fallback when no assistant events were streamed', async () => {
             // Simulate SDK returning text only via result.result (no assistant events streamed)
             async function* resultOnlyGenerator() {
@@ -192,6 +221,7 @@ describe('generateText', () => {
             { input: '**bold text**', expected: 'bold text', description: 'bold markers' },
             { input: '**Bold** and _italic_ with `code`', expected: 'Bold and italic with code', description: 'mixed markdown' },
             { input: '  ```status```  ', expected: 'status', description: 'whitespace with markdown' },
+            { input: '#\nHeading', expected: 'Heading', description: 'whitespace left by a bare heading marker' },
         ])('should strip $description', async ({ input, expected }) => {
             mockQuery.mockImplementation(() => makeQueryGenerator(input));
 
@@ -376,6 +406,46 @@ describe('generateText', () => {
             expect(callArgs.options.abortController).toBeDefined();
             // But it is NOT the caller's controller — it's our internal one
             expect(callArgs.options.abortController).not.toBe(callerController);
+        });
+
+        test('detaches caller abort forwarding after generation finishes', async () => {
+            const callerController = new AbortController();
+            const removeListener = spyOn(callerController.signal, 'removeEventListener');
+
+            await generateText('Test prompt', { abortController: callerController, timeoutMs: 0 });
+            const callArgs = mockQuery.mock.calls[0][0] as { options: { abortController: AbortController } };
+            expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+
+            callerController.abort();
+            expect(callArgs.options.abortController.signal.aborted).toBe(false);
+            removeListener.mockRestore();
+        });
+
+        test('a nonpositive timeout does not abort a delayed successful query', async () => {
+            async function* delayedGenerator() {
+                await Bun.sleep(2);
+                yield { type: 'assistant', message: { content: [{ type: 'text', text: 'ready' }] } };
+                yield { type: 'result', subtype: 'success' };
+            }
+            mockQuery.mockImplementation(() => delayedGenerator());
+            expect(await generateText('Test prompt', { timeoutMs: 0 })).toBe('ready');
+            expect(await generateText('Test prompt', { timeoutMs: -1 })).toBe('ready');
+        });
+
+        test('detaches timeout abort forwarding after generation completes', async () => {
+            const timeoutController = new AbortController();
+            const timeoutSpy = spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutController.signal);
+            const removeListener = spyOn(timeoutController.signal, 'removeEventListener');
+            try {
+                await generateText('Test prompt', { timeoutMs: 100 });
+                const callArgs = mockQuery.mock.calls[0][0] as { options: { abortController: AbortController } };
+                expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+                timeoutController.abort();
+                expect(callArgs.options.abortController.signal.aborted).toBe(false);
+            } finally {
+                removeListener.mockRestore();
+                timeoutSpy.mockRestore();
+            }
         });
 
         test('should rethrow non-abort errors from the generator', async () => {

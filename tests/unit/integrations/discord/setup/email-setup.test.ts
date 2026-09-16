@@ -8,14 +8,15 @@
  *
  * The `_deps.sleep` override eliminates retryAsync backoff delays in tests.
  */
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, spyOn } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
+import { mockLogger } from '../../../../setup';
 import type { NotifyParams } from '@/agent';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { setupEmail, buildEmailProcessorCallbacks, type EmailSetupOptions } from '@/integrations/discord/setup/email-setup';
-import { type EmailMetadata, type ClassifierVerdict, type WildDuckClient, ClassifierVerdictType, buildReviewEmbed, buildUnsafeAlert, EmailFolder  } from '@/integrations/email';
+import { type EmailMetadata, type ClassifierVerdict, WildDuckClient, ClassifierVerdictType, buildReviewEmbed, buildUnsafeAlert, EmailFolder  } from '@/integrations/email';
 import type { ApprovalSagaBackend } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 
@@ -62,6 +63,14 @@ async function noopSleep(_ms: number): Promise<void> {
     // no-op: eliminates retryAsync backoff delays in tests
 }
 
+function makeDeferred(): { promise: Promise<void>, resolve: () => void } {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    return { promise, resolve: release };
+}
+
 const MINIMAL_EMAIL_CONFIG = {
     user:                           'test@example.com',
     password:                       'secret',
@@ -74,10 +83,21 @@ const MINIMAL_EMAIL_CONFIG = {
     sendReservoirRefillRatePerHour: 1,
 };
 
+interface RegisteredTool {
+    handler: (...args: unknown[]) => Promise<{ content: unknown[], isError?: boolean }>
+}
+
+function getToolHandler(result: Awaited<ReturnType<typeof setupEmail>>, toolName: string): RegisteredTool['handler'] {
+    return ((result.emailMcpServer as unknown as { instance: { _registeredTools: Record<string, RegisteredTool> } }).instance
+        ._registeredTools[toolName]
+        .handler);
+}
+
 describe('setupEmail — isSendableChannel type guard', () => {
     let options: EmailSetupOptions;
 
     beforeEach(async () => {
+        mockLogger.info.mockClear();
         options = {
             emailConfig:        MINIMAL_EMAIL_CONFIG,
             docClient:          makeMockDocClient(),
@@ -123,7 +143,7 @@ describe('setupEmail — isSendableChannel type guard', () => {
         const result = await setupEmail(options);
 
         // Call sendApprovalRequest — isSendableChannel('not-a-channel') → false → throws
-        expect(
+        await expect(
             result.sendApprovalRequest('to@example.com', 'Test Subject', 123)
         ).rejects.toBeInstanceOf(ChannelNotAccessibleError);
     });
@@ -138,13 +158,13 @@ describe('setupEmail — isSendableChannel type guard', () => {
         const result = await setupEmail(options);
 
         // null: isSendableChannel → false → throws
-        expect(
+        await expect(
             result.sendApprovalRequest('to@example.com', 'Test Subject', 123)
         ).rejects.toBeInstanceOf(ChannelNotAccessibleError);
     });
 
     it('sends message when channel.fetch returns a sendable channel (object with send method)', async () => {
-        const mockSend = mock(async () => undefined);
+        const mockSend = mock(async (_payload: unknown) => undefined);
         options.client = {
             channels: {
                 fetch: mock(async () => ({ send: mockSend })),
@@ -153,9 +173,141 @@ describe('setupEmail — isSendableChannel type guard', () => {
 
         const result = await setupEmail(options);
 
-        await result.sendApprovalRequest('to@example.com', 'Test Subject', 123);
+        await result.sendApprovalRequest('to@example.com', 'Test Subject', 123, ['copy@example.com']);
 
         expect(mockSend).toHaveBeenCalledTimes(1);
+        const payload = mockSend.mock.calls[0]?.[0] as { embeds: { toJSON: () => { fields?: { name: string, value: string }[] } }[], components: unknown[] };
+        expect(payload.embeds[0]?.toJSON().fields).toContainEqual(expect.objectContaining({
+            name: 'CC', value: 'copy@example.com',
+        }));
+        expect(payload.embeds[0]?.toJSON().fields).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'To', value: 'to@example.com', inline: true }),
+            expect.objectContaining({ name: 'Subject', value: 'Test Subject', inline: true }),
+            expect.objectContaining({ name: 'UID', value: '123', inline: true }),
+        ]));
+        expect(payload.components).toHaveLength(1);
+    });
+
+    it('omits the CC field when no copies are supplied', async () => {
+        const mockSend = mock(async (_payload: unknown) => undefined);
+        options.client = { channels: { fetch: mock(async () => ({ send: mockSend })) } } as unknown as Client;
+        const result = await setupEmail(options);
+        await result.sendApprovalRequest('to@example.com', 'Test Subject', 123);
+        const payload = mockSend.mock.calls[0]?.[0] as { embeds: { toJSON: () => { fields?: { name: string }[] } }[] };
+        expect(payload.embeds[0]?.toJSON().fields?.some(field => field.name === 'CC')).toBe(false);
+    });
+
+    it('omits CC for an empty recipient list and preserves the comma separator and inline layout when recipients exist', async () => {
+        const mockSend = mock(async (_payload: unknown) => undefined);
+        options.client = { channels: { fetch: mock(async () => ({ send: mockSend })) } } as unknown as Client;
+        const result = await setupEmail(options);
+
+        await result.sendApprovalRequest('to@example.com', 'Test Subject', 123, []);
+        let fields = (mockSend.mock.calls[0]?.[0] as { embeds: { toJSON: () => { fields?: { name: string, value: string, inline: boolean }[] } }[] }).embeds[0]?.toJSON().fields ?? [];
+        expect(fields.some(field => field.name === 'CC')).toBe(false);
+
+        await result.sendApprovalRequest('to@example.com', 'Test Subject', 124, ['one@example.com', 'two@example.com']);
+        fields = (mockSend.mock.calls[1]?.[0] as { embeds: { toJSON: () => { fields?: { name: string, value: string, inline: boolean }[] } }[] }).embeds[0]?.toJSON().fields ?? [];
+        expect(fields).toContainEqual(expect.objectContaining({ name: 'CC', value: 'one@example.com, two@example.com', inline: true }));
+    });
+
+    it('uses the configured retry policy and injected sleep when direct Discord delivery repeatedly fails', async () => {
+        const sleep = mock(async (_ms: number) => undefined);
+        const fetch = mock(async () => {
+            throw new Error('Discord temporarily unavailable');
+        });
+        options.client = { channels: { fetch } } as unknown as Client;
+        options._deps = { sleep };
+        const result = await setupEmail(options);
+
+        await expect(result.sendApprovalRequest('to@example.com', 'Test Subject', 123)).rejects.toThrow('Discord temporarily unavailable');
+
+        expect(fetch).toHaveBeenCalledTimes(3);
+        expect(sleep).toHaveBeenCalledTimes(2);
+    });
+
+    it('passes the complete approval payload and high-priority outbox metadata to Discord capability', async () => {
+        const sendToChannel = mock<(channelId: string, payload: unknown, metadata: unknown) => Promise<{ status: 'sent' }>>(async () => ({ status: 'sent' as const }));
+        options.discordCapability = { sendToChannel } as never;
+        const result = await setupEmail(options);
+
+        await result.sendApprovalRequest('to@example.com', 'Capability subject', 321);
+
+        expect(sendToChannel).toHaveBeenCalledTimes(1);
+        const [channelId, payload, metadata] = sendToChannel.mock.calls[0];
+        expect(channelId).toBe(MINIMAL_EMAIL_CONFIG.adminDiscordChannelId);
+        expect((payload as { embeds: unknown[], components: unknown[] }).embeds).toHaveLength(1);
+        expect((payload as { embeds: unknown[], components: unknown[] }).components).toHaveLength(1);
+        expect(metadata).toEqual({ priority: 'high', type: 'email_approval' });
+    });
+
+    it('creates and initializes WildDuck when no client is provided, and logs the lifecycle', async () => {
+        options.wildDuckClient = undefined;
+        const initSpy = spyOn(WildDuckClient.prototype, 'init').mockResolvedValue(undefined);
+
+        await setupEmail(options);
+
+        expect(initSpy).toHaveBeenCalledTimes(1);
+        expect(mockLogger.info.mock.calls).toContainEqual(['Starting WildDuck client...']);
+        expect(mockLogger.info.mock.calls).toContainEqual(['WildDuck client initialized']);
+        expect(mockLogger.info.mock.calls).toContainEqual([{ msg: 'Email integration initialized' }]);
+        initSpy.mockRestore();
+    });
+
+    it('does not finish setup until a newly-created WildDuck client is initialized', async () => {
+        const gate = makeDeferred();
+        const started = makeDeferred();
+        options.wildDuckClient = undefined;
+        const initSpy = spyOn(WildDuckClient.prototype, 'init').mockImplementation(async () => {
+            started.resolve();
+            await gate.promise;
+        });
+        const setupOperation = setupEmail(options);
+
+        try {
+            await started.promise;
+            await Bun.sleep(0);
+            expect(Bun.peek.status(setupOperation)).toBe('pending');
+        } finally {
+            gate.resolve();
+            try {
+                await setupOperation;
+            } finally {
+                initSpy.mockRestore();
+            }
+        }
+    });
+
+    it('does not finish an approval request until direct Discord delivery completes', async () => {
+        const gate = makeDeferred();
+        const started = makeDeferred();
+        const deliveryFinished = makeDeferred();
+        const order: string[] = [];
+        const send = mock(async () => {
+            started.resolve();
+            await gate.promise;
+            order.push('delivery');
+            deliveryFinished.resolve();
+        });
+        options.client = { channels: { fetch: mock(async () => ({ send })) } } as unknown as Client;
+        const result = await setupEmail(options);
+        const operation = result.sendApprovalRequest('to@example.com', 'Deferred delivery', 456);
+        void operation.then(() => {
+            order.push('operation');
+            return undefined;
+        });
+
+        try {
+            await started.promise;
+            await Bun.sleep(0);
+            expect(Bun.peek.status(operation)).toBe('pending');
+        } finally {
+            gate.resolve();
+            await operation;
+            await deliveryFinished.promise;
+        }
+
+        expect(order).toEqual(['delivery', 'operation']);
     });
 });
 
@@ -205,6 +357,91 @@ describe('setupEmail — createEmailMcpServerInstance', () => {
 
         expect(first).not.toBe(result.emailMcpServer);
         expect(second).not.toBe(first);
+    });
+
+    it('applies the configured rate limiter capacity rather than the constructor default', async () => {
+        options.emailConfig = { ...MINIMAL_EMAIL_CONFIG, sendReservoirCapacity: 0, sendReservoirRefillRatePerHour: 7 };
+        options.wildDuckClient = {
+            ...options.wildDuckClient,
+            getUserAddresses: mock(async () => [{ address: 'formal@example.com', tags: ['formal'] }]),
+            uploadMessage:    mock(async () => 71),
+            submitMessage:    mock(async () => undefined),
+        } as unknown as WildDuckClient;
+        options.personAllowlist = { ...options.personAllowlist, isAllowed: mock(() => true) } as unknown as PersonAllowlist;
+        const result = await setupEmail(options);
+
+        const response = await getToolHandler(result, 'sendEmail')({
+            to: 'recipient@example.com', subject: 'Rate limit', body: 'body', identity: 'formal',
+        });
+
+        expect((response.content[0] as { text: string }).text).toBe('Sent successfully. Warning: send rate limit reached (0 tokens remaining).');
+    });
+
+    it('sends restricted-mailbox notices through the capability with complete embed payload and metadata', async () => {
+        const sendToChannel = mock<(channelId: string, payload: unknown, metadata: unknown) => Promise<{ status: 'sent' }>>(async () => ({ status: 'sent' as const }));
+        options.discordCapability = { sendToChannel } as never;
+        const result = await setupEmail(options);
+
+        const response = await getToolHandler(result, 'getEmailContent')({ message: 'Quarantine:19' });
+
+        expect(response.isError).toBe(true);
+        expect(sendToChannel).toHaveBeenCalledTimes(1);
+        const [channelId, payload, metadata] = sendToChannel.mock.calls[0];
+        expect(channelId).toBe(MINIMAL_EMAIL_CONFIG.adminDiscordChannelId);
+        expect((payload as { embeds: unknown[], components: unknown[] }).embeds).toHaveLength(1);
+        expect((payload as { embeds: unknown[], components: unknown[] }).components).toHaveLength(1);
+        expect(metadata).toEqual({ priority: 'high', type: 'email_notification' });
+    });
+
+    it('logs the restricted-mailbox delivery failure with its specific context', async () => {
+        mockLogger.error.mockClear();
+        options.discordCapability = {
+            sendToChannel: mock(async () => {
+                throw new Error('outbox unavailable');
+            }),
+        } as never;
+        const result = await setupEmail(options);
+
+        await getToolHandler(result, 'getEmailContent')({ message: 'Quarantine:20' });
+
+        expect(mockLogger.error).toHaveBeenCalledWith({
+            error: 'outbox unavailable',
+            msg:   'Failed to send restricted mailbox notification to admin channel',
+        });
+    });
+
+    it('does not return a restricted-mailbox result until its admin notice is delivered', async () => {
+        const gate = makeDeferred();
+        const started = makeDeferred();
+        const deliveryFinished = makeDeferred();
+        const order: string[] = [];
+        options.discordCapability = {
+            sendToChannel: mock(async () => {
+                started.resolve();
+                await gate.promise;
+                order.push('delivery');
+                deliveryFinished.resolve();
+                return { status: 'sent' as const };
+            }),
+        } as never;
+        const result = await setupEmail(options);
+        const operation = getToolHandler(result, 'getEmailContent')({ message: 'Quarantine:21' });
+        void operation.then(() => {
+            order.push('operation');
+            return undefined;
+        });
+
+        try {
+            await started.promise;
+            await Bun.sleep(0);
+            expect(Bun.peek.status(operation)).toBe('pending');
+        } finally {
+            gate.resolve();
+            await operation;
+            await deliveryFinished.promise;
+        }
+
+        expect(order).toEqual(['delivery', 'operation']);
     });
 });
 
@@ -350,6 +587,73 @@ describe('buildEmailProcessorCallbacks', () => {
         expect(order).toEqual(['send', 'notify']);
     });
 
+    it.each([
+        ['onSafe',       (callbacks: ReturnType<typeof buildEmailProcessorCallbacks>) => callbacks.onSafe?.(makeEmail(), makeVerdict())],
+        ['onReview',     (callbacks: ReturnType<typeof buildEmailProcessorCallbacks>) => callbacks.onReview?.(makeEmail(), makeVerdict())],
+        ['onUnsafe',     (callbacks: ReturnType<typeof buildEmailProcessorCallbacks>) => callbacks.onUnsafe?.(makeEmail(), makeVerdict())],
+        ['onAuthFailed', (callbacks: ReturnType<typeof buildEmailProcessorCallbacks>) => callbacks.onAuthFailed?.(makeEmail())],
+    ])('%s waits for capability delivery before notifying', async (_name, invoke) => {
+        const gate = makeDeferred();
+        const started = makeDeferred();
+        const deferredNotify = makeNotify();
+        const callbacks = buildEmailProcessorCallbacks({
+            client:            {} as unknown as Client,
+            adminDiscordChannelId,
+            discordCapability: {
+                sendToChannel: mock(async () => {
+                    started.resolve();
+                    await gate.promise;
+                    return { status: 'sent' as const };
+                }),
+            } as never,
+            notify: deferredNotify,
+        });
+        const operation = invoke(callbacks);
+
+        try {
+            await started.promise;
+            await Bun.sleep(0);
+            expect(deferredNotify).not.toHaveBeenCalled();
+        } finally {
+            gate.resolve();
+            await operation;
+        }
+
+        expect(deferredNotify).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits for direct Discord delivery before notifying', async () => {
+        const gate = makeDeferred();
+        const started = makeDeferred();
+        const deferredNotify = makeNotify();
+        const callbacks = buildEmailProcessorCallbacks({
+            client: {
+                channels: {
+                    fetch: mock(async () => ({
+                        send: mock(async () => {
+                            started.resolve();
+                            await gate.promise;
+                        }),
+                    })),
+                },
+            } as unknown as Client,
+            adminDiscordChannelId,
+            notify: deferredNotify,
+        });
+        const operation = callbacks.onSafe?.(makeEmail(), makeVerdict());
+
+        try {
+            await started.promise;
+            await Bun.sleep(0);
+            expect(deferredNotify).not.toHaveBeenCalled();
+        } finally {
+            gate.resolve();
+            await operation;
+        }
+
+        expect(deferredNotify).toHaveBeenCalledTimes(1);
+    });
+
     it('falls back to client.channels.fetch when discordCapability is not provided', async () => {
         const mockSend = mock(async () => undefined);
         const fetch = mock(async (_channelId: string) => ({ send: mockSend }));
@@ -364,5 +668,23 @@ describe('buildEmailProcessorCallbacks', () => {
         expect(fetch).toHaveBeenCalledWith(adminDiscordChannelId);
         expect(mockSend).toHaveBeenCalledTimes(1);
         expect(notify).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['onSafe',       (callbacks: ReturnType<typeof buildEmailProcessorCallbacks>) => callbacks.onSafe?.(makeEmail(), makeVerdict()), 'Failed to send safe-but-not-allowlisted notification to admin channel'],
+        ['onReview',     (callbacks: ReturnType<typeof buildEmailProcessorCallbacks>) => callbacks.onReview?.(makeEmail(), makeVerdict()), 'Failed to send email review embed to admin channel'],
+        ['onUnsafe',     (callbacks: ReturnType<typeof buildEmailProcessorCallbacks>) => callbacks.onUnsafe?.(makeEmail(), makeVerdict()), 'Failed to send unsafe alert to admin channel'],
+        ['onAuthFailed', (callbacks: ReturnType<typeof buildEmailProcessorCallbacks>) => callbacks.onAuthFailed?.(makeEmail()), 'Failed to send auth-failure notification to admin channel'],
+    ])('%s logs its specific admin delivery failure', async (_name, invoke, expectedMessage) => {
+        mockLogger.error.mockClear();
+        const callbacks = buildEmailProcessorCallbacks({
+            client: { channels: { fetch: mock(async () => { throw new Error('offline'); }) } } as unknown as Client,
+            adminDiscordChannelId,
+            notify,
+        });
+
+        await invoke(callbacks);
+
+        expect(mockLogger.error).toHaveBeenCalledWith({ error: 'offline', msg: expectedMessage });
     });
 });

@@ -8,6 +8,7 @@ const testDir = path.join(process.cwd(), 'test-fixtures-path-validator');
 const validFile = path.join(testDir, 'valid.txt');
 const subDir = path.join(testDir, 'subdir');
 const subDirFile = path.join(subDir, 'nested.txt');
+const dotDotPrefixedFile = path.join(process.cwd(), '..safe-file.txt');
 
 describe('path-validator', () => {
     beforeAll(() => {
@@ -17,6 +18,7 @@ describe('path-validator', () => {
         void mockFsPromises.mkdir(subDir, { recursive: true });
         void mockFsPromises.writeFile(validFile, 'test content\n');
         void mockFsPromises.writeFile(subDirFile, 'nested content\n');
+        void mockFsPromises.writeFile(dotDotPrefixedFile, 'safe content\n');
     });
 
     afterAll(() => {
@@ -40,10 +42,20 @@ describe('path-validator', () => {
             expect(result).toBe(validFile);
         });
 
+        test('accepts an in-CWD filename that begins with two dots', async () => {
+            expect(await validateFilePath('..safe-file.txt')).toBe(dotDotPrefixedFile);
+        });
+
         test('should reject path outside CWD with ..', async () => {
             await expect(validateFilePath('../etc/passwd')).rejects.toThrow(PathSecurityError);
             await expect(validateFilePath('../etc/passwd')).rejects.toThrow('SECURITY');
             await expect(validateFilePath('../etc/passwd')).rejects.toThrow('outside the working directory');
+        });
+
+        test('classifies the parent directory itself as outside the working directory', async () => {
+            await expect(validateFilePath('..')).rejects.toMatchObject({
+                context: { path: '..', reason: 'outside_cwd' },
+            });
         });
 
         test('should reject absolute path outside CWD', async () => {

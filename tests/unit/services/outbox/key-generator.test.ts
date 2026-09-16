@@ -101,6 +101,10 @@ describe('OutboxKeyGenerator', () => {
     });
 
     describe('parseSK()', () => {
+        test('rejects an interior ITEM prefix even when the fixed slice resembles a valid item', () => {
+            expect(OutboxKeyGenerator.parseSK('xxxxx0#dedupeITEM#')).toBeUndefined();
+        });
+
         test('parses a valid high-priority SK back to components', () => {
             const sk = `ITEM#0#${DEDUPE_KEY}`;
             const result = OutboxKeyGenerator.parseSK(sk);
@@ -156,6 +160,7 @@ describe('OutboxKeyGenerator', () => {
 
         test('returns undefined when SK has no hash after prefix', () => {
             expect(OutboxKeyGenerator.parseSK('ITEM#0')).toBeUndefined();
+            expect(OutboxKeyGenerator.parseSK('ITEM#01')).toBeUndefined();
         });
 
         test('returns undefined when priority char is not 0, 1, or 2', () => {

@@ -2,7 +2,6 @@ import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction } from 'discord.js';
 import { createUserId, createChannelId } from './types';
 import type { QuestionRegistry, QuestionAnswer } from '@/agent';
-import { InvariantViolationError } from '@/errors';
 
 interface InteractionHandlerConfig {
     questionRegistry: QuestionRegistry
@@ -24,27 +23,22 @@ interface InteractionHandler {
 export function createInteractionHandler(config: InteractionHandlerConfig): InteractionHandler {
     const { questionRegistry } = config;
 
-    // Stryker disable next-line BlockStatement: async function body mutation would empty the handler — integration code, untestable without real Discord
     async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
         // Parse customId: question:${questionId}:${value}
 
         const parts = interaction.customId.split(':');
 
         // Ignore if not a question button
-        // Stryker disable next-line StringLiteral: 'question' prefix is configuration — mutation would skip all question buttons
         if(parts[0] !== 'question') {
             return;
         }
 
-        // Stryker disable all: Integration code - Button validation and early returns
         if(parts.length < 3) {
             return;
         }
 
-        const questionId = parts[1];
-        if(questionId === undefined) {
-            throw new InvariantViolationError('handleButtonInteraction', 'parts[1] undefined despite parts.length >= 3');
-        }
+        // The preceding length check guarantees this index exists at runtime.
+        const questionId = parts[1]!;
         const value = parts.slice(2).join(':'); // Rejoin in case value contains colons
 
         // Look up question in registry
@@ -77,16 +71,13 @@ export function createInteractionHandler(config: InteractionHandlerConfig): Inte
             });
             return;
         }
-        // Stryker restore all
 
-        // Stryker disable all: Logger info object
         logger.info({
             questionId,
             userId:        interaction.user.id,
             selectedValue: value,
             msg:           'Button answer received',
         });
-        // Stryker restore all
 
         // Update the message to remove buttons (acknowledge click)
         await interaction.update({
@@ -94,11 +85,9 @@ export function createInteractionHandler(config: InteractionHandlerConfig): Inte
         });
 
         // Determine channelId and threadId from interaction context
-        // Stryker disable OptionalChaining: equivalent mutant - channel existence guaranteed by isThread() check
         const channelId = interaction.channel?.isThread()
             ? createChannelId(interaction.channel.parentId ?? interaction.channelId)
             : createChannelId(interaction.channelId);
-        // Stryker restore OptionalChaining
         const threadId = interaction.channel?.isThread() ? interaction.channelId : undefined;
 
         // Create QuestionAnswer

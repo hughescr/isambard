@@ -8,11 +8,8 @@ import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } 
 import type { PersonAllowlist } from '@/storage';
 /** Shared pagination schema fields for feed tools that support checkpointing. */
 const FEED_PAGINATION_SCHEMA = {
-    // Stryker disable next-line StringLiteral: describe() is documentation only
     limit:            z.number().int().positive().optional().describe('Maximum number of items to return'),
-    // Stryker disable next-line StringLiteral: describe() is documentation only
     cursor:           z.string().optional().describe('Pagination cursor from previous response'),
-    // Stryker disable next-line StringLiteral,BooleanLiteral: describe() is documentation only, default is configuration
     includeProcessed: z.boolean().optional().default(false).describe('Include already-processed items (default: false)'),
 } as const;
 
@@ -109,10 +106,8 @@ function buildVideoEmbedHint(playlists: string[]): string | undefined {
     if(playlists.length === 0) {
         return undefined;
     }
-    // Stryker disable next-line StringLiteral: label text is informational only — tested for presence, not exact wording
     const label = playlists.length === 1 ? 'This response contains a video embed' : 'This response contains video embeds';
     const lines  = playlists.map(url => `  - ${url}`);
-    // Stryker disable next-line StringLiteral: hint message is informational only
     return `Note: ${label}. Use the analyzeVideoFromUrl tool to analyze:\n${lines.join('\n')}`;
 }
 
@@ -121,10 +116,8 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
 
     function buildRateLimitWarning(): string {
         if(!rateLimiter?.isAtLimit()) {
-            // Stryker disable next-line StringLiteral: initial empty string for rateLimitWarning
             return '';
         }
-        // Stryker disable next-line StringLiteral: Warning message is configuration
         return ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
     }
 
@@ -136,12 +129,10 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'getFeed',
                 'Read a Bluesky feed',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     feedName: z.string().optional().describe("Feed name: 'for-you' (default), 'following', 'discover', or a raw at:// URI"),
                     ...FEED_PAGINATION_SCHEMA,
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('getFeed', async (args): Promise<CallToolResult> => {
                         const feedName = args.feedName ?? 'for-you';
                         const result   = await client.getFeed(feedName, args.limit, args.cursor);
@@ -154,7 +145,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
 
                         return mcpJsonResult(buildCheckpointedResponse(newItems, result.cursor, totalFetched));
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Feed', readOnlyHint: false, idempotentHint: false } }
             ),
 
@@ -162,15 +152,11 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'getNotifications',
                 'Get recent Bluesky notifications',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:            z.number().int().positive().optional().describe('Maximum number of notifications to return'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     cursor:           z.string().optional().describe('Pagination cursor from previous response'),
-                    // Stryker disable next-line StringLiteral,BooleanLiteral: describe() is documentation only, default is configuration
                     includeProcessed: z.boolean().optional().default(false).describe('Include already-processed notifications (default: false)'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('getNotifications', async (args): Promise<CallToolResult> => {
                         const result = await client.getNotifications(args.limit, args.cursor);
 
@@ -183,7 +169,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         // Mark as seen when there are new notifications OR this is the first poll (no prior checkpoint).
                         // On first poll, we always want to mark the current position as seen so subsequent polls
                         // only surface truly new activity.
-                        // Stryker disable next-line ConditionalExpression: compound guard — mutations collapse to a single branch that causes either spurious or missed updateNotificationsSeen calls
                         if(newNotifications.length > 0 || !hadExistingCheckpoint) {
                         // Use max of lastSeenAt (if defined) and current time to guard against clock drift.
                         // When lastSeenAt is undefined (empty first poll), fall back to current time directly.
@@ -199,7 +184,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                             totalFetched,
                         });
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Notifications', readOnlyHint: false, idempotentHint: false } }
             ),
 
@@ -207,20 +191,15 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'searchPosts',
                 'Search Bluesky posts',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     query:  z.string().describe('Search query'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:  z.number().int().positive().optional().describe('Maximum number of results to return'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     cursor: z.string().optional().describe('Pagination cursor from previous response'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('searchPosts', async (args): Promise<CallToolResult> => {
                         const result = await client.searchPosts(args.query, args.limit, args.cursor);
                         return mcpJsonResult(result);
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Search Posts', readOnlyHint: true, idempotentHint: true } }
             ),
 
@@ -228,16 +207,13 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'getPost',
                 'Get a Bluesky post by AT URI',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     uri: z.string().describe('AT URI of the post (e.g., at://did:plc:abc123/app.bsky.feed.post/xyz)'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('getPost', async (args): Promise<CallToolResult> => {
                         const result = await client.getPost(args.uri);
                         return mcpJsonResult(result);
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Post', readOnlyHint: true, idempotentHint: true } }
             ),
 
@@ -245,16 +221,13 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'getProfile',
                 'Get a Bluesky user profile',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('getProfile', async (args): Promise<CallToolResult> => {
                         const result = await client.getProfile(args.actor);
                         return mcpJsonResult(result);
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Profile', readOnlyHint: true, idempotentHint: true } }
             ),
 
@@ -262,12 +235,10 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'getAuthorFeed',
                 "Read a user's recent posts on Bluesky",
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                     ...FEED_PAGINATION_SCHEMA,
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('getAuthorFeed', async (args): Promise<CallToolResult> => {
                         const result = await client.getAuthorFeed(args.actor, args.limit, args.cursor);
 
@@ -283,7 +254,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
 
                         return mcpJsonResult(buildCheckpointedResponse(newItems, result.cursor, totalFetched));
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Author Feed', readOnlyHint: false, idempotentHint: false } }
             ),
 
@@ -291,13 +261,10 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'likePost',
                 'Like a Bluesky post',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     uri: z.string().describe('AT URI of the post to like'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     cid: z.string().describe('CID of the post to like'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('likePost', async (args): Promise<CallToolResult> => {
                         const post = await client.getPost(args.uri);
                         if(post.viewer?.like) {
@@ -306,7 +273,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         await client.likePost(args.uri, args.cid);
                         return mcpTextResult('Post liked successfully');
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Like Post', readOnlyHint: false, destructiveHint: false, idempotentHint: true } }
             ),
 
@@ -314,21 +280,16 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'follow',
                 'Follow a Bluesky user',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('follow', async (args): Promise<CallToolResult> => {
                         const result = await client.follow(args.actor);
                         if(result.alreadyFollowing) {
-                        // Stryker disable next-line StringLiteral: success message is informational only
                             return mcpTextResult(`Already following ${args.actor}`);
                         }
-                        // Stryker disable next-line StringLiteral: success message is informational only
                         return mcpTextResult(`Followed ${args.actor} successfully`);
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Follow', readOnlyHint: false, destructiveHint: false, idempotentHint: true } }
             ),
 
@@ -336,21 +297,16 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'unfollow',
                 'Unfollow a Bluesky user',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('unfollow', async (args): Promise<CallToolResult> => {
                         const result = await client.unfollow(args.actor);
                         if(!result.wasFollowing) {
-                        // Stryker disable next-line StringLiteral: success message is informational only
                             return mcpTextResult(`Not following ${args.actor}`);
                         }
-                        // Stryker disable next-line StringLiteral: success message is informational only
                         return mcpTextResult(`Unfollowed ${args.actor} successfully`);
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Unfollow', readOnlyHint: false, destructiveHint: true, idempotentHint: true } }
             ),
 
@@ -358,19 +314,15 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'sendPost',
                 'Post a new message to Bluesky',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     text: z.string().describe('The text content of the post'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'bluesky', 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('sendPost', async (args): Promise<CallToolResult> => {
                         const result           = await client.sendPost(args.text);
                         const rateLimitWarning = buildRateLimitWarning();
                         rateLimiter?.increment();
-                        // Stryker disable next-line StringLiteral: success message is informational only
                         return mcpTextResult(`Post sent successfully: ${result.uri}${rateLimitWarning}`);
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Send Post', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
             ),
 
@@ -378,19 +330,13 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'replyToPost',
                 'Reply to an existing Bluesky post. If the target author is on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     text:      z.string().describe('The text content of the reply'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     parentUri: z.string().describe('AT URI of the post to reply to'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     parentCid: z.string().describe('CID of the post to reply to'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     rootUri:   z.string().optional().describe('AT URI of the thread root post (auto-resolved from parent for nested replies; only needed to override)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     rootCid:   z.string().optional().describe('CID of the thread root post (auto-resolved from parent for nested replies; only needed to override)'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'bluesky', 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('replyToPost', async (args): Promise<CallToolResult> => {
                         // Fetch parent post to determine the target author and resolve thread root
                         const parentPost   = await client.getPost(args.parentUri);
@@ -407,7 +353,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
 
                         // Check if target is allowlisted (by handle or DID).
                         // Self-replies and missing allowlist are always allowed.
-                        // Stryker disable next-line ConditionalExpression: allowlist guard — self-reply, no-allowlist, and handle check all needed
                         const isAllowed = isSelfReply || !allowlist || allowlist.isAllowed('bsky', targetHandle);
 
                         if(isAllowed) {
@@ -415,7 +360,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                             const result           = await client.replyToPost(args.text, args.parentUri, args.parentCid, resolvedRootUri, resolvedRootCid);
                             const rateLimitWarning = buildRateLimitWarning();
                             rateLimiter?.increment();
-                            // Stryker disable next-line StringLiteral: success message is informational only
                             return mcpTextResult(`Reply sent successfully: ${result.uri}${rateLimitWarning}`);
                         }
 
@@ -424,21 +368,16 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         if(sendApprovalRequest) {
                             try {
                                 await sendApprovalRequest(args.text, targetHandle, args.parentUri, args.parentCid, resolvedRootUri, resolvedRootCid);
-                                // Stryker disable next-line StringLiteral: success message is informational only
                                 return mcpTextResult(`Reply to ${targetHandle} requires approval. Approval request sent to admin.`);
                             } catch (error) {
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                                 logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send bsky approval request' });
-                                // Stryker disable next-line StringLiteral: error message is informational only
                                 return mcpErrorResult(new Error(`Reply to ${targetHandle} requires approval but failed to send approval request to admin. Please try again later.`));
                             }
                         }
 
                         // No approval callback — just inform
-                        // Stryker disable next-line StringLiteral: informational message is not behavior-affecting
                         return mcpTextResult(`Reply to ${targetHandle} requires approval but no approval handler is configured.`);
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Reply To Post', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
             ),
 
@@ -446,23 +385,17 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'listConversations',
                 'List Bluesky direct message conversations',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().optional().describe('Maximum number of conversations to return'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     cursor:    z.string().optional().describe('Pagination cursor from previous response'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     readState: z.string().optional().describe("Filter by read state: 'unread' for only unread conversations"),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     status:    z.string().optional().describe("Filter by status: 'request' or 'accepted'"),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('listConversations', async (args): Promise<CallToolResult> => {
                         const result          = await client.listConversations(args.limit, args.cursor, args.readState, args.status);
                         const conversations   = result.conversations.map(convo => transformConversation(convo));
                         return mcpJsonResult({ conversations, cursor: result.cursor });
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'List Conversations', readOnlyHint: true, idempotentHint: true } }
             ),
 
@@ -470,15 +403,11 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'getDirectMessages',
                 'Get direct messages with specific Bluesky users. Automatically marks the conversation as read.',
                 {
-                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only; .min(1) is Zod schema configuration
                     recipients: z.array(z.string()).min(1).describe("Handles of the users (e.g., ['alice.bsky.social'])"),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:      z.number().int().positive().optional().describe('Maximum number of messages to return'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     cursor:     z.string().optional().describe('Pagination cursor from previous response'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('getDirectMessages', async (args): Promise<CallToolResult> => {
                         // Resolve each handle → DID
                         const resolvedRecipients = await Promise.all(
@@ -493,11 +422,9 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         const result = await client.getMessages(convo.id, args.limit, args.cursor);
 
                         // Auto-mark conversation as read (best-effort — don't fail the fetch on mark-read error)
-                        // Stryker disable BlockStatement: try-catch guards mark-read from breaking message fetch
                         try {
                             await client.markConversationRead(convo.id);
                         } catch (markError) {
-                        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                             logger.warn({ error: markError instanceof Error ? markError.message : String(markError), msg: 'Failed to mark conversation as read' });
                         }
                         // Stryker restore BlockStatement
@@ -517,12 +444,12 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         const playlists = result.messages.flatMap(msg => collectVideoPlaylistsFromDM(msg));
                         const hint      = buildVideoEmbedHint(playlists);
                         if(hint) {
+                            // Stryker disable next-line SpreadOperandDrop: mcpJsonResult has only content, which this literal replaces explicitly.
                             return { ...baseResult, content: [...baseResult.content, { type: 'text' as const, text: hint }] };
                         }
 
                         return baseResult;
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Direct Messages', readOnlyHint: false, idempotentHint: false } }
             ),
 
@@ -530,13 +457,10 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'sendDirectMessage',
                 'Send a direct message to Bluesky users. If recipients are on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.',
                 {
-                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only; .min(1) is Zod schema configuration
                     recipients: z.array(z.string()).min(1).describe("Handles of the recipients (e.g., ['alice.bsky.social'])"),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     text:       z.string().describe('The text content of the message'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'bluesky', 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('sendDirectMessage', async (args): Promise<CallToolResult> => {
                         // Resolve each handle → profile
                         const resolvedRecipients = await Promise.all(
@@ -551,7 +475,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         const isSelfDM = resolvedRecipients.length === 1 && resolvedRecipients[0]?.handle === client.ownHandle;
 
                         // Check if all recipients are allowlisted (by handle or DID)
-                        // Stryker disable next-line ConditionalExpression: allowlist guard — self-DM, no-allowlist, and handle check all needed
                         const allAllowed = isSelfDM || !allowlist || resolvedRecipients.every(
                             r => allowlist.isAllowed('bsky', r.handle)
                         );
@@ -564,7 +487,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                             await client.sendDirectMessage(convo.id, args.text);
                             const rateLimitWarning = buildRateLimitWarning();
                             rateLimiter?.increment();
-                            // Stryker disable next-line StringLiteral: success message is informational only
                             return mcpTextResult(`DM sent successfully${rateLimitWarning}`);
                         }
 
@@ -574,92 +496,69 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                             try {
                                 const allHandles = resolvedRecipients.map(r => r.handle);
                                 await sendDMApprovalRequest(args.text, allHandles, convo.id);
-                                // Stryker disable next-line StringLiteral: success message is informational only
                                 return mcpTextResult('DM requires approval. Approval request sent to admin.');
                             } catch (error) {
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                                 logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send bsky DM approval request' });
-                                // Stryker disable next-line StringLiteral: error message is informational only
                                 return mcpErrorResult(new Error('DM requires approval but failed to send approval request to admin. Please try again later.'));
                             }
                         }
 
                         // No approval callback — just inform
-                        // Stryker disable next-line StringLiteral: informational message is not behavior-affecting
                         return mcpTextResult('DM requires approval but no approval handler is configured.');
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Send Direct Message', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
             ),
 
             tool(
                 'listRejectedPosts',
-                // Stryker disable next-line StringLiteral: tool description is configuration
                 'List Bluesky posts and DMs that were rejected by admin. Shows rejection reason and all parameters needed to retry with revised content.',
                 {},
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('listRejectedPosts', async (): Promise<CallToolResult> => {
                         if(!options.rejectionBackend) {
-                        // Stryker disable next-line StringLiteral: error message is informational only
                             return mcpErrorResult('Rejection tracking is not configured');
                         }
                         const items = await options.rejectionBackend.listRejections();
                         if(items.length === 0) {
-                        // Stryker disable next-line StringLiteral: result message is informational only
                             return mcpTextResult('No rejected posts or DMs pending review.');
                         }
                         return mcpJsonResult(items);
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'List Rejected Posts', readOnlyHint: true, idempotentHint: true } }
             ),
 
             tool(
                 'clearRejection',
-                // Stryker disable next-line StringLiteral: tool description is configuration
                 'Clear a specific rejected post/DM after reviewing it. Use the uuid from listRejectedPosts.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     uuid: z.uuid().describe('UUID of the rejection to clear (from listRejectedPosts)'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('clearRejection', async (input): Promise<CallToolResult> => {
                         if(!options.rejectionBackend) {
-                        // Stryker disable next-line StringLiteral: error message is informational only
                             return mcpErrorResult('Rejection tracking is not configured');
                         }
                         await options.rejectionBackend.deleteRejection(input.uuid);
-                        // Stryker disable next-line StringLiteral: result message is informational only
                         return mcpTextResult(`Cleared rejection ${input.uuid}`);
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Clear Rejection', readOnlyHint: false, destructiveHint: true, idempotentHint: true } }
             ),
 
             tool(
                 'clearAllRejections',
-                // Stryker disable next-line StringLiteral: tool description is configuration
                 'Clear all rejected posts/DMs after reviewing them.',
                 {},
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('clearAllRejections', async (): Promise<CallToolResult> => {
                         if(!options.rejectionBackend) {
-                        // Stryker disable next-line StringLiteral: error message is informational only
                             return mcpErrorResult('Rejection tracking is not configured');
                         }
                         const count = await options.rejectionBackend.clearAll();
-                        // Stryker disable next-line ConditionalExpression: zero-count guard — informational message branch
                         if(count === 0) {
-                        // Stryker disable next-line StringLiteral: result message is informational only
                             return mcpTextResult('No rejections to clear.');
                         }
-                        // Stryker disable next-line StringLiteral,ConditionalExpression: plural suffix and count guard are informational only
                         return mcpTextResult(`Cleared ${count} rejection${count === 1 ? '' : 's'}.`);
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Clear All Rejections', readOnlyHint: false, destructiveHint: true, idempotentHint: false } }
             ),
 

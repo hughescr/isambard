@@ -3,7 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
-import { textContent } from '../../setup';
+import { mockLogger, textContent } from '../../setup';
 
 // Helper to create mock memory item data
 const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemData => ({
@@ -77,6 +77,18 @@ describe.concurrent('Memory MCP Server Pagination', () => {
         });
 
         describe('backend calls with options', () => {
+            test('logs which listing backend served a layer root and a directory', async () => {
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+                await handler({ path: '/state' });
+                await handler({ path: '/diagnostic-directory' });
+                expect(mockLogger.debug).toHaveBeenCalledWith({
+                    layer: 'state', dirPath: '/state', msg: 'Using GSI1 listByLayer for layer path',
+                });
+                expect(mockLogger.debug).toHaveBeenCalledWith({
+                    dirPath: '/diagnostic-directory', msg: 'Using directory list for non-layer path',
+                });
+            });
             test.each([
                 ['limit only', { limit: 10 }, { limit: 10 }],
                 ['cursor only', { cursor: 'dGVzdA==' }, { cursor: 'dGVzdA==' }],

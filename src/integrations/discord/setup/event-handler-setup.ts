@@ -26,18 +26,8 @@ import { safeAsyncHandler } from '@/utils';
 // No-op health registry stub (used when no registry is provided)
 // ---------------------------------------------------------------------------
 
-// Stryker disable all: no-op stub — behaviour is definitionally absent
-function noopUnsubscribe(): void { /* no-op */ }
-const NOOP_HEALTH_REGISTRY: ServiceHealthRegistry = {
-    getState:           () => 'disabled',
-    getEntry:           () => ({ state: 'disabled', epoch: 0, failureCount: 0 }),
-    getAll:             () => ({} as ReturnType<ServiceHealthRegistry['getAll']>),
-    isAvailable:        () => false,
-    isWriteAvailable:   () => false,
+const NOOP_RECONNECTION_REGISTRY: Pick<ServiceHealthRegistry, 'sendEvent'> = {
     sendEvent:          () => undefined,
-    subscribe:          () => noopUnsubscribe,
-    buildStatusSummary: () => undefined,
-    stop:               () => undefined,
 };
 // Stryker restore all
 
@@ -57,14 +47,11 @@ async function sendRegistryErrorNotification(
         // Route to fallback channel for startup errors — no origin channel exists here.
         const routing = await responseRouter.routeToFallback(notificationContent);
 
-        // Stryker disable next-line all: Defensive guard - routing always has shouldSend=true and targetChannelId set for error notifications
         if(routing.shouldSend && routing.targetChannelId) {
             // Fetch the target channel and send directly
             const targetChannel = await client.channels.fetch(routing.targetChannelId);
-            // Stryker disable next-line all: Defensive guard - validated in response-sender.test.ts for normal flow
             if(targetChannel && 'send' in (targetChannel as object)) {
                 await rateLimiter.sendToChannel(targetChannel as TextChannel, routing.content);
-                // Stryker disable all: Logging for observability
                 logger.info({
                     targetChannelId: routing.targetChannelId,
                     msg:             'Channel registry error notification sent to fallback channel',
@@ -102,7 +89,7 @@ export function initializeChannelRegistry(
     rateLimiter?: DiscordRateLimiter,
     healthRegistry?: ServiceHealthRegistry
 ): void {
-    const registry = healthRegistry ?? NOOP_HEALTH_REGISTRY;
+    const registry = healthRegistry ?? NOOP_RECONNECTION_REGISTRY;
 
     // Register the channel-registry service with the health registry so it
     // appears in status summaries and transitions correctly through the state machine.
@@ -153,7 +140,6 @@ export function initializeChannelRegistry(
     channelRegistry.onReady(async () => {
         try {
             const discoveryResult = await discoverAllChannels(client, channelRegistry);
-            // Stryker disable all: Logging for observability
             logger.info({
                 discovered: discoveryResult.discovered,
                 updated:    discoveryResult.updated,
@@ -220,7 +206,6 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
 
     // Register message handler AFTER channel registry is initialized
     // This ensures channelRegistry.shouldProcess() has data to work with
-    // Stryker disable StringLiteral: Handler context name is logging configuration
     client.on('messageCreate', safeAsyncHandler(createMessageHandler({
         botUserId: createUserId(readyClient.user!.id),
         channelRegistry,
@@ -263,7 +248,6 @@ export function setupChannelCleanupHandlers(params: {
     });
 
     // guildDelete: Clean up coordinator state for all channels in a guild when bot leaves
-    // Stryker disable StringLiteral: Handler context name is logging configuration
     client.on('guildDelete', safeAsyncHandler(async (guild) => {
         if(!coordinator) {
             return;

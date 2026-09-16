@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
-import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
+import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem, TagIndexReadItem } from '../../../src/storage/memory-tool/types';
 import { mockLogger, textContent } from '../../setup';
 
 interface SafeParseResult { success: boolean }
@@ -147,6 +147,13 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = searchTool.inputSchema.shape.tags.safeParse(['tag1', 'tag2']);
             expect(result.success).toBe(true);
         });
+
+        test('should accept one search tag and reject an empty tag list', () => {
+            const server = createMemoryMCPServer(mockBackend);
+            const tagsSchema = (server.instance as unknown as RegisteredToolInstance)._registeredTools.search.inputSchema.shape.tags;
+            expect(tagsSchema.safeParse(['tag1']).success).toBe(true);
+            expect(tagsSchema.safeParse([]).success).toBe(false);
+        });
     });
 
     describe('view tool', () => {
@@ -272,6 +279,22 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             // Flush microtask queue to let fire-and-forget promise settle
             await Promise.resolve();
+            await Promise.resolve();
+
+            expect(recordAccess).not.toHaveBeenCalled();
+        });
+
+        test('should not record a nested state segment outside the state layer', async () => {
+            mockBackend.get = mock(async () => createMockItem({
+                path:    '/users/alice/state/note' as MemoryPath,
+                content: 'User memory',
+            }));
+
+            const recordAccess = mock(async () => { /* intentionally empty */ });
+            const server = createMemoryMCPServer(mockBackend, { recordAccess });
+            const handler = getToolHandler(server, 'view');
+
+            await handler({ path: '/users/alice/state/note' });
             await Promise.resolve();
 
             expect(recordAccess).not.toHaveBeenCalled();
@@ -873,6 +896,19 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
+        test('should show the single tag from a deleted memory', async () => {
+            mockBackend.delete = mock(async () => createMockItem({
+                path: '/identity/test' as MemoryPath,
+                tags: new Set(['only-tag']),
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'deleteMemory');
+            const result = await handler({ path: '/identity/test' });
+
+            expect(textContent(result.content[0])).toContain('Tags: only-tag');
+        });
+
         test('should return error when memory not found', async () => {
             mockBackend.delete = mock(async () => undefined);
 
@@ -916,13 +952,14 @@ describe.concurrent('createMemoryMCPServer', () => {
 
     describe('search tool', () => {
         test('should show "No content" when memory item has no contentPreview', async () => {
-            const itemWithoutPreview = createMockTagIndexItem({
-                memoryPath:     '/identity/test.md',
-                PK:             'TAG#test',
-                SK:             'PATH#/identity/test.md',
-                contentPreview: undefined, // No preview
-                tags:           new Set(['test']),
-            });
+            const itemWithoutPreview: TagIndexReadItem = {
+                PK:         'TAG#test',
+                SK:         'PATH#/identity/test.md',
+                memoryPath: '/identity/test.md',
+                layer:      'identity',
+                updatedAt:  '2025-01-01T00:00:00.000Z',
+                tags:       new Set(['test']),
+            };
 
             mockBackend.searchByTags = mock(async () => ({
                 items:      [itemWithoutPreview],

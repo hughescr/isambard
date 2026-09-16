@@ -1,8 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
-import { describe, it, expect, beforeEach, mock, type Mock, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, mock, type Mock, afterEach, spyOn } from 'bun:test';
 import type { Client, Guild, GuildChannel } from 'discord.js';
-// eslint-disable-next-line lodash-es/suggest-native-alternatives -- noop is used as a mock function, not a no-op return value
-import { noop } from 'lodash-es';
+import { mockLogger } from '../../../../setup';
 import {
     discoverAllChannels,
     setupChannelEventHandlers
@@ -11,12 +9,15 @@ import type { ChannelRegistryManager } from '@/integrations/discord/channel-regi
 import type { ChannelMetadata } from '@/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 
+const noop = (): undefined => undefined;
+
 describe('discovery', () => {
     let mockManager: ChannelRegistryManager;
     let mockClient: Client;
     let mockGuild: Guild;
 
     beforeEach(() => {
+        mockLogger.info.mockClear();
         // Mock manager
         mockManager = {
             getChannel:    mock(() => Promise.resolve(null)),
@@ -57,6 +58,29 @@ describe('discovery', () => {
                 updated:    0,
                 errors:     [],
             });
+            expect(mockLogger.info).toHaveBeenCalledTimes(2);
+        });
+
+        it('logs discovery boundaries with the measured elapsed time', async () => {
+            const now = spyOn(Date, 'now')
+                .mockReturnValueOnce(1000)
+                .mockReturnValueOnce(1025);
+            try {
+                await discoverAllChannels(mockClient, mockManager);
+
+                expect(mockLogger.info).toHaveBeenNthCalledWith(1, {
+                    guildCount: 0,
+                    msg:        'Discovering channels across guilds...',
+                });
+                expect(mockLogger.info).toHaveBeenNthCalledWith(2, {
+                    discovered: 0,
+                    updated:    0,
+                    elapsedMs:  25,
+                    msg:        'Channel discovery complete',
+                });
+            } finally {
+                now.mockRestore();
+            }
         });
 
         it('should discover channels from single guild', async () => {
@@ -114,7 +138,7 @@ describe('discovery', () => {
 
             // Verify the updated metadata
             const call = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0];
-            const metadata = call?.[0] as ChannelMetadata;
+            const metadata = call[0] as ChannelMetadata;
 
             expect(metadata.channelName).toBe('general-renamed');
             expect(metadata.isMuted).toBe(false);
@@ -155,7 +179,7 @@ describe('discovery', () => {
 
             // Verify user settings are preserved
             const call = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0];
-            const metadata = call?.[0] as ChannelMetadata;
+            const metadata = call[0] as ChannelMetadata;
 
             expect(metadata.channelName).toBe('general-renamed');  // Updated from Discord
             expect(metadata.isMuted).toBe(true);  // Preserved user setting
@@ -257,6 +281,61 @@ describe('discovery', () => {
             });
         });
 
+        it('waits for admitted upserts after failure and starts no queued write', async () => {
+            const channels = new Map<string, GuildChannel>();
+            for(let index = 1; index <= 6; index++) {
+                channels.set(`channel-${index}`, {
+                    id:   `channel-${index}`,
+                    name: `channel-${index}`,
+                    send: mock(noop),
+                } as unknown as GuildChannel);
+            }
+            mockGuild.channels.fetch = mock(async () => channels) as unknown as typeof mockGuild.channels.fetch;
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+
+            let rejectFirst!: (error: Error) => void;
+            const firstWrite = new Promise<void>((_resolve, reject) => {
+                rejectFirst = reject;
+            });
+            let releaseOthers!: () => void;
+            const heldWrite = new Promise<void>((resolve) => {
+                releaseOthers = resolve;
+            });
+            let signalFiveStarted!: () => void;
+            const fiveStarted = new Promise<void>((resolve) => {
+                signalFiveStarted = resolve;
+            });
+            const started: string[] = [];
+            mockManager.upsertChannel = mock((metadata: ChannelMetadata) => {
+                started.push(metadata.channelId);
+                if(started.length === 5) {
+                    signalFiveStarted();
+                }
+                return metadata.channelId === 'channel-1' ? firstWrite : heldWrite;
+            });
+
+            const pending = discoverAllChannels(mockClient, mockManager);
+            let completed = false;
+            const observed = pending.then((result) => {
+                completed = true;
+                return result;
+            });
+            await fiveStarted;
+            rejectFirst(new Error('upsert failed'));
+            await Bun.sleep(0);
+
+            expect(started).toEqual(['channel-1', 'channel-2', 'channel-3', 'channel-4', 'channel-5']);
+            expect(completed).toBe(false);
+            expect(mockLogger.info).toHaveBeenCalledTimes(1);
+
+            releaseOthers();
+            const result = await observed;
+            expect(completed).toBe(true);
+            expect(result.errors).toEqual([{ guildId: 'guild-123', error: 'upsert failed' }]);
+            expect(started).toHaveLength(5);
+            expect(mockLogger.info).toHaveBeenCalledTimes(2);
+        });
+
         it('should handle non-Error exceptions', async () => {
             mockGuild.channels.fetch = mock(async () => {
                 throw 'String error';
@@ -290,7 +369,7 @@ describe('discovery', () => {
 
             expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
             const call = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0];
-            const metadata = call?.[0] as ChannelMetadata;
+            const metadata = call[0] as ChannelMetadata;
 
             expect(metadata.channelId).toBe(createChannelId('channel-1'));
             expect(metadata.guildId).toBe(createGuildId('guild-123'));
@@ -342,23 +421,6 @@ describe('discovery', () => {
                 const mockChannel = {
                     id:   'channel-1',
                     name: 'dm-channel',
-                } as unknown as GuildChannel;
-
-                await handler(mockChannel);
-
-                expect(mockManager.upsertChannel).not.toHaveBeenCalled();
-            });
-
-            it('should ignore channels with null guild', async () => {
-                setupChannelEventHandlers(mockClient, mockManager);
-
-                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
-
-                const mockChannel = {
-                    id:    'channel-1',
-                    name:  'dm-channel',
-                    guild: null, // guild property exists but is null
-                    send:  mock(noop),
                 } as unknown as GuildChannel;
 
                 await handler(mockChannel);
@@ -494,30 +556,6 @@ describe('discovery', () => {
                 const newChannel = {
                     id:   'channel-1',
                     name: 'new-name',
-                } as unknown as GuildChannel;
-
-                await handler(oldChannel, newChannel);
-
-                expect(mockManager.getChannel).not.toHaveBeenCalled();
-            });
-
-            it('should ignore channels with null guild', async () => {
-                setupChannelEventHandlers(mockClient, mockManager);
-
-                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelUpdate')?.[1];
-
-                const oldChannel = {
-                    id:    'channel-1',
-                    name:  'old-name',
-                    guild: null, // guild property exists but is null
-                    send:  mock(noop),
-                } as unknown as GuildChannel;
-
-                const newChannel = {
-                    id:    'channel-1',
-                    name:  'new-name',
-                    guild: null, // guild property exists but is null
-                    send:  mock(noop),
                 } as unknown as GuildChannel;
 
                 await handler(oldChannel, newChannel);

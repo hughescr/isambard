@@ -18,7 +18,6 @@ import { ErrorCode } from './codes';
 export class BrowserError extends IsambardError {
     constructor(message: string, code: ErrorCode = ErrorCode.BROWSER_ERROR, context?: Record<string, unknown>) {
         super(message, code, context);
-        // Stryker disable next-line StringLiteral: error name is informational only
         this.name = 'BrowserError';
     }
 }
@@ -36,12 +35,10 @@ export class BrowserNavigateTimeoutError extends BrowserError {
 
     constructor(url: string, attempts: number) {
         super(
-            // Stryker disable next-line StringLiteral: error message is informational only
             `navigate(${url}) timed out after ${attempts} attempts; view closed, next call will lazy-reinit`,
             ErrorCode.BROWSER_NAVIGATE_TIMEOUT,
             { url, attempts }
         );
-        // Stryker disable next-line StringLiteral: error name is informational only
         this.name = 'BrowserNavigateTimeoutError';
     }
 }

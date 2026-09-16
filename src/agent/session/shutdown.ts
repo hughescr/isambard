@@ -94,7 +94,6 @@ export function createShutdown(params: CreateShutdownParams): Shutdown {
             clock.clearTimer(deadlineTimer);
         }
 
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.info({ forced, sessionCount: sessions.length, msg: 'Shutdown sequence complete' });
 
         return { forced };

@@ -374,6 +374,9 @@ describe('setupConductorPresence', () => {
         });
 
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
+        expect(mockPresenceManager.start).toHaveBeenCalledTimes(1);
+        expect(throttle.shouldUpdate).not.toHaveBeenCalled();
+        expect(throttle.record).toHaveBeenCalledTimes(1);
     });
 
     test('a non-idle view is blocked while the throttle window has not elapsed', () => {
@@ -704,6 +707,7 @@ describe('setupConductorPresence', () => {
         // The interrupted turn ends: the composed view is idle, but it must not be applied yet.
         conversation.dispatch({ type: 'sdk_frame', frame: frames.resultSuccess(), at: new Date(1) });
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
+        expect(jest.getTimerCount()).toBe(1);
 
         // The follow-up's turn opens well inside the window: the pending idle apply is dropped and
         // the active placeholder goes out as usual.
@@ -711,6 +715,7 @@ describe('setupConductorPresence', () => {
         conversation.dispatch({
             type: 'turn_submitted', envelope: { id: 'env-2', kind: 'discord', queuedAt: new Date(2), channelId: 'chan-1' }, at: new Date(2),
         });
+        expect(jest.getTimerCount()).toBe(0);
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
         const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
         expect(view.phase.type).not.toBe('idle');
@@ -729,7 +734,9 @@ describe('setupConductorPresence', () => {
             sessions:         [{ ledger: conversation }],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
+            isCostPaused:     () => true,
         });
+        throttle.record.mockClear();
         conversation.dispatch({
             type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
         });
@@ -746,9 +753,65 @@ describe('setupConductorPresence', () => {
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
         const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
         expect(view.phase.type).toBe('idle');
+        expect(view.prefix).toContain('⏸ perch');
+        expect(throttle.record).toHaveBeenCalledTimes(1);
 
         jest.advanceTimersByTime(IDLE_SETTLE_MS * 2);
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
+    });
+
+    test('a delayed idle apply uses the unpaused default when isCostPaused is omitted', () => {
+        const conversation = makeConversationLedger();
+        const throttle = throttleAlways();
+        setupConductorPresence({
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            sessions:         [{ ledger: conversation }],
+            throttle,
+            getRecentContext: () => Promise.resolve(undefined),
+        });
+        conversation.dispatch({
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+        });
+        mockPresenceManager.applyView.mockClear();
+        conversation.dispatch({ type: 'sdk_frame', frame: frames.resultSuccess(), at: new Date(1) });
+
+        jest.advanceTimersByTime(IDLE_SETTLE_MS);
+
+        const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
+        expect(view.prefix).toBe('💤');
+    });
+
+    test('a queued idle callback rechecks the current view after an active turn cancels its timer', () => {
+        let queuedIdleCallback: (() => void) | undefined;
+        const captureTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
+            queuedIdleCallback = callback as () => void;
+            return 99 as unknown as ReturnType<typeof setTimeout>;
+        }) as typeof setTimeout;
+        spies.push(spyOn(globalThis, 'setTimeout').mockImplementation(captureTimeout));
+        const conversation = makeConversationLedger();
+        setupConductorPresence({
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            sessions:         [{ ledger: conversation }],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
+        });
+        conversation.dispatch({
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+        });
+        conversation.dispatch({ type: 'sdk_frame', frame: frames.resultSuccess(), at: new Date(1) });
+        expect(queuedIdleCallback).toBeDefined();
+        conversation.dispatch({
+            type: 'turn_submitted', envelope: { id: 'env-2', kind: 'discord', queuedAt: new Date(2), channelId: 'chan-1' }, at: new Date(2),
+        });
+        const applyCount = mockPresenceManager.applyView.mock.calls.length;
+
+        queuedIdleCallback?.();
+
+        expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(applyCount);
     });
 
     test('unsubscribeLedgers cancels a pending idle apply', () => {

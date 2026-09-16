@@ -34,6 +34,7 @@ import * as crManagerModule from '@/integrations/discord/channel-registry/manage
 import * as registerCommandsModule from '@/integrations/discord/register-commands';
 import * as storageModule from '@/storage';
 import * as dynamoClientModule from '@/storage/client';
+import { DynamoDBClientHolder } from '@/storage/client-holder';
 import * as memoryToolModule from '@/storage/memory-tool';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath } from '@/storage/memory-tool/types';
@@ -320,10 +321,8 @@ describe('Vector feature wiring', () => {
                 fakeBackend as unknown as Parameters<typeof memoryMcpServerModule.createMemoryMCPServer>[0]
             );
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic introspection of SDK internals
-            const withSearchTools: Record<string, unknown> = (serverWithSearch.instance as any)._registeredTools ?? {};
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic introspection of SDK internals
-            const withoutTools: Record<string, unknown> = (serverWithout.instance as any)._registeredTools ?? {};
+            const withSearchTools = (serverWithSearch.instance as unknown as { _registeredTools?: Record<string, unknown> })._registeredTools ?? {};
+            const withoutTools = (serverWithout.instance as unknown as { _registeredTools?: Record<string, unknown> })._registeredTools ?? {};
 
             expect(Object.hasOwn(withSearchTools, 'semantic_search')).toBe(true);
             expect(Object.hasOwn(withoutTools, 'semantic_search')).toBe(false);
@@ -345,9 +344,11 @@ describe('Vector feature wiring', () => {
             spies.length = 0;
         });
 
-        it('app.stop() calls asyncIndexer.close() before vectorIndex.close()', async () => {
+        it.each([false, true])('app.stop() closes the vector index after the async indexer (indexer rejects: %s)', async (indexerRejects) => {
             // We need to create a real app with stubbed vector deps, then stop it and verify order.
             const callOrder: string[] = [];
+            const indexerFailure = new Error('Indexer drain failed');
+            const destroyHolder = spyOn(DynamoDBClientHolder.prototype, 'destroy');
 
             const fakeEmbedder = {
                 encode: mock(async (): Promise<{ data: Uint8Array }> => ({ data: new Uint8Array(128) })),
@@ -365,19 +366,33 @@ describe('Vector feature wiring', () => {
 
             const mockAsyncIndexer = {
                 isClosed: false,
-                close:    mock(async () => { callOrder.push('asyncIndexer.close'); }),
-                enqueue:  mock(() => undefined),
-                drain:    mock(async () => undefined),
+                close:    mock(async () => {
+                    callOrder.push('asyncIndexer.close');
+                    if(indexerRejects) {
+                        throw indexerFailure;
+                    }
+                }),
+                enqueue: mock(() => undefined),
+                drain:   mock(async () => undefined),
             };
 
             const mockDocClient = { send: mock(async () => ({ Items: [], Count: 0 })) } as unknown as DynamoDBDocumentClient;
+            const firstClient = { destroy: mock(() => undefined) } as unknown as DynamoDBClient;
+            const openVectorIndex = spyOn(vecStoreModule.VectorIndex, 'open').mockResolvedValue(
+                mockVectorIndex as unknown as Awaited<ReturnType<typeof vecStoreModule.VectorIndex.open>>
+            );
+            // @ts-expect-error -- mocking constructor
+            const createAsyncIndexer = spyOn(vecStoreModule, 'AsyncIndexer').mockImplementation(() => mockAsyncIndexer);
+            const createDynamoDBClient = spyOn(dynamoClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    firstClient,
+                docClient: mockDocClient,
+                tableName: 'IsambardMemory',
+            });
 
             spies.push(
-                spyOn(vecStoreModule.VectorIndex, 'open').mockResolvedValue(
-                    mockVectorIndex as unknown as Awaited<ReturnType<typeof vecStoreModule.VectorIndex.open>>
-                ),
-                // @ts-expect-error -- mocking constructor
-                spyOn(vecStoreModule, 'AsyncIndexer').mockImplementation(() => mockAsyncIndexer),
+                destroyHolder,
+                openVectorIndex,
+                createAsyncIndexer,
                 spyOn(storageModule, 'loadEmbedder').mockResolvedValue(
                     fakeEmbedder as unknown as Awaited<ReturnType<typeof storageModule.loadEmbedder>>
                 ),
@@ -415,11 +430,7 @@ describe('Vector feature wiring', () => {
                     getUnmutedChannels: mock(async () => []),
                     getAllChannels:     mock(() => []),
                 }),
-                spyOn(dynamoClientModule, 'createDynamoDBClient').mockReturnValue({
-                    client:    { destroy: mock(() => undefined) } as unknown as DynamoDBClient,
-                    docClient: mockDocClient,
-                    tableName: 'IsambardMemory',
-                }),
+                createDynamoDBClient,
                 // @ts-expect-error -- mocking constructor
                 spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({
                     load: mock(async () => undefined),
@@ -428,7 +439,16 @@ describe('Vector feature wiring', () => {
 
             process.env.CLAUDE_CODE_OAUTH_TOKEN = 'test-oauth-token';
             const app = await indexModule.createApp();
-            await app.stop();
+            const stopResult = app.stop();
+            expect(app.stop()).toBe(stopResult);
+            await (indexerRejects
+                ? expect(stopResult).rejects.toBe(indexerFailure)
+                : expect(stopResult).resolves.toBeUndefined());
+            const repeatedStop = app.stop();
+            expect(repeatedStop).toBe(stopResult);
+            await (indexerRejects
+                ? expect(repeatedStop).rejects.toBe(indexerFailure)
+                : expect(repeatedStop).resolves.toBeUndefined());
 
             // Both must have been called
             expect(callOrder).toContain('asyncIndexer.close');
@@ -438,6 +458,42 @@ describe('Vector feature wiring', () => {
             const asyncIdx = callOrder.indexOf('asyncIndexer.close');
             const vecIdx = callOrder.indexOf('vectorIndex.close');
             expect(asyncIdx).toBeLessThan(vecIdx);
+            expect(mockAsyncIndexer.close).toHaveBeenCalledTimes(1);
+            expect(mockVectorIndex.close).toHaveBeenCalledTimes(1);
+            expect(destroyHolder).toHaveBeenCalledTimes(1);
+
+            if(!indexerRejects) {
+                const firstCycleClientCreations = createDynamoDBClient.mock.calls.length;
+                const nextVectorIndex = {
+                    ...mockVectorIndex,
+                    close: mock(() => { callOrder.push('next vectorIndex.close'); }),
+                };
+                const nextAsyncIndexer = {
+                    ...mockAsyncIndexer,
+                    close: mock(async () => { callOrder.push('next asyncIndexer.close'); }),
+                };
+                const nextClient = { destroy: mock(() => undefined) } as unknown as DynamoDBClient;
+                openVectorIndex.mockResolvedValue(nextVectorIndex as unknown as Awaited<ReturnType<typeof vecStoreModule.VectorIndex.open>>);
+                // @ts-expect-error -- mocking constructor
+                createAsyncIndexer.mockImplementation(() => nextAsyncIndexer);
+                createDynamoDBClient.mockReturnValue({ client: nextClient, docClient: mockDocClient, tableName: 'IsambardMemory' });
+
+                await app.start();
+                await app.stop();
+
+                expect(firstClient).not.toBe(nextClient);
+                expect(createDynamoDBClient.mock.calls.length).toBeGreaterThan(firstCycleClientCreations);
+                expect(firstClient.destroy).toHaveBeenCalled();
+                expect(nextClient.destroy).toHaveBeenCalled();
+                expect(openVectorIndex).toHaveBeenCalledTimes(2);
+                expect(createAsyncIndexer).toHaveBeenCalledTimes(2);
+                expect(mockAsyncIndexer.close).toHaveBeenCalledTimes(1);
+                expect(mockVectorIndex.close).toHaveBeenCalledTimes(1);
+                expect(nextAsyncIndexer.close).toHaveBeenCalledTimes(1);
+                expect(nextVectorIndex.close).toHaveBeenCalledTimes(1);
+                expect(callOrder.indexOf('next asyncIndexer.close')).toBeLessThan(callOrder.indexOf('next vectorIndex.close'));
+                expect(destroyHolder).toHaveBeenCalledTimes(2);
+            }
         });
     });
 
@@ -488,22 +544,19 @@ describe('Vector feature wiring', () => {
             });
             const afterCreate = [...enqueuedJobs];
             expect(afterCreate).toHaveLength(1);
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- noUncheckedIndexedAccess; enqueuedJobs has 1 item per check above
-            expect(afterCreate[0]!.kind).toBe('upsert');
+            expect(afterCreate[0].kind).toBe('upsert');
 
             // 2. update → should enqueue another 'upsert' job
             await backend.update('/state/test-item' as MemoryPath, { content: 'updated content' });
             const afterUpdate = [...enqueuedJobs];
             expect(afterUpdate).toHaveLength(2);
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- noUncheckedIndexedAccess; enqueuedJobs has 2 items per check above
-            expect(afterUpdate[1]!.kind).toBe('upsert');
+            expect(afterUpdate[1].kind).toBe('upsert');
 
             // 3. delete → should enqueue a 'delete' job
             await backend.delete('/state/test-item' as MemoryPath);
             const afterDelete = [...enqueuedJobs];
             expect(afterDelete).toHaveLength(3);
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- noUncheckedIndexedAccess; enqueuedJobs has 3 items per check above
-            expect(afterDelete[2]!.kind).toBe('delete');
+            expect(afterDelete[2].kind).toBe('delete');
         });
     });
 });

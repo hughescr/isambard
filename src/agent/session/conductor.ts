@@ -492,6 +492,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * requested, because some query has by then already been created from options built AFTER the
      * request, and therefore already carries whatever the request wanted applied.
      */
+    // Stryker disable next-line NumberLiteralValue: only differences from a captured generation are observed, so any fixed initial offset cancels from both sides.
     let openGeneration = 0;
     /** A controlled reopen the host asked for that has not started yet — see {@link requestReopen}. */
     let pendingReopen: { reason: string, atGeneration: number } | undefined;
@@ -546,14 +547,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     function waitForTurnEnd(): Promise<void> {
-        // Stryker disable next-line BlockStatement: defensive fallback — the sole caller (shutdown's
-        // graceful cleanup, below) already checks `currentTurn !== null` synchronously immediately
-        // before calling this, with no `await` between the check and this call, so `currentTurn`
-        // cannot have changed; unreachable in practice, kept in case another caller is ever added.
-        if(currentTurn === null) {
-            return Promise.resolve();
-        }
+        // The sole caller checks currentTurn synchronously immediately before calling.
         return new Promise((resolve) => {
+            // Stryker disable next-line ArrayMethodSwap: shutdown sets shuttingDown before awaiting, so at most one turn-end waiter can exist and either insertion gives the same one-element array.
             turnEndedWaiters.push(resolve);
         });
     }
@@ -869,6 +865,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         const response = !wasInterrupted && frame.subtype === 'success' ? frame.result : null;
         const truncated = response !== null && response.length > TURN_RESPONSE_TEXT_CAP;
         journal.append({
+            // Stryker disable next-line llm: TurnKind is the nonempty EnvelopeKind literal union, so the fallback cannot be selected.
             type: 'turn_completed', at: now(), envelopeId: item.envelope.id, kind: turn.kind,
             ...(response === null ? {} : { responseText: truncated ? response.slice(0, TURN_RESPONSE_TEXT_CAP) : response }),
             ...(truncated ? { truncated: true } : {}),
@@ -1150,7 +1147,8 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 },
                 onClosed: (error) => {
                     if(!settled) {
-                        settled = true;
+                        // openSession calls onClosed once, after its terminal reader-loop exit;
+                        // rejecting this one-shot Promise needs no additional local state change.
                         reject(toError(error, 'Session closed before it opened'));
                         return;
                     }
@@ -1328,7 +1326,6 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 inFlightItem.deferred.reject(failure);
             }
             rejectAllQueued(failure);
-            // Stryker disable next-line ArithmeticOperator: dropped count is informational (logged, not branched on) — a wrong count changes no behavior a test can observe
             logger.warn({ dropped: carryOver.length + bufferedAppends.length }, 'Giving up on a reopen; dropping input the dead session never delivered');
             bufferedAppends = [];
             return;
@@ -1354,6 +1351,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         if(inFlightItem !== undefined) {
             pendingQueue.unshift(inFlightItem);
         }
+        // Stryker disable next-line llm: processQueue is a local function declaration and is always defined at this call site.
         processQueue();
     }
 
@@ -1374,6 +1372,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         const carryOver = currentQueue?.takePending() ?? [];
         const handshake = `[BOOT] Session reopened at ${now().toISOString()} after the previous session ended unexpectedly. Host handshake — nothing to do, no reply expected.`;
         reopenInFlight = reopenReplacementSession(handshake, inFlightItem, carryOver);
+        // Stryker disable next-line AwaitDrop: onClosed discards this wrapper promise, while lifecycle synchronization observes the separately assigned reopenInFlight promise directly.
         await reopenInFlight;
     }
 
@@ -1611,8 +1610,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
         // than leaving them pending for the life of the process.
         rejectAllQueued(new Error('Conductor is shutting down'));
 
-        let deadlineTimer: TimerHandle | undefined;
+        let deadlineTimer!: TimerHandle;
         const deadline = new Promise<void>((resolve) => {
+            // Promise executors run synchronously, so this is assigned before the race below.
             deadlineTimer = clock.setTimer(resolve, options.deadlineMs);
         });
 
@@ -1623,7 +1623,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
             await reopenInFlight;
             if(currentTurn !== null) {
                 await raceAgainstTimeout(waitForTurnEnd(), options.turnWaitMs);
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, sonarjs/different-types-comparison -- TS narrows currentTurn from the outer check, but the await above lets afterResult() (running from a frame observed while we waited) set it back to null concurrently; re-checking is deliberate, not redundant
+                // The turn may have ended while awaiting the waiter; avoid adding another await
+                // on the no-op interrupt path because the hard-deadline race observes that turn.
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, sonarjs/different-types-comparison -- the await lets afterResult set currentTurn back to null despite TypeScript retaining the outer narrowing
                 if(currentTurn !== null) {
                     await interruptCurrentTurnInternal('shutdown turn-wait elapsed');
                 }
@@ -1643,9 +1645,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         })();
 
         await Promise.race([graceful, deadline]);
-        if(deadlineTimer !== undefined) {
-            clock.clearTimer(deadlineTimer);
-        }
+        clock.clearTimer(deadlineTimer);
         currentHandleRef?.close();
     }
 

@@ -24,32 +24,45 @@ interface RawDiscordMessage {
     content?:   string
 }
 
+interface SearchedMessage {
+    id:      string
+    message: RawDiscordMessage
+}
+
 /**
- * Search a single channel and collect messages into the accumulator.
- * Skips messages already seen (dedup by ID). Logs a warning on error.
+ * Search one channel, retaining messages collected before a malformed response fails.
+ * Logs a warning on error without discarding the valid prefix.
  */
-async function searchChannelInto(
+async function searchChannel(
     searchService: MCPMessageSearchService,
     channelId:     string,
     query:         string,
     startTime:     Date | undefined,
     endTime:       Date | undefined,
-    limit:         number | undefined,
-    seenIds:       Set<string>,
-    out:           RawDiscordMessage[]
-): Promise<void> {
+    limit:         number | undefined
+): Promise<SearchedMessage[]> {
+    const messages: SearchedMessage[] = [];
     try {
         const result = await searchService.searchMessages({ channelId, query, startTime, endTime, limit });
         for(const msg of result.messages as RawDiscordMessage[]) {
             const id = msg.id;
-            if(id && !seenIds.has(id)) {
-                seenIds.add(id);
-                out.push(msg);
+            if(id) {
+                messages.push({ id, message: msg });
             }
         }
     } catch (err) {
-        // Stryker disable next-line ObjectLiteral,StringLiteral: log call structure and message text are informational only
         logger.warn({ err, channelId }, 'DiscordHistoryProvider: channel search failed');
+    }
+    return messages;
+}
+
+/** Merge in channel order so the first DM or guild occurrence wins each message ID. */
+function appendUnseen(messages: SearchedMessage[], seenIds: Set<string>, out: RawDiscordMessage[]): void {
+    for(const { id, message } of messages) {
+        if(!seenIds.has(id)) {
+            seenIds.add(id);
+            out.push(message);
+        }
     }
 }
 
@@ -57,15 +70,14 @@ async function searchChannelInto(
  * Convert a raw message object from the search service to a HistoryEntry.
  */
 function toHistoryEntry(msg: RawDiscordMessage, botUserId: string): HistoryEntry {
+    // Stryker disable next-line NumberLiteralValue: MCPMessageSearchService requires timestamp and the production fetcher constructs it with createdAt.toISOString().
     const timestamp  = msg.timestamp ?? new Date(0).toISOString();
     const author     = msg.author;
     const rawContent = msg.content ?? '';
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: true mutant always truncates but slice(0,200) of 200-char string is identical; >= equivalent since slice(0,N) of length-N string returns same value
-    const content    = rawContent.length > MAX_CONTENT_LENGTH
-        ? rawContent.slice(0, MAX_CONTENT_LENGTH)
-        : rawContent;
+    // `slice(0, limit)` preserves shorter strings and bounds longer ones, so one operation
+    // expresses the runtime contract without a redundant boundary branch.
+    const content    = rawContent.slice(0, MAX_CONTENT_LENGTH);
     const authorName = author?.displayName ?? author?.username ?? 'unknown';
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: author ID comparison — determines direction from bot perspective; empty botUserId means pre-login construction, direction unknown
     let direction: 'inbound' | 'outbound' | 'mutual';
     if(!botUserId) {
         direction = 'mutual';
@@ -75,7 +87,6 @@ function toHistoryEntry(msg: RawDiscordMessage, botUserId: string): HistoryEntry
         direction = 'inbound';
     }
 
-    // Stryker disable next-line StringLiteral: summary format is cosmetic — tested indirectly via content
     return { platform: 'discord', timestamp, summary: `${authorName}: ${content}`, direction };
 }
 
@@ -108,20 +119,20 @@ export class DiscordHistoryProvider implements PlatformHistoryProvider {
         if(this.dmTracker && metadata?.discordUserId) {
             const dmChannelId = await this.dmTracker.getOrCreateDMByUsername(identifier);
             if(dmChannelId) {
-                await searchChannelInto(this.searchService, dmChannelId, identifier, startTime, endTime, maxMessages, seenIds, allMessages);
+                const dmMessages = await searchChannel(this.searchService, dmChannelId, identifier, startTime, endTime, maxMessages);
+                appendUnseen(dmMessages, seenIds, allMessages);
             }
         }
 
         // Step 2: search up to MAX_CHANNELS unmuted guild channels
         const unmutedChannels  = await this.channelRegistry.getUnmutedChannels();
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: optimization guard — slice(0, MAX_CHANNELS) on shorter array returns same result
-        const channelsToSearch = unmutedChannels.length > MAX_CHANNELS
-            ? unmutedChannels.slice(0, MAX_CHANNELS)
-            : unmutedChannels;
+        // Slicing preserves the channel content for fewer than MAX_CHANNELS runtime entries.
+        const channelsToSearch = unmutedChannels.slice(0, MAX_CHANNELS);
 
-        for(const channel of channelsToSearch) {
-            // eslint-disable-next-line no-await-in-loop -- must stay sequential: seenIds Set is mutated inside searchChannelInto for cross-channel deduplication; parallel calls would race on shared state
-            await searchChannelInto(this.searchService, channel.channelId, identifier, startTime, endTime, maxMessages, seenIds, allMessages);
+        const guildResults = await Promise.all(channelsToSearch.map(channel =>
+            searchChannel(this.searchService, channel.channelId, identifier, startTime, endTime, maxMessages)));
+        for(const channelMessages of guildResults) {
+            appendUnseen(channelMessages, seenIds, allMessages);
         }
 
         // Step 3: convert to HistoryEntry[]

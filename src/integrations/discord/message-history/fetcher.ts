@@ -1,5 +1,6 @@
 import type { Client, Message, TextBasedChannel } from 'discord.js';
 import { ChannelNotAccessibleError, MessageFetchError } from '@/errors';
+import { mapBounded } from '@/integrations/discord/map-bounded';
 import { timestampToSnowflake } from '@/integrations/discord/message-history/snowflake';
 import type { DiscordSearchResult, DiscordAttachment, DiscordEmbed, DiscordReaction } from '@/integrations/discord/message-history/types';
 import { withDiscordRetry } from '@/integrations/discord/retry';
@@ -60,8 +61,7 @@ function transformMessage(message: Message): DiscordSearchResult {
     for(const attachment of message.attachments.values()) {
         const transformed: DiscordAttachment = {
             url:      attachment.url,
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: attachment.name typed as string but may be null at runtime
-            filename: attachment.name ?? 'unnamed',
+            filename: attachment.name,
         };
         if(attachment.contentType) {
             transformed.contentType = attachment.contentType;
@@ -172,16 +172,24 @@ function processBatch(
 
         messages.push(message);
 
-        // Stryker disable all: Loop termination on limit reached prevents infinite pagination
         if(currentMessages.length + messages.length >= maxMessages) {
             hasMore = true;
             shouldStop = true;
             break;
         }
-        // Stryker restore all
     }
 
     return { messages, hasMore, shouldStop };
+}
+
+function pageOptions(cursor: string | undefined, remaining: number): { limit: number, before?: string } {
+    const options: { limit: number, before?: string } = {
+        limit: Math.min(DISCORD_API_MAX_MESSAGES, Math.max(1, remaining)),
+    };
+    if(cursor) {
+        options.before = cursor;
+    }
+    return options;
 }
 
 export function createMessageFetcher(client: Client): MessageFetcher {
@@ -197,7 +205,6 @@ export function createMessageFetcher(client: Client): MessageFetcher {
             }
             return channel;
         } catch (error) {
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent — both branches throw ChannelNotAccessibleError(channelId); mutant wraps the existing error in a new one with the same channelId, indistinguishable to callers
             if(error instanceof ChannelNotAccessibleError) {
                 throw error;
             }
@@ -208,7 +215,6 @@ export function createMessageFetcher(client: Client): MessageFetcher {
     /**
      * Fetches messages with pagination and optional time filtering.
      */
-    // eslint-disable-next-line sonarjs/cognitive-complexity -- pagination loop with time-filtering and error-handling requires inherent branching
     async function fetchMessages(options: FetchOptions): Promise<FetchResult> {
         const { channelId, startTime, endTime, limit } = options;
         const channel = await getChannel(channelId);
@@ -225,26 +231,17 @@ export function createMessageFetcher(client: Client): MessageFetcher {
 
         try {
             while(true) {
-                const fetchOptions: { limit: number, before?: string } = {
-                    limit: Math.min(DISCORD_API_MAX_MESSAGES, Math.max(1, maxMessages - allMessages.length)),
-                };
-                if(cursor) {
-                    fetchOptions.before = cursor;
-                }
+                const fetchOptions = pageOptions(cursor, maxMessages - allMessages.length);
 
                 // eslint-disable-next-line no-await-in-loop -- sequential: pagination depends on prior response cursor
                 const batch = await withDiscordRetry(
                     () => channel.messages.fetch(fetchOptions)
                 ) as Map<string, Message>;
 
-                if(batch.size === 0) {
-                    break;
-                }
-
                 // Process batch using helper function
                 const batchResult = processBatch(batch, afterSnowflake, allMessages, maxMessages);
                 allMessages.push(...batchResult.messages);
-                hasMore = batchResult.hasMore;
+                hasMore ||= batchResult.hasMore;
 
                 if(batchResult.shouldStop) {
                     break;
@@ -264,7 +261,6 @@ export function createMessageFetcher(client: Client): MessageFetcher {
             if(error instanceof ChannelNotAccessibleError) {
                 throw error;
             }
-            // Stryker disable next-line StringLiteral: Default error message is not behavior
             const reason = error instanceof Error ? error.message : 'Unknown error';
             throw new MessageFetchError(channelId, reason);
         }
@@ -300,27 +296,24 @@ export function createMessageFetcher(client: Client): MessageFetcher {
      * Returns only the messages that were successfully fetched.
      */
     async function fetchByIds(channelId: string, messageIds: string[]): Promise<DiscordSearchResult[]> {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: No test exercises empty array path - L-class (avoids unnecessary channel fetch)
         if(messageIds.length === 0) {
             return [];
         }
 
         const channel = await getChannel(channelId);
 
-        // Fetch each message individually and filter out failures
-        const results: DiscordSearchResult[] = [];
-        for(const messageId of messageIds) {
+        const results = await mapBounded(messageIds, 5, async (messageId) => {
             try {
-                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per message
                 const message = await withDiscordRetry(
                     () => channel.messages.fetch(messageId)
                 );
-                results.push(transformMessage(message));
+                return transformMessage(message);
             } catch{
                 // Skip messages that fail to fetch (not found or inaccessible)
+                return null;
             }
-        }
-        return results;
+        });
+        return results.filter((result): result is DiscordSearchResult => result !== null);
     }
 
     return {

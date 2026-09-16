@@ -30,14 +30,10 @@ export function createUserContextMCPServer(options: UserContextMCPServerOptions)
                 'getPersonContext',
                 'Fetch cross-platform interaction history for a person. Returns recent messages, emails, and social interactions.',
                 {
-                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only; .min(1) is Zod schema validation constraint
                     identifier: z.string().min(1).describe('Name, email, handle, or any identifier for the person'),
-                    // Stryker disable next-line ObjectLiteral: Zod schema shape is tool input configuration
                     timeRange:  z.object({
-                        // Stryker disable StringLiteral: describe() is documentation only
                         startTime: z.string().optional().describe('ISO 8601 start (default: 7 days ago)'),
                         endTime:   z.string().optional().describe('ISO 8601 end (default: now)'),
-                        // Stryker restore StringLiteral
                     }).optional(),
                 },
                 withToolErrorHandling('getPersonContext', async (args): Promise<CallToolResult> => {
@@ -56,13 +52,11 @@ export function createUserContextMCPServer(options: UserContextMCPServerOptions)
                     });
 
                     if(!result.person) {
-                        // Stryker disable next-line StringLiteral: result message is informational only
                         return mcpTextResult(`No contact found matching '${args.identifier}'.`);
                     }
 
                     return mcpJsonResult({ person: result.person, history: result.history ?? null });
                 }),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Person Context', readOnlyHint: true, idempotentHint: true } }
             ),
         ],

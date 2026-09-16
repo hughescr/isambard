@@ -5,6 +5,7 @@
  * These are used to track agent progress and trigger presence updates.
  */
 
+import type { MessageCreateOptions } from 'discord.js';
 import { z } from 'zod';
 
 // ============================================================================
@@ -314,8 +315,7 @@ export interface MCPMessageSplitter {
  */
 export interface MCPQuestionButtonBuilder {
     /** Build button components for a question with options */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- platform components returned as unknown to avoid Discord.js dependency
-    buildQuestionButtons(config: { questionId: string, options: { label: string, value: string }[] }): any[]
+    buildQuestionButtons(config: { questionId: string, options: { label: string, value: string }[] }): NonNullable<MessageCreateOptions['components']>
 }
 
 /**
@@ -334,10 +334,8 @@ export interface MCPRetryHelper {
  * Return types are kept as unknown to avoid importing Discord-specific types.
  */
 export interface MCPMessageSearchService {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- search results contain Discord-specific types; passed through as JSON
-    searchMessages(params: { channelId?: string, query?: string, startTime?: Date, endTime?: Date, limit?: number }): Promise<{ messages: any[], overflowCount?: number, [key: string]: unknown }>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- search results contain Discord-specific types; passed through as JSON
-    getRecentMessages(channelId: string, limit?: number): Promise<{ messages: any[], [key: string]: unknown }>
+    searchMessages(params: { channelId?: string, query?: string, startTime?: Date, endTime?: Date, limit?: number }): Promise<{ messages: { timestamp: string, localTimestamp?: string }[], overflowCount?: number, [key: string]: unknown }>
+    getRecentMessages(channelId: string, limit?: number): Promise<{ messages: { timestamp: string, localTimestamp?: string }[], [key: string]: unknown }>
     getMessageById(channelId: string, messageId: string): Promise<{ localTimestamp?: string, timestamp: string, [key: string]: unknown } | null>
     getMessagesById(channelId: string, messageIds: string[]): Promise<{ localTimestamp?: string, timestamp: string, [key: string]: unknown }[]>
 }

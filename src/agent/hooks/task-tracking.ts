@@ -25,9 +25,7 @@ export function createTaskTrackingHooks(): Partial<Record<HookEvent, HookCallbac
                 hooks: [
                     async (input): Promise<{ 'continue': boolean }> => {
                         const taskInput = input as TaskCreatedHookInput;
-                        // Stryker disable StringLiteral,ObjectLiteral: Observability — logging only, does not affect task tracking state
                         logger.debug({ taskId: taskInput.task_id, taskSubject: taskInput.task_subject, msg: 'TaskCreated hook fired — task launched by agent' });
-                        // Stryker restore StringLiteral,ObjectLiteral
                         return { 'continue': true };
                     },
                 ],
@@ -38,9 +36,7 @@ export function createTaskTrackingHooks(): Partial<Record<HookEvent, HookCallbac
                 hooks: [
                     async (input): Promise<{ 'continue': boolean }> => {
                         const taskInput = input as TaskCompletedHookInput;
-                        // Stryker disable StringLiteral,ObjectLiteral: Observability — logging only, does not affect task tracking state
                         logger.debug({ taskId: taskInput.task_id, taskSubject: taskInput.task_subject, msg: 'TaskCompleted hook fired — sub-agent finished' });
-                        // Stryker restore StringLiteral,ObjectLiteral
                         return { 'continue': true };
                     },
                 ],

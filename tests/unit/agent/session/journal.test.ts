@@ -86,6 +86,7 @@ describe('createSessionJournal', () => {
         const [logArg] = errorLog.mock.calls[0] as [Record<string, unknown>];
         expect(logArg.error).toBe(failure);
         expect(logArg.kind).toBe('shutdown');
+        expect(logArg.msg).toBe('SessionJournal: failed to write journal entry');
     });
 
     test('append() never throws synchronously even when the backend later rejects', () => {

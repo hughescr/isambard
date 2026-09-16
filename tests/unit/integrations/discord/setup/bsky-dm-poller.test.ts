@@ -195,7 +195,10 @@ describe('bsky-dm-poller', () => {
         jest.advanceTimersByTime(1000);
         await flushMicrotasks();
 
-        expect(mockLogger.error).toHaveBeenCalled();
+        expect(mockLogger.error).toHaveBeenCalledWith({
+            err: expect.any(Error),
+            msg: 'Bluesky DM poll tick failed',
+        });
         expect(notify).not.toHaveBeenCalled();
     });
 

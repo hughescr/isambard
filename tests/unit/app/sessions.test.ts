@@ -32,6 +32,27 @@ async function flush(): Promise<void> {
     }
 }
 
+function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void, reject: (error: unknown) => void } {
+    let resolveDeferred!: (value: T) => void;
+    let rejectDeferred!: (error: unknown) => void;
+    const promise = new Promise<T>((resolve, reject) => {
+        resolveDeferred = resolve;
+        rejectDeferred = reject;
+    });
+    return { promise, resolve: resolveDeferred, reject: rejectDeferred };
+}
+
+async function waitUntil(predicate: () => boolean, description: string): Promise<void> {
+    for(let attempt = 0; attempt < 100; attempt += 1) {
+        if(predicate()) {
+            return;
+        }
+        // eslint-disable-next-line no-await-in-loop -- bounded condition wait; assertions never depend on a particular tick count
+        await Promise.resolve();
+    }
+    throw new Error(`Timed out waiting for ${description}`);
+}
+
 const FAKE_MCP_SERVERS: MCPServers = {
     memoryMcpServer:    { name: 'memory' } as unknown as MCPServers['memoryMcpServer'],
     discordMcpServer:   { name: 'discord' } as unknown as MCPServers['discordMcpServer'],
@@ -397,6 +418,7 @@ describe('createConversationConductor', () => {
         const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
         expect(startupContext).toContain('[BOOT BUNDLE · conversation · fresh]');
         expect(startupContext).toContain('user-42');
+        expect(startupContext).not.toContain('Stryker was here');
 
         // 'compact' renders no recentUsers section at all (R1's per-kind contract) — nothing was
         // lost across a compaction, so who Izzy was recently talking to is not re-seeded here.
@@ -535,9 +557,15 @@ describe('createConversationConductor', () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
         h.clock.advance(10_000);
-        (h.contextBuilder.loadRecentEventsSince as ReturnType<typeof jest.fn>).mockResolvedValue([
+        const eventsStarted = Promise.withResolvers<void>();
+        const eventsGate = Promise.withResolvers<unknown>();
+        (h.contextBuilder.loadRecentEventsSince as ReturnType<typeof jest.fn>).mockImplementation(() => {
+            eventsStarted.resolve();
+            return eventsGate.promise;
+        });
+        const events = [
             { path: 'state/foo.md', content: 'Foo happened', contentPreview: 'Foo happened', updatedAt: new Date(9000) },
-        ]);
+        ];
 
         const { conductor, contextPolicy } = await createConversationConductor(h.params);
         const openPromise = conductor.open();
@@ -550,7 +578,17 @@ describe('createConversationConductor', () => {
 
         const options = h.instances[0].receivedParams?.options;
         const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        const compactResult = await hookFn?.({ source: 'compact' } as never, undefined, undefined as never);
+        const compactResultPromise = hookFn?.({ source: 'compact' } as never, undefined, undefined as never);
+        let compactResult: Awaited<typeof compactResultPromise>;
+        try {
+            await eventsStarted.promise;
+            // The current mark remains the committed boundary until every section of the bundle
+            // has finished loading. Advancing it sooner could omit events from a concurrent retry.
+            expect(contextPolicy.eventsSinceMs()).toBe(5000);
+        } finally {
+            eventsGate.resolve(events);
+            compactResult = await compactResultPromise;
+        }
         const compactContext = (compactResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
 
         expect(h.contextBuilder.loadRecentEventsSince).toHaveBeenCalledWith(10_000 - 5000, expect.any(Number), new Date(10_000));
@@ -731,6 +769,7 @@ describe('createConversationConductor', () => {
         expect(startupContext).toContain('Refactor the widget');
     });
 
+    // eslint-disable-next-line complexity -- one scenario exercises dedupe, filtering and the ten-user cap through the same live conductor
     it('dedupes, caps at 10 and ignores non-discord/undefined authors when building recentUsers', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
@@ -756,7 +795,7 @@ describe('createConversationConductor', () => {
         async function submitNonDiscord(envelopeId: string): Promise<void> {
             const submitPromise = conductor.submit(
                 {
-                    id: envelopeId, kind: 'notification', text: 'note', hostPriority: 'accumulate', shouldQuery: true, createdAt: new Date(0),
+                    id: envelopeId, kind: 'notification', text: 'note', authorId: 'user-NON-DISCORD', hostPriority: 'accumulate', shouldQuery: true, createdAt: new Date(0),
                 },
                 { priority: 'other' }
             );
@@ -773,6 +812,15 @@ describe('createConversationConductor', () => {
         await submitNonDiscord('env-notify-1');
         // An undefined authorId must not blow up or be recorded.
         await submitDiscord(undefined, 'env-anon');
+
+        const prefillOptions = h.instances[0].receivedParams?.options;
+        const prefillHookFn = prefillOptions?.hooks?.SessionStart?.[0]?.hooks[0];
+        const prefillResult = await prefillHookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+        const prefillContext = (prefillResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+        expect(prefillContext.match(/user-A/g)).toHaveLength(1);
+        expect(prefillContext.match(/user-B/g)).toHaveLength(1);
+        expect(prefillContext).not.toContain('user-NON-DISCORD');
+
         // Fill past the 10-entry cap.
         for(let i = 0; i < 10; i += 1) {
             // eslint-disable-next-line no-await-in-loop -- sequential submits against one fake session, deliberately serialised
@@ -790,6 +838,7 @@ describe('createConversationConductor', () => {
         expect(startupContext).toContain('user-0');
         expect(startupContext).not.toContain('user-A');
         expect(startupContext).not.toContain('user-B');
+        expect(startupContext).not.toContain('Stryker was here');
     });
 
     it('classifies the SDK\'s "Operation aborted" stderr as an error, never debug — the session has no per-open interrupt flag threaded into isInterrupting', async () => {
@@ -1420,6 +1469,7 @@ describe('createPerchConductor', () => {
 
         expect(startupContext).toContain('[BOOT BUNDLE · perch · fresh]');
         expect(startupContext).toContain('Quiet night.');
+        expect(startupContext).not.toContain('Stryker was here');
     });
 
     it('reports lost perch-started background tasks (recovery from the perch journal) in its boot bundle', async () => {
@@ -1813,29 +1863,32 @@ describe('createSessionAmbience', () => {
         expect(h.perch.get().quota).toMatchObject({ fiveHour: { utilization: 42 }, source: 'poll' });
     });
 
-    it('polls once when a registered ledger sees a result frame', async () => {
+    it('requests a debounced follow-up poll only when a registered ledger sees a result frame', async () => {
         const h = ambienceHarness();
-        // app.start() arms the poller before any session takes a turn; a stopped poller
-        // deliberately ignores result frames.
         h.ambience.quotaPoller.start();
         h.ambience.register(h.conversation);
+        await h.ambience.quotaPoller.poll();
+        h.clock.advance(30_000);
 
         h.conversation.dispatch({ type: 'turn_submitted', envelope: { id: 'e1', kind: 'discord', queuedAt: new Date(0) }, at: new Date(0) });
         h.conversation.dispatch({ type: 'sdk_frame', frame: frames.resultSuccess({ total_cost_usd: 0.01 }), at: new Date(0) });
         await flush();
 
-        expect(h.fetch).toHaveBeenCalledTimes(1);
+        expect(h.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('does not poll for a non-result SDK frame, nor for a non-frame ledger event', async () => {
         const h = ambienceHarness();
+        h.ambience.quotaPoller.start();
         h.ambience.register(h.conversation);
+        await h.ambience.quotaPoller.poll();
+        h.clock.advance(30_000);
 
         h.conversation.dispatch({ type: 'turn_submitted', envelope: { id: 'e1', kind: 'discord', queuedAt: new Date(0) }, at: new Date(0) });
         h.conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hello'), at: new Date(0) });
         await flush();
 
-        expect(h.fetch).not.toHaveBeenCalled();
+        expect(h.fetch).toHaveBeenCalledTimes(1);
     });
 
     it('returns the plain time header for a role whose ledger has not been registered', () => {
@@ -1959,6 +2012,117 @@ describe('createSessionAmbience', () => {
 
         expect(h.ambience.timeHeaderFor('conversation')).toBe(h.ambience.timeHeaderFor('conversation'));
         expect(h.ambience.timeHeaderFor('perch')).not.toBe(h.ambience.timeHeaderFor('conversation'));
+    });
+});
+
+describe('session lifecycle await boundaries', () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it.each(['conversation', 'perch'] as const)('%s serializes deferred identity reloads so the latest identity wins', async (role) => {
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const h = role === 'conversation' ? build() : buildPerch();
+        const first = deferred<string>();
+        const second = deferred<string>();
+        let secondStarted = false;
+        let conductor: Awaited<ReturnType<typeof createConversationConductor>>['conductor'] | undefined;
+
+        try {
+            const created = role === 'conversation'
+                ? await createConversationConductor(h.params as CreateConversationConductorParams)
+                : await createPerchConductor(h.params);
+            conductor = created.conductor;
+            const openPromise = conductor.open();
+            await waitUntil(() => h.instances.length === 1, `${role} initial query`);
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            h.identityGet
+                .mockImplementationOnce(() => first.promise)
+                .mockImplementationOnce(() => {
+                    secondStarted = true;
+                    return second.promise;
+                });
+
+            h.fireIdentityChange();
+            await waitUntil(() => h.identityGet.mock.calls.length === 2, `${role} first identity reload`);
+            h.fireIdentityChange();
+            await new Promise<void>((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- stable event-loop checkpoint proves the second read stays gated
+                setImmediate(resolve);
+            });
+
+            expect(secondStarted).toBe(false);
+
+            first.resolve('identity one');
+            await waitUntil(() => secondStarted, `${role} second identity reload`);
+            second.resolve('identity two');
+            await waitUntil(() => h.instances.length === 2, `${role} identity reopen`);
+
+            expect(h.instances[1].receivedParams?.options.systemPrompt).toContain('identity two');
+        } finally {
+            first.resolve('identity one');
+            second.resolve('identity two');
+            await Promise.allSettled([first.promise, second.promise]);
+            try {
+                const replacement = h.instances.at(1);
+                if(replacement !== undefined) {
+                    replacement.emit(frames.init('sess-2'));
+                    await waitUntil(() => conductor?.status().sessionId === 'sess-2', `${role} replacement query cleanup`);
+                }
+            } finally {
+                await conductor?.shutdown({ turnWaitMs: 0, deadlineMs: 1000 });
+            }
+        }
+    });
+
+    it.each(['conversation', 'perch'] as const)('%s retains ownership of a rejecting adopted-wake delivery', async (role) => {
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const h = role === 'conversation' ? build() : buildPerch();
+        const delivery = deferred<void>();
+        // Observe this promise independently so an AwaitDrop mutant cannot turn the test itself
+        // into an unhandled-rejection test; the public contract is the conductor's own error log.
+        void delivery.promise.catch(() => undefined);
+        let conductor: Awaited<ReturnType<typeof createConversationConductor>>['conductor'] | undefined;
+
+        try {
+            const created = role === 'conversation'
+                ? await createConversationConductor(h.params as CreateConversationConductorParams)
+                : await createPerchConductor(h.params);
+            conductor = created.conductor;
+            const openPromise = conductor.open();
+            await waitUntil(() => h.instances.length === 1, `${role} initial query`);
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            let deliveredKind: Envelope['kind'] | undefined;
+            created.setWakeTurnDelivery((envelope) => {
+                deliveredKind = envelope.kind;
+                return delivery.promise;
+            });
+
+            conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'background result' });
+            h.instances[0].emit(frames.assistantText('background result'));
+            h.instances[0].emit(frames.resultSuccess({ result: 'background result' }));
+            await waitUntil(() => deliveredKind !== undefined, `${role} adopted-wake delivery`);
+
+            delivery.reject(new Error('delivery failed'));
+            await new Promise<void>((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- stable event-loop checkpoint lets the conductor observe the rejection
+                setImmediate(resolve);
+            });
+
+            expect(deliveredKind).toBe(role === 'conversation' ? 'task' : 'perch');
+            expect(h.logger.error).toHaveBeenCalledWith(
+                { error: expect.objectContaining({ message: 'delivery failed' }) },
+                'onWakeTurnSettled failed for an adopted wake turn'
+            );
+        } finally {
+            delivery.reject(new Error('delivery cleanup'));
+            await delivery.promise.catch(() => undefined);
+            await conductor?.shutdown({ turnWaitMs: 0, deadlineMs: 1000 });
+        }
     });
 });
 

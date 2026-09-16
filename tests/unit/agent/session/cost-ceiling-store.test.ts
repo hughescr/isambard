@@ -56,7 +56,7 @@ describe('createCostCeilingStore — load', () => {
         const oldest: JournalEntry = { type: 'cost_ceiling_snapshot', at: new Date(T0 - 3000), dateKey: '2026-09-03', totalUsd: 9, paused: true };
         const middle: JournalEntry = { type: 'cost_ceiling_snapshot', at: new Date(T0 - 2000), dateKey: '2026-09-04', totalUsd: 5, paused: true };
         const latest: JournalEntry = { type: 'cost_ceiling_snapshot', at: new Date(T0 - 1000), dateKey: '2026-09-05', totalUsd: 0.5, paused: false };
-        journal.scriptReadSince([unrelated, oldest, middle, latest]);
+        journal.scriptReadSince([unrelated, oldest, middle, latest, { type: 'shutdown', at: new Date(T0) }]);
 
         await expect(store.load()).resolves.toEqual({ dateKey: '2026-09-05', totalUsd: 0.5, paused: false });
     });

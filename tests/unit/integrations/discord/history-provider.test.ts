@@ -41,7 +41,7 @@ const UNMUTED_CHANNELS: MCPChannelInfo[] = [
 function makeMessage(id: string, authorId: string, authorName: string, content: string, timestamp: string) {
     return {
         id,
-        author:    { id: authorId, displayName: authorName, username: authorName }, // eslint-disable-line @stylistic/key-spacing -- aligned with surrounding shorthand keys
+        author: { id: authorId, displayName: authorName, username: authorName },
         content,
         timestamp,
     };
@@ -214,6 +214,42 @@ describe('DiscordHistoryProvider', () => {
             expect(result).toHaveLength(1);
         });
 
+        test('searches guild channels concurrently but merges out-of-order replies in channel order', async () => {
+            channelRegistry.getUnmutedChannels.mockResolvedValue(UNMUTED_CHANNELS.slice(0, 3));
+            const first  = Promise.withResolvers<{ messages: ReturnType<typeof makeMessage>[] }>();
+            const second = Promise.withResolvers<{ messages: ReturnType<typeof makeMessage>[] }>();
+            const third  = Promise.withResolvers<{ messages: ReturnType<typeof makeMessage>[] }>();
+            searchService.searchMessages.mockImplementation(({ channelId }: { channelId: string }) => {
+                if(channelId === CHANNEL_1_ID) {
+                    return first.promise;
+                }
+                if(channelId === CHANNEL_2_ID) {
+                    return second.promise;
+                }
+                return third.promise;
+            });
+
+            const historyPromise = provider.fetchHistory({ identifier: 'Alice' });
+            await Bun.sleep(1);
+            const admittedSearches = searchService.searchMessages.mock.calls.length;
+
+            // Resolve in reverse order; the channel-1 copy must still win the duplicate ID.
+            third.resolve({ messages: [makeMessage('third', 'user-3', 'C', 'last', '2026-01-01T12:00:00.000Z')] });
+            second.resolve({ messages: [
+                makeMessage('shared', 'user-2', 'B', 'wrong copy', '2026-01-01T11:00:00.000Z'),
+                makeMessage('second', 'user-2', 'B', 'middle', '2026-01-01T11:01:00.000Z'),
+            ] });
+            first.resolve({ messages: [makeMessage('shared', 'user-1', 'A', 'winning copy', '2026-01-01T10:00:00.000Z')] });
+
+            const result = await historyPromise;
+            expect(admittedSearches).toBe(3);
+            expect(result.map(entry => entry.summary)).toEqual([
+                'A: winning copy',
+                'B: middle',
+                'C: last',
+            ]);
+        });
+
         test('handles search errors gracefully — one channel fails, others succeed', async () => {
             channelRegistry.getUnmutedChannels.mockResolvedValue(UNMUTED_CHANNELS.slice(0, 3));
             const msg = makeMessage('msg-ok', 'user-123', 'Alice', 'Hi', '2026-01-01T10:00:00.000Z');
@@ -226,6 +262,51 @@ describe('DiscordHistoryProvider', () => {
 
             expect(result).toHaveLength(1);
             expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({ channelId: CHANNEL_2_ID }),
+                'DiscordHistoryProvider: channel search failed'
+            );
+        });
+
+        test('keeps DM precedence and good guild results when another guild search fails', async () => {
+            dmTracker.getOrCreateDMByUsername.mockResolvedValue(DM_CHANNEL_ID);
+            channelRegistry.getUnmutedChannels.mockResolvedValue(UNMUTED_CHANNELS.slice(0, 3));
+            searchService.searchMessages.mockImplementation(async ({ channelId }: { channelId: string }) => {
+                if(channelId === DM_CHANNEL_ID) {
+                    return { messages: [makeMessage('shared', 'user-1', 'DM', 'wins', '2026-01-01T10:00:00.000Z')] };
+                }
+                if(channelId === CHANNEL_1_ID) {
+                    return { messages: [
+                        makeMessage('shared', 'user-1', 'Guild', 'loses', '2026-01-01T11:00:00.000Z'),
+                        makeMessage('guild-1', 'user-1', 'Guild', 'good', '2026-01-01T11:01:00.000Z'),
+                    ] };
+                }
+                if(channelId === CHANNEL_2_ID) {
+                    throw new Error('timeout');
+                }
+                return { messages: [makeMessage('guild-3', 'user-3', 'Third', 'good', '2026-01-01T12:00:00.000Z')] };
+            });
+
+            const result = await provider.fetchHistory({ identifier: 'Alice', metadata: { discordUserId: 'user-1' } });
+
+            expect(result.map(entry => entry.summary)).toEqual(['DM: wins', 'Guild: good', 'Third: good']);
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ channelId: CHANNEL_2_ID }), expect.any(String));
+        });
+
+        test('keeps messages collected before a malformed response entry fails', async () => {
+            channelRegistry.getUnmutedChannels.mockResolvedValue(UNMUTED_CHANNELS.slice(0, 2));
+            const first = makeMessage('first', 'user-1', 'A', 'kept', '2026-01-01T10:00:00.000Z');
+            const second = makeMessage('second', 'user-2', 'B', 'also kept', '2026-01-01T11:00:00.000Z');
+            searchService.searchMessages
+                .mockResolvedValueOnce({ messages: [first, null] })
+                .mockResolvedValueOnce({ messages: [second] });
+
+            const result = await provider.fetchHistory({ identifier: 'Alice' });
+
+            expect(result.map(entry => entry.summary)).toEqual(['A: kept', 'B: also kept']);
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ channelId: CHANNEL_1_ID }), expect.any(String));
         });
 
         test('passes startTime and endTime to search', async () => {

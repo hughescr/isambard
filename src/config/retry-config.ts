@@ -40,7 +40,6 @@ export function loadRetryConfig(): RetryConfig {
     // Only parse if env var is actually set (not undefined or empty)
     const claudeMaxAttemptsRaw = env.get('CLAUDE_RETRY_MAX_ATTEMPTS').asString();
     if(claudeMaxAttemptsRaw) {
-        // Stryker disable next-line ObjectLiteral: Empty object for env override structure
         envOverrides.claude = {
             maxAttempts: env.get('CLAUDE_RETRY_MAX_ATTEMPTS').asInt(),
         };
@@ -48,7 +47,6 @@ export function loadRetryConfig(): RetryConfig {
 
     const discordMaxAttemptsRaw = env.get('DISCORD_RETRY_MAX_ATTEMPTS').asString();
     if(discordMaxAttemptsRaw) {
-        // Stryker disable next-line ObjectLiteral: Empty object for env override structure
         envOverrides.discord = {
             maxAttempts: env.get('DISCORD_RETRY_MAX_ATTEMPTS').asInt(),
         };
@@ -56,26 +54,12 @@ export function loadRetryConfig(): RetryConfig {
 
     const dynamodbTimeoutRaw = env.get('DYNAMODB_TIMEOUT_MS').asString();
     if(dynamodbTimeoutRaw) {
-        // Stryker disable next-line ObjectLiteral: Empty object for env override structure
         envOverrides.dynamodb = {
             defaultTimeoutMs: env.get('DYNAMODB_TIMEOUT_MS').asInt(),
         };
     }
 
-    // Parse with defaults, then merge overrides
-    const defaults = retryConfigSchema.parse({});
-
-    // Merge with deep merge for nested objects
-    // Stryker disable ObjectLiteral,LogicalOperator: Config merging with env overrides - defaults needed for undefined overrides
-    const merged = {
-        claude:   { ...defaults.claude, ...envOverrides.claude as Record<string, unknown> },
-        discord:  { ...defaults.discord, ...envOverrides.discord as Record<string, unknown> },
-        dynamodb: { ...defaults.dynamodb, ...envOverrides.dynamodb as Record<string, unknown> },
-    };
-    // Stryker restore ObjectLiteral,LogicalOperator
-
-    // Validate merged result
-    return retryConfigSchema.parse(merged);
+    return retryConfigSchema.parse(envOverrides);
 }
 
 // Export default config (useful for testing)

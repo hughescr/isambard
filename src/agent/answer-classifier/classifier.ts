@@ -32,12 +32,10 @@ export class AnswerClassifier {
         }
 
         // Layer 2: Heuristics
-        // Stryker disable next-line MethodExpression: trim() is defensive — Discord content rarely has leading/trailing whitespace; toLowerCase() is redundant with /i flag on patterns but kept for consistency
         const text = message.content.trim().toLowerCase();
 
         // Answer patterns - short affirmative/negative responses, direct answers
         // Longer alternatives first to avoid substring matches
-        // Stryker disable next-line Regex: $ anchor required for pattern matching
         // eslint-disable-next-line sonarjs/regex-complexity -- pattern list necessarily has many alternatives for classification accuracy; splitting would obscure intent
         const answerPatterns = /^(?:yes|nope|yep|okay|sure|i think|because|it's|they're|that's|maybe|probably|definitely|of course|no|ok|\d+(?:\.\d+)?$)/i;
 

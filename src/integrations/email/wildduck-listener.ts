@@ -11,35 +11,23 @@ import { createReconnectionLoop, type ReconnectionLoop, type ServiceHealthRegist
 const CONSECUTIVE_POLL_FAILURE_THRESHOLD = 3;
 
 export interface WildDuckListenerConfig {
-    // Stryker disable next-line NumericLiteral: Poll fallback interval is configuration constant
     pollFallbackMs:       number
-    // Stryker disable next-line NumericLiteral: SSE reconnect base delay is configuration constant
     sseReconnectDelayMs?: number
-    // Stryker disable next-line NumericLiteral: maxEmailsPerPoll is configuration constant
     maxEmailsPerPoll?:    number
     /** Optional service health registry for reporting email connectivity events */
     healthRegistry?:      ServiceHealthRegistry
 }
 
 const DEFAULT_MAX_EMAILS_PER_POLL = 20;
+const MAX_CONCURRENT_EMAILS = 4;
 const DEFAULT_SSE_RECONNECT_DELAY_MS = 5000;
 
 // ---------------------------------------------------------------------------
-// No-op health registry stub (used when no registry is provided)
+// No-op event sink (used when no registry is provided)
 // ---------------------------------------------------------------------------
 
-// Stryker disable all: no-op stub — behaviour is definitionally absent
-function noopUnsubscribe(): void { /* no-op */ }
-const NOOP_HEALTH_REGISTRY: ServiceHealthRegistry = {
-    getState:           () => 'disabled',
-    getEntry:           () => ({ state: 'disabled', epoch: 0, failureCount: 0 }),
-    getAll:             () => ({} as ReturnType<ServiceHealthRegistry['getAll']>),
-    isAvailable:        () => false,
-    isWriteAvailable:   () => false,
-    sendEvent:          () => undefined,
-    subscribe:          () => noopUnsubscribe,
-    buildStatusSummary: () => undefined,
-    stop:               () => undefined,
+const NOOP_HEALTH_REGISTRY: Pick<ServiceHealthRegistry, 'sendEvent'> = {
+    sendEvent: () => undefined,
 };
 // Stryker restore all
 
@@ -52,33 +40,29 @@ export class WildDuckListener {
     private readonly processor:            EmailProcessor;
     private readonly config:               WildDuckListenerConfig;
     private          timer:                ReturnType<typeof setTimeout> | null;
-    private          processing:           boolean;
+    private          processingGeneration: number | null;
+    // A batch may continue after stop(); the next generation waits for it before querying unseen mail.
+    private          processingDone:       Promise<void> | null;
     private          _running:             boolean;
+    private          generation:           number;
+    private          startPromise:         Promise<void> | null;
     private          sseSource:            EventSource | null;
     private          consecutivePollFails: number;
-    private readonly sseReconnectLoop:     ReconnectionLoop;
+    private          sseReconnectLoop:     ReconnectionLoop | null;
 
     constructor(wildDuckClient: WildDuckClient, processor: EmailProcessor, config: WildDuckListenerConfig) {
         this.wildDuckClient       = wildDuckClient;
         this.processor            = processor;
         this.config               = config;
         this.timer                = null;
-        // Stryker disable next-line BooleanLiteral: initialization flag — false is correct initial state
-        this.processing           = false;
-        // Stryker disable next-line BooleanLiteral: initialization flag — false is correct initial state
+        this.processingGeneration = null;
+        this.processingDone       = null;
         this._running             = false;
+        this.generation           = 0;
+        this.startPromise         = null;
         this.sseSource            = null;
         this.consecutivePollFails = 0;
-
-        const registry      = config.healthRegistry ?? NOOP_HEALTH_REGISTRY;
-        const baseDelayMs   = config.sseReconnectDelayMs ?? DEFAULT_SSE_RECONNECT_DELAY_MS;
-        this.sseReconnectLoop = createReconnectionLoop({
-            service:   'email',
-            registry,
-            connectFn: () => this.connectSSEForLoop(),
-            // Stryker disable next-line ObjectLiteral: SSE reconnect policy is configuration wiring
-            policy:    { baseDelayMs },
-        });
+        this.sseReconnectLoop     = null;
     }
 
     /** Whether the listener is currently active. */
@@ -90,80 +74,112 @@ export class WildDuckListener {
      * Drain backlog via fetchAndProcess() loop, then connect SSE for real-time updates.
      */
     async start(): Promise<void> {
-        // Stryker disable BlockStatement: try-catch ensures running=false on startup failure
-        try {
-            // Stryker disable next-line BooleanLiteral: setting running=true before backlog drain
-            this._running = true;
+        if(this._running) {
+            await this.startPromise;
+            return;
+        }
+        const generation = ++this.generation;
+        this._running = true;
+        const startPromise = this.startGeneration(generation);
+        this.startPromise = startPromise;
+        await startPromise;
+    }
 
+    private async startGeneration(generation: number): Promise<void> {
+        try {
             // Fetch and process any messages that arrived before this session
             // Re-fetch immediately while there are more messages (batch cap was hit)
-            // Stryker disable next-line ConditionalExpression,LogicalOperator: re-poll loop drains backlog — LogicalOperator mutation (&&→||) causes infinite loop in tests
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, no-await-in-loop -- defensive: _running may be set to false by stop(); await inside while is sequential pagination
-            while(this._running && await this.fetchAndProcess()) { /* drain backlog */ }
+            // eslint-disable-next-line no-await-in-loop -- sequential pagination drains one batch at a time
+            while(this.isCurrent(generation) && await this.fetchAndProcess(generation)) { /* drain backlog */ }
+
+            if(!this.isCurrent(generation)) {
+                return;
+            }
 
             // Connect SSE for real-time new-mail notifications via reconnection loop.
             // Only start when EventSource is available (not in all test environments).
             if(typeof EventSource !== 'undefined') {
-                this.sseReconnectLoop.start();
+                const registry = this.config.healthRegistry ?? NOOP_HEALTH_REGISTRY;
+                const baseDelayMs = this.config.sseReconnectDelayMs ?? DEFAULT_SSE_RECONNECT_DELAY_MS;
+                const loop = createReconnectionLoop({
+                    service:   'email',
+                    registry,
+                    connectFn: () => this.connectSSEForLoop(generation, loop),
+                    policy:    { baseDelayMs },
+                });
+                this.sseReconnectLoop = loop;
+                loop.start();
             }
 
             // Schedule fallback poll timer
-            this.scheduleNextPoll();
+            this.scheduleNextPoll(generation);
         } catch (err) {
-            // Stryker disable next-line BooleanLiteral: resetting running=false on startup failure
-            this._running = false;
+            if(this.isCurrent(generation)) {
+                await this.stop();
+            }
             throw err;
         }
     }
 
     /** Stop SSE connection, clear timers, set running=false. */
     async stop(): Promise<void> {
-        // Stryker disable next-line ConditionalExpression: equivalent mutant — when _running is false, cleanup body is a no-op (timer and sseSource are null)
         if(!this._running) {
             return;
         }
-        // Stryker disable next-line BooleanLiteral: setting running=false before cleanup
+        this.generation++;
         this._running = false;
+        this.startPromise = null;
         if(this.timer !== null) {
             clearTimeout(this.timer);
             this.timer = null;
         }
-        // Stryker disable BlockStatement: SSE cleanup — close if connected
         if(this.sseSource !== null) {
             this.sseSource.close();
             this.sseSource = null;
         }
-        this.sseReconnectLoop.stop();
+        this.sseReconnectLoop?.stop();
+        this.sseReconnectLoop = null;
     }
 
     // ---------------------------------------------------------------------------
     // Internal helpers
     // ---------------------------------------------------------------------------
 
-    private scheduleNextPoll(): void {
+    private isCurrent(generation: number): boolean {
+        return this._running && generation === this.generation;
+    }
+
+    private scheduleNextPoll(generation: number): void {
+        if(!this.isCurrent(generation)) {
+            return;
+        }
         this.timer = setTimeout(() => {
-            void this.poll();
+            if(this.isCurrent(generation)) {
+                this.timer = null;
+                void this.poll(generation);
+            }
         }, this.config.pollFallbackMs);
     }
 
-    private async poll(): Promise<void> {
-        // Stryker disable BlockStatement: try-catch wraps poll cycle — error handling
+    private async poll(generation = this.generation): Promise<void> {
         try {
             // Re-fetch immediately while there are more messages (batch cap was hit)
-            // Stryker disable next-line ConditionalExpression,LogicalOperator: re-poll loop drains backlog — LogicalOperator mutation (&&→||) causes infinite loop in tests
             // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop drains backlog one batch at a time
-            while(await this.fetchAndProcess() && this._running) { /* drain backlog */ }
-            this.recordPollSuccess();
+            while(this.isCurrent(generation) && await this.fetchAndProcess(generation)) { /* drain backlog */ }
+            if(this.isCurrent(generation)) {
+                this.recordPollSuccess();
+            }
         } catch (err) {
+            if(!this.isCurrent(generation)) {
+                return;
+            }
             logger.warn({
                 error: err instanceof Error ? err.message : String(err),
                 msg:   'Poll cycle failed, will retry',
             });
             this.recordPollFailure(err);
         }
-        if(this._running) {
-            this.scheduleNextPoll();
-        }
+        this.scheduleNextPoll(generation);
     }
 
     private recordPollSuccess(): void {
@@ -196,13 +212,24 @@ export class WildDuckListener {
      * Returns true if the batch was capped at maxEmailsPerPoll (indicating more messages likely remain),
      * false otherwise.
      */
-    private async fetchAndProcess(): Promise<boolean> {
-        // Stryker disable next-line ConditionalExpression: concurrency guard — drop concurrent calls
-        if(this.processing) {
-            return false;
+    private async fetchAndProcess(generation = this.generation): Promise<boolean> {
+        while(this.processingDone !== null) {
+            if(this.processingGeneration === generation) {
+                return false;
+            }
+            // eslint-disable-next-line no-await-in-loop -- wait for an older generation's batch before acquiring single-flight ownership
+            await this.processingDone;
+            if(generation !== this.generation) {
+                return false;
+            }
         }
-        // Stryker disable next-line BooleanLiteral: setting processing=true to guard concurrent calls
-        this.processing = true;
+
+        let releaseProcessing!: () => void;
+        const done = new Promise<void>((resolve) => {
+            releaseProcessing = resolve;
+        });
+        this.processingGeneration = generation;
+        this.processingDone = done;
         try {
             const maxEmailsPerPoll = this.config.maxEmailsPerPoll ?? DEFAULT_MAX_EMAILS_PER_POLL;
             const summaries        = await this.wildDuckClient.listMessages(EmailFolder.Inbox, {
@@ -210,11 +237,13 @@ export class WildDuckListener {
                 limit:  maxEmailsPerPoll + 1,
             });
 
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: batch cap rate-limits processing to maxEmailsPerPoll; > vs >= is equivalent when length === cap
+            if(generation !== this.generation) {
+                return false;
+            }
+
             const capped    = summaries.length > maxEmailsPerPoll;
             const toProcess = capped ? summaries.slice(0, maxEmailsPerPoll) : summaries;
             if(capped) {
-                // Stryker disable ObjectLiteral,StringLiteral: log message content is not behavior-affecting
                 logger.warn({
                     total:     summaries.length,
                     processed: maxEmailsPerPoll,
@@ -223,23 +252,46 @@ export class WildDuckListener {
                 // Stryker restore ObjectLiteral,StringLiteral
             }
 
-            for(const summary of toProcess) {
-                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited WildDuck API per email
-                await this.processOne(summary.id);
+            let nextIndex = 0;
+            const workerFailures = new Set<unknown>();
+            const processNext = async (): Promise<void> => {
+                if(generation !== this.generation || workerFailures.size > 0) {
+                    return;
+                }
+                try {
+                    const summary = toProcess[nextIndex];
+                    if(summary === undefined) {
+                        return;
+                    }
+                    nextIndex++;
+                    await this.processOne(summary.id, generation);
+                } catch (error) {
+                    workerFailures.add(error);
+                    throw error;
+                }
+                await processNext();
+            };
+            const outcomes = await Promise.allSettled(Array.from(
+                { length: Math.min(MAX_CONCURRENT_EMAILS, toProcess.length) },
+                () => processNext()
+            ));
+            const failure = outcomes.find(outcome => outcome.status === 'rejected');
+            if(failure !== undefined) {
+                throw failure.reason;
             }
 
             return capped;
         } finally {
-            // Stryker disable next-line BooleanLiteral: resetting processing=false in finally
-            this.processing = false;
+            this.processingGeneration = null;
+            this.processingDone = null;
+            releaseProcessing();
         }
     }
 
-    private async processOne(uid: number): Promise<void> {
-        // Stryker disable BlockStatement: try-catch wraps single email processing — error handling
+    private async processOne(uid: number, generation: number): Promise<void> {
         try {
             const email = await this.wildDuckClient.getFullMessage(EmailFolder.Inbox, uid);
-            if(!email) {
+            if(!email || generation !== this.generation) {
                 return;
             }
             await this.processor.processEmail(email);
@@ -259,11 +311,13 @@ export class WildDuckListener {
      * subsequent 'error' event (server disconnects) restarts the reconnect loop so
      * the next connection attempt is made with exponential backoff.
      *
-     * Infrastructure-level — wrapped with Stryker disable for SSE plumbing.
      */
-    // Stryker disable all
-    private connectSSEForLoop(): Promise<void> {
+    private connectSSEForLoop(generation: number, loop: ReconnectionLoop): Promise<void> {
         return new Promise<void>((resolve, reject) => {
+            if(!this.isCurrent(generation)) {
+                resolve();
+                return;
+            }
             // Guard: EventSource may not be available in all environments (e.g., test runners)
             if(typeof EventSource === 'undefined') {
                 resolve();
@@ -284,11 +338,17 @@ export class WildDuckListener {
             let opened = false;
 
             source.addEventListener('open', (_event: Event) => {
+                if(!this.isCurrent(generation) || this.sseSource !== source) {
+                    return;
+                }
                 opened = true;
                 resolve();
             });
 
             source.addEventListener('message', (event: MessageEvent) => {
+                if(!this.isCurrent(generation) || this.sseSource !== source) {
+                    return;
+                }
                 let data: unknown;
                 try {
                     data = JSON.parse(String(event.data)) as unknown;
@@ -298,20 +358,17 @@ export class WildDuckListener {
                 }
 
                 if(typeof data === 'object' && data !== null && 'command' in data && (data).command === 'EXISTS') {
-                    void this.fetchAndProcess();
+                    void this.fetchAndProcess(generation);
                 }
             });
 
             source.addEventListener('error', (_event: Event) => {
-                source.close();
-                if(this.sseSource === source) {
-                    this.sseSource = null;
+                if(this.sseSource !== source) {
+                    return;
                 }
-                if(!this._running) {
-                    if(!opened) {
-                        // Listener is stopped — don't reconnect, but settle the promise
-                        resolve();
-                    }
+                source.close();
+                this.sseSource = null;
+                if(!this.isCurrent(generation)) {
                     return;
                 }
                 logger.warn({ msg: 'SSE connection error, scheduling reconnect' });
@@ -320,7 +377,7 @@ export class WildDuckListener {
                     // Error after open: stream was connected and then dropped.
                     // Use restart() (not start()) to preserve attemptCount so backoff grows
                     // on repeated drops rather than resetting to base delay every time.
-                    this.sseReconnectLoop.restart();
+                    loop.restart();
                 } else {
                     // Error before open: let the ReconnectionLoop handle backoff by rejecting
                     reject(new Error('SSE connection error'));
@@ -328,5 +385,4 @@ export class WildDuckListener {
             });
         });
     }
-    // Stryker restore all
 }

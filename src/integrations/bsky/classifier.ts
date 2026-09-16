@@ -20,13 +20,11 @@ export function createBskyClassifier(): ErrorClassifier {
             return {
                 category: 'rate_limited',
                 message:  error.message,
-                // Stryker disable next-line ConditionalExpression: ternary spreads retryAfterMs only when defined — undefined spread changes nothing, but presence/absence of the key affects classifier callers
                 ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
             };
         }
 
         if(error instanceof BskyError) {
-            // Stryker disable next-line StringLiteral: error message is informational only
             return { category: 'permanent', message: error.message || 'Bluesky error' };
         }
 

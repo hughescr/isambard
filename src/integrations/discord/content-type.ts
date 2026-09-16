@@ -10,13 +10,11 @@ import { lookup } from 'mrmime';
  */
 export function inferImageContentType(filename: string, discordContentType: string | null): string {
     // If Discord provided a valid image content type, use it
-    // Stryker disable next-line StringLiteral: Equivalent — any non-image string ('' or 'Stryker was here!') produces the same false from startsWith; the test uses null which goes through ?? to '' anyway
-    if((discordContentType ?? '').startsWith('image/')) {
-        return discordContentType!;
+    if(discordContentType?.startsWith('image/')) {
+        return discordContentType;
     }
 
     // Try to infer from file extension
-    // Stryker disable next-line MethodExpression: toLowerCase is equivalent to toUpperCase here — mrmime normalizes case internally
     const ext = filename.toLowerCase().split('.').at(-1);
     if(ext) {
         const mime = lookup(ext);

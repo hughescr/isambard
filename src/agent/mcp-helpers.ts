@@ -72,7 +72,6 @@ export function mcpServiceUnavailableResult(
     }
 
     if(category === 'offline_retryable_later') {
-        // Stryker disable next-line EqualityOperator: boundary condition — retryMs===0 is indistinguishable from retryMs<0 in practice; both map to "reconnection in progress"
         if(entry.nextRetryAt && entry.nextRetryAt.getTime() > Date.now()) {
             const waitMs = entry.nextRetryAt.getTime() - Date.now();
             const waitSec = Math.ceil(waitMs / 1000);
@@ -228,7 +227,6 @@ export function withToolErrorHandling<T>(
             return await handler(args);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            // Stryker disable next-line all: Logging for observability
             logger.warn({ tool: toolName, error: message }, 'MCP tool error');
             return mcpErrorResult(error);
         }

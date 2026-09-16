@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { z } from 'zod';
 import type { BrowserAdapter, BrowserHostPolicy } from '../../../src/agent/browser/types';
 import { createBrowserMCPServer, truncateToBytes } from '../../../src/agent/browser-mcp-server';
 import { textContent } from '../../setup';
@@ -7,10 +8,13 @@ import { textContent } from '../../setup';
 interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<CallToolResult>
     description: string
-    inputSchema: { shape: Record<string, unknown> }
-    annotations: Record<string, boolean>
+    inputSchema: { shape: Record<string, z.ZodType> }
+    annotations: Record<string, string | boolean>
 }
-interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool> }
+interface RegisteredToolInstance {
+    _registeredTools: Record<string, RegisteredTool>
+    server:           { _serverInfo: { name: string, version: string } }
+}
 
 // ---------------------------------------------------------------------------
 // Fake BrowserAdapter
@@ -62,6 +66,76 @@ async function callTool(
     }
     return tool.handler(args);
 }
+
+describe('browser MCP discovery contract', () => {
+    test('publishes actionable descriptions and accurate operation hints for every tool', () => {
+        const server = createBrowserMCPServer({ adapter: makeFakeAdapter(), policy: noPolicy, ...policy2mb });
+        const instance = server.instance as unknown as RegisteredToolInstance;
+        expect(server.name).toBe('browser');
+        expect(instance.server._serverInfo).toMatchObject({ name: 'browser', version: '1.0.0' });
+        const registered = instance._registeredTools;
+        const expectations: Record<string, [string, boolean, boolean]> = {
+            navigate:        ['Navigate', false, false],
+            reload:          ['Reload', false, false],
+            goBack:          ['Go Back', false, false],
+            goForward:       ['Go Forward', false, false],
+            getState:        ['Get State', true, true],
+            getBodyText:     ['Get Body Text', true, true],
+            getFullHTML:     ['Get Full HTML', true, true],
+            getLinks:        ['Get Links', true, true],
+            click:           ['Click', false, false],
+            type:            ['Type', false, false],
+            press:           ['Press Key', false, false],
+            scrollBy:        ['Scroll By', false, false],
+            scrollTo:        ['Scroll To', false, false],
+            screenshot:      ['Screenshot', true, false],
+            evaluate:        ['Evaluate JavaScript', false, false],
+            resize:          ['Resize', false, false],
+            waitForSelector: ['Wait For Selector', true, false],
+            getConsoleLogs:  ['Get Console Logs', true, true],
+            closeBrowser:    ['Close Browser', false, true],
+        };
+        expect(Object.keys(registered).toSorted((a, b) => a.localeCompare(b))).toEqual(Object.keys(expectations).toSorted((a, b) => a.localeCompare(b)));
+        for(const [name, [title, readOnlyHint, idempotentHint]] of Object.entries(expectations)) {
+            const entry = registered[name];
+            expect(entry.description.length).toBeGreaterThan(15);
+            expect(entry.annotations).toEqual({ title, readOnlyHint, idempotentHint });
+            for(const field of Object.values(entry.inputSchema.shape)) {
+                expect(field.description?.length).toBeGreaterThan(8);
+            }
+        }
+        expect(registered.navigate.description).toContain('security policy');
+        expect(registered.getState.description).toContain('isClosed');
+        expect(registered.closeBrowser.description).toContain('cookies');
+    });
+
+    test('exposes defaults, enums, and range limits that protect adapter calls', () => {
+        const server = createBrowserMCPServer({ adapter: makeFakeAdapter(), policy: noPolicy, ...policy2mb });
+        const tools = (server.instance as unknown as RegisteredToolInstance)._registeredTools;
+        expect(tools.getLinks.inputSchema.shape.containerSelector.parse(undefined)).toBe('body');
+        expect(tools.click.inputSchema.shape.button.safeParse('back').success).toBe(false);
+        for(const button of ['left', 'right', 'middle']) {
+            expect(tools.click.inputSchema.shape.button.safeParse(button).success).toBe(true);
+        }
+        expect(tools.click.inputSchema.shape.clickCount.safeParse(0).success).toBe(false);
+        expect(tools.click.inputSchema.shape.clickCount.safeParse(1).success).toBe(true);
+        expect(tools.click.inputSchema.shape.clickCount.safeParse(3).success).toBe(true);
+        expect(tools.click.inputSchema.shape.clickCount.safeParse(4).success).toBe(false);
+        expect(tools.screenshot.inputSchema.shape.format.safeParse('gif').success).toBe(false);
+        for(const format of ['png', 'jpeg']) {
+            expect(tools.screenshot.inputSchema.shape.format.safeParse(format).success).toBe(true);
+        }
+        for(const block of ['start', 'center', 'end']) {
+            expect(tools.scrollTo.inputSchema.shape.block.safeParse(block).success).toBe(true);
+        }
+        expect(tools.screenshot.inputSchema.shape.quality.safeParse(-1).success).toBe(false);
+        expect(tools.screenshot.inputSchema.shape.quality.safeParse(0).success).toBe(true);
+        expect(tools.screenshot.inputSchema.shape.quality.safeParse(100).success).toBe(true);
+        expect(tools.screenshot.inputSchema.shape.quality.safeParse(101).success).toBe(false);
+        expect(tools.resize.inputSchema.shape.width.safeParse(0).success).toBe(false);
+        expect(tools.getConsoleLogs.inputSchema.shape.limit.safeParse(0).success).toBe(false);
+    });
+});
 
 // ---------------------------------------------------------------------------
 // navigate
@@ -121,6 +195,9 @@ describe('browserMcpServer — reload/goBack/goForward', () => {
         const result = await callTool(server, 'reload');
         expect(adapter.reload).toHaveBeenCalled();
         expect(result.isError).toBeFalsy();
+        expect(JSON.parse(textContent(result.content[0]))).toEqual({
+            url: 'https://example.com', title: 'Example', loading: false,
+        });
     });
 
     test('reload returns error when adapter throws', async () => {
@@ -491,18 +568,39 @@ describe('browserMcpServer — scrollTo', () => {
 // ---------------------------------------------------------------------------
 
 describe('browserMcpServer — screenshot', () => {
+    test.each([
+        [16, false],
+        [17, true],
+    ])('enforces the screenshot byte cap at %i bytes', async (size, tooLarge) => {
+        const adapter = makeFakeAdapter({ screenshot: mock(async (): Promise<Buffer> => Buffer.alloc(size)) });
+        const server = createBrowserMCPServer({ adapter, policy: noPolicy, maxScreenshotBytes: 16, maxTextBytes: 100 });
+        const result = await callTool(server, 'screenshot', { format: 'jpeg' });
+        expect(result.isError).toBe(tooLarge);
+        if(tooLarge) {
+            expect(textContent(result.content[0])).toContain('limit 16');
+        } else {
+            expect(result.content).toEqual([{ type: 'image', data: Buffer.alloc(size).toString('base64'), mimeType: 'image/jpeg' }]);
+        }
+    });
     test('screenshot returns image content block on success', async () => {
         const adapter = makeFakeAdapter();
         const server = createBrowserMCPServer({ adapter, policy: noPolicy, ...policy2mb });
         const result = await callTool(server, 'screenshot');
         expect(result.isError).toBeFalsy();
-        expect(result.content[0].type).toBe('image');
+        const imageContent = result.content[0];
+        expect(imageContent.type).toBe('image');
         // FIX 13: adapter returns Buffer; MCP layer converts to base64
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrowing image content type at runtime
-        const data = (result.content[0] as any).data as string;
+        if(imageContent.type !== 'image') {
+            throw new TypeError('screenshot did not return image content');
+        }
+        const { data } = imageContent;
         // The fake adapter returned Buffer.from('base64screenshot'), so the base64 of that ASCII is its bytes encoded
         expect(typeof data).toBe('string');
         expect(data.length).toBeGreaterThan(0);
+        expect(imageContent.mimeType).toBe('image/png');
+        expect(adapter.screenshot).toHaveBeenCalledWith({});
+        const screenshotOptions = (adapter.screenshot as ReturnType<typeof mock>).mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(Object.keys(screenshotOptions)).toEqual([]);
     });
 
     test('screenshot returns error when buffer byteLength exceeds maxScreenshotBytes', async () => {
@@ -590,8 +688,9 @@ describe('browserMcpServer — resize', () => {
     test('resize calls adapter.resize', async () => {
         const adapter = makeFakeAdapter();
         const server = createBrowserMCPServer({ adapter, policy: noPolicy, ...policy2mb });
-        await callTool(server, 'resize', { width: 1920, height: 1080 });
+        const result = await callTool(server, 'resize', { width: 1920, height: 1080 });
         expect(adapter.resize).toHaveBeenCalledWith(1920, 1080);
+        expect(JSON.parse(textContent(result.content[0]))).toEqual({ width: 1920, height: 1080 });
     });
 
     test('resize returns error when adapter throws', async () => {
@@ -615,6 +714,7 @@ describe('browserMcpServer — waitForSelector', () => {
         const result = await callTool(server, 'waitForSelector', { selector: '#content', timeout: 5000 });
         expect(adapter.waitForSelector).toHaveBeenCalledWith('#content', 5000);
         expect(result.isError).toBeFalsy();
+        expect(JSON.parse(textContent(result.content[0]))).toEqual({ selector: '#content', found: true });
     });
 
     test('waitForSelector returns error when adapter throws', async () => {
@@ -655,6 +755,7 @@ describe('browserMcpServer — closeBrowser', () => {
         const result = await callTool(server, 'closeBrowser');
         expect(adapter.close).toHaveBeenCalled();
         expect(result.isError).toBeFalsy();
+        expect(textContent(result.content[0])).toBe('Browser closed.');
     });
 });
 

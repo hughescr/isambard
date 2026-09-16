@@ -297,6 +297,17 @@ describe('createTaskLaunchHooks', () => {
             expect(h.adoptWakeTurn).toHaveBeenCalledWith({ taskId: 'agent-X', toolUseId: 'tool-T', summary: 'BG-AGENT-DONE-BUT-TRUNCATED' });
         });
 
+        it('preserves a one-character summary without wrapper whitespace', async () => {
+            const h = build();
+            const fn = getHook(h.hooks, 'UserPromptSubmit');
+
+            await fn(userPromptSubmitInput({
+                prompt: '<task-notification><task-id>agent-X</task-id><tool-use-id>tool-T</tool-use-id><output-file></output-file>x</task-notification>',
+            }), undefined, { signal: makeSignal() });
+
+            expect(h.adoptWakeTurn).toHaveBeenCalledWith({ taskId: 'agent-X', toolUseId: 'tool-T', summary: 'x' });
+        });
+
         it('does not adopt for a prompt that is not a task-notification wake', async () => {
             const h = build();
             const fn = getHook(h.hooks, 'UserPromptSubmit');

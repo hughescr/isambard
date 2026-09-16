@@ -15,8 +15,7 @@ export interface AllowlistSagaStarter {
      * Sends a followUp message to the interaction if a name is needed.
      */
     startFromApproval(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- structural duck type for Discord interaction; discord.js followUp overload doesn't match exact structural type
-        interaction: { followUp: (options: any) => Promise<unknown> },
+        interaction: { followUp: (options: { content: string, ephemeral: true }) => Promise<unknown> },
         platform: AllowlistSagaPlatform,
         identifierValue: string,
         displayNameHint?: string

@@ -13,6 +13,7 @@
 
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
 import type { Client, TextChannel } from 'discord.js';
+import { mockLogger } from '../../../setup';
 import { InvariantViolationError } from '@/errors';
 import { WellKnownChannelNotFoundError } from '@/errors/discord';
 import type { DiscordCapability } from '@/integrations/discord/capability';
@@ -31,6 +32,8 @@ describe('sendEnvelopeResponse', () => {
     let mockTargetChannel: TextChannel;
 
     beforeEach(() => {
+        mockLogger.info.mockClear();
+        mockLogger.warn.mockClear();
         mockResolveEnvelopeTarget = mock();
         mockResponseRouter = {
             resolveEnvelopeTarget: mockResolveEnvelopeTarget,
@@ -75,6 +78,11 @@ describe('sendEnvelopeResponse', () => {
         expect(mockClient.channels.fetch).toHaveBeenCalledWith('target-channel-456');
         expect(mockSendToChannel).toHaveBeenCalledWith(mockTargetChannel, 'Digest text');
         expect(result).toEqual({ sent: true });
+        expect(mockLogger.info).toHaveBeenCalledTimes(1);
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            envelopeId:  'env-1', kind:        'catchup', chunkIndex:  0, totalChunks: 1,
+            msg:         'Envelope response chunk sent successfully',
+        });
     });
 
     test('splits long content into multiple chunks, sent in order', async () => {
@@ -120,15 +128,19 @@ describe('sendEnvelopeResponse', () => {
     });
 
     test('throws InvariantViolationError for a discord kind with no channelId, without resolving', async () => {
-        await expect(sendEnvelopeResponse({
+        const error = await sendEnvelopeResponse({
             envelopeId:     'env-4',
             kind:           'discord',
             text:           'reply text',
             responseRouter: mockResponseRouter,
             client:         mockClient,
             rateLimiter:    mockRateLimiter,
-        })).rejects.toThrow(InvariantViolationError);
+        }).catch(error_ => error_);
 
+        expect(error).toBeInstanceOf(InvariantViolationError);
+        expect((error as InvariantViolationError).context).toEqual({
+            location: 'sendEnvelopeResponse', invariant: 'channelId is required for envelope kind: discord',
+        });
         expect(mockResolveEnvelopeTarget).not.toHaveBeenCalled();
     });
 
@@ -158,6 +170,10 @@ describe('sendEnvelopeResponse', () => {
         expect(result.sent).toBe(false);
         expect(result.skipReason).toContain('catch-up');
         expect(mockSendToChannel).not.toHaveBeenCalled();
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            envelopeId:  'env-5', kind:        'catchup', channelType: 'catch-up',
+            msg:         'Cannot route envelope response: well-known channel #catch-up not configured. Response skipped.',
+        }));
     });
 
     test('a missing well-known channel for a perch kind resolves to sent:false with a skipReason', async () => {
@@ -194,6 +210,10 @@ describe('sendEnvelopeResponse', () => {
 
         expect(result).toEqual({ sent: false, skipReason: 'no-response' });
         expect(mockClient.channels.fetch).not.toHaveBeenCalled();
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            envelopeId:   'env-7', kind:         'catchup', fullResponse: 'Nothing new. @@NO_RESPONSE@@',
+            msg:          'Agent chose not to respond (@@NO_RESPONSE@@ sentinel detected)',
+        });
     });
 
     test('an unreachable target channel with no discordCapability resolves to a genuine sent:false, not a fabricated queue', async () => {
@@ -214,6 +234,11 @@ describe('sendEnvelopeResponse', () => {
         });
 
         expect(result).toEqual({ sent: false });
+        expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+            envelopeId: 'env-8', kind:       'catchup',
+            msg:        expect.stringContaining('Envelope response send failed, no outbox to queue to:'),
+        }));
     });
 
     test('a send failure after retries with no discordCapability resolves to a genuine sent:false, not a fabricated queue', async () => {
@@ -234,6 +259,7 @@ describe('sendEnvelopeResponse', () => {
         });
 
         expect(result).toEqual({ sent: false });
+        expect(mockLogger.warn).toHaveBeenCalledTimes(1);
     });
 
     test('with a discordCapability, a chunk queued to the outbox resolves to sent:false queued:true and never touches the raw client', async () => {
@@ -260,6 +286,11 @@ describe('sendEnvelopeResponse', () => {
         expect(result).toEqual({ sent: false, queued: true });
         expect(mockSendToChannelCapability).toHaveBeenCalledWith('target-channel-456', 'Digest text', { priority: 'high', type: 'catch_up_output' });
         expect(mockClient.channels.fetch).not.toHaveBeenCalled();
+        expect(mockLogger.info).toHaveBeenCalledTimes(1);
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            envelopeId:  'env-11', kind:        'catchup', chunkIndex:  0, totalChunks: 1,
+            msg:         'Envelope response chunk sent via capability facade',
+        });
     });
 
     test('with a discordCapability, a discord-kind envelope queues under the agent_response outbox type', async () => {

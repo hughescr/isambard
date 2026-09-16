@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { loadConfig, loadDynamoDBConfig, type ResourceProvider, type DynamoDBResourceProvider } from '@/config/loader';
+import { ConfigValidationError } from '@/errors/config';
 import { resolveTimezone } from '@/utils/time';
 
 /**
@@ -76,6 +77,7 @@ describe.concurrent('loadConfig', () => {
             // Discord config
             expect(config.discord.botToken).toBe('bot-token-123');
             expect(config.discord.applicationId).toBe('app-id-456');
+            expect(config.discord.taskBoard).toEqual({ enabled: true, editIntervalMs: 3000, refreshIntervalMs: 10_000 });
 
             // Planned integrations should be undefined
             expect(config.email).toBeUndefined();
@@ -393,6 +395,67 @@ describe.concurrent('loadConfig', () => {
     });
 });
 
+describe('loadConfig - contact reconciliation and vector index', () => {
+    afterEach(() => {
+        for(const key of [
+            'CONTACT_RECONCILIATION_ENABLED',
+            'CONTACT_RECONCILIATION_INTERVAL_MS',
+            'CONTACT_RECONCILIATION_OPERATION_DELAY_MS',
+            'CONTACT_RECONCILIATION_SCAN_PAGE_SIZE',
+            'CONTACT_RECONCILIATION_STRAY_LOOKUP_AGE_THRESHOLD_MS',
+            'VECTOR_INDEX_ENABLED',
+            'VECTOR_INDEX_DB_PATH',
+            'VECTOR_INDEX_MODEL_SLUG',
+            'VECTOR_INDEX_MODEL_QUANT',
+        ]) {
+            delete process.env[key];
+        }
+    });
+
+    test('loads contact scheduler overrides from their respective environment keys', () => {
+        process.env.CONTACT_RECONCILIATION_ENABLED = 'true';
+        process.env.CONTACT_RECONCILIATION_INTERVAL_MS = '61000';
+        process.env.CONTACT_RECONCILIATION_OPERATION_DELAY_MS = '0';
+        process.env.CONTACT_RECONCILIATION_SCAN_PAGE_SIZE = '11';
+        process.env.CONTACT_RECONCILIATION_STRAY_LOOKUP_AGE_THRESHOLD_MS = '45000';
+
+        expect(loadConfig(createMockResources()).contactReconciliation).toEqual({
+            enabled:                   true,
+            intervalMs:                61_000,
+            operationDelayMs:          0,
+            scanPageSize:              11,
+            strayLookupAgeThresholdMs: 45_000,
+        });
+    });
+
+    test('uses the documented contact reconciliation defaults when enabled', () => {
+        process.env.CONTACT_RECONCILIATION_ENABLED = 'true';
+        expect(() => loadConfig(createMockResources())).not.toThrow();
+        expect(loadConfig(createMockResources()).contactReconciliation).toEqual({
+            enabled:                   true,
+            intervalMs:                24 * 60 * 60 * 1000,
+            operationDelayMs:          1000,
+            scanPageSize:              25,
+            strayLookupAgeThresholdMs: 300_000,
+        });
+    });
+
+    test('uses the disabled default and exposes every vector-index override', () => {
+        expect(loadConfig(createMockResources()).contactReconciliation).toBeUndefined();
+        process.env.VECTOR_INDEX_ENABLED = 'false';
+        process.env.VECTOR_INDEX_DB_PATH = '/tmp/vec-test.sqlite';
+        process.env.VECTOR_INDEX_MODEL_SLUG = '4b';
+        process.env.VECTOR_INDEX_MODEL_QUANT = 'Q4_K_M';
+
+        expect(loadConfig(createMockResources()).vectorIndex).toEqual({
+            enabled:    false,
+            dbPath:     '/tmp/vec-test.sqlite',
+            modelSlug:  '4b',
+            modelQuant: 'Q4_K_M',
+        });
+    });
+});
+
 // Session-peers block 5: quota thresholds and the perch ceiling. Sequential (not concurrent)
 // because these mutate process.env.
 describe('loadConfig - Agent Quota Config', () => {
@@ -694,6 +757,12 @@ describe('loadDynamoDBConfig', () => {
             IsambardMemory: { name: '' },
         };
         expect(() => loadDynamoDBConfig(resources)).toThrow('DynamoDB config validation failed');
+        try {
+            loadDynamoDBConfig(resources);
+        } catch (error) {
+            expect(error).toBeInstanceOf(ConfigValidationError);
+            expect((error as ConfigValidationError).context.validationErrors[0]?.path).toBe('tableName');
+        }
     });
 
     test('should handle different table names', () => {

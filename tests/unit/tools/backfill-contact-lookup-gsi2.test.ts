@@ -1,19 +1,230 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { QueryCommand, UpdateCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import * as retryMod from '../../../src/utils/retry/retry-async';
-import { type ContactProfileItem, type BackfillStats, type QueryPageFn, type ProcessContactsFn, runBackfillLoop, parseArgs, processContacts } from '../../../tools/backfill-contact-lookup-gsi2-core';
+import { backfillSleep, runBackfillCli } from '../../../tools/backfill-contact-lookup-gsi2';
+import { type ContactProfileItem, type BackfillStats, type QueryPageFn, type ProcessContactsFn, runBackfillLoop, parseArgs, processContacts, createUpdateRateLimiter } from '../../../tools/backfill-contact-lookup-gsi2-core';
+import { mockLogger } from '../../setup';
 
 // backfill-contact-lookup-gsi2-core.ts has no top-level side-effects — safe to import in tests.
-// The CLI entrypoint (backfill-contact-lookup-gsi2.ts) has `await main()` at module level and
-// is NOT imported here.
+// The CLI entrypoint runs only as the main module; tests inject the runtime and never reach AWS.
+
+describe('backfill CLI wiring', () => {
+    const contact: ContactProfileItem = {
+        PK:          'CONTACT#alice-id',
+        SK:          'PROFILE',
+        personId:    'alice-id',
+        identifiers: [{ platform: 'email', value: 'alice@example.com' }],
+    };
+
+    test('help prints usage without loading DynamoDB runtime', async () => {
+        const output: string[] = [];
+        const loadRuntime = mock(() => {
+            throw new Error('runtime must stay unloaded');
+        });
+        await runBackfillCli(['bun', 'backfill', '--help'], {
+            loadRuntime,
+            write: (text) => { output.push(text); },
+        });
+        expect(loadRuntime).not.toHaveBeenCalled();
+        expect(output).toHaveLength(1);
+        expect(output[0]).toContain('Usage: sst shell -- bun tools/backfill-contact-lookup-gsi2.ts [options]');
+        expect(output[0]).toContain('--dry-run    Show what would be updated without writing');
+    });
+
+    test('help uses its default stdout writer without loading DynamoDB runtime', async () => {
+        const loadRuntime = mock(() => {
+            throw new Error('runtime must stay unloaded');
+        });
+        const stdout = spyOn(process.stdout, 'write').mockImplementation(() => true);
+        try {
+            await runBackfillCli(['bun', 'backfill', '--help'], { loadRuntime });
+            expect(stdout).toHaveBeenCalledWith(expect.stringContaining('Usage: sst shell -- bun tools/backfill-contact-lookup-gsi2.ts [options]'));
+        } finally {
+            stdout.mockRestore();
+        }
+        expect(loadRuntime).not.toHaveBeenCalled();
+    });
+
+    test('queries the CONTACTS GSI2 partition and reports exact successful counts', async () => {
+        const commands: unknown[] = [];
+        const docClient = { send: mock(async (command: unknown) => {
+            commands.push(command);
+            return command instanceof QueryCommand ? { Items: [contact] } : {};
+        }) } as unknown as DynamoDBDocumentClient;
+        const output: string[] = [];
+        let paceCalls = 0;
+        const paceUpdates = async (): Promise<void> => {
+            paceCalls++;
+        };
+        await runBackfillCli(['bun', 'backfill'], {
+            loadRuntime: () => ({ docClient, tableName: 'test-table' }),
+            paceUpdates,
+            write:       (text) => { output.push(text); },
+        });
+
+        expect(commands).toHaveLength(2);
+        expect(commands[0]).toBeInstanceOf(QueryCommand);
+        expect((commands[0] as QueryCommand).input).toMatchObject({
+            TableName:                 'test-table',
+            IndexName:                 'GSI2',
+            KeyConditionExpression:    'GSI2PK = :pk',
+            ExpressionAttributeValues: { ':pk': 'CONTACTS' },
+            Limit:                     50,
+        });
+        expect(commands[1]).toBeInstanceOf(UpdateCommand);
+        expect(paceCalls).toBe(1);
+        expect(output[0]).toBe('Querying CONTACTS GSI2 partition in table: test-table\n');
+        expect(output).not.toContain('[DRY RUN] No writes will be performed.\n');
+        expect(output.at(-1)).toContain('Contacts scanned: 1\n  Lookup rows updated: 1\n  Lookup rows skipped (already had GSI2 keys or stale): 0\n  Errors: 0');
+    });
+
+    test('creates the default update pacer when no override is injected', async () => {
+        const commands: unknown[] = [];
+        const docClient = { send: mock(async (command: unknown) => {
+            commands.push(command);
+            return command instanceof QueryCommand ? { Items: [contact] } : {};
+        }) } as unknown as DynamoDBDocumentClient;
+        const output: string[] = [];
+        await runBackfillCli(['bun', 'backfill'], {
+            loadRuntime: () => ({ docClient, tableName: 'test-table' }),
+            write:       (text) => { output.push(text); },
+        });
+
+        expect(commands).toHaveLength(2);
+        expect(commands[1]).toBeInstanceOf(UpdateCommand);
+        expect(output.at(-1)).toContain('Lookup rows updated: 1');
+    });
+
+    test('dry run reports its mode and never sends an update', async () => {
+        const commands: unknown[] = [];
+        const docClient = { send: mock(async (command: unknown) => {
+            commands.push(command);
+            return { Items: [contact] };
+        }) } as unknown as DynamoDBDocumentClient;
+        const output: string[] = [];
+        const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation(() => true);
+        try {
+            await runBackfillCli(['bun', 'backfill', '--dry-run'], {
+                loadRuntime: () => ({ docClient, tableName: 'test-table' }),
+                write:       (text) => { output.push(text); },
+            });
+        } finally {
+            stdoutSpy.mockRestore();
+        }
+
+        expect(commands).toHaveLength(1);
+        expect(commands[0]).toBeInstanceOf(QueryCommand);
+        expect(output).toContain('[DRY RUN] No writes will be performed.\n');
+        expect(output.at(-1)).toContain('Lookup rows updated: 1');
+    });
+
+    test('prints the failure summary and rejects when a profile cannot be parsed', async () => {
+        const invalidContact = { ...contact, personId: 'INVALID_ID' };
+        const docClient = { send: mock(async () => ({ Items: [invalidContact] })) } as unknown as DynamoDBDocumentClient;
+        const output: string[] = [];
+        await expect(runBackfillCli(['bun', 'backfill'], {
+            loadRuntime: () => ({ docClient, tableName: 'test-table' }),
+            write:       (text) => { output.push(text); },
+        })).rejects.toThrow('Backfill completed with 1 error(s)');
+        expect(output.at(-1)).toContain('Errors: 1');
+    });
+
+    test('real backfill sleep resolves after its timer fires', async () => {
+        const outcome = await Promise.race([
+            backfillSleep(1).then(() => 'resolved'),
+            Bun.sleep(100).then(() => 'timed out'),
+        ]);
+        expect(outcome).toBe('resolved');
+    });
+
+    test('the actual CLI main entry prints help before loading DynamoDB runtime', async () => {
+        const subprocess = Bun.spawn(['bun', 'tools/backfill-contact-lookup-gsi2.ts', '--help'], {
+            cwd:    process.cwd(),
+            stdout: 'pipe',
+            stderr: 'pipe',
+        });
+        const [exitCode, stdout] = await Promise.all([
+            subprocess.exited,
+            new Response(subprocess.stdout).text(),
+        ]);
+        expect(exitCode).toBe(0);
+        expect(stdout).toContain('Usage: sst shell -- bun tools/backfill-contact-lookup-gsi2.ts [options]');
+    });
+
+    test('importing the CLI entrypoint does not run its help path', async () => {
+        const originalArgv = process.argv;
+        const stdout = spyOn(process.stdout, 'write').mockImplementation(() => true);
+        process.argv = ['bun', 'backfill-contact-lookup-gsi2.ts', '--help'];
+        try {
+            // eslint-disable-next-line no-restricted-syntax -- query makes this a fresh in-process entrypoint evaluation.
+            await import(`../../../tools/backfill-contact-lookup-gsi2.ts?import-test=${String(Date.now())}`);
+            expect(stdout).not.toHaveBeenCalled();
+        } finally {
+            // eslint-disable-next-line require-atomic-updates -- restore the process-global argv before this test returns.
+            process.argv = originalArgv;
+            stdout.mockRestore();
+        }
+    });
+});
 
 // ============================================================
 // runBackfillLoop tests
 // ============================================================
+async function flushMicrotasks(remaining: number): Promise<void> {
+    if(remaining > 0) {
+        await Promise.resolve();
+        await flushMicrotasks(remaining - 1);
+    }
+}
+
+test('update rate limiter spaces steady request starts at 250 ms', async () => {
+    let clock = 100;
+    const waits: number[] = [];
+    const starts: number[] = [];
+    const pace = createUpdateRateLimiter(() => clock, async (ms) => {
+        waits.push(ms);
+        clock += ms;
+    });
+    await Promise.all(Array.from({ length: 5 }, async () => {
+        await pace();
+        starts.push(clock);
+    }));
+    expect(starts).toEqual([100, 350, 600, 850, 1100]);
+    expect(waits).toEqual([250, 250, 250, 250]);
+});
+
+test('update rate limiter rebases after an event-loop stall instead of bursting', async () => {
+    let clock = 0;
+    const timers: { ms: number, release: () => void }[] = [];
+    const starts: number[] = [];
+    const pace = createUpdateRateLimiter(() => clock, ms => new Promise<void>((resolve) => {
+        timers.push({ ms, release: resolve });
+    }));
+    const tasks = Array.from({ length: 3 }, async () => {
+        await pace();
+        starts.push(clock);
+    });
+    await flushMicrotasks(10);
+    expect(starts).toEqual([0]);
+    expect(timers.map(timer => timer.ms)).toEqual([250]);
+
+    clock = 1000;
+    timers.shift()?.release();
+    await flushMicrotasks(10);
+    expect(starts).toEqual([0, 1000]);
+    expect(timers.map(timer => timer.ms)).toEqual([250]);
+
+    clock = 1250;
+    timers.shift()?.release();
+    await Promise.all(tasks);
+    expect(starts).toEqual([0, 1000, 1250]);
+});
+
 describe('runBackfillLoop', () => {
     let fakeSleep: ReturnType<typeof mock<(ms: number) => Promise<void>>>;
 
     beforeEach(() => {
+        mockLogger.warn.mockClear();
         fakeSleep = mock(async (_ms: number) => {});
     });
 
@@ -37,8 +248,7 @@ describe('runBackfillLoop', () => {
             if(idx >= pages.length) {
                 throw new Error(`Unexpected queryPage call at index ${idx} (only ${pages.length} pages defined)`);
             }
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; bounds check is above
-            const page = pages[idx]!;
+            const page = pages[idx];
             return {
                 items:            page.items,
                 lastEvaluatedKey: page.lastEvaluatedKey,
@@ -124,6 +334,12 @@ describe('runBackfillLoop', () => {
         // Sleep called for each failure: 2 times
         expect(fakeSleep).toHaveBeenCalledTimes(2);
         expect(summaries).toHaveLength(1);
+        expect(mockLogger.warn).toHaveBeenCalledWith({
+            err:                 expect.any(Error),
+            exclusiveStartKey:   undefined,
+            consecutiveFailures: 1,
+            msg:                 'Failed to query page; will retry same page',
+        });
     });
 
     test('3 consecutive first-page failures then success — circuit-breaker not triggered', async () => {
@@ -154,10 +370,12 @@ describe('runBackfillLoop', () => {
         };
 
         let errorCaught = false;
+        let abortError: Error | undefined;
         await runBackfillLoop(queryPage, processOnePage, onSummary, fakeSleep, 5, 100)
-            .catch(() => {
+            .catch((error: Error) => {
                 summaryOrder.push('error');
                 errorCaught = true;
+                abortError = error;
             });
 
         expect(errorCaught).toBe(true);
@@ -165,13 +383,15 @@ describe('runBackfillLoop', () => {
         expect(summaryOrder[0]).toBe('summary');
         expect(summaryOrder[1]).toBe('error');
         // 5 failures accumulated
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; summaries is always populated before this line
-        const firstSummary = summaries[0]!;
+        const firstSummary = summaries[0];
         expect(firstSummary.totalErrors).toBe(5);
         // Sleep called 4 times — 5th failure triggers circuit-breaker throw before sleep
         expect(fakeSleep).toHaveBeenCalledTimes(4);
         // lastCursor is undefined because all failures hit the first page (exclusiveStartKey never advanced)
         expect(capturedLastCursor).toBeUndefined();
+        expect(abortError?.message).toBe('Backfill aborted: 5 consecutive query failures at cursor undefined');
+        expect(abortError?.cause).toBeInstanceOf(Error);
+        expect((abortError?.cause as Error).message).toBe('Query failure 5');
     });
 
     test('backoff doubles on each consecutive failure', async () => {
@@ -266,6 +486,32 @@ describe('runBackfillLoop', () => {
         expect(cursorsSeenOnCall2[1]).toEqual(cursorAfterPage1);
     });
 
+    test('a successful page resets the consecutive-failure circuit breaker', async () => {
+        const cursorAfterPage1 = { PK: 'cursor-after-page1' };
+        let callCount = 0;
+        const queryPage: QueryPageFn = async () => {
+            callCount++;
+            if(callCount === 1) {
+                throw new Error('failure before success');
+            }
+            if(callCount === 2) {
+                return { items: [], lastEvaluatedKey: cursorAfterPage1 };
+            }
+            throw new Error(`failure after success ${callCount - 2}`);
+        };
+        let abortError: Error | undefined;
+
+        await runBackfillLoop(queryPage, makeProcessContacts(), () => {}, fakeSleep, 5, 100)
+            .catch((error: Error) => {
+                abortError = error;
+            });
+
+        expect(callCount).toBe(7);
+        expect(fakeSleep).toHaveBeenCalledTimes(5);
+        expect(abortError?.message).toContain('5 consecutive query failures');
+        expect((abortError?.cause as Error).message).toBe('failure after success 5');
+    });
+
     test('processContacts errors are accumulated in totalErrors', async () => {
         // processOnePage returns errors > 0 — must be reflected in totalErrors
         const item = makeContact('henry-id', [{ platform: 'email', value: 'h@h.com' }]);
@@ -289,6 +535,7 @@ describe('parseArgs', () => {
         expect(opts.showHelp).toBe(false);
     });
 
+    // eslint-disable-next-line sonarjs/parameterized-tests -- default and each flag have distinct option assertions.
     test('--dry-run flag sets dryRun=true', () => {
         const opts = parseArgs(['node', 'script.ts', '--dry-run']);
         expect(opts.dryRun).toBe(true);
@@ -352,6 +599,8 @@ describe('processContacts', () => {
     let stdoutSpy: ReturnType<typeof spyOn<NodeJS.WriteStream, 'write'>>;
 
     beforeEach(() => {
+        mockLogger.debug.mockClear();
+        mockLogger.warn.mockClear();
         sentCommands = [];
         sendMock = mock(async (cmd: unknown) => {
             sentCommands.push(cmd);
@@ -406,6 +655,12 @@ describe('processContacts', () => {
         expect(exprValues[':gsi2pk']).toBe('CONTACT_LOOKUPS');
         // GSI2SK format: CONTACT#{personId}#{platform}#{normalizedValue}
         expect(exprValues[':gsi2sk']).toBe('CONTACT#alice-id#email#alice@example.com');
+        expect(mockLogger.debug).toHaveBeenCalledWith({
+            pk:     'CONTACT_LOOKUP#email#alice@example.com',
+            sk:     'CONTACT#alice-id',
+            gsi2sk: 'CONTACT#alice-id#email#alice@example.com',
+            msg:    'Updated CONTACT_LOOKUP row with GSI2 keys',
+        });
         // createdAt must be a non-empty ISO-8601 string
         const createdAt = exprValues[':createdAt'];
         expect(typeof createdAt).toBe('string');
@@ -512,8 +767,9 @@ describe('processContacts', () => {
     });
 
     test('non-conditional DynamoDB error → errors++, updated remains 0', async () => {
+        const updateError = new Error('DynamoDB update failed: ProvisionedThroughputExceededException');
         sendMock.mockImplementation(async (_cmd: unknown) => {
-            throw new Error('DynamoDB update failed: ProvisionedThroughputExceededException');
+            throw updateError;
         });
         const item = makeContact('frank-id', [{ platform: 'email', value: 'frank@example.com' }]);
 
@@ -522,6 +778,12 @@ describe('processContacts', () => {
         expect(result.errors).toBe(1);
         expect(result.updated).toBe(0);
         expect(result.skipped).toBe(0);
+        expect(mockLogger.warn).toHaveBeenCalledWith({
+            pk:  'CONTACT_LOOKUP#email#frank@example.com',
+            sk:  'CONTACT#frank-id',
+            err: updateError,
+            msg: 'Failed to update row after retries',
+        });
     });
 
     test('dry-run path → updated++, stdout write called, no DynamoDB call', async () => {
@@ -534,8 +796,7 @@ describe('processContacts', () => {
         expect(result.errors).toBe(0);
         expect(sendMock).not.toHaveBeenCalled();
         expect(stdoutSpy).toHaveBeenCalledTimes(1);
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; stdoutSpy is always called once before this assertion
-        const written = stdoutSpy.mock.calls[0]![0] as string;
+        const written = stdoutSpy.mock.calls[0][0] as string;
         expect(written).toContain('[dry-run]');
         expect(written).toContain('CONTACT_LOOKUP#email#grace@example.com');
         expect(written).toContain('CONTACT_LOOKUPS');
@@ -575,6 +836,36 @@ describe('processContacts', () => {
         expect(vals2[':gsi2sk']).toBe('CONTACT#bob-id#bsky#did:plc:abcdef');
     });
 
+    test('updates independent lookup rows with at most four requests in flight', async () => {
+        const releases: (() => void)[] = [];
+        let active = 0;
+        let maximum = 0;
+        sendMock.mockImplementation(async () => {
+            active++;
+            maximum = Math.max(maximum, active);
+            await new Promise<void>((resolve) => {
+                releases.push(resolve);
+            });
+            active--;
+        });
+        const items = Array.from({ length: 6 }, (_, index) => makeContact(`person-${index}`, [
+            { platform: 'email', value: `person-${index}@example.com` },
+        ]));
+        const task = processContacts(items, TABLE_NAME, docClient, false, async () => {});
+        await flushMicrotasks(10);
+        expect(maximum).toBe(4);
+        for(const release of releases.splice(0)) {
+            release();
+        }
+        await flushMicrotasks(10);
+        expect(releases).toHaveLength(2);
+        for(const release of releases.splice(0)) {
+            release();
+        }
+        expect(await task).toEqual({ updated: 6, skipped: 0, errors: 0 });
+        expect(maximum).toBe(4);
+    });
+
     test('contact with invalid personId (not kebab-case) → parse error → errors++, no send', async () => {
         // Inject an item with a personId that won't pass contactIdSchema validation
         const item: ContactProfileItem = {
@@ -589,6 +880,11 @@ describe('processContacts', () => {
         expect(result.errors).toBe(1);
         expect(result.updated).toBe(0);
         expect(sendMock).not.toHaveBeenCalled();
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+            pk:  'CONTACT#INVALID_ID',
+            err: expect.any(Error) as Error,
+            msg: 'Skipping contact: failed to parse personId/identifiers',
+        }));
     });
 
     test('empty items array → all counts are 0, send not called', async () => {

@@ -94,6 +94,17 @@ describe('extractMetadata', () => {
         mockLogger.warn.mockClear();
     });
 
+    it('uses every required ffprobe output flag and retains unknown codec fallback', async () => {
+        const calls: string[][] = [];
+        const runner: SpawnRunner = async (cmd) => {
+            calls.push(cmd);
+            return { stdout: JSON.stringify({ streams: [{ codec_type: 'video' }] }), stderr: '', exitCode: 0 };
+        };
+        const metadata = await extractMetadata('/tmp/movie.mp4', runner);
+        expect(calls).toEqual([['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', '/tmp/movie.mp4']]);
+        expect(metadata.videoCodec).toBe('unknown');
+    });
+
     it('parses full metadata with video and audio streams', async () => {
         const metadata = await extractMetadata('/test/video.mp4', makeRunner(FULL_FFPROBE_OUTPUT));
         expect(metadata.duration).toBeCloseTo(154.3, 1);
@@ -150,6 +161,37 @@ describe('extractMetadata', () => {
         expect(metadata.frameRate).toBe(25);
     });
 
+    it('preserves ffprobe frame-rate syntax and prefers avg_frame_rate', async () => {
+        const output = JSON.stringify({
+            streams: [{
+                codec_type:     'video',
+                avg_frame_rate: '30000/1001',
+                r_frame_rate:   '30/1',
+                index:          0,
+            }],
+            format: {},
+        });
+
+        const metadata = await extractMetadata('/test/video.mp4', makeRunner(output));
+        expect(metadata.frameRate).toBeGreaterThan(29.96);
+        expect(metadata.frameRate).toBeLessThan(29.98);
+    });
+
+    it('uses zero defaults for absent numeric metadata and preserves missing subtitle indices', async () => {
+        const output = JSON.stringify({
+            streams: [
+                { codec_type: 'video' },
+                { codec_type: 'subtitle', tags: { language: 'eng' } },
+                { codec_type: 'subtitle', tags: { language: 'fra' } },
+            ],
+            format: {},
+        });
+
+        const metadata = await extractMetadata('/test/video.mp4', makeRunner(output));
+        expect(metadata).toMatchObject({ duration: 0, width: 0, height: 0, frameRate: 0 });
+        expect(metadata.subtitleTracks.map(track => track.index)).toEqual([0, 1]);
+    });
+
     it('parses subtitle tracks with language and title', async () => {
         const metadata = await extractMetadata('/test/video.mp4', makeRunner(WITH_SUBTITLES_OUTPUT));
         expect(metadata.subtitleTracks).toHaveLength(2);
@@ -173,7 +215,7 @@ describe('extractMetadata', () => {
 
     it('throws on malformed JSON output', async () => {
         const runner = makeRunner('not json');
-        expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Failed to parse ffprobe output');
+        await expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Failed to parse ffprobe output');
     });
 
     it('throws MediaProcessingError with cause on malformed JSON', async () => {
@@ -191,7 +233,7 @@ describe('extractMetadata', () => {
 
     it('logs warn before throwing on malformed JSON output', async () => {
         const runner = makeRunner('not json');
-        expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Failed to parse ffprobe output');
+        await expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Failed to parse ffprobe output');
         await Promise.resolve();
         expect(mockLogger.warn).toHaveBeenCalledWith(
             expect.objectContaining({ msg: 'Failed to parse ffprobe output', stdout: 'not json' })
@@ -201,12 +243,12 @@ describe('extractMetadata', () => {
     it('throws on valid JSON with invalid schema (streams is not an array)', async () => {
         // Valid JSON but wrong structure — streams must be array if present
         const runner = makeRunner(JSON.stringify({ streams: 'not-an-array', format: { duration: '10.0' } }));
-        expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Invalid ffprobe output schema');
+        await expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Invalid ffprobe output schema');
     });
 
     it('logs warn before throwing on invalid schema', async () => {
         const runner = makeRunner(JSON.stringify({ streams: 'not-an-array', format: { duration: '10.0' } }));
-        expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Invalid ffprobe output schema');
+        await expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Invalid ffprobe output schema');
         await Promise.resolve();
         expect(mockLogger.warn).toHaveBeenCalledWith(
             expect.objectContaining({ msg: 'Invalid ffprobe output schema', issues: expect.arrayContaining([expect.anything()]) })

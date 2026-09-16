@@ -251,6 +251,84 @@ describe('EmailClassifier', () => {
             expect(result.confidence).toBe(0);
         });
 
+        test('does not attempt extraction or log a warning when no complete JSON object exists', async () => {
+            mockGenerateTextWithSystemPrompt.mockResolvedValue('plain text with no JSON');
+            mockLogger.warn.mockClear();
+
+            const result = await new EmailClassifier().classify(makeEmail());
+
+            expect(result).toMatchObject({ verdict: 'uncertain', confidence: 0 });
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test('does not attempt extraction when only a closing brace is present', async () => {
+            mockGenerateTextWithSystemPrompt.mockResolvedValue('plain text }');
+            mockLogger.warn.mockClear();
+
+            const result = await new EmailClassifier().classify(makeEmail());
+
+            expect(result).toMatchObject({ verdict: 'uncertain', confidence: 0 });
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test('does not attempt extraction when only an opening brace is present', async () => {
+            mockGenerateTextWithSystemPrompt.mockResolvedValue('plain text {');
+            mockLogger.warn.mockClear();
+
+            const result = await new EmailClassifier().classify(makeEmail());
+
+            expect(result).toMatchObject({ verdict: 'uncertain', confidence: 0 });
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test('does not attempt extraction when the closing brace precedes the opening brace', async () => {
+            mockGenerateTextWithSystemPrompt.mockResolvedValue('} plain text {');
+            mockLogger.warn.mockClear();
+
+            const result = await new EmailClassifier().classify(makeEmail());
+
+            expect(result).toMatchObject({ verdict: 'uncertain', confidence: 0 });
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test('extracts an object whose opening brace follows non-JSON text', async () => {
+            mockGenerateTextWithSystemPrompt.mockResolvedValue(
+                'x{"verdict":"safe","confidence":0.9,"reason":"OK"}'
+            );
+
+            const result = await new EmailClassifier().classify(makeEmail());
+
+            expect(result).toMatchObject({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
+        });
+
+        test('warns on the same widest candidate when multiple brace-delimited fragments are present', async () => {
+            const first = '{"verdict":"safe","confidence":0.9,"reason":"first"}';
+            const second = '{not valid}';
+            mockGenerateTextWithSystemPrompt.mockResolvedValue(`prefix ${first} middle ${second} suffix`);
+            mockLogger.warn.mockClear();
+
+            const result = await new EmailClassifier().classify(makeEmail());
+
+            expect(result).toMatchObject({ verdict: 'uncertain', confidence: 0 });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                extracted: `prefix ${first} middle ${second}`.slice('prefix '.length, 200),
+                msg:       'Failed to parse extracted JSON from classifier response',
+            }));
+        });
+
+        test('limits an invalid extracted JSON snippet in warning logs to 200 characters', async () => {
+            const candidate = `{${'x'.repeat(250)}}`;
+            mockGenerateTextWithSystemPrompt.mockResolvedValue(`prefix ${candidate} suffix`);
+            mockLogger.warn.mockClear();
+
+            await new EmailClassifier().classify(makeEmail());
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                extracted: candidate.slice(0, 200),
+                msg:       'Failed to parse extracted JSON from classifier response',
+            }));
+        });
+
         test('logs warn with extracted snippet when embedded JSON fails to parse', async () => {
             // Outer JSON.parse fails (not pure JSON); regex finds a {…} match;
             // inner JSON.parse also fails — exercises the logger.warn in the inner catch block
@@ -285,8 +363,8 @@ describe('EmailClassifier', () => {
 
             const classifier = new EmailClassifier();
 
-            expect(classifier.classify(makeEmail()))
-                .rejects.toThrow(ClassifierError);
+            await expect(classifier.classify(makeEmail()))
+                .rejects.toThrow('Classifier returned empty response');
         });
 
         test('error message includes original error detail', async () => {
@@ -338,6 +416,7 @@ describe('EmailClassifier', () => {
                 verdict:    'safe',
                 confidence: 0.95,
                 reason:     'Looks good',
+                msg:        'Email classified',
             }));
         });
 
@@ -454,6 +533,19 @@ describe('EmailClassifier', () => {
 
             expect(capturedUserMessage).toContain('To: noreply@rungie.com');
             expect(capturedUserMessage).not.toContain('To: undefined');
+        });
+
+        test('separates multiple To addresses with a comma and space', async () => {
+            let capturedUserMessage: string | undefined;
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string | string[], user: string) => {
+                capturedUserMessage = user;
+                return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
+            });
+
+            const classifier = new EmailClassifier();
+            await classifier.classify(makeEmail({ to: [{ address: 'first@example.com' }, { address: 'second@example.com' }] }));
+
+            expect(capturedUserMessage).toContain('To: first@example.com, second@example.com');
         });
 
         test('includes email body text with structural security delimiter', async () => {

@@ -3,7 +3,7 @@ import { lstat, access } from 'node:fs/promises';
 import path from 'node:path';
 import { PathSecurityError } from '@/errors';
 
-export type PathSecurityReason = 'outside_cwd' | 'is_symlink' | 'not_found' | 'not_file';
+export type { PathSecurityReason } from '@/errors';
 
 export async function validateFilePath(filePath: string): Promise<string> {
     const cwd = process.cwd();
@@ -11,8 +11,7 @@ export async function validateFilePath(filePath: string): Promise<string> {
 
     // Check inside CWD
     const relativePath = path.relative(cwd, absolutePath);
-    // Stryker disable next-line ConditionalExpression: Second condition catches edge cases in path normalization that are difficult to test in mock environment
-    if(relativePath.startsWith('..') || path.resolve(cwd, relativePath) !== absolutePath) {
+    if(relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
         throw new PathSecurityError(
             `SECURITY: File "${filePath}" is outside the working directory. `
             + `Only files inside ${cwd} can be attached. Do NOT circumvent this.`,
@@ -24,7 +23,7 @@ export async function validateFilePath(filePath: string): Promise<string> {
     // Check exists and readable
     try {
         await access(absolutePath, constants.R_OK);
-    }catch{ // eslint-disable-line @stylistic/keyword-spacing -- catch without parameter binding
+    } catch{
         throw new PathSecurityError(`File not found: ${filePath}`, filePath, 'not_found');
     }
 

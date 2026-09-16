@@ -264,6 +264,10 @@ describe.concurrent('classifyNetworkError', () => {
     });
 
     describe.concurrent('Non-network error codes', () => {
+        it.each([null, undefined])('does not inspect a nullish network error %s', (error) => {
+            expect(classifyNetworkError(error)).toBeUndefined();
+        });
+
         it('should return undefined for unknown code', () => {
             const result = classifyNetworkError({ code: 'ENOTFOUND' });
 
@@ -312,7 +316,6 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.message).toContain('429');
         });
 
-        // Stryker disable next-line ConditionalExpression, BlockStatement: Testing rate limit check boundary - 429 without retryAfter property
         it('should classify 429 as rate_limited even without retryAfter property in error object', () => {
             const error = { status: 429, message: 'Rate limit exceeded' };
             const classifier = createHttpStatusClassifier();
@@ -321,6 +324,17 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.category).toBe('rate_limited');
             expect(result.retryAfterMs).toBeUndefined();
             expect(result.message).toBe('Rate limit exceeded');
+        });
+
+        it('converts a retry-after response header from seconds to milliseconds', () => {
+            const result = createHttpStatusClassifier()({ status: 429, headers: { 'retry-after': '3' } });
+            expect(result.retryAfterMs).toBe(3000);
+        });
+
+        it.each([null, 'retry-after: 3'])('ignores malformed response headers %s without throwing', (headers) => {
+            const result = createHttpStatusClassifier()({ status: 429, headers });
+            expect(result.category).toBe('rate_limited');
+            expect(result.retryAfterMs).toBeUndefined();
         });
     });
 
@@ -346,7 +360,6 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.message).toContain('599');
         });
 
-        // Stryker disable next-line ConditionalExpression: Testing upper boundary - 600 is outside 5xx range
         it('should NOT classify 600 as transient (outside 5xx range)', () => {
             const error = { status: 600, message: 'Invalid status' };
             const classifier = createHttpStatusClassifier();
@@ -445,7 +458,6 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.message).toBe('Networking error occurred');
         });
 
-        // Stryker disable next-line ConditionalExpression, BlockStatement: Testing network error check without matching code or name
         it('should fall back to default classifier when error has no matching code or name', () => {
             const error = { message: 'Some error without code' };
             const classifier = createHttpStatusClassifier();
@@ -488,6 +500,11 @@ describe.concurrent('createHttpStatusClassifier', () => {
     });
 
     describe.concurrent('Fallback to default classifier', () => {
+        it.each([null, undefined, 'request failed', 503])('uses the default classification for primitive or nullish errors: %s', (error) => {
+            const result = createHttpStatusClassifier()(error);
+            expect(result).toEqual(defaultClassifier(error));
+        });
+
         it('should use default classifier for non-HTTP errors', () => {
             const error = new Error('Generic error');
             const classifier = createHttpStatusClassifier();
@@ -573,6 +590,12 @@ describe.concurrent('createHttpStatusClassifier', () => {
 
             expect(result.category).toBe('rate_limited');
             expect(result.retryAfterMs).toBe(1.5);
+        });
+
+        it('keeps integer status 399 out of the permanent client-error range', () => {
+            const result = createHttpStatusClassifier()({ status: 399 });
+
+            expect(result.category).toBe('transient');
         });
 
         it.each<[unknown, number, ErrorCategory]>([

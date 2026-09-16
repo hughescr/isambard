@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import { MessageFlags, type Client, type Message } from 'discord.js';
+import { MessageFlags, type ButtonInteraction, type ChatInputCommandInteraction, type Client, type Interaction, type Message, type ModalSubmitInteraction } from 'discord.js';
 import type { AllowlistCommandHandler } from './allowlist-commands';
 import type { AllowlistInteractionHandler } from './allowlist-interaction-handler';
 import type { DiscordCapability } from './capability';
@@ -46,7 +46,6 @@ declare global {
 }
 
 /** Rolling window for activity-log signals fed to LiveSignals (2 hours in ms). */
-// Stryker disable next-line ArithmeticOperator: window duration constant — mutation would change the window size, not the logic
 const ACTIVITY_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 /**
@@ -72,6 +71,34 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
         return await Promise.race([promise, timeout]);
     } finally {
         clearTimeout(timer);
+    }
+}
+
+async function destroyOwnedDiscordClient(client: Client, providedClient: Client | undefined, reportFailure: (error: unknown, phase: string) => void): Promise<void> {
+    // Listener removal and destruction are independent releases. A failure in one
+    // must not skip the other, and the caller retains the first teardown error.
+    try {
+        client.removeAllListeners();
+    } catch (error) {
+        reportFailure(error, 'Listener removal');
+    }
+    let destroyed = false;
+    try {
+        await client.destroy();
+        destroyed = true;
+    } catch (error) {
+        reportFailure(error, 'Discord client destruction');
+    }
+    if(destroyed && !providedClient && globalThis.__discordClient === client) {
+        globalThis.__discordClient = undefined;
+    }
+}
+
+async function runBotStopStep(phase: string, stop: () => void | Promise<void>, reportFailure: (error: unknown, phase: string) => void): Promise<void> {
+    try {
+        await stop();
+    } catch (error) {
+        reportFailure(error, phase);
     }
 }
 
@@ -460,40 +487,28 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     let responseRouterRef: ResponseRouter | undefined;
 
     // Register error handler for Discord client errors
-    // Stryker disable next-line StringLiteral: Discord.js event name
     client.on('error', createErrorHandler());
 
-    // Register rate limit handler for logging (if rest client is available)
-    // Stryker disable next-line ConditionalExpression,BlockStatement: client.rest always exists on Discord.js Client; rate limit logging is observational
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: client.rest typed as non-nullable but checking defensively
-    if(client.rest) {
-        // Stryker disable all: Rate limit logging is observational only
-        // Stryker disable next-line StringLiteral: Event name constant
-        client.rest.on('rateLimited', (info) => {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Logger warn object for observability
-            logger.warn({
-                route:      info.route,
-                limit:      info.limit,
-                retryAfter: info.retryAfter,
-                global:     info.global,
-                msg:        'Discord rate limit hit, auto-retrying',
-            });
+    // Register rate limit handler for logging.
+    client.rest.on('rateLimited', (info) => {
+        logger.warn({
+            route:      info.route,
+            limit:      info.limit,
+            retryAfter: info.retryAfter,
+            global:     info.global,
+            msg:        'Discord rate limit hit, auto-retrying',
         });
-        // Stryker restore all
-    }
+    });
+    // Stryker restore all
 
     // Register shard event listeners for health tracking
-    // Stryker disable BlockStatement: Composition root — shard health event wiring is not unit-testable
     if(healthRegistry) {
-        // Stryker disable next-line StringLiteral: Discord.js event name
         client.on('shardDisconnect', () => {
             healthRegistry.sendEvent('discord', 'CONNECTION_LOST');
         });
-        // Stryker disable next-line StringLiteral: Discord.js event name
         client.on('shardReady', () => {
             healthRegistry.sendEvent('discord', 'CONNECT_SUCCESS');
         });
-        // Stryker disable next-line StringLiteral: Discord.js event name
         client.on('shardResume', () => {
             healthRegistry.sendEvent('discord', 'CONNECT_SUCCESS');
         });
@@ -502,7 +517,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
     // Track last session ID for task context
     let lastSessionId: string | undefined;
-    // Stryker disable BlockStatement: composition root helper — tested via coordinator integration
     const setLastSessionId = (sessionId: string | undefined): void => {
         if(sessionId) {
             lastSessionId = sessionId;
@@ -516,7 +530,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     const MAX_RECENT_MESSAGES = 10; // Increased from 5 since we track both sides
     const recentMessages: RecentMessage[] = [];
 
-    // Stryker disable BlockStatement: composition root helper — tested via coordinator integration
     const addRecentMessage = (content: string, author: 'user' | 'izzy' = 'user'): void => {
         recentMessages.push({ author, content: content.slice(0, 200), timestamp: Date.now() });
         if(recentMessages.length > MAX_RECENT_MESSAGES) {
@@ -528,7 +541,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Track last thinking content for context-aware idle status generation
     let lastThinkingContent: string | undefined;
 
-    // Stryker disable next-line BlockStatement: composition root callback — not covered by unit tests
     const setLastThinkingContent = (content: string): void => {
         lastThinkingContent = content;
     };
@@ -538,7 +550,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Recent-tools ring buffer for LiveSignals aggregator
     const MAX_RECENT_TOOLS = 10;
     const recentTools: RecentTool[] = [];
-    // Stryker disable BlockStatement: composition root helper — tested via ring-buffer unit tests
     const addRecentTool = (toolName: string): void => {
         recentTools.push({ toolName, timestamp: Date.now() });
         if(recentTools.length > MAX_RECENT_TOOLS) {
@@ -551,7 +562,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Recent-channels ring buffer for LiveSignals aggregator
     const MAX_RECENT_CHANNELS = 10;
     const recentChannels: RecentChannel[] = [];
-    // Stryker disable BlockStatement: composition root helper — tested via ring-buffer unit tests
     const addRecentChannel = (channelId: RecentChannel['channelId']): void => {
         recentChannels.push({ channelId, timestamp: Date.now() });
         if(recentChannels.length > MAX_RECENT_CHANNELS) {
@@ -564,7 +574,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Previous idle status holder — populated by Step 3; read by LiveSignals
     let lastIdleText: string | undefined;
     const getPreviousStatus = (): string | undefined => lastIdleText;
-    // Stryker disable next-line BlockStatement: composition root setter — populated in Step 3
     const setPreviousStatus = (text: string): void => {
         lastIdleText = text;
     };
@@ -595,71 +604,78 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // This uses `client` (not `readyClient`) so it is registered immediately at bot creation time,
     // not inside the clientReady handler. This allows interactions to be routed even before the
     // first clientReady fires.
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity, sonarjs/cognitive-complexity -- interactionCreate handler is async; branching is inherent — routes buttons, modals, selects, and slash commands
-    client.on('interactionCreate', async (interaction) => {
-        // Stryker disable BlockStatement: top-level error handler — prevents unhandled rejections
-        try {
-            if(interaction.isButton()) {
-                // Route bsky-send-* and bsky-dm-* buttons to bsky outbound approval handler
-                // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
-                if(bskySetup && (interaction.customId.startsWith('bsky-send-') || interaction.customId.startsWith('bsky-dm-'))) {
-                    await bskySetup.outboundApprovalHandler.handleButton(interaction);
-                    return;
-                }
-                // Route email-send-* buttons to outbound approval handler (before email-* catch-all)
-                if(emailSetup && interaction.customId.startsWith('email-send-')) {
-                    await emailSetup.outboundApprovalHandler.handleButton(interaction);
-                    return;
-                }
-                // Route email-* buttons to review handler
-                if(emailSetup && interaction.customId.startsWith('email-')) {
-                    await emailSetup.reviewHandler.handleButton(interaction);
-                    return;
-                }
-                // Route contact-approve:*, contact-reject:*, contact-delete-confirm:*, and contact-delete-cancel:* buttons to contact approval handler
-                // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
-                if(contactApprovalHandler && (interaction.customId.startsWith('contact-approve:') || interaction.customId.startsWith('contact-reject:') || interaction.customId.startsWith('contact-delete-confirm:') || interaction.customId.startsWith('contact-delete-cancel:'))) {
-                    await contactApprovalHandler.handleButton(interaction);
-                    return;
-                }
-                // Route allowlist-* buttons (yes/next/create/startmodal) to allowlist interaction handler
-                // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
-                if(allowlistInteractionHandler && interaction.customId.startsWith('allowlist-')) {
-                    await allowlistInteractionHandler.handleButton(interaction);
-                    return;
-                }
-                await interactionHandler.handleButtonInteraction(interaction);
-            } else if(interaction.isModalSubmit()) {
-                // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
-                if(bskySetup && (interaction.customId.startsWith('bsky-send-reject-reason:') || interaction.customId.startsWith('bsky-dm-reject-reason:'))) {
-                    await bskySetup.outboundApprovalHandler.handleModalSubmit(interaction);
-                } else if(emailSetup && interaction.customId.startsWith('email-send-reject-reason:')) {
-                    await emailSetup.outboundApprovalHandler.handleModalSubmit(interaction);
-                } else if(allowlistInteractionHandler && interaction.customId.startsWith('allowlist-name:')) {
-                    // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
-                    await allowlistInteractionHandler.handleModalSubmit(interaction);
-                }
-            } else if(interaction.isStringSelectMenu() && interaction.customId.startsWith('email-allowlist-select:')) {
-                // Stryker disable next-line StringLiteral: error message is not behavior-affecting
-                await (emailSetup ? emailSetup.outboundApprovalHandler.handleSelectMenu(interaction) : interaction.reply({ content: 'Email integration is not currently available.', flags: MessageFlags.Ephemeral }));
-            } else if(interaction.isChatInputCommand() && interaction.commandName === 'allowlist') {
-                // Stryker disable next-line StringLiteral: error message is not behavior-affecting
+    async function routeButton(interaction: ButtonInteraction): Promise<void> {
+        if(bskySetup && (interaction.customId.startsWith('bsky-send-') || interaction.customId.startsWith('bsky-dm-'))) {
+            await bskySetup.outboundApprovalHandler.handleButton(interaction);
+            return;
+        }
+        if(emailSetup && interaction.customId.startsWith('email-send-')) {
+            await emailSetup.outboundApprovalHandler.handleButton(interaction);
+            return;
+        }
+        if(emailSetup && interaction.customId.startsWith('email-')) {
+            await emailSetup.reviewHandler.handleButton(interaction);
+            return;
+        }
+        if(contactApprovalHandler && (interaction.customId.startsWith('contact-approve:') || interaction.customId.startsWith('contact-reject:') || interaction.customId.startsWith('contact-delete-confirm:') || interaction.customId.startsWith('contact-delete-cancel:'))) {
+            await contactApprovalHandler.handleButton(interaction);
+            return;
+        }
+        if(allowlistInteractionHandler && interaction.customId.startsWith('allowlist-')) {
+            await allowlistInteractionHandler.handleButton(interaction);
+            return;
+        }
+        await interactionHandler.handleButtonInteraction(interaction);
+    }
+
+    async function routeModal(interaction: ModalSubmitInteraction): Promise<void> {
+        if(bskySetup && (interaction.customId.startsWith('bsky-send-reject-reason:') || interaction.customId.startsWith('bsky-dm-reject-reason:'))) {
+            await bskySetup.outboundApprovalHandler.handleModalSubmit(interaction);
+        } else if(emailSetup && interaction.customId.startsWith('email-send-reject-reason:')) {
+            await emailSetup.outboundApprovalHandler.handleModalSubmit(interaction);
+        } else if(allowlistInteractionHandler && interaction.customId.startsWith('allowlist-name:')) {
+            await allowlistInteractionHandler.handleModalSubmit(interaction);
+        }
+    }
+
+    async function routeCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+        switch(interaction.commandName) {
+            case 'allowlist': {
                 await (allowlistHandler ? allowlistHandler.handle(interaction) : interaction.reply({ content: 'Allowlist management is not currently available.', flags: MessageFlags.Ephemeral }));
-            } else if(interaction.isChatInputCommand() && interaction.commandName === 'calendar') {
-                // Stryker disable next-line StringLiteral: error message is not behavior-affecting
-                await (calendarHandler ? calendarHandler.handle(interaction) : interaction.reply({ content: 'Calendar management is not currently available.', flags: MessageFlags.Ephemeral }));
-            } else if(interaction.isChatInputCommand() && interaction.commandName === 'contact') {
-                // Stryker disable next-line StringLiteral: error message is not behavior-affecting
-                await (contactHandler ? contactHandler.handle(interaction) : interaction.reply({ content: 'Contact management is not currently available.', flags: MessageFlags.Ephemeral }));
+                break;
             }
+            case 'calendar': {
+                await (calendarHandler ? calendarHandler.handle(interaction) : interaction.reply({ content: 'Calendar management is not currently available.', flags: MessageFlags.Ephemeral }));
+                break;
+            }
+            case 'contact': {
+                await (contactHandler ? contactHandler.handle(interaction) : interaction.reply({ content: 'Contact management is not currently available.', flags: MessageFlags.Ephemeral }));
+                break;
+            }
+        }
+    }
+
+    async function routeInteraction(interaction: Interaction): Promise<void> {
+        if(interaction.isButton()) {
+            await routeButton(interaction);
+        } else if(interaction.isModalSubmit()) {
+            await routeModal(interaction);
+        } else if(interaction.isStringSelectMenu() && interaction.customId.startsWith('email-allowlist-select:')) {
+            await (emailSetup ? emailSetup.outboundApprovalHandler.handleSelectMenu(interaction) : interaction.reply({ content: 'Email integration is not currently available.', flags: MessageFlags.Ephemeral }));
+        } else if(interaction.isChatInputCommand()) {
+            await routeCommand(interaction);
+        }
+    }
+
+    const onInteractionCreate = async (interaction: Interaction): Promise<void> => {
+        try {
+            await routeInteraction(interaction);
         } catch (err) {
             logger.error({
                 error:           err instanceof Error ? err.message : String(err),
                 interactionType: interaction.type,
                 msg:             'Unhandled error in interaction handler',
             });
-            // Try to respond to the interaction if it hasn't been acknowledged
-            // Stryker disable BlockStatement: nested error handler — interaction may have expired
             try {
                 if(interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
                     await interaction.reply({
@@ -668,15 +684,14 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     });
                 }
             } catch{
-                // Silent: interaction.reply() throws if the interaction expired (3-second
-                // acknowledgement window) or the bot already replied. The outer catch above
-                // already logged the original error; failing to send the fallback ephemeral
-                // reply is not a new error worth logging separately.
+                // The interaction may have expired or already been acknowledged.
             }
-            // Stryker restore BlockStatement
         }
-        // Stryker restore BlockStatement
-    });
+    };
+
+    // Discord's client captures rejected listener promises; this listener also catches route errors.
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- asynchronous Discord event listener
+    client.on('interactionCreate', onInteractionCreate);
 
     // P11/P14: the ring buffers are fed exclusively from the session ledger(s) — there is no
     // other source of activity-phase/turn data in conductor mode. P12: the perch conductor's own
@@ -703,7 +718,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     const conductorSessions: readonly ConductorPresenceSession[] | undefined = buildConductorSessions();
     /** Just the ledgers of {@link conductorSessions}, for the consumers that compose from ledgers alone (ring buffers, task board). Derived, never rebuilt, so it cannot fall out of step with the sessions above. */
     const conductorLedgers: readonly LedgerStore[] | undefined = conductorSessions?.map(session => session.ledger);
-    // Stryker disable BlockStatement: Composition root — ring-buffer subscriptions are integration-wiring, not unit-testable
     let unsubscribeToolTracking: () => void = () => undefined;
     let unsubscribeChannelTracking: () => void = () => undefined;
     if(conductorLedgers) {
@@ -742,7 +756,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // This runs after the client is authenticated and ready.
     // Use .on() (not .once()) so reconnects fire the handler again; the `initialized`
     // flag gates the one-time setup so components are only created on first connection.
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity, sonarjs/cognitive-complexity -- clientReady handler must be async; complexity is inherent — it orchestrates presence, coordinator, perch, catch-up, inbox, and email lifecycle in sequence
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Discord captures rejected listener promises; startup setup is asynchronous
     client.on('clientReady', async (readyClient: Client): Promise<void> => {
         // Log that the bot is ready (preserving functionality from removed logging handler)
         createReadyHandler()(readyClient);
@@ -753,13 +767,11 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             initialized = true;
 
             // Construct LiveSignals aggregator (requires readyClient for channel name resolution)
-            // Stryker disable BlockStatement: composition root — LiveSignals construction is integration-wiring
             const liveSignals = options.perchConfig
                 ? new LiveSignals({
                     timezone:           options.perchConfig.timezone,
                     getRecentTools,
                     getRecentChannels,
-                    // Stryker disable next-line ConditionalExpression,BlockStatement: channel name resolution — cache miss path is a valid runtime state
                     resolveChannelName: (id) => {
                         const ch = readyClient.channels.cache.get(id);
                         return ch && 'name' in ch ? (ch as { name: string }).name : undefined;
@@ -768,7 +780,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     // Step 4: network-fetched signals
                     bskyClient:            bskySetup?.client,
                     idleSignalsConfig:     config.presence?.idleSignals,
-                    // Stryker disable next-line BlockStatement: composition root callback — contextBuilder is optional
                     loadRecentActivityLog: contextBuilder
                         ? (limit: number) => contextBuilder.loadRecentEventsSince(ACTIVITY_WINDOW_MS, limit)
                         : undefined,
@@ -836,273 +847,290 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     : undefined;
             }
 
-            // Open the long-lived conversation conductor now that the guild cache and channel
-            // registry exist, but BEFORE setupCoordinatorIntegration/setupMessageProcessing pick a
-            // processor — a rejected open() (or one that never settles at all — see
-            // CONDUCTOR_OPEN_TIMEOUT_MS) exits the process (see the `exit` option's own doc)
-            // rather than switching either of those on and running on silently disabled.
-            // Stryker disable all: Composition root — conductor-open wiring is a bot.test.ts behavioural describe block (real timers/promises/callback wiring); a mutant here changes call ORDER or the timeout bound, not a value the unit tests below assert on
-            if(conversationConductor && ledgerStore && contextPolicy && journal) {
-                try {
-                    await withTimeout(conversationConductor.open(), CONDUCTOR_OPEN_TIMEOUT_MS, 'conductor.open() timed out');
-                    setLastSessionId(ledgerStore.get().sessionId);
-                    // Created here (before setupCoordinatorIntegration/setupMessageProcessing pick
-                    // a processor) so both can be handed the SAME gate/shutdown instances.
-                    // `onDrain` reads the outer `coordinator` variable at CALL time (gate.open()
-                    // only ever runs from the boot sequence, well after setupCoordinatorIntegration
-                    // has assigned it below), not at this closure's definition time. Routed through
-                    // the same `dispatchAdmittedMessage` the live handler uses, so a perch-channel
-                    // message buffered during boot is answered by the perch conductor exactly like
-                    // a live one, once drained.
-                    //
-                    // `drainChain` serialises dispatch across a whole drained batch: `gate.open()`
-                    // calls `onDrain` synchronously per buffered message in arrival order, but each
-                    // call now does async work first (with perch routing active, a
-                    // getWellKnownChannel lookup) whose await depth varies per message (a cache hit
-                    // resolves sooner than a cache miss). Without this chain, a later message's
-                    // dispatch could resolve before an earlier one's, delivering a boot-buffered
-                    // burst to the coordinator out of arrival order. Each link swallows its own
-                    // error (logged) so one failed dispatch never blocks the rest of the chain.
-                    let drainChain: Promise<void> = Promise.resolve();
-                    ingressGate = createIngressGate<Message>({
-                        onDrain: (message) => {
-                            if(coordinator) {
-                                const currentCoordinator = coordinator;
-                                drainChain = drainChain
-                                    .then(() => dispatchAdmittedMessage(message, createUserId(readyClient.user!.id), currentCoordinator, {
-                                        channelRegistry, inboxManager, perch: perchRoutingDeps(),
-                                    }))
-                                    .catch((err: unknown) => {
-                                        logger.error({ err, msg: 'dispatchAdmittedMessage failed for a gate-drained message' });
-                                    });
-                            }
-                        },
-                    });
-                    conductorOpened = true;
-                } catch (err) {
-                    logger.error({
-                        error: err instanceof Error ? err.message : String(err),
-                        msg:   'Conductor open() failed — exiting so the deploy supervisor restarts this process',
-                    });
-                    exit(1);
+            let drainChain: Promise<void> = Promise.resolve();
+            const onDrain = (message: Message): void => {
+                if(coordinator) {
+                    const currentCoordinator = coordinator;
+                    drainChain = drainChain
+                        .then(() => dispatchAdmittedMessage(message, createUserId(readyClient.user!.id), currentCoordinator, {
+                            channelRegistry, inboxManager, perch: perchRoutingDeps(),
+                        }))
+                        .catch((err: unknown) => {
+                            logger.error({ err, msg: 'dispatchAdmittedMessage failed for a gate-drained message' });
+                        });
                 }
-            }
+            };
 
-            // Open the perch conductor next — independent of whether the conversation conductor
-            // above succeeded — mirroring its build-only-then-open contract exactly. A rejected
-            // (or omitted) open() leaves perch disabled without a restart; the conversation
-            // coordinator is never touched by the perch conductor either way.
-            if(perchConductor && perchLedgerStore && perchJournal) {
-                try {
-                    await withTimeout(perchConductor.open(), CONDUCTOR_OPEN_TIMEOUT_MS, 'perch conductor.open() timed out');
-                    perchConductorOpened = true;
-                } catch (err) {
-                    logger.error({
-                        error: err instanceof Error ? err.message : String(err),
-                        msg:   'Perch conductor open() failed — perch disabled for this process, no restart',
-                    });
-                }
-            }
-
-            // P10/P12: build the cross-session shutdown orchestrator once both open attempts above
-            // have settled, covering whichever conductor(s) actually opened under ONE shared
-            // turnWaitMs/deadlineMs budget (createShutdown's own `sessions` array already
-            // anticipates a second 'perch' entry — see shutdown.ts's own doc).
-            if(conductorOpened || perchConductorOpened) {
-                const sessions: ShutdownSession[] = [];
-                if(conductorOpened && conversationConductor) {
-                    sessions.push({ name: 'conversation', shutdown: opts => conversationConductor.shutdown(opts) });
-                }
-                if(perchConductorOpened && perchConductor) {
-                    sessions.push({ name: 'perch', shutdown: opts => perchConductor.shutdown(opts) });
-                }
-                shutdownRef = createShutdown({
-                    sessions,
-                    journal: {
-                        flush: async () => {
-                            await Promise.allSettled([
-                                conductorOpened && journal ? journal.flush() : Promise.resolve(),
-                                perchConductorOpened && perchJournal ? perchJournal.flush() : Promise.resolve(),
-                            ]);
-                        },
-                    },
-                    stopIngress: () => ingressGate?.stop(),
-                    clock,
-                    turnWaitMs:  shutdownTurnWaitMs ?? 60_000,
-                    deadlineMs:  shutdownDeadlineMs ?? 120_000,
-                    logger,
-                });
-            }
-            // Stryker restore all
-
-            // Setup presence manager once the conductor has actually opened (open() SUCCEEDED, not
-            // merely requested). Presence setup now also OWNS synopsis attachment for every turn
-            // (presence/turn-synopsis.ts, one attachment per (ledger, conductor) pair) — the
-            // message processor wires none, so nothing here feeds it any more. There is no
-            // fallback presence path (P13b removed the one-shot agent; P14 removed the legacy
-            // state-machine bridged `setupPresence`): a conductor that never opens simply runs
-            // with no presence at all.
-            if(identityContext && config.presence && conductorOpened && presenceThrottle && ledgerStore) {
-                // Stryker disable next-line BlockStatement: composition root callback
-                const getRecentContext = async (): Promise<string | undefined> => {
-                    // Stryker disable next-line BlockStatement: optimization guard — empty array short-circuit, not covered by unit tests
-                    if(recentMessages.length === 0) {
-                        return undefined;
+            async function openConversation(): Promise<void> {
+                // Open the long-lived conversation conductor now that the guild cache and channel
+                // registry exist, but BEFORE setupCoordinatorIntegration/setupMessageProcessing pick a
+                // processor — a rejected open() (or one that never settles at all — see
+                // CONDUCTOR_OPEN_TIMEOUT_MS) exits the process (see the `exit` option's own doc)
+                // rather than switching either of those on and running on silently disabled.
+                if(conversationConductor && ledgerStore && contextPolicy && journal) {
+                    try {
+                        await withTimeout(conversationConductor.open(), CONDUCTOR_OPEN_TIMEOUT_MS, 'conductor.open() timed out');
+                        setLastSessionId(ledgerStore.get().sessionId);
+                        // Created here (before setupCoordinatorIntegration/setupMessageProcessing pick
+                        // a processor) so both can be handed the SAME gate/shutdown instances.
+                        // `onDrain` reads the outer `coordinator` variable at CALL time (gate.open()
+                        // only ever runs from the boot sequence, well after setupCoordinatorIntegration
+                        // has assigned it below), not at this closure's definition time. Routed through
+                        // the same `dispatchAdmittedMessage` the live handler uses, so a perch-channel
+                        // message buffered during boot is answered by the perch conductor exactly like
+                        // a live one, once drained.
+                        //
+                        // `drainChain` serialises dispatch across a whole drained batch: `gate.open()`
+                        // calls `onDrain` synchronously per buffered message in arrival order, but each
+                        // call now does async work first (with perch routing active, a
+                        // getWellKnownChannel lookup) whose await depth varies per message (a cache hit
+                        // resolves sooner than a cache miss). Without this chain, a later message's
+                        // dispatch could resolve before an earlier one's, delivering a boot-buffered
+                        // burst to the coordinator out of arrival order. Each link swallows its own
+                        // error (logged) so one failed dispatch never blocks the rest of the chain.
+                        ingressGate = createIngressGate<Message>({ onDrain });
+                        conductorOpened = true;
+                    } catch (err) {
+                        logger.error({
+                            error: err instanceof Error ? err.message : String(err),
+                            msg:   'Conductor open() failed — exiting so the deploy supervisor restarts this process',
+                        });
+                        exit(1);
                     }
-                    const sortedMessages = recentMessages.toSorted((a, b) => a.timestamp - b.timestamp);
-                    return sortedMessages.map(m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
-                };
-                // P11/P12: presence composes from the session ledger(s) — conversation always,
-                // perch too whenever its ledger exists — see setupConductorPresence's own doc for
-                // exactly what that composition does.
-                const conductorPresence = setupConductorPresence({
-                    identityContext,
-                    presenceConfig:          config.presence,
-                    readyClient,
-                    getTaskContext:          () => taskListReader.buildTaskListSummary(),
-                    getRecentContext,
-                    contextBuilder,
-                    getLastThinkingContent,
-                    identityCache,
-                    getLiveSignals:          liveSignals ? () => liveSignals.snapshot() : undefined,
-                    getPreviousStatus,
-                    setPreviousStatus,
-                    // Stryker disable next-line ArrayDeclaration: equivalent — buildConductorSessions() (above) returns undefined iff `!ledgerStore`, and this `if` already requires `ledgerStore` truthy, so `conductorSessions` can never be undefined here; the `??` fallback exists only to satisfy TypeScript's narrowing, not to handle a reachable branch.
-                    sessions:                conductorSessions ?? [{ ledger: ledgerStore, conductor: conversationConductor }],
-                    throttle:                presenceThrottle,
-                    onThinkingContentUpdate: setLastThinkingContent,
-                    // Q3/B4: only forward the predicate when perch is actually enabled — the
-                    // `⏸ perch` marker asserts a pause that has a subject; with perch off, no
-                    // scheduler was ever going to run, so nothing is paused regardless of what
-                    // isCostPaused() reports (finding: the marker rendered even with perch off).
-                    isCostPaused:            options.perchConfig?.enabled ? options.isCostPaused : undefined,
-                });
-                presenceManager = conductorPresence.presenceManager;
-                unsubscribeLedgerPresence = conductorPresence.unsubscribeLedgers;
+                }
             }
+            await openConversation();
 
-            // Live task board: one system-posted embed per (channel, turn) mirroring the
-            // sub-agents, workflows and background shell commands that turn launched. Gated on the
-            // same conductor-opened condition as presence (it composes from the same ledgers) and
-            // on the config flag, which only an explicit `enabled: false` turns off.
-            if(conductorOpened && ledgerStore && config.taskBoard?.enabled !== false) {
-                const taskBoard = setupTaskBoard({
-                    readyClient,
-                    rateLimiter,
-                    // Stryker disable next-line ArrayDeclaration: equivalent — see the identical narrowing-only fallback on setupConductorPresence's `sessions` above.
-                    ledgers:                  conductorLedgers ?? [ledgerStore],
-                    config:                   config.taskBoard ?? DEFAULT_TASK_BOARD_CONFIG,
-                    // The bot receives no zone of its own; perch's configured zone is the only one
-                    // reachable here, and it is the same IANA zone the rest of Izzy schedules in.
-                    // With perch disabled there is no configured zone at all, so fall back to the
-                    // host zone the config loader itself defaults every other `timezone` to.
-                    timeZone:                 options.perchConfig?.timezone ?? resolveTimezone(),
-                    logger,
-                    // A conversation-session task launched from a turn with no channel (a bare
-                    // notification turn, or a wake whose launch record was lost) boards in the
-                    // `fallback` well-known channel — the same place wake delivery sends such a
-                    // turn's reply. A perch-session task always launches with no channel, so it
-                    // always takes this fallback: it boards in the `perch-time` well-known
-                    // channel, the same place the perch reply already goes.
-                    resolveFallbackChannelId: async (role: string): Promise<string | undefined> => {
-                        if(role === 'conversation') {
-                            const fallback = await channelRegistry.getWellKnownChannel('fallback');
-                            return fallback?.channelId;
-                        }
-                        if(role === 'perch') {
-                            const perch = await channelRegistry.getWellKnownChannel('perch-time');
-                            return perch?.channelId;
-                        }
-                        return undefined;
-                    },
-                });
-                stopTaskBoard = taskBoard.stop;
+            async function openPerch(): Promise<void> {
+                // Open the perch conductor next — independent of whether the conversation conductor
+                // above succeeded — mirroring its build-only-then-open contract exactly. A rejected
+                // (or omitted) open() leaves perch disabled without a restart; the conversation
+                // coordinator is never touched by the perch conductor either way.
+                if(perchConductor && perchLedgerStore && perchJournal) {
+                    try {
+                        await withTimeout(perchConductor.open(), CONDUCTOR_OPEN_TIMEOUT_MS, 'perch conductor.open() timed out');
+                        perchConductorOpened = true;
+                    } catch (err) {
+                        logger.error({
+                            error: err instanceof Error ? err.message : String(err),
+                            msg:   'Perch conductor open() failed — perch disabled for this process, no restart',
+                        });
+                    }
+                }
             }
+            await openPerch();
 
-            // Create the perch driver+scheduler once the perch conductor has successfully opened.
-            // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
-            if(perchConductorOpened && perchConductor && options.perchConfig?.enabled) {
-                const perchSetup = setupPerchDriverAndScheduler({
-                    conductor:    perchConductor,
-                    perchConfig:  options.perchConfig,
-                    clock,
-                    contextBuilder,
-                    activityLogger,
-                    channelRegistry,
-                    responseRouter,
-                    client:       readyClient,
-                    rateLimiter,
-                    discordCapability,
-                    isCostPaused: options.isCostPaused,
-                    timeHeader:   options.perchTimeHeader,
-                    slotHooks:    options.perchSlotHooks,
-                });
-                perchDriver = perchSetup.driver;
-                perchScheduler = perchSetup.scheduler;
-            }
-            // Stryker restore BlockStatement
-
-            // Mute admin email channel so Craig's messages there don't reach Izzy
-            if(emailSetup?.adminChannelId) {
-                // Stryker disable BlockStatement: try-catch wraps admin channel mute - non-fatal startup step
-                try {
-                    await channelRegistry.muteChannel(emailSetup.adminChannelId);
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: log message is not behavior-affecting
-                    logger.info({ msg: 'Admin email channel muted in channel registry' });
-                } catch (err) {
-                    logger.warn({
-                        error: err instanceof Error ? err.message : String(err),
-                        // Stryker disable next-line StringLiteral: log message is not behavior-affecting
-                        msg:   'Failed to mute admin email channel — messages there may reach Izzy',
+            function configureShutdown(): void {
+                // P10/P12: build the cross-session shutdown orchestrator once both open attempts above
+                // have settled, covering whichever conductor(s) actually opened under ONE shared
+                // turnWaitMs/deadlineMs budget (createShutdown's own `sessions` array already
+                // anticipates a second 'perch' entry — see shutdown.ts's own doc).
+                if(conductorOpened || perchConductorOpened) {
+                    const sessions: ShutdownSession[] = [];
+                    if(conductorOpened && conversationConductor) {
+                        // Stryker disable next-line ArrayMethodSwap: sessions is newly allocated and empty, so either insertion makes conversation its sole first entry.
+                        sessions.push({ name: 'conversation', shutdown: opts => conversationConductor.shutdown(opts) });
+                    }
+                    if(perchConductorOpened && perchConductor) {
+                        sessions.push({ name: 'perch', shutdown: opts => perchConductor.shutdown(opts) });
+                    }
+                    shutdownRef = createShutdown({
+                        sessions,
+                        journal: {
+                            flush: async () => {
+                                await Promise.allSettled([
+                                    conductorOpened && journal ? journal.flush() : Promise.resolve(),
+                                    perchConductorOpened && perchJournal ? perchJournal.flush() : Promise.resolve(),
+                                ]);
+                            },
+                        },
+                        stopIngress: () => ingressGate?.stop(),
+                        clock,
+                        turnWaitMs:  shutdownTurnWaitMs ?? 60_000,
+                        deadlineMs:  shutdownDeadlineMs ?? 120_000,
+                        logger,
                     });
+                }
+                // Stryker restore all
+            }
+            configureShutdown();
+
+            const getRecentContext = async (): Promise<string | undefined> => {
+                if(recentMessages.length === 0) {
+                    return undefined;
+                }
+                const sortedMessages = recentMessages.toSorted((a, b) => a.timestamp - b.timestamp);
+                return sortedMessages.map(m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
+            };
+
+            function configurePresence(): void {
+                // Setup presence manager once the conductor has actually opened (open() SUCCEEDED, not
+                // merely requested). Presence setup now also OWNS synopsis attachment for every turn
+                // (presence/turn-synopsis.ts, one attachment per (ledger, conductor) pair) — the
+                // message processor wires none, so nothing here feeds it any more. There is no
+                // fallback presence path (P13b removed the one-shot agent; P14 removed the legacy
+                // state-machine bridged `setupPresence`): a conductor that never opens simply runs
+                // with no presence at all.
+                if(identityContext && config.presence && conductorOpened && presenceThrottle && ledgerStore) {
+                    // P11/P12: presence composes from the session ledger(s) — conversation always,
+                    // perch too whenever its ledger exists — see setupConductorPresence's own doc for
+                    // exactly what that composition does.
+                    const conductorPresence = setupConductorPresence({
+                        identityContext,
+                        presenceConfig:          config.presence,
+                        readyClient,
+                        getTaskContext:          () => taskListReader.buildTaskListSummary(),
+                        getRecentContext,
+                        contextBuilder,
+                        getLastThinkingContent,
+                        identityCache,
+                        getLiveSignals:          liveSignals ? () => liveSignals.snapshot() : undefined,
+                        getPreviousStatus,
+                        setPreviousStatus,
+                        sessions:                conductorSessions!,
+                        throttle:                presenceThrottle,
+                        onThinkingContentUpdate: setLastThinkingContent,
+                        // Q3/B4: only forward the predicate when perch is actually enabled — the
+                        // `⏸ perch` marker asserts a pause that has a subject; with perch off, no
+                        // scheduler was ever going to run, so nothing is paused regardless of what
+                        // isCostPaused() reports (finding: the marker rendered even with perch off).
+                        isCostPaused:            options.perchConfig?.enabled ? options.isCostPaused : undefined,
+                    });
+                    presenceManager = conductorPresence.presenceManager;
+                    unsubscribeLedgerPresence = conductorPresence.unsubscribeLedgers;
+                }
+            }
+            configurePresence();
+
+            function configureTaskBoard(): void {
+                // Live task board: one system-posted embed per (channel, turn) mirroring the
+                // sub-agents, workflows and background shell commands that turn launched. Gated on the
+                // same conductor-opened condition as presence (it composes from the same ledgers) and
+                // on the config flag, which only an explicit `enabled: false` turns off.
+                if(conductorOpened && ledgerStore && config.taskBoard?.enabled !== false) {
+                    const taskBoard = setupTaskBoard({
+                        readyClient,
+                        rateLimiter,
+                        ledgers:                  conductorLedgers!,
+                        config:                   config.taskBoard ?? DEFAULT_TASK_BOARD_CONFIG,
+                        // The bot receives no zone of its own; perch's configured zone is the only one
+                        // reachable here, and it is the same IANA zone the rest of Izzy schedules in.
+                        // With perch disabled there is no configured zone at all, so fall back to the
+                        // host zone the config loader itself defaults every other `timezone` to.
+                        timeZone:                 options.perchConfig?.timezone ?? resolveTimezone(),
+                        logger,
+                        // A conversation-session task launched from a turn with no channel (a bare
+                        // notification turn, or a wake whose launch record was lost) boards in the
+                        // `fallback` well-known channel — the same place wake delivery sends such a
+                        // turn's reply. A perch-session task always launches with no channel, so it
+                        // always takes this fallback: it boards in the `perch-time` well-known
+                        // channel, the same place the perch reply already goes.
+                        resolveFallbackChannelId: async (role: string): Promise<string | undefined> => {
+                            if(role === 'conversation') {
+                                const fallback = await channelRegistry.getWellKnownChannel('fallback');
+                                return fallback?.channelId;
+                            }
+                            if(role === 'perch') {
+                                const perch = await channelRegistry.getWellKnownChannel('perch-time');
+                                return perch?.channelId;
+                            }
+                            return undefined;
+                        },
+                    });
+                    stopTaskBoard = taskBoard.stop;
+                }
+            }
+            configureTaskBoard();
+
+            function configurePerch(): void {
+                // Create the perch driver+scheduler once the perch conductor has successfully opened.
+                if(perchConductorOpened && perchConductor && options.perchConfig?.enabled) {
+                    const perchSetup = setupPerchDriverAndScheduler({
+                        conductor:    perchConductor,
+                        perchConfig:  options.perchConfig,
+                        clock,
+                        contextBuilder,
+                        activityLogger,
+                        channelRegistry,
+                        responseRouter,
+                        client:       readyClient,
+                        rateLimiter,
+                        discordCapability,
+                        isCostPaused: options.isCostPaused,
+                        timeHeader:   options.perchTimeHeader,
+                        slotHooks:    options.perchSlotHooks,
+                    });
+                    perchDriver = perchSetup.driver;
+                    perchScheduler = perchSetup.scheduler;
                 }
                 // Stryker restore BlockStatement
             }
+            configurePerch();
 
-            // Create message coordinator once the conductor has opened (MUST be before setupMessageProcessing)
-            if(conductorOpened) {
-                // The conductor's Discord-facing dependencies bind to this readyClient/
-                // channelRegistry — built here (not earlier) because both only exist from
-                // clientReady onward.
-                const envelopeProvider: DiscordEnvelopeProvider = {
-                    resolveNames: resolveEnvelopeNames(channelRegistry, readyClient),
-                    toEnvelopeInput,
-                    channelList:  channelListProvider(channelRegistry, readyClient),
-                };
-
-                coordinator = setupCoordinatorIntegration({
-                    responseRouter,
-                    rateLimiter,
-                    readyClient,
-                    channelRegistry,
-                    setLastSessionId,
-                    addRecentMessage,
-                    addRecentChannel,
-                    activityLogger,
-                    discordCapability,
-                    conversationConductor: conversationConductor!,
-                    contextPolicy:         contextPolicy!,
-                    envelopeProvider,
-                    contextBuilder,
-                    inboxManager,
-                    timeHeader:            options.timeHeader,
-                });
-
-                // Register message handler AFTER channel registry is initialized and coordinator is created
-                setupMessageProcessing({
-                    client,
-                    readyClient,
-                    channelRegistry,
-                    addRecentMessage,
-                    coordinator,
-                    questionRegistry,
-                    answerClassifier,
-                    inboxManager,
-                    dmTracker,
-                    ingressGate: ingressGate!,
-                    perch:       perchRoutingDeps(),
-                });
+            async function muteAdminEmailChannel(): Promise<void> {
+                // Mute admin email channel so Craig's messages there don't reach Izzy
+                if(emailSetup?.adminChannelId) {
+                    try {
+                        await channelRegistry.muteChannel(emailSetup.adminChannelId);
+                        logger.info({ msg: 'Admin email channel muted in channel registry' });
+                    } catch (err) {
+                        logger.warn({
+                            error: err instanceof Error ? err.message : String(err),
+                            msg:   'Failed to mute admin email channel — messages there may reach Izzy',
+                        });
+                    }
+                    // Stryker restore BlockStatement
+                }
             }
+            await muteAdminEmailChannel();
+
+            function configureMessageProcessing(): void {
+                // Create message coordinator once the conductor has opened (MUST be before setupMessageProcessing)
+                if(conductorOpened) {
+                    // The conductor's Discord-facing dependencies bind to this readyClient/
+                    // channelRegistry — built here (not earlier) because both only exist from
+                    // clientReady onward.
+                    const envelopeProvider: DiscordEnvelopeProvider = {
+                        resolveNames: resolveEnvelopeNames(channelRegistry, readyClient),
+                        toEnvelopeInput,
+                        channelList:  channelListProvider(channelRegistry, readyClient),
+                    };
+
+                    coordinator = setupCoordinatorIntegration({
+                        responseRouter,
+                        rateLimiter,
+                        readyClient,
+                        channelRegistry,
+                        setLastSessionId,
+                        addRecentMessage,
+                        addRecentChannel,
+                        activityLogger,
+                        discordCapability,
+                        conversationConductor: conversationConductor!,
+                        contextPolicy:         contextPolicy!,
+                        envelopeProvider,
+                        contextBuilder,
+                        inboxManager,
+                        timeHeader:            options.timeHeader,
+                    });
+
+                    // Register message handler AFTER channel registry is initialized and coordinator is created
+                    setupMessageProcessing({
+                        client,
+                        readyClient,
+                        channelRegistry,
+                        addRecentMessage,
+                        coordinator,
+                        questionRegistry,
+                        answerClassifier,
+                        inboxManager,
+                        dmTracker,
+                        ingressGate: ingressGate!,
+                        perch:       perchRoutingDeps(),
+                    });
+                }
+            }
+            configureMessageProcessing();
 
             // Register channel cleanup event handlers
             setupChannelCleanupHandlers({
@@ -1111,52 +1139,54 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 channelRegistry,
             });
 
-            // Initialize inbox on startup and then check for catch-up, once the conductor opened.
-            // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
-            if(inboxManager && conductorOpened) {
-                // The well-known perch-time channel's replay is owned by the perch conductor, not
-                // the conversation one — excluded from replayUnhandled entirely (documented skip:
-                // this package does not route perch-channel replay to the perch conductor, only
-                // its LIVE messages — see handlers.ts's own dispatchAdmittedMessage) whenever the
-                // perch conductor actually opened. If it did not, conversation's own replay keeps
-                // trying that channel too (the safer fallback).
-                //
-                // Guarded: a rejection here (the backend read inside getWellKnownChannel is not
-                // itself try/caught — see channel-registry/manager.ts) must NOT abort the rest of
-                // this async clientReady handler, which has no surrounding try/catch of its own —
-                // an unguarded throw here would skip setupInboxAndCatchUp entirely, so the ingress
-                // gate would never open and every Discord message would buffer forever. Degrading
-                // to "no exclusion" (conversation's replay tries that channel too) is the safe
-                // fallback, exactly like the omitted-perchConductor case above.
-                let perchTimeChannelId: ChannelId | undefined;
-                if(perchConductorOpened) {
-                    try {
-                        const perchTimeChannel = await channelRegistry.getWellKnownChannel('perch-time');
-                        perchTimeChannelId = perchTimeChannel?.channelId;
-                    } catch (err) {
-                        logger.error({ err, msg: 'Failed to resolve the well-known perch-time channel for replay exclusion — continuing without it' });
+            async function initializeInbox(): Promise<void> {
+                // Initialize inbox on startup and then check for catch-up, once the conductor opened.
+                if(inboxManager && conductorOpened) {
+                    // The well-known perch-time channel's replay is owned by the perch conductor, not
+                    // the conversation one — excluded from replayUnhandled entirely (documented skip:
+                    // this package does not route perch-channel replay to the perch conductor, only
+                    // its LIVE messages — see handlers.ts's own dispatchAdmittedMessage) whenever the
+                    // perch conductor actually opened. If it did not, conversation's own replay keeps
+                    // trying that channel too (the safer fallback).
+                    //
+                    // Guarded: a rejection here (the backend read inside getWellKnownChannel is not
+                    // itself try/caught — see channel-registry/manager.ts) must NOT abort the rest of
+                    // this async clientReady handler, which has no surrounding try/catch of its own —
+                    // an unguarded throw here would skip setupInboxAndCatchUp entirely, so the ingress
+                    // gate would never open and every Discord message would buffer forever. Degrading
+                    // to "no exclusion" (conversation's replay tries that channel too) is the safe
+                    // fallback, exactly like the omitted-perchConductor case above.
+                    let perchTimeChannelId: ChannelId | undefined;
+                    if(perchConductorOpened) {
+                        try {
+                            const perchTimeChannel = await channelRegistry.getWellKnownChannel('perch-time');
+                            perchTimeChannelId = perchTimeChannel?.channelId;
+                        } catch (err) {
+                            logger.error({ err, msg: 'Failed to resolve the well-known perch-time channel for replay exclusion — continuing without it' });
+                        }
                     }
-                }
 
-                void setupInboxAndCatchUp({
-                    inboxManager,
-                    readyClient,
-                    perchConfig:           options.perchConfig,
-                    healthRegistry:        options.healthRegistry,
-                    conversationConductor: conversationConductor!,
-                    journal:               journal!,
-                    responseRouter,
-                    rateLimiter,
-                    ingressGate:           ingressGate!,
-                    discordCapability,
-                    excludeChannelIds:     perchTimeChannelId ? new Set([perchTimeChannelId]) : undefined,
-                    contextPolicy,
-                    bootEventsWindowMs,
-                    bootLostTasks,
-                    timeHeader:            options.timeHeader,
-                });
+                    void setupInboxAndCatchUp({
+                        inboxManager,
+                        readyClient,
+                        perchConfig:           options.perchConfig,
+                        healthRegistry:        options.healthRegistry,
+                        conversationConductor: conversationConductor!,
+                        journal:               journal!,
+                        responseRouter,
+                        rateLimiter,
+                        ingressGate:           ingressGate!,
+                        discordCapability,
+                        excludeChannelIds:     perchTimeChannelId ? new Set([perchTimeChannelId]) : undefined,
+                        contextPolicy,
+                        bootEventsWindowMs,
+                        bootLostTasks,
+                        timeHeader:            options.timeHeader,
+                    });
+                }
+                // Stryker restore BlockStatement
             }
-            // Stryker restore BlockStatement
+            await initializeInbox();
         } // end if(!initialized)
     });
 
@@ -1167,10 +1197,22 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         },
 
         async stop(): Promise<void> {
+            let primaryError: Error | undefined;
+            const recordFailure = (error: unknown, phase: string): void => {
+                const failure = error instanceof Error ? error : new Error(String(error));
+                if(primaryError === undefined) {
+                    primaryError = failure;
+                    try {
+                        logger.warn({ error: failure.message, msg: `${phase} failed during bot shutdown` });
+                    } catch{ /* Preserve the original shutdown failure even if logging fails. */ }
+                    return;
+                }
+                try {
+                    logger.warn({ error: failure.message, msg: `${phase} failed after an earlier bot shutdown error` });
+                } catch{ /* Preserve the first shutdown failure. */ }
+            };
             // Stop coordinator if it exists
-            if(coordinator) {
-                coordinator.stop();
-            }
+            await runBotStopStep('Coordinator stop', () => coordinator?.stop(), recordFailure);
             // Stop the perch driver's own timers (wrap-up/interrupt/pending) and the scheduler
             // BEFORE shutdownRef.run() below waits out the shared turn-wait budget — otherwise an
             // interrupt or wrap-up timer can still fire while shutdown is politely waiting for the
@@ -1178,65 +1220,50 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // (onSlotSettled's `pending` resolution) into a conductor that is mid-shutdown and
             // logs a spurious "shutting down" rejection. A no-op when perch was never enabled or
             // its conductor never opened (perchDriver/perchScheduler stay undefined).
-            if(perchScheduler) {
-                perchScheduler.stop();
-            }
-            if(perchDriver) {
-                perchDriver.stop();
-            }
+            await runBotStopStep('Perch scheduler stop', () => perchScheduler?.stop(), recordFailure);
+            await runBotStopStep('Perch driver stop', () => perchDriver?.stop(), recordFailure);
             // coordinator.stop() -> perch driver/scheduler stop() -> gate.stop() ->
             // shutdown.run() (the cross-session wait/interrupt/flush/close sequence, covering both
             // conductors under ONE shared config.session.shutdownTurnWaitMs/shutdownDeadlineMs
             // budget — see createShutdown) -> ledger/ring-buffer unsubscribes below.
-            // Stryker disable all: bot.ts IS in the mutate glob (stryker.conf.mjs) — this block is
-            // disabled because the shutdown() call ORDER (asserted by bot.test.ts's 'stop order'
-            // conductor-mode test) is the behaviour that matters; the catch's error-message
-            // formatting is not independently asserted and is accepted as untested
-            // composition-root wiring.
+            // The shutdown() call ORDER and warning formatting are covered by bot.test.ts's
+            // conductor-mode lifecycle assertions.
             if(shutdownRef) {
-                ingressGate?.stop();
+                await runBotStopStep('Ingress gate stop', () => ingressGate?.stop(), recordFailure);
                 try {
                     await shutdownRef.run();
                 } catch (err) {
-                    logger.warn({
-                        error: err instanceof Error ? err.message : String(err),
-                        msg:   'Conductor shutdown() failed — continuing with the rest of stop()',
-                    });
+                    try {
+                        logger.warn({
+                            error: err instanceof Error ? err.message : String(err),
+                            msg:   'Conductor shutdown() failed — continuing with the rest of stop()',
+                        });
+                    } catch (warningError) {
+                        recordFailure(warningError, 'Conductor shutdown warning');
+                    }
                 }
             }
             // Stryker restore all
             // Stop question registry (always exists now)
-            questionRegistry.stop();
-            if(unsubscribeLedgerPresence) {
-                unsubscribeLedgerPresence();
-            }
-            if(stopTaskBoard) {
-                stopTaskBoard();
-            }
-            unsubscribeToolTracking();
-            unsubscribeChannelTracking();
+            await runBotStopStep('Question registry stop', () => questionRegistry.stop(), recordFailure);
+            await runBotStopStep('Ledger presence unsubscribe', () => unsubscribeLedgerPresence?.(), recordFailure);
+            await runBotStopStep('Task board stop', () => stopTaskBoard?.(), recordFailure);
+            await runBotStopStep('Tool tracking unsubscribe', () => unsubscribeToolTracking(), recordFailure);
+            await runBotStopStep('Channel tracking unsubscribe', () => unsubscribeChannelTracking(), recordFailure);
             // Perch scheduler/driver are already stopped above, before shutdownRef.run() — see
             // that comment.
             // Stop presence manager if it exists
-            if(presenceManager) {
-                presenceManager.stop();
-            }
+            await runBotStopStep('Presence manager stop', () => presenceManager?.stop(), recordFailure);
             // Stop rate limiter
-            rateLimiter.stop();
+            await runBotStopStep('Rate limiter stop', () => rateLimiter.stop(), recordFailure);
             // Stop channel registry hydration loop (safe to call if startHydration was never called)
-            channelRegistry.stop();
-            // Remove all listeners before destroy to prevent memory leaks
-            client.removeAllListeners();
-            // destroy() is sufficient for cleanup (as per user decision)
-            await client.destroy();
-            // Clear global state to allow fresh initialization if needed
-            // Only clear if this is the global client (not a provided client)
-            if(!providedClient && globalThis.__discordClient === client) {
-                globalThis.__discordClient = undefined;
+            await runBotStopStep('Channel registry stop', () => channelRegistry.stop(), recordFailure);
+            await destroyOwnedDiscordClient(client, providedClient, recordFailure);
+            if(primaryError) {
+                throw primaryError;
             }
         },
 
-        // Stryker disable BlockStatement: Composition root — reconnect catch-up trigger is not unit-testable
         async triggerCatchUp(): Promise<void> {
             // Submits a catch-up envelope through the conductor — the same path the boot sequence
             // uses (`submitConductorCatchUp`).

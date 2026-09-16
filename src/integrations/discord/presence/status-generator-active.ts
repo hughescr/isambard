@@ -54,14 +54,12 @@ interface ActiveStatusGeneratorDeps {
  * @returns Emoji prefix string (with trailing space if applicable)
  */
 function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined): string {
-    // Stryker disable BlockStatement,ConditionalExpression,LogicalOperator: Early return and default case have same behavior ('') - tested in integration
-    if(!presenceDisplayMode || presenceDisplayMode === 'none') {
-        return '';
-    }
-    // Stryker restore BlockStatement,ConditionalExpression,LogicalOperator
-
     // Switch case emojis are tested in test file
-    switch(presenceDisplayMode) { // Stryker disable ConditionalExpression,StringLiteral
+    switch(presenceDisplayMode) {
+        case undefined:
+        case 'none': {
+            return '';
+        }
         case 'processing_message': {
             return '💬 ';
         }

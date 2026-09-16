@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { resolveTimezone } from '@/utils';
 
 // Log level enum schema
-// Stryker disable next-line StringLiteral: Log level enum values are configuration
 const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error']);
 
 // App config: nodeEnv (enum), logLevel (default 'info'), port (coerced number)
@@ -39,11 +38,9 @@ export const agentGatewayConfigSchema = z.object({
 // Agent config: OAuth token for Claude Agent SDK
 export const agentConfigSchema = z.object({
     oauthToken:    z.string().min(1),
-    // Stryker disable next-line StringLiteral: Default model value is configuration
     mainModel:     z.string().min(1).default('opus'),
     // Default 'sonnet' must stay in sync with the sst.Secret('IsambardFallbackModel', 'sonnet')
     // placeholder default in sst/secrets.ts.
-    // Stryker disable next-line StringLiteral: Default fallback model value is configuration
     fallbackModel: z.string().min(1).default('sonnet'),
     quota:         quotaConfigSchema.default(quotaConfigSchema.parse({})),
     // Optional in the structural Config type so existing programmatic test/config producers
@@ -55,7 +52,6 @@ export const agentConfigSchema = z.object({
 export const emailConfigSchema = z.object({
     user:                           z.string().min(1),
     password:                       z.string().min(1),
-    // Stryker disable BooleanLiteral,StringLiteral,ArithmeticOperator: Default values are configuration
     pollFallbackMs:                 z.number().int().positive().default(300_000),    // 5 min
     sseReconnectDelayMs:            z.number().int().positive().default(5000),
     maxBodySizeBytes:               z.number().int().positive().default(50_000),
@@ -63,7 +59,6 @@ export const emailConfigSchema = z.object({
     wildDuckApiUrl:                 z.url(),
     sendReservoirCapacity:          z.number().int().positive().default(24),
     sendReservoirRefillRatePerHour: z.number().positive().default(1),
-    // Stryker restore BooleanLiteral,StringLiteral,ArithmeticOperator
 });
 
 // GuildId branded type - canonical definition (re-exported by src/integrations/discord/types.ts)
@@ -75,7 +70,6 @@ export const guildIdSchema = z
 export type GuildId = z.infer<typeof guildIdSchema>;
 
 // Idle signals configuration — feature flags and TTL overrides for network-fetched signals
-/* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
 export const idleSignalsConfigSchema = z.object({
     /** Enable Bluesky discover feed signal (default: false — requires tuning) */
     bskyDiscoverEnabled:      z.boolean().default(false),
@@ -125,7 +119,6 @@ export type PresenceConfig = z.infer<typeof PresenceConfigSchema>;
 // Inbox configuration schema - canonical definition (re-exported by src/integrations/discord/inbox/config.ts)
 export const inboxConfigSchema = z.object({
     /** Minimum gap duration in milliseconds before catching up messages (default: 10 seconds) */
-    // Stryker disable next-line ArithmeticOperator: Configuration default value — multiplication is readability only
     minGapDurationMs:   z.number().int().positive().default(10 * 1000),  // 10 seconds
     /** Maximum number of messages to catch up per channel (default: 100) */
     maxCatchUpMessages: z.number().int().positive().default(100),
@@ -188,9 +181,7 @@ export const discordConfigSchema = z.object({
 });
 
 // Browser config
-/* Stryker disable BooleanLiteral,StringLiteral,ArithmeticOperator: Default values are configuration */
 export const browserConfigSchema = z.object({
-    // Stryker disable next-line StringLiteral,ArrayDeclaration: Enum values are configuration
     backend:             z.enum(['auto', 'webkit', 'chrome']).default('auto'),
     viewportWidth:       z.number().int().min(320).max(4096).default(1280),
     viewportHeight:      z.number().int().min(320).max(4096).default(800),
@@ -208,7 +199,6 @@ export const browserConfigSchema = z.object({
 export const bskyConfigSchema = z.object({
     handle:      z.string().min(1),
     appPassword: z.string().min(1),
-    // Stryker disable next-line StringLiteral: Default URL is configuration
     serviceUrl:  z.url().default('https://bsky.social'),
 });
 
@@ -218,7 +208,6 @@ export const dynamoDBConfigSchema = z.object({
 });
 
 // Perch time configuration schema
-/* Stryker disable BooleanLiteral,StringLiteral: Default values are configuration - validated by schema tests */
 export const perchConfigSchema = z.object({
     /** Whether perch time is enabled */
     enabled:               z.boolean().default(true),
@@ -249,7 +238,6 @@ export const perchConfigSchema = z.object({
 /**
  * Backoff configuration for exponential retry
  */
-/* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
 const reconciliationBackoffSchema = z.object({
     /** Base delay in milliseconds for exponential backoff */
     baseDelayMs: z.number().int().positive().default(100),
@@ -261,7 +249,6 @@ const reconciliationBackoffSchema = z.object({
 /**
  * Test mode configuration for manual triggering
  */
-/* Stryker disable BooleanLiteral: Default values are configuration */
 const reconciliationTestModeSchema = z.object({
     /** Whether to trigger reconciliation immediately on startup */
     triggerOnStartup: z.boolean().optional(),
@@ -273,7 +260,6 @@ const reconciliationTestModeSchema = z.object({
 /**
  * Configuration for tag index reconciliation job
  */
-/* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
 export const reconciliationConfigSchema = z.object({
     /** Whether reconciliation job is enabled */
     enabled:          z.boolean().default(false),
@@ -298,7 +284,6 @@ export type ReconciliationConfig = z.infer<typeof reconciliationConfigSchema>;
 /**
  * Configuration for contact reconciliation job
  */
-/* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
 export const contactReconciliationConfigSchema = z.object({
     /** Whether contact reconciliation job is enabled */
     enabled:                   z.boolean().default(false),
@@ -315,23 +300,18 @@ export const contactReconciliationConfigSchema = z.object({
      */
     strayLookupAgeThresholdMs: z.number().int().nonnegative().default(300_000),
 });
-/* Stryker restore BooleanLiteral,ArithmeticOperator */
 
 export type ContactReconciliationConfig = z.infer<typeof contactReconciliationConfigSchema>;
 
 // Vector index config schema
-/* Stryker disable BooleanLiteral,StringLiteral: Default values are configuration */
 export const vectorIndexConfigSchema = z.object({
     /** Whether vector indexing is enabled */
     enabled:    z.boolean().default(true),
     /** Path to SQLite database file (relative to CWD) */
-    // Stryker disable next-line StringLiteral: Default path is configuration
     dbPath:     z.string().default('memory-vec.sqlite'),
     /** Embedding model size slug */
-    // Stryker disable next-line StringLiteral,ArrayDeclaration: Enum values and default are configuration
     modelSlug:  z.enum(['0.6b', '4b']).default('0.6b'),
     /** Embedding model quantization level */
-    // Stryker disable next-line StringLiteral,ArrayDeclaration: Enum values and default are configuration
     modelQuant: z.enum(['Q8_0', 'Q4_K_M']).default('Q8_0'),
 });
 /* Stryker restore BooleanLiteral,StringLiteral */
@@ -339,7 +319,6 @@ export const vectorIndexConfigSchema = z.object({
 export type VectorIndexConfig = z.infer<typeof vectorIndexConfigSchema>;
 
 // Session configuration for long-lived conversations
-/* Stryker disable BooleanLiteral,ArithmeticOperator,StringLiteral: Default values are configuration - validated by schema tests */
 export const sessionConfigSchema = z.object({
     compactThresholdPercent:    z.number().int().positive().default(60),
     humanWaitTargetMs:          z.number().int().positive().default(10_000),

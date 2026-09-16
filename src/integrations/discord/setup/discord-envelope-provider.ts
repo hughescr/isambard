@@ -21,7 +21,11 @@ import { InvariantViolationError } from '@/errors';
  * built during that window gets a legible placeholder instead of silently reporting no channels
  * at all.
  */
-export const CHANNEL_LIST_HYDRATING_MARKER = '(channel list still hydrating — registry not ready yet)';
+function channelListHydratingMarker(): string {
+    return '(channel list still hydrating — registry not ready yet)';
+}
+
+export const CHANNEL_LIST_HYDRATING_MARKER = channelListHydratingMarker();
 
 /**
  * `channelName (guildName) [well-known: type]` — matches coordinator-setup.ts's legacy format
@@ -61,7 +65,7 @@ function formatChannelEntry(channel: ChannelMetadata, client: Client): string {
 export function channelListProvider(registry: ChannelRegistryManager, client: Client): () => Promise<string[]> {
     return async () => {
         if(!registry.isReady()) {
-            return [CHANNEL_LIST_HYDRATING_MARKER];
+            return [channelListHydratingMarker()];
         }
         const channels = await registry.getUnmutedChannels();
         return channels.map(channel => formatChannelEntry(channel, client));

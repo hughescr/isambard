@@ -42,7 +42,7 @@ import { buildPeerEnvelope, type Clock, type Conductor } from '@/agent/session';
  * taken as `prompt.slice(match[0].length)`, which is only the text after the tag when the match
  * starts at index 0.
  */
-const OPEN_TAG_PATTERN = /^<cross-session-message\s([^>]*)>/;
+const OPEN_TAG_PATTERN = /^<cross-session-message\s[^>]*>/;
 
 /** The reply address attribute. `from-name`/`from-mode` cannot match: the `="` follows `from` immediately. */
 const FROM_PATTERN = /\bfrom="([^"]*)"/;
@@ -90,16 +90,14 @@ export function parsePeerMessage(prompt: string): { from: string, fromName?: str
         return undefined;
     }
     const wholeTag = openTag[0];
-    // OPEN_TAG_PATTERN has one mandatory capture, so a successful exec always supplies index 1.
-    const attributes = openTag[1]!;
-    const from = FROM_PATTERN.exec(attributes)?.[1];
+    const from = FROM_PATTERN.exec(wholeTag)?.[1];
     if(from === undefined || from === '') {
         return undefined;
     }
     const body = prompt.slice(wholeTag.length);
     const closeIndex = body.lastIndexOf(CLOSE_TAG);
     const text = (closeIndex === -1 ? body : body.slice(0, closeIndex)).trim();
-    const fromName = FROM_NAME_PATTERN.exec(attributes)?.[1];
+    const fromName = FROM_NAME_PATTERN.exec(wholeTag)?.[1];
 
     return { from, ...(fromName === undefined || fromName === '' ? {} : { fromName }), text };
 }

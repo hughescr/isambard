@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-// Stryker disable all: Schema values are static definitions
-
 const approvalSagaStateSchema = z.enum([
     'pending_approval',
     'approved',

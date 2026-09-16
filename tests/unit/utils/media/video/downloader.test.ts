@@ -48,15 +48,19 @@ describe('downloadVideo', () => {
 
     it('uses ffmpeg for HLS URLs', async () => {
         const capturedCmds: string[][] = [];
-        const trackingRunner: SpawnRunner = async (cmd): Promise<{ stdout: string, stderr: string, exitCode: number }> => {
+        const options: { timeout?: number }[] = [];
+        const trackingRunner: SpawnRunner = async (cmd, opts): Promise<{ stdout: string, stderr: string, exitCode: number }> => {
             capturedCmds.push(cmd);
+            options.push(opts ?? {});
             return { stdout: '', stderr: '', exitCode: 0 };
         };
         // HLS download path: ffmpeg writes the output file (we don't verify the file exists)
         const resultPath = await downloadVideo('https://example.com/stream.m3u8', `${TEST_DIR}/hls`, trackingRunner);
         expect(capturedCmds).toHaveLength(1);
-        expect(capturedCmds[0]).toContain('ffmpeg');
-        expect(capturedCmds[0]).toContain('https://example.com/stream.m3u8');
+        expect(capturedCmds[0]).toEqual([
+            'ffmpeg', '-i', 'https://example.com/stream.m3u8', '-c', 'copy', resultPath,
+        ]);
+        expect(options[0]).toEqual({ timeout: 300_000 });
         expect(resultPath).toContain('video-original.mp4');
     });
 
@@ -79,10 +83,12 @@ describe('downloadVideo', () => {
         await mkdir(`${TEST_DIR}/direct`, { recursive: true });
 
         const fakeBuffer = Buffer.from('fake video data');
-        globalThis.fetch = mock(async (): Promise<Response> => new Response(fakeBuffer, { status: 200 })) as unknown as typeof fetch;
+        const fetchMock = mock(async (_url: string, _options?: RequestInit): Promise<Response> => new Response(fakeBuffer, { status: 200 }));
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
 
         const resultPath = await downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/direct`, makeSuccessRunner());
         expect(resultPath).toContain('video-original.mp4');
+        expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
     });
 
     it('throws MediaProcessingError on HTTP error during direct download', async () => {

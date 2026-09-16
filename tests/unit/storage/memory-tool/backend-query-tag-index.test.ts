@@ -29,6 +29,16 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
         ddbMock.reset();
     });
 
+    test('identifies the missing tag index boundary', async () => {
+        const withoutIndex = new MemoryToolBackendQuery(ddbMock as unknown as DynamoDBDocumentClient, 'TestTable', stripDynamoKeys);
+        try {
+            await withoutIndex.searchByTags(new Set(['missing']));
+            throw new Error('expected an invariant failure');
+        } catch (error) {
+            expect(error).toMatchObject({ context: { location: 'MemoryToolBackendQuery.searchByTags' } });
+        }
+    });
+
     test('should delegate to tagIndex.queryByTags with single tag', async () => {
         const tagIndexItems: TagIndexItem[] = [
             {

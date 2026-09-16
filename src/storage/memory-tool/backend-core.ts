@@ -6,7 +6,9 @@ import {
     type MemoryPath,
     type ContentType,
     type MemoryToolItemData,
-    type MemoryToolItem
+    type MemoryToolItem,
+    type StoredMemoryToolItem,
+    normalizeStoredMemoryToolItem
 } from './types';
 import { ItemNotFoundError, ValidationError } from '@/errors';
 
@@ -56,7 +58,6 @@ export class MemoryToolBackendCore {
             path:           input.path,
             content:        input.content,
             contentType:    input.contentType,
-            // Stryker disable next-line LogicalOperator: ?? operator provides default empty object
             metadata:       input.metadata ?? {},
             tags:           input.tags && input.tags.size > 0 ? input.tags : undefined,
             createdAt:      now,
@@ -79,7 +80,6 @@ export class MemoryToolBackendCore {
 
         // boundary cast: spreading a branded MemoryToolItem into a plain DynamoDB Record for putItem; branded MemoryPath/ContentType are runtime-compatible strings
         const ddbItem: Record<string, unknown> = { ...(item as unknown as Record<string, unknown>) };
-        // Stryker disable next-line ConditionalExpression: TTL is an optional DDB attribute; absence is intentional when ttl is undefined
         if(input.ttl !== undefined) {
             ddbItem.TTL = input.ttl;
         }
@@ -97,12 +97,12 @@ export class MemoryToolBackendCore {
             SK: keys.SK,
         };
 
-        const item = await this.getItem<MemoryToolItem>(key);
+        const item = await this.getItem<StoredMemoryToolItem>(key);
         if(!item) {
             return undefined;
         }
 
-        return this.stripKeys(item);
+        return this.stripKeys(normalizeStoredMemoryToolItem(item));
     }
 
     async update(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<MemoryToolItemData> {
@@ -112,7 +112,6 @@ export class MemoryToolBackendCore {
         }
 
         // Build updated data with new content preview if content changed
-        // Stryker disable next-line ConditionalExpression: Conditional prevents regenerating preview when content unchanged
         const newContentPreview = input.content === undefined
             ? existing.contentPreview
             : generateContentPreview(input.content);
@@ -122,7 +121,6 @@ export class MemoryToolBackendCore {
             ...(input.content !== undefined && { content: input.content }),
             ...(input.metadata !== undefined && { metadata: input.metadata }),
             ...(input.tags !== undefined && { tags: input.tags.size > 0 ? input.tags : undefined }),
-            // Stryker disable next-line ConditionalExpression: Spread operator conditional - undefined values should not override existing contentPreview
             ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
             // updatedAt reflects "last touched" (content edit OR deliberate access via recordAccess),
             // not just content modification. This keeps accessed items visible in GSI1 time-ordered queries.
@@ -145,7 +143,6 @@ export class MemoryToolBackendCore {
         const updated = result.data;
         // boundary cast: spreading a branded MemoryToolItem into a plain DynamoDB Record for putItem; branded MemoryPath/ContentType are runtime-compatible strings
         const ddbItem: Record<string, unknown> = { ...(this.buildUpdatedItem(updated) as unknown as Record<string, unknown>) };
-        // Stryker disable next-line ConditionalExpression: TTL is an optional DDB attribute; absence is intentional when no TTL is set
         if(ttlToWrite !== undefined) {
             ddbItem.TTL = ttlToWrite;
         }

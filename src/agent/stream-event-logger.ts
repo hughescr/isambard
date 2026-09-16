@@ -19,6 +19,11 @@ import type { SessionRole } from './session/types';
 import { extractAssistantText, extractToolUses, parseToolName, redactSensitiveArgs } from './stream-extractors';
 import type { AgentStreamEvent } from './types';
 
+/** Older SDK compact-boundary frames can omit metadata required by current SDK types. */
+interface CompactBoundaryIngress extends Pick<SDKCompactBoundaryMessage, 'type' | 'subtype'> {
+    compact_metadata?: SDKCompactBoundaryMessage['compact_metadata']
+}
+
 /**
  * The narrow logging surface {@link createStreamEventLogger} and {@link createRoleLogger} need:
  * each method takes exactly one metadata object, matching this module's (and the rest of the
@@ -61,9 +66,8 @@ export function createRoleLogger(role: SessionRole, base: FieldLogger = logger):
  * path (src/agent/agent.ts), which is the sole caller of `processSingleStreamMessage`.
  * @param message Stream message to check for errors
  */
-// Stryker disable StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement,ArrayDeclaration: Observability - error logging doesn't affect return value
 export function logResultErrors(message: { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] }): void {
-    if(message.type === 'result' && 'is_error' in message && message.is_error) {
+    if(message.type === 'result' && message.is_error) {
         logger.error({
             subtype: 'subtype' in message ? message.subtype : undefined,
             errors:  'errors' in message ? message.errors : [],
@@ -78,9 +82,8 @@ export function logResultErrors(message: { type: string, is_error?: boolean, sub
  * path (src/agent/agent.ts).
  * @param message Stream message to check for errors
  */
-// Stryker disable StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: Observability - error logging doesn't affect return value
 export function logAssistantErrors(message: { type: string, error?: unknown }): void {
-    if(message.type === 'assistant' && 'error' in message && message.error) {
+    if(message.type === 'assistant' && message.error) {
         logger.error({
             error: message.error,
             msg:   'Agent SDK assistant message error',
@@ -94,7 +97,6 @@ export function logAssistantErrors(message: { type: string, error?: unknown }): 
  * by the one-shot path (src/agent/agent.ts).
  * @param message Stream message to extract tool uses from
  */
-// Stryker disable StringLiteral,ObjectLiteral: Observability - debug logging doesn't affect return value
 export function logToolUsage(message: { type: string, message?: { content?: unknown } }): void {
     const toolUses = extractToolUses(message);
     for(const toolUse of toolUses) {
@@ -138,7 +140,6 @@ export function createStreamEventLogger(log: FieldLogger = logger): StreamEventL
      * with the tools that were invoked. Tracks ALL pending tools since multiple tools can be
      * requested in a single turn.
      */
-    // Stryker disable next-line ArrayDeclaration: Module initialization - reset() is the tested behavior
     let pendingToolRequests: string[] = [];
 
     function logUserEvent(_message: AgentStreamEvent): void {
@@ -207,12 +208,9 @@ export function createStreamEventLogger(log: FieldLogger = logger): StreamEventL
 
     function logSystemEvent(message: AgentStreamEvent): void {
         // Type guard: Only SystemEvent has subtype property
-        // Stryker disable next-line ConditionalExpression: Equivalent mutant - message.type === 'system' is always true here (called from switch case 'system')
-        if(message.type === 'system' && 'subtype' in message && message.subtype === 'compact_boundary') {
-            const compactMessage = message as SDKCompactBoundaryMessage;
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: compact_metadata may be absent in older SDK versions despite types
+        if('subtype' in message && message.subtype === 'compact_boundary') {
+            const compactMessage = message as CompactBoundaryIngress;
             const preTokens = compactMessage.compact_metadata?.pre_tokens;
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: compact_metadata may be absent in older SDK versions despite types
             const trigger = compactMessage.compact_metadata?.trigger;
             const tokenInfo = preTokens
                 ? ` (pre-compaction: ${preTokens.toLocaleString()} tokens)`
@@ -248,10 +246,8 @@ export function createStreamEventLogger(log: FieldLogger = logger): StreamEventL
                 break;
             }
 
-            // Stryker disable ConditionalExpression,BlockStatement: Observability - switch case routing and logging don't affect return value
             case 'result': {
                 const resultMessage = message as { type: 'result', subtype?: 'success' | 'error_during_execution' | 'error_max_turns' };
-                // Stryker disable StringLiteral,ObjectLiteral: Observability - log content doesn't affect return value
                 log.debug({
                     eventType: 'result',
                     status:    resultMessage.subtype,

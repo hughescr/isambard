@@ -26,18 +26,6 @@ type DynamicStatusGenerator = ReturnType<typeof createDynamicStatusGenerator>;
  */
 export const IDLE_SETTLE_MS = 1500;
 
-/** `${activeRole}:${phaseType}` for a non-idle {@link PresenceView}, `null` for idle. */
-function phaseSignature(view: PresenceView): string | null {
-    // Stryker disable next-line StringLiteral: equivalent mutant — composePresence's own invariant
-    // (presence-view.ts's resolveActiveRole) guarantees `activeRole` is non-null whenever
-    // `phase.type !== 'idle'` (the only branch that evaluates this expression, per the guard
-    // above), so the `?? ''` fallback's literal value can never be observed: every `view` this
-    // function is ever called with (always `composePresence`'s own return value, from `tick()`)
-    // makes this branch dead. Kept only as a type-level defensive default against `PresenceView`'s
-    // own type, which does not itself encode that correlation.
-    return view.phase.type === 'idle' ? null : `${view.activeRole ?? ''}:${view.phase.type}`;
-}
-
 /** `true` when the view's phase carries a ledger-overlaid synopsis (`compacting` has none). */
 function digestOf(view: PresenceView): string | undefined {
     return 'generatedStatus' in view.phase ? view.phase.generatedStatus : undefined;
@@ -270,19 +258,24 @@ export function setupConductorPresence(params: {
      */
     function tick(settleIdle = true): void {
         const view = composePresence(ledgers.map(store => store.get()), isCostPaused?.() ?? false);
-        const signature = phaseSignature(view);
         const digest = digestOf(view);
 
-        if(view.phase.type === 'idle' && settleIdle) {
-            lastSeenSignature = signature;
-            lastSeenDigest = digest;
-            idleSettleTimer ??= setTimeout(applyIdleIfStillIdle, IDLE_SETTLE_MS);
+        if(view.phase.type === 'idle') {
+            lastSeenSignature = null;
+            lastSeenDigest = undefined;
+            if(settleIdle) {
+                idleSettleTimer ??= setTimeout(applyIdleIfStillIdle, IDLE_SETTLE_MS);
+            } else {
+                planPresenceUpdate(view, throttle);
+                apply(view);
+            }
             return;
         }
         if(idleSettleTimer !== null) {
             clearTimeout(idleSettleTimer);
             idleSettleTimer = null;
         }
+        const signature = `${view.activeRole}:${view.phase.type}`;
         // (An idle view has a null signature AND no digest, so the two-clause form below cannot
         // misfire on idle -> idle: both digests are undefined there.)
         const digestJustArrived = signature === lastSeenSignature && digest !== lastSeenDigest;

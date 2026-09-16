@@ -24,6 +24,7 @@ describe('parseToolName', () => {
         [undefined, { module: 'claude', tool: 'unknown' }],
         ['mcp__foo', { module: 'claude', tool: 'mcp__foo' }],
         ['mcp__', { module: 'claude', tool: 'mcp__' }],
+        ['prefix-mcp__memory__view', { module: 'claude', tool: 'prefix-mcp__memory__view' }],
     ] as const)('should parse "%s" as %j', (input, expected) => {
         expect(parseToolName(input as string | undefined)).toEqual(expected);
     });
@@ -135,6 +136,7 @@ describe('redactSensitiveArgs', () => {
 describe('extractToolUses', () => {
     test('should return empty array for non-assistant messages', () => {
         expect(extractToolUses({ type: 'user', message: { content: [] } })).toEqual([]);
+        expect(extractToolUses({ type: 'user', message: { content: [{ type: 'tool_use', id: 'private', name: 'Read', input: {} }] } })).toEqual([]);
         expect(extractToolUses({ type: 'assistant', message: {} })).toEqual([]);
         expect(extractToolUses({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } })).toEqual([]);
     });
@@ -194,6 +196,7 @@ describe('extractToolUses', () => {
 describe('extractThinkingContent', () => {
     test('should return empty string for non-assistant messages', () => {
         expect(extractThinkingContent({ type: 'user', message: { content: [] } })).toBe('');
+        expect(extractThinkingContent({ type: 'user', message: { content: [{ type: 'thinking', text: 'private thought' }] } })).toBe('');
         expect(extractThinkingContent({ type: 'system', message: { content: [] } })).toBe('');
         expect(extractThinkingContent({ type: 'result', message: { content: [] } })).toBe('');
         expect(extractThinkingContent({ type: 'assistant', message: {} })).toBe('');
@@ -245,6 +248,13 @@ describe('extractThinkingContent', () => {
 });
 
 describe('extractAssistantText', () => {
+    test('returns empty text for a non-assistant message even when it carries text-shaped content', () => {
+        expect(extractAssistantText({
+            type:    'user',
+            message: { content: [{ type: 'text', text: 'must not leak' }] },
+        })).toBe('');
+    });
+
     test('extracts and joins assistant text blocks', () => {
         expect(extractAssistantText({
             type:    'assistant',

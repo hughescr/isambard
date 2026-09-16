@@ -59,8 +59,8 @@ export interface MessageCoordinatorConfig {
      * context survives interruption) and is therefore excluded.
      */
     onResponse?:      (result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>
-    /** Optional callback invoked when processing ends, with info about whether it was interrupted and whether it will resume */
-    onProcessingEnd?: (info: { wasInterrupted: boolean, willResume: boolean }) => void
+    /** Optional callback invoked when processing ends; an async callback is observed but does not delay the next run. */
+    onProcessingEnd?: (info: { wasInterrupted: boolean, willResume: boolean }) => void | Promise<void>
     /**
      * Optional synchronous callback that returns true when the channel registry is ready.
      * When provided and returns false, incoming messages are dropped with a warn log.
@@ -88,6 +88,8 @@ interface ChannelState {
         originalContexts:    DiscordMessageContext[]
         processingPromise:   Promise<void>
         firstDiscordMessage: Message | null  // First message in the batch for response
+        resumeScheduled:     boolean
+        resultCompleted:     boolean
     }
     // Messages received during processing
     pendingMessages:          QueuedMessage[]
@@ -126,7 +128,7 @@ interface ChannelState {
 export class MessageCoordinator {
     private readonly debounceMs:       number;
     private readonly onResponse?:      (result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>;
-    private readonly onProcessingEnd?: (info: { wasInterrupted: boolean, willResume: boolean }) => void;
+    private readonly onProcessingEnd?: (info: { wasInterrupted: boolean, willResume: boolean }) => void | Promise<void>;
     private readonly registryReady?:   () => boolean;
     private readonly channelStates = new Map<ChannelId, ChannelState>();
     private processor:                 MessageProcessor | null = null;
@@ -161,7 +163,6 @@ export class MessageCoordinator {
         }
 
         // Early return if typing is already active - avoids unnecessary work
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive guard - stopTypingIndicator always clears interval before next startTypingIndicator call; prevents leaked intervals if call order changes
         if(state.typingInterval) {
             return;
         }
@@ -174,15 +175,15 @@ export class MessageCoordinator {
         });
 
         // Send initial typing indicator
-        // Stryker disable next-line ArrowFunction: Equivalent mutant - () => undefined and () => undefined both return undefined, suppressing the caught error
-        // eslint-disable-next-line no-restricted-syntax -- sendTyping is best-effort; Discord rate limits or offline state should not crash message processing
-        void state.typingChannel.sendTyping().catch(() => undefined);
+        void state.typingChannel.sendTyping().catch((err: unknown) => {
+            logger.warn({ err, msg: 'MessageCoordinator: initial typing indicator failed' });
+        });
 
         // Set up refresh interval (Discord typing lasts ~10 seconds, refresh every 8s)
         state.typingInterval = setInterval(() => {
-            // Stryker disable next-line ArrowFunction: Equivalent mutant - () => undefined and () => undefined both return undefined, suppressing the caught error
-            // eslint-disable-next-line no-restricted-syntax -- sendTyping is best-effort; Discord rate limits or offline state should not crash message processing
-            state.typingChannel?.sendTyping().catch(() => undefined);
+            void state.typingChannel?.sendTyping().catch((err: unknown) => {
+                logger.warn({ err, msg: 'MessageCoordinator: typing indicator refresh failed' });
+            });
         }, 8000);
     }
 
@@ -190,10 +191,23 @@ export class MessageCoordinator {
      * Stop typing indicator and clear refresh interval.
      */
     private stopTypingIndicator(state: ChannelState): void {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Guard clause - clearInterval on undefined is harmless but unnecessary
         if(state.typingInterval) {
             clearInterval(state.typingInterval);
             state.typingInterval = undefined;
+        }
+    }
+
+    /** The end callback is advisory; observe failures without delaying queued work. */
+    private notifyProcessingEnd(channelId: ChannelId, info: { wasInterrupted: boolean, willResume: boolean }): void {
+        try {
+            const notified = this.onProcessingEnd?.(info);
+            if(notified) {
+                void notified.catch((err: unknown) => {
+                    logger.error({ err, channelId, msg: 'MessageCoordinator: processing-end callback failed' });
+                });
+            }
+        } catch (err) {
+            logger.error({ err, channelId, msg: 'MessageCoordinator: processing-end callback failed' });
         }
     }
 
@@ -233,11 +247,9 @@ export class MessageCoordinator {
         contexts: DiscordMessageContext[],
         firstDiscordMessage: Message | null
     ): void {
-        // Stryker disable all: Unreachable - handleMessage checks processor first
         if(!this.processor) {
             throw new InvariantViolationError('startProcessing', 'Processor not set. Call setProcessor() before handling messages.');
         }
-        // Stryker restore all
 
         const state = this.getOrCreateState(channelId);
 
@@ -252,10 +264,23 @@ export class MessageCoordinator {
         // Create abort controller for this query
         const abortController = new AbortController();
 
-        // Create the processing promise
-        // Stryker disable next-line ArrowFunction: Equivalent mutant — catch handler suppresses unhandled rejection; return value is unused
+        // Install ownership before invoking user code. A synchronous processor throw can run
+        // catch/finally before the IIFE returns; its finally must clear this same active run.
+        const activeQuery: NonNullable<ChannelState['activeQuery']> = {
+            abortController,
+            originalContexts:  contexts,
+            processingPromise: Promise.resolve(),
+            firstDiscordMessage,
+            resumeScheduled:   false,
+            resultCompleted:   false,
+        };
+        state.activeQuery = activeQuery;
+
+        // The coordinator does not retry a failed processor or delivery callback: the inbox
+        // checkpoint and conductor/outbox own replay, and a blind callback retry can send twice.
         const processingPromise = (async () => {
             let wasInterrupted = true; // Default: treat errors/aborts as interruptions
+            let phase: 'processor' | 'onResponse' = 'processor';
             try {
                 // Call processor
                 const result = await this.processor!(
@@ -264,48 +289,46 @@ export class MessageCoordinator {
                     abortController.signal
                 );
                 wasInterrupted = result.wasInterrupted;
+                if(!result.wasInterrupted && state.activeQuery?.abortController === abortController) {
+                    state.activeQuery.resultCompleted = true;
+                }
+                phase = 'onResponse';
 
                 // Conditionally await: handleProcessingResult returns a Promise only when onResponse
                 // is invoked (completed path). For interrupted/no-callback paths it returns void,
                 // avoiding an extra microtask hop that would delay state.activeQuery cleanup.
                 const postProcess = this.handleProcessingResult(result, state, firstDiscordMessage, batch);
-                // Stryker disable next-line ConditionalExpression,BlockStatement: conditional await — if void, skip await to avoid extra microtask
                 if(postProcess) {
                     await postProcess;
                 }
+            } catch (err) {
+                logger.error({ err, channelId, messageIds: contexts.map(context => context.messageId), phase, msg: 'MessageCoordinator: processing failed' });
             } finally {
                 // Stop typing indicator
                 this.stopTypingIndicator(state);
                 // Clear active query
                 state.activeQuery = undefined;
                 // Notify caller about processing end state
-                // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: debounceTimer is structurally redundant — handleMessage always pushes to pendingMessages before setting debounceTimer
-                const willResume = state.pendingMessages.length > 0 || state.debounceTimer !== undefined;
-                this.onProcessingEnd?.({ wasInterrupted, willResume });
+                const willResume = state.pendingMessages.length > 0;
+                this.notifyProcessingEnd(channelId, { wasInterrupted, willResume });
             }
-        // eslint-disable-next-line no-restricted-syntax -- IIFE safety net: internal errors are handled by the try/catch above; outer .catch prevents unhandled rejection in case of internal logic errors
-        })().catch(() => undefined);
-
-        // Store in state
-        state.activeQuery = {
-            abortController,
-            originalContexts: contexts,
-            processingPromise,
-            firstDiscordMessage,
-        };
+        })();
+        activeQuery.processingPromise = processingPromise;
     }
 
     /**
      * Process with resume context after debounce.
      */
     private processWithResume(channelId: ChannelId): void {
-        // Stryker disable all: Unreachable - handleMessage checks processor first
         if(!this.processor) {
             throw new InvariantViolationError('processWithResume', 'Processor not set. Call setProcessor() before handling messages.');
         }
-        // Stryker restore all
 
         const state = this.getOrCreateState(channelId);
+
+        if(state.pendingMessages.length === 0) {
+            return;
+        }
 
         // Get pending messages and clear the queue
         const pendingMessages = [...state.pendingMessages];
@@ -324,7 +347,6 @@ export class MessageCoordinator {
         // Get the first Discord message for this batch
         // Priority: 1) interruptedFirstMessage (from original interrupted query)
         //           2) First new message's Discord message
-        // Stryker disable next-line OptionalChaining: newMessages cannot be empty in reachable paths
         const firstDiscordMessage = state.interruptedFirstMessage ?? newMessages[0]?.discordMessage ?? null;
 
         // The non-null Discord Message of every context in the batch (originals + resumed), in
@@ -353,10 +375,20 @@ export class MessageCoordinator {
         // Create abort controller for this query
         const abortController = new AbortController();
 
-        // Create the processing promise
-        // Stryker disable next-line ArrowFunction: Equivalent mutant — catch handler suppresses unhandled rejection; return value is unused
+        const activeQuery: NonNullable<ChannelState['activeQuery']> = {
+            abortController,
+            originalContexts:  allContexts,
+            processingPromise: Promise.resolve(),
+            firstDiscordMessage,
+            resumeScheduled:   false,
+            resultCompleted:   false,
+        };
+        state.activeQuery = activeQuery;
+
+        // Delivery retries belong to the conductor/outbox, not this coordinator.
         const processingPromise = (async () => {
             let wasInterrupted = true; // Default: treat errors/aborts as interruptions
+            let phase: 'processor' | 'onResponse' = 'processor';
             try {
                 // Call processor with resume context
                 const result = await this.processor!(
@@ -365,55 +397,55 @@ export class MessageCoordinator {
                     abortController.signal
                 );
                 wasInterrupted = result.wasInterrupted;
+                if(!result.wasInterrupted && state.activeQuery?.abortController === abortController) {
+                    state.activeQuery.resultCompleted = true;
+                }
+                phase = 'onResponse';
 
                 // Conditionally await: handleProcessingResult returns a Promise only when onResponse
                 // is invoked (completed path). For interrupted/no-callback paths it returns void,
                 // avoiding an extra microtask hop that would delay state.activeQuery cleanup.
                 const postProcess = this.handleProcessingResult(result, state, firstDiscordMessage, batch);
-                // Stryker disable next-line ConditionalExpression,BlockStatement: conditional await — if void, skip await to avoid extra microtask
                 if(postProcess) {
                     await postProcess;
                 }
+            } catch (err) {
+                logger.error({ err, channelId, messageIds: allContexts.map(context => context.messageId), phase, msg: 'MessageCoordinator: processing failed' });
             } finally {
                 // Stop typing indicator
                 this.stopTypingIndicator(state);
                 // Clear active query
                 state.activeQuery = undefined;
                 // Notify caller about processing end state
-                // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: debounceTimer is structurally redundant — handleMessage always pushes to pendingMessages before setting debounceTimer
-                const willResume = state.pendingMessages.length > 0 || state.debounceTimer !== undefined;
-                this.onProcessingEnd?.({ wasInterrupted, willResume });
+                const willResume = state.pendingMessages.length > 0;
+                this.notifyProcessingEnd(channelId, { wasInterrupted, willResume });
             }
-        // eslint-disable-next-line no-restricted-syntax -- IIFE safety net: internal errors are handled by the try/catch above; outer .catch prevents unhandled rejection in case of internal logic errors
-        })().catch(() => undefined);
+        })();
+        activeQuery.processingPromise = processingPromise;
+    }
 
-        // Store in state
-        state.activeQuery = {
-            abortController,
-            originalContexts: allContexts,
-            processingPromise,
-            firstDiscordMessage,
-        };
+    /** Start one resumed run after both the active run and the latest debounce have ended. */
+    private resumePending(channelId: ChannelId, state: ChannelState): void {
+        if(this.channelStates.get(channelId) !== state || state.activeQuery || state.debounceTimer) {
+            return;
+        }
+        this.processWithResume(channelId);
     }
 
     /**
      * Handle an incoming message.
      */
     handleMessage(context: DiscordMessageContext, discordMessage: Message, channel?: TypingChannel): void {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Redundant with checks in startProcessing (line 126) and processWithResume (line 180)
         if(!this.processor) {
-            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
             throw new InvariantViolationError('handleMessage', 'Processor not set. Call setProcessor() before handling messages.');
         }
 
         // Registry-ready gate: drop messages while the channel registry is hydrating.
         // Inbox checkpoint covers messages missed during this window.
         if(this.registryReady !== undefined && !this.registryReady()) {
-            // Stryker disable next-line ObjectLiteral: Logger warn object for observability
             logger.warn({
                 channelId: context.channelId,
                 messageId: context.messageId,
-                // Stryker disable next-line StringLiteral: log message is informational only
                 msg:       'MessageCoordinator: dropping message — channel registry not ready',
             });
             return;
@@ -433,53 +465,50 @@ export class MessageCoordinator {
                 context,
                 discordMessage,
             });
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: queue cap boundary — equivalent mutant (> vs >=) produces identical behavior in practice
             if(state.pendingMessages.length > MAX_PENDING_MESSAGES) {
                 const evictCount = state.pendingMessages.length - MAX_PENDING_MESSAGES;
                 state.pendingMessages.splice(0, evictCount);
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.debug({ evicted: evictCount, max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction (Case 1 push)' });
             }
 
             // Start or reset debounce timer
-            // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op
-            if(state.debounceTimer) {
-                clearTimeout(state.debounceTimer);
-            }
-
-            // Store the processing promise to wait for it
-            const processingPromise = state.activeQuery.processingPromise;
+            clearTimeout(state.debounceTimer);
 
             // Set debounce timer - when it expires, THEN interrupt
             state.debounceTimer = setTimeout(() => {
                 state.debounceTimer = undefined;
 
-                // Check if active query is still running
-                if(state.activeQuery) {
-                    // Interrupt the active query
-                    state.activeQuery.abortController.abort();
+                const activeQuery = state.activeQuery;
+                if(activeQuery) {
+                    // Several debounce windows may expire while one aborted processor cleans up.
+                    // Only the first expiry owns its requeue and completion continuation.
+                    if(activeQuery.resumeScheduled) {
+                        return;
+                    }
+                    activeQuery.resumeScheduled = true;
+                    if(!activeQuery.resultCompleted) {
+                        activeQuery.abortController.abort();
 
-                    // Store the first message from interrupted query if we don't have one yet
-                    state.interruptedFirstMessage ??= state.activeQuery.firstDiscordMessage;
+                        // Store the first message from interrupted query if we don't have one yet
+                        state.interruptedFirstMessage ??= activeQuery.firstDiscordMessage;
 
-                    // Re-queue original messages (with null discordMessage)
-                    const reQueuedOriginals = state.activeQuery.originalContexts.map(ctx => ({
-                        context:        ctx,
-                        discordMessage: null,
-                    }));
-                    state.pendingMessages.unshift(...reQueuedOriginals);
-                    // Stryker disable next-line ConditionalExpression,EqualityOperator: queue cap boundary — equivalent mutant (> vs >=) produces identical behavior in practice
-                    if(state.pendingMessages.length > MAX_PENDING_MESSAGES) {
-                        state.pendingMessages.length = MAX_PENDING_MESSAGES; // Truncate from end (keep re-queued originals at front)
+                        // Re-queue original messages (with null discordMessage)
+                        const reQueuedOriginals = activeQuery.originalContexts.map(ctx => ({
+                            context:        ctx,
+                            discordMessage: null,
+                        }));
+                        state.pendingMessages.unshift(...reQueuedOriginals);
+                        state.pendingMessages.splice(MAX_PENDING_MESSAGES); // Keep re-queued originals at the front
                     }
 
-                    // Wait for the interrupted processing to complete, then start processing with resume
-                    void processingPromise.finally(() => {
-                        this.processWithResume(context.channelId);
+                    // A newer debounce may still be running when cleanup finishes; the continuation
+                    // and timer both use resumePending, which starts at most one nonempty batch.
+                    void activeQuery.processingPromise.then(() => this.resumePending(context.channelId, state)).catch((err: unknown) => {
+                        logger.error({ err, channelId: context.channelId, msg: 'MessageCoordinator: failed to resume after interruption' });
                     });
                 } else {
                     // Active query finished before debounce expired, just process pending normally
-                    this.processWithResume(context.channelId);
+                    this.resumePending(context.channelId, state);
                 }
             }, this.debounceMs);
 
@@ -493,25 +522,39 @@ export class MessageCoordinator {
                 context,
                 discordMessage,
             });
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: queue cap boundary — equivalent mutant (> vs >=) produces identical behavior in practice
             if(state.pendingMessages.length > MAX_PENDING_MESSAGES) {
                 state.pendingMessages.splice(0, state.pendingMessages.length - MAX_PENDING_MESSAGES);
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.debug({ max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction (Case 2)' });
             }
 
             // Reset debounce timer
             clearTimeout(state.debounceTimer);
-            // Stryker disable next-line BlockStatement: Case 2 (debounce active, no query) is covered via Case 1 interrupt flow
             state.debounceTimer = setTimeout(() => {
                 state.debounceTimer = undefined;
-                this.processWithResume(context.channelId);
+                this.resumePending(context.channelId, state);
             }, this.debounceMs);
 
             return;
         }
 
-        // Case 3: No active processing, no debounce
+        // An end callback may synchronously submit a new message after activeQuery is cleared
+        // but before its pending-batch continuation runs. Keep the queued batch first.
+        if(state.pendingMessages.length > 0) {
+            state.pendingMessages.push({ context, discordMessage });
+            if(state.pendingMessages.length > MAX_PENDING_MESSAGES) {
+                // Re-queued originals have no response yet. Evict the oldest newer message,
+                // matching ordinary push eviction while retaining the interrupted original.
+                const oldestNewIndex = state.pendingMessages.findIndex(message => message.discordMessage !== null);
+                state.pendingMessages.splice(oldestNewIndex, 1);
+                logger.debug({ evicted: 1, max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction (reentrant push)' });
+            }
+            this.resumePending(context.channelId, state);
+            return;
+        }
+
+        // Case 3: No active processing, no debounce or pending batch
+        state.partialWork = undefined;
+        state.interruptedFirstMessage = undefined;
         this.startProcessing(context.channelId, [context], discordMessage);
     }
 
@@ -532,11 +575,8 @@ export class MessageCoordinator {
         }
 
         // Clear debounce timer
-        // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op
-        if(state.debounceTimer) {
-            clearTimeout(state.debounceTimer);
-            state.debounceTimer = undefined;
-        }
+        clearTimeout(state.debounceTimer);
+        state.debounceTimer = undefined;
 
         // Stop typing indicator
         this.stopTypingIndicator(state);

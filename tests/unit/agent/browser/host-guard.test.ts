@@ -37,6 +37,10 @@ describe('validateUrl — accepted URLs', () => {
     test('normalises uppercase scheme/host — HTTPS://EXAMPLE.COM', () => {
         expectOk('HTTPS://EXAMPLE.COM');
     });
+
+    test('does not treat a domain beginning with an IPv6 prefix as an IP address', () => {
+        expectOk('https://fc00.example.com');
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -81,6 +85,7 @@ describe('validateUrl — parse failures', () => {
     test.each([
         'not a url',
         'http://',
+        'http://./',
         '',
     ])('rejects unparseable %j', (url) => {
         const result = validateUrl(url, noPolicy);
@@ -127,6 +132,12 @@ describe('validateUrl — localhost hostnames', () => {
         'http://host.docker.internal',
     ])('rejects localhost-style host in %s', (url) => {
         expectDenied(url);
+    });
+
+    test('allows a hostname that merely contains .localhost in its interior', () => {
+        // Only a localhost suffix is blocked; an interior substring must not
+        // turn an otherwise public hostname into a loopback rejection.
+        expectOk('https://evil.localhost.attacker.example');
     });
 });
 
@@ -189,6 +200,10 @@ describe('validateUrl — link-local IPv6', () => {
     test('accepts http://[fec0::1] (fec0 is NOT link-local — fe[c-f] is outside /10)', () => {
         expectOk('http://[fec0::1]');
     });
+
+    test('does not confuse a later fe80 group with a link-local prefix', () => {
+        expectOk('http://[2001:fe80::1]');
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -240,6 +255,10 @@ describe('validateUrl — IPv6 ULA', () => {
 
     test('accepts http://[fb00::1] (fb00 is outside ULA fc00::/7)', () => {
         expectOk('http://[fb00::1]');
+    });
+
+    test('does not confuse a later fc00 group with a ULA prefix', () => {
+        expectOk('http://[2001:fc00::1]');
     });
 });
 
@@ -356,6 +375,10 @@ describe('validateUrl — IPv4-mapped IPv6 (::ffff:0:0/96)', () => {
         expectDenied('http://[::ffff:0.0.0.0]/');
     });
 
+    test('accepts http://[::ffff:0.0.0.1]/ — only the zero mapped address is blocked', () => {
+        expectOk('http://[::ffff:0.0.0.1]/');
+    });
+
     // Hex-group form: 7f00:1 = 127.0.0.1
     test('rejects http://[::ffff:7f00:1]/ — 127.0.0.1 in hex-group form', () => {
         expectDenied('http://[::ffff:7f00:1]/');
@@ -379,6 +402,15 @@ describe('validateUrl — IPv4-mapped IPv6 (::ffff:0:0/96)', () => {
     // Public IPv4 via mapped form should be ACCEPTED
     test('accepts http://[::ffff:8.8.8.8]/ — public IPv4 via mapped form', () => {
         expectOk('http://[::ffff:8.8.8.8]/');
+    });
+
+    test('only decodes a mapped IPv4 address when the mapped prefix is present', () => {
+        expectOk('http://[::abcd:7f00:1]/');
+    });
+
+    test('does not decode suffixes of longer IPv6 addresses as mapped IPv4', () => {
+        expectOk('http://[::ffff:0:7f00:1]/');
+        expectOk('http://[::ffff:7f00:1:2]/');
     });
 });
 
@@ -460,6 +492,22 @@ describe('validateUrl — allowlist wildcard', () => {
         expectDenied('https://example.com.attacker.net', policy);
     });
 
+    test('rejects a host with the allowed suffix only in its interior', () => {
+        // A substring check would incorrectly accept this hostname because
+        // `.example.com` occurs before the attacker-controlled suffix.
+        expectDenied('https://foo.example.com.attacker.net', policy);
+    });
+
+    test('does not treat an arbitrary pattern containing *. as a wildcard', () => {
+        // Wildcards are anchored at the beginning of the pattern. A broader
+        // substring check would incorrectly treat this as *.example.com.
+        expectDenied('https://y*.example.com', { allowlist: ['x*.example.com'] });
+    });
+
+    test('does not accept the dot-prefixed suffix as a wildcard subdomain', () => {
+        expectDenied('https://.example.com', policy);
+    });
+
     test('rejects https://evil.com with *.example.com allowlist', () => {
         expectDenied('https://evil.com', policy);
     });
@@ -506,6 +554,19 @@ describe('validateUrl — empty allowlist is permissive', () => {
 // ---------------------------------------------------------------------------
 
 describe('validateUrl — result shape', () => {
+    test.each([
+        ['not a url', 'invalid URL: not a url', noPolicy],
+        ['ftp://example.com', "scheme 'ftp' is not allowed; only http/https", noPolicy],
+        ['http://localhost', "host 'localhost' is loopback", noPolicy],
+        ['http://host.docker.internal', "host 'host.docker.internal' is a container-internal alias", noPolicy],
+        ['http://127.0.0.1', 'IP address 127.0.0.1 is in a blocked range (loopback/private/link-local)', noPolicy],
+        ['http://[::1]', 'IP address ::1 is in a blocked range (loopback/private/link-local)', noPolicy],
+        ['https://other.example', "host 'other.example' is not in the allowlist", { allowlist: ['example.com'] }],
+    ] satisfies [string, string, BrowserHostPolicy][])('returns the actionable rejection reason for %s', (url, reason, policy) => {
+        const result = validateUrl(url, policy);
+        expect(result).toEqual({ ok: false, reason });
+    });
+
     test('success result contains parsed URL object', () => {
         const result = validateUrl('https://example.com/path', noPolicy);
         expect(result.ok).toBe(true);

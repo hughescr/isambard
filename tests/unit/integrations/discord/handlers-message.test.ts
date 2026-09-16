@@ -67,8 +67,9 @@ describe('Discord Event Handlers', () => {
 
         beforeEach(() => {
             const mockUser = {
-                id:  '111111111111111111',
-                bot: false,
+                id:       '111111111111111111',
+                username: 'testuser',
+                bot:      false,
             } as User;
 
             const mockGuild = {
@@ -77,6 +78,7 @@ describe('Discord Event Handlers', () => {
 
             mockTextChannel = {
                 id:         '333333333333333333',
+                name:       '333333333333333333',
                 type:       0, // GuildText
                 sendTyping: mock(async () => undefined),
                 isThread:   mock(() => false),
@@ -101,6 +103,7 @@ describe('Discord Event Handlers', () => {
                 channel:      mockTextChannel,
                 channelId:    '333333333333333333',
                 createdAt:    new Date('2025-01-15T12:00:00.000Z'),
+                attachments:  new Map(),
                 reply:        mock(async () => mockMessage), // Return mockMessage for chaining replies
                 client:       {
                     channels: {
@@ -572,8 +575,6 @@ describe('Discord Event Handlers', () => {
 
                 // Test 3: Normal user message - should be processed
                 // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
-                mockMessage.author.bot = false;
-                // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
                 mockMessage.author.id = '111111111111111111';
                 await handler(mockMessage);
                 expect(mockCoordinator.handleMessage).toHaveBeenCalled();
@@ -763,6 +764,19 @@ describe('Discord Event Handlers', () => {
                     channelId:   '333333333333333333',
                     threadId:    undefined,
                 });
+                expect(mockLogger.debug).toHaveBeenCalledWith({
+                    questionId:     'q123',
+                    channelId:      '333333333333333333',
+                    threadId:       undefined,
+                    classification: 'answer',
+                    msg:            'Message classified as answer',
+                });
+                expect(mockLogger.info).toHaveBeenCalledWith({
+                    questionId:  'q123',
+                    responderId: '111111111111111111',
+                    messageId:   '555555555555555555',
+                    msg:         'Question resolved with text answer',
+                });
 
                 // Should NOT call onMessage (early return after resolving)
                 expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
@@ -790,6 +804,17 @@ describe('Discord Event Handlers', () => {
 
                 // Should cancel the pending question
                 expect(mockQuestionRegistry.cancel).toHaveBeenCalledWith('q123');
+                expect(mockLogger.debug).toHaveBeenCalledWith({
+                    questionId:     'q123',
+                    channelId:      '333333333333333333',
+                    threadId:       undefined,
+                    classification: 'interruption',
+                    msg:            'Message classified as interruption',
+                });
+                expect(mockLogger.info).toHaveBeenCalledWith({
+                    questionId: 'q123',
+                    msg:        'Question cancelled due to interruption',
+                });
 
                 // Should continue normal processing (call coordinator.handleMessage)
                 expect(mockCoordinator.handleMessage).toHaveBeenCalled();
@@ -818,6 +843,17 @@ describe('Discord Event Handlers', () => {
                 // Should NOT cancel or resolve the question (question remains pending)
                 expect(mockQuestionRegistry.cancel).not.toHaveBeenCalled();
                 expect(mockQuestionRegistry.resolveWithAnswer).not.toHaveBeenCalled();
+                expect(mockLogger.debug).toHaveBeenCalledWith({
+                    questionId:     'q123',
+                    channelId:      '333333333333333333',
+                    threadId:       undefined,
+                    classification: 'unrelated',
+                    msg:            'Message classified as unrelated',
+                });
+                expect(mockLogger.debug).toHaveBeenCalledWith({
+                    questionId: 'q123',
+                    msg:        'Message classified as unrelated, question still pending',
+                });
 
                 // Should send polite reply asking for @mention
                 expect(mockMessage.reply).toHaveBeenCalledWith({
@@ -1544,14 +1580,24 @@ describe('Discord Event Handlers', () => {
             }
 
             function createFakePerchConductor(turnResult: { response: string | null }) {
+                const deliveredPayloads: { channelId: string, messageIds: string[] }[] = [];
+                const deliveryErrors: Error[] = [];
                 return {
                     submit: mock(async (_envelope: { kind: string, authorId?: string }, _options: { priority: string, requestingChannelId?: string }) => ({
                         envelopeId: 'env-perch-1', response: turnResult.response, wasInterrupted: false, partialWork: { thinking: '', text: '', pendingToolUse: null, sessionId: undefined }, sessionId: 'perch-sess-1', isError: false, contextUsagePercent: 0,
                     })),
                     deliver: mock(async (_envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
-                        await send();
-                        return { delivered: true };
+                        try {
+                            const payload = await send();
+                            deliveredPayloads.push(payload);
+                            return { delivered: true };
+                        } catch (error) {
+                            deliveryErrors.push(error as Error);
+                            throw error;
+                        }
                     }),
+                    deliveredPayloads,
+                    deliveryErrors,
                 };
             }
 
@@ -1580,9 +1626,15 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 expect(perchConductor.submit).toHaveBeenCalledTimes(1);
-                const [envelope, submitOptions] = perchConductor.submit.mock.calls[0];
+                const [rawEnvelope, submitOptions] = perchConductor.submit.mock.calls[0];
+                const envelope = rawEnvelope as typeof rawEnvelope & { channelId: string, text: string };
                 expect(envelope.kind).toBe('discord');
                 expect(envelope.authorId).toBe('111111111111111111');
+                expect(envelope.channelId).toBe(PERCH_CHANNEL_ID);
+                expect(envelope.text).toContain(`[DISCORD #${PERCH_CHANNEL_ID}`);
+                expect(envelope.text).toContain('messageIds=[555555555555555555]');
+                expect(envelope.text).toContain('authorId=111111111111111111');
+                expect(envelope.text).toContain('Test message');
                 expect(submitOptions.priority).toBe('other');
 
                 expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
@@ -1590,6 +1642,8 @@ describe('Discord Event Handlers', () => {
                 expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
                     kind: 'discord', channelId: PERCH_CHANNEL_ID, text: 'Nothing much to report.',
                 }));
+                expect(perchConductor.deliveredPayloads).toEqual([{ channelId: PERCH_CHANNEL_ID, messageIds: [] }]);
+                expect(perchConductor.deliveryErrors).toEqual([]);
                 expect(mockInboxManager.recordHandled).toHaveBeenCalledWith(PERCH_CHANNEL_ID, mockMessage.id, mockMessage.createdAt.toISOString());
             });
 
@@ -1768,6 +1822,10 @@ describe('Discord Event Handlers', () => {
 
                 expect(perchConductor.submit).not.toHaveBeenCalled();
                 expect(mockCoordinator.handleMessage).toHaveBeenCalledTimes(1);
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    channelId: PERCH_CHANNEL_ID,
+                    msg:       'Failed to resolve the well-known perch-time channel; routing to the coordinator instead',
+                }));
             });
 
             it('a perch-channel message buffered by the gate is NOT submitted to the perch conductor until admitted (gate runs first)', async () => {
@@ -1880,6 +1938,10 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 expect(perchConductor.deliver).not.toHaveBeenCalled();
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    channelId: PERCH_CHANNEL_ID,
+                    msg:       'Perch-channel envelope submission failed',
+                }));
                 expect(mockInboxManager.recordHandled).toHaveBeenCalledWith(PERCH_CHANNEL_ID, mockMessage.id, mockMessage.createdAt.toISOString());
             });
 
@@ -1908,6 +1970,31 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 expect(mockInboxManager.recordHandled).toHaveBeenCalledTimes(1);
+                expect(perchConductor.deliveryErrors).toHaveLength(1);
+                expect(perchConductor.deliveryErrors[0]?.constructor.name).toBe('PerchResponseNotSentError');
+                expect(mockLogger.error).not.toHaveBeenCalled();
+            });
+
+            it('accepts a queued perch response as delivered without raising the not-sent sentinel', async () => {
+                const mockInboxManager = createMockInboxManager();
+                const perchConductor = createFakePerchConductor({ response: 'Queued response' });
+                spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: true });
+                const handler = createMessageHandler({
+                    channelRegistry: createMockChannelRegistry(PERCH_CHANNEL_ID),
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     createMockCoordinator(),
+                    inboxManager:    mockInboxManager,
+                    ingressGate:     createMockIngressGate(() => 'pass'),
+                    perch:           {
+                        conductor:      perchConductor, responseRouter: {} as ResponseRouter,
+                        client:         {} as Client, rateLimiter:    {} as DiscordRateLimiter,
+                    },
+                });
+
+                await handler(mockMessage);
+
+                expect(perchConductor.deliveryErrors).toEqual([]);
+                expect(perchConductor.deliveredPayloads).toEqual([{ channelId: PERCH_CHANNEL_ID, messageIds: [] }]);
             });
 
             it('a real delivery failure (not the not-sent sentinel) is logged but the watermark still advances', async () => {
@@ -1935,6 +2022,10 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 expect(mockInboxManager.recordHandled).toHaveBeenCalledTimes(1);
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    channelId: PERCH_CHANNEL_ID,
+                    msg:       'Perch-channel response delivery failed',
+                }));
             });
         });
     });

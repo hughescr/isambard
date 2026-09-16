@@ -90,6 +90,10 @@ describe('createBootBundleHooks', () => {
         const result = await fn(sessionStartInput('startup'), undefined, { signal: makeSignal() });
 
         expect(result).toEqual({ 'continue': true });
-        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ error: failure, source: 'startup' }));
+        expect(mockLogger.warn).toHaveBeenCalledWith({
+            error:  failure,
+            source: 'startup',
+            msg:    'Boot bundle builder rejected; starting session without it',
+        });
     });
 });

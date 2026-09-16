@@ -1,6 +1,6 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { mockHeicConvert, setHeicConvertImpl, resetHeicConvertImpl } from '../../../setup';
-import { fetchImage, fetchImages } from '@/utils/media/fetcher';
+import { mockHeicConvert, mockLogger, setHeicConvertImpl, resetHeicConvertImpl } from '../../../setup';
+import { fetchImage, fetchImages, FETCH_TIMEOUT_MS } from '@/utils/media/fetcher';
 import { type MediaFetchMetadata, MAX_IMAGE_SIZE_BYTES } from '@/utils/media/types';
 
 // Mock global fetch
@@ -15,6 +15,7 @@ describe('Media Fetcher', () => {
     beforeEach(() => {
         setHeicConvertImpl(async () => Buffer.from('converted-png-data'));
         mockFetch.mockClear();
+        mockLogger.error.mockClear();
         // Replace global fetch with our mock for testing
         globalThis.fetch = mockFetch as unknown as typeof globalThis.fetch;
     });
@@ -54,6 +55,8 @@ describe('Media Fetcher', () => {
                 expect(result.image.width).toBe(800);
                 expect(result.image.height).toBe(600);
             }
+            expect(mockFetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+            expect(FETCH_TIMEOUT_MS).toBe(30_000);
         });
 
         test('fetches and returns native image (png) as base64', async () => {
@@ -260,6 +263,13 @@ describe('Media Fetcher', () => {
                 expect(result.failure.size).toBe(1024);
                 expect(result.failure.error).toContain('Network error');
             }
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                filename:    'image.jpg',
+                contentType: 'image/jpeg',
+                size:        1024,
+                error:       'Network error',
+                msg:         'Failed to fetch/convert image: image.jpg',
+            });
         });
 
         test('returns failure info on non-ok response', async () => {
@@ -292,6 +302,13 @@ describe('Media Fetcher', () => {
                 expect(result.failure.error).toContain('HTTP');
             }
             expect(arrayBufferMock).not.toHaveBeenCalled();
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                filename:    'image.jpg',
+                contentType: 'image/jpeg',
+                size:        1024,
+                error:       'HTTP 404 Not Found',
+                msg:         'Failed to fetch image: image.jpg',
+            });
         });
 
         test('returns failure info when HEIC conversion fails', async () => {

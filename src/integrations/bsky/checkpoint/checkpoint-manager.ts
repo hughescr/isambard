@@ -44,7 +44,6 @@ export class BskyCheckpointManager {
      * Gets the memory path for the notification checkpoint.
      */
     private getNotificationCheckpointPath(): MemoryPath {
-        // Stryker disable next-line StringLiteral: memory path is configuration
         return createMemoryPath('/state/services/bsky/notifications/checkpoint');
     }
 
@@ -52,7 +51,6 @@ export class BskyCheckpointManager {
      * Gets the memory path for the DM checkpoint.
      */
     private getDmCheckpointPath(): MemoryPath {
-        // Stryker disable next-line StringLiteral: memory path is configuration
         return createMemoryPath('/state/services/bsky/dm/checkpoint');
     }
 
@@ -66,14 +64,13 @@ export class BskyCheckpointManager {
             return undefined;
         }
 
-        // Stryker disable BlockStatement: Error handling for corrupted/invalid data
         try {
             const parsed: unknown = JSON.parse(item.content);
             return schema.parse(parsed);
         } catch{
-            return undefined;
+            // Invalid persisted checkpoints are treated as absent.
         }
-        // Stryker restore BlockStatement
+        return undefined;
     }
 
     /**
@@ -87,7 +84,6 @@ export class BskyCheckpointManager {
             : this.backend.create({
                 path,
                 content,
-                // Stryker disable next-line StringLiteral: content type is configuration
                 contentType: 'application/json',
             }));
     }
@@ -113,11 +109,7 @@ export class BskyCheckpointManager {
     async saveFeedCheckpoint(checkpoint: BskyFeedCheckpoint, exists: boolean): Promise<void> {
         const path = this.getFeedCheckpointPath(checkpoint.feedName);
 
-        // Apply FIFO eviction
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: at exactly MAX items, slice(-MAX) returns full array — true/>=MAX produces identical output
-        const bounded = checkpoint.processedUris.length > MAX_PROCESSED_URIS
-            ? { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) }
-            : checkpoint;
+        const bounded = { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) };
 
         await this.saveCheckpoint(path, bounded, exists);
     }
@@ -142,11 +134,7 @@ export class BskyCheckpointManager {
     async saveNotificationCheckpoint(checkpoint: BskyNotificationCheckpoint, exists: boolean): Promise<void> {
         const path = this.getNotificationCheckpointPath();
 
-        // Apply FIFO eviction
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: at exactly MAX items, slice(-MAX) returns full array — true/>=MAX produces identical output
-        const bounded = checkpoint.processedUris.length > MAX_PROCESSED_URIS
-            ? { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) }
-            : checkpoint;
+        const bounded = { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) };
 
         await this.saveCheckpoint(path, bounded, exists);
     }
@@ -172,7 +160,6 @@ export class BskyCheckpointManager {
             : checkpoint?.lastIndexedAt;
 
         // Build deduplicated processedUris
-        // Stryker disable next-line ArrayDeclaration: fallback [] when no checkpoint — tests verify new URIs are present but don't count stale entries
         const updatedUris = [...new Set([...(checkpoint?.processedUris ?? []), ...items.map(item => item.post.uri)])];
 
         const now = new Date().toISOString();
@@ -207,11 +194,9 @@ export class BskyCheckpointManager {
 
         // Compute lastSeenAt (max indexedAt of fetched notifications via lexicographic sort)
         const sortedIndexedAts = notifications.map(n => n.indexedAt).toSorted((a, b) => a.localeCompare(b));
-        // Stryker disable next-line StringLiteral: ?? '' fallback unreachable — length > 0 guard ensures .at(-1) always returns a value
         const lastSeenAt = notifications.length > 0 ? sortedIndexedAts.at(-1) : checkpoint?.lastSeenAt;
 
         // Build deduplicated processedUris
-        // Stryker disable next-line ArrayDeclaration: fallback [] when no checkpoint — tests verify new URIs are present but don't count stale entries
         const updatedUris = [...new Set([...(checkpoint?.processedUris ?? []), ...notifications.map(n => n.uri)])];
 
         const now = new Date().toISOString();
@@ -246,11 +231,7 @@ export class BskyCheckpointManager {
     async saveDmCheckpoint(checkpoint: BskyDmCheckpoint, exists: boolean): Promise<void> {
         const path = this.getDmCheckpointPath();
 
-        // Apply FIFO eviction
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: at exactly MAX items, slice(-MAX) returns full array — true/>=MAX produces identical output
-        const bounded = checkpoint.processedUris.length > MAX_PROCESSED_URIS
-            ? { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) }
-            : checkpoint;
+        const bounded = { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) };
 
         await this.saveCheckpoint(path, bounded, exists);
     }
@@ -293,7 +274,6 @@ export class BskyCheckpointManager {
             : checkpoint?.lastSeenSentAt;
 
         // Build deduplicated processedUris (lastMessage.id values)
-        // Stryker disable next-line ArrayDeclaration: fallback [] when no checkpoint — tests verify new ids are present but don't count stale entries
         const updatedUris = [...new Set([...(checkpoint?.processedUris ?? []), ...candidates.map(c => c.lastMessage.id)])];
 
         if(newConvos.length > 0 || lastSeenSentAt !== checkpoint?.lastSeenSentAt) {

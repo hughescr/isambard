@@ -4,7 +4,6 @@ import { z } from 'zod';
  * Known platform types for contact identifiers.
  * Extensible — new platforms can be added here as they are integrated.
  */
-// Stryker disable all: Enum values are static definitions
 export const platformTypeSchema = z.enum(['name', 'nickname', 'discord', 'email', 'bsky']);
 // Stryker restore all
 
@@ -25,11 +24,9 @@ export type ContactIdentifier = z.infer<typeof contactIdentifierSchema>;
  * ContactId is a branded string representing a kebab-case person identifier.
  * E.g., "craig-hughes" or "alice-wonderland"
  */
-// Stryker disable Regex: ContactId regex — mutating causes runtime regex syntax error or invalid validation behavior
 const CONTACT_ID_REGEX = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/;
 // Stryker restore Regex
 
-// Stryker disable ObjectLiteral,StringLiteral: error message shape and text in refine are informational only
 export const contactIdSchema = z
     .string()
     .min(1)

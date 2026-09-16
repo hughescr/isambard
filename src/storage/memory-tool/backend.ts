@@ -12,7 +12,7 @@ import {
     type MemoryPath,
     type MemoryToolItemData,
     type LayerName,
-    type TagIndexItem,
+    type TagIndexReadItem,
     extractLayerFromPath
 } from './types';
 
@@ -75,15 +75,12 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
      * Errors from enqueue are swallowed — never propagate to callers.
      */
     private enqueueIndex(job: IndexerJob): void {
-        // Stryker disable next-line ConditionalExpression: optimization guard — no indexer means nothing to enqueue
         if(!this.indexer) {
             return;
         }
-        // Stryker disable BlockStatement: defensive catch — indexer errors must never propagate to DynamoDB callers
         try {
             this.indexer.enqueue(job);
         } catch (error) {
-            /* Stryker disable all: Defensive error handling for indexer */
             logger.warn({ error, msg: 'MemoryToolBackend: indexer.enqueue failed, ignoring' });
             /* Stryker restore all */
         }
@@ -94,38 +91,30 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         const result = await this.coreOps.create(input);
 
         // Create tag index items (best-effort) - counts handled internally by createTagIndexItems
-        // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: Optimization - tag index operations are best-effort and short-circuit on empty arrays
-        if(input.tags && input.tags.size > 0) {
-            const normalizedTags = normalizeTags(input.tags);
-            const layer = extractLayerFromPath(input.path);
-            // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
-            const layerStr = layer ?? 'unknown';
-            const contentPreview = generateContentPreview(result.content);
-            // Stryker disable BlockStatement: Tag index catch block has internal error handling
-            try {
-                await this.tagIndexOps.createTagIndexItems(
-                    input.path,
-                    normalizedTags,
-                    result.updatedAt,
-                    contentPreview,
-                    layerStr
-                );
-            } catch (error) {
-                /* Stryker disable all: Defensive error handling */
-                logger.warn({ error, path: input.path, msg: 'Failed to create tag index items' });
-                /* Stryker restore all */
-            }
+        const normalizedTags = normalizeTags(input.tags);
+        const layer = extractLayerFromPath(input.path);
+        const layerStr = layer ?? 'unknown';
+        const contentPreview = generateContentPreview(result.content);
+        try {
+            await this.tagIndexOps.createTagIndexItems(
+                input.path,
+                normalizedTags,
+                result.updatedAt,
+                contentPreview,
+                layerStr
+            );
+        } catch (error) {
+            logger.warn({ error, path: input.path, msg: 'Failed to create tag index items' });
+            /* Stryker restore all */
         }
 
         // Enqueue vector index upsert job (fire-and-forget)
         const keys = MemoryToolKeyGenerator.createKeys(result.path);
-        const layer = extractLayerFromPath(result.path);
-        // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
-        const layerStr = layer ?? 'unknown';
-        this.enqueueIndex({ kind: 'upsert', pk: keys.PK, sk: keys.SK, layer: layerStr, path: result.path, content: result.content });
+        const indexLayer = extractLayerFromPath(result.path);
+        const indexLayerStr = indexLayer ?? 'unknown';
+        this.enqueueIndex({ kind: 'upsert', pk: keys.PK, sk: keys.SK, layer: indexLayerStr, path: result.path, content: result.content });
 
-        // Stryker disable next-line ConditionalExpression: identity-write callback — only called when layer is 'identity'
-        if(layerStr === 'identity') {
+        if(indexLayerStr === 'identity') {
             this.onIdentityWrite?.();
         }
 
@@ -139,7 +128,6 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     async update(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<MemoryToolItemData> {
         // Skip tag index updates for metadata-only changes (e.g. recordAccess).
         // The reconciler handles eventual consistency of tag index updatedAt/contentPreview.
-        // Stryker disable next-line ConditionalExpression: contentOrTagsChanged guard is optimization; false-positive on removal
         const contentOrTagsChanged = input.content !== undefined || input.tags !== undefined;
 
         // Only fetch existing item for tag comparison when content/tags are changing
@@ -150,30 +138,24 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
 
         if(contentOrTagsChanged) {
             const layer = extractLayerFromPath(path);
-            // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
             const layerStr = layer ?? 'unknown';
             const contentPreview = generateContentPreview(result.content);
             const normalizedNewTags = normalizeTags(result.tags);
 
             // Update tag index items when content or tags change (counts handled internally)
-            // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: Tag index updates are best-effort; condition is optimization guard
-            if(normalizedNewTags.size > 0 || (oldTags && oldTags.size > 0)) {
-                const normalizedOldTags = normalizeTags(oldTags);
-                // Stryker disable BlockStatement: Tag index catch block has internal error handling
-                try {
-                    await this.tagIndexOps.updateTagIndexItems(
-                        path,
-                        normalizedOldTags,
-                        normalizedNewTags,
-                        result.updatedAt,
-                        contentPreview,
-                        layerStr
-                    );
-                } catch (error) {
-                    /* Stryker disable all: Defensive error handling */
-                    logger.warn({ error, path, msg: 'Failed to update tag index items' });
-                    /* Stryker restore all */
-                }
+            const normalizedOldTags = normalizeTags(oldTags);
+            try {
+                await this.tagIndexOps.updateTagIndexItems(
+                    path,
+                    normalizedOldTags,
+                    normalizedNewTags,
+                    result.updatedAt,
+                    contentPreview,
+                    layerStr
+                );
+            } catch (error) {
+                logger.warn({ error, path, msg: 'Failed to update tag index items' });
+                /* Stryker restore all */
             }
 
             // Enqueue vector index upsert job (fire-and-forget)
@@ -183,7 +165,6 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             // Metadata-only updates (content === undefined && tags === undefined) intentionally
             // skip this callback because metadata fields are not part of the rendered identity
             // string returned by loadCoreIdentity — only content and tags affect the output.
-            // Stryker disable next-line ConditionalExpression: identity-write callback — only called when layer is 'identity'
             if(layerStr === 'identity') {
                 this.onIdentityWrite?.();
             }
@@ -199,28 +180,21 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         await this.coreOps.delete(path);
 
         // Delete tag index items if item had tags (counts handled internally)
-        // Stryker disable next-line all: Tag length check is optimization - tag index functions short-circuit on empty arrays
-        if(existing?.tags && existing.tags.size > 0) {
-            const normalizedTags = normalizeTags(existing.tags);
+        const normalizedTags = normalizeTags(existing?.tags);
 
-            // Delete tag index items (best-effort)
-            // Stryker disable BlockStatement: Tag index catch block has internal error handling
-            try {
-                await this.tagIndexOps.deleteTagIndexItems(path, normalizedTags);
-            } catch (error) {
-                /* Stryker disable all: Defensive error handling */
-                logger.warn({ error, path, msg: 'Failed to delete tag index items' });
-                /* Stryker restore all */
-            }
+        // Delete tag index items (best-effort)
+        try {
+            await this.tagIndexOps.deleteTagIndexItems(path, normalizedTags);
+        } catch (error) {
+            logger.warn({ error, path, msg: 'Failed to delete tag index items' });
+            /* Stryker restore all */
         }
 
         // Enqueue vector index delete job (fire-and-forget)
         const keys = MemoryToolKeyGenerator.createKeys(path);
         this.enqueueIndex({ kind: 'delete', pk: keys.PK, sk: keys.SK });
 
-        // Stryker disable next-line ConditionalExpression: identity-write callback — only called when layer is 'identity'
-        // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
-        if((extractLayerFromPath(path) ?? 'unknown') === 'identity') {
+        if(extractLayerFromPath(path)?.toString() === 'identity') {
             this.onIdentityWrite?.();
         }
 
@@ -236,7 +210,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         tags: Set<string>,
         layer?: LayerName,
         options?: ListOptions
-    ): Promise<ListResult<TagIndexItem>> {
+    ): Promise<ListResult<TagIndexReadItem>> {
         return this.queryOps.searchByTags(tags, layer, options);
     }
 

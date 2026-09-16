@@ -21,7 +21,21 @@ interface CalDAVClientOptions {
     cacheTtlMs?:     number
     timeoutMs?:      number
     healthRegistry?: ServiceHealthRegistry
+    dependencies?:   CalDAVClientDependencies
 }
+
+/** Dependencies supplied per client so test doubles cannot replace process-wide modules. */
+export interface CalDAVClientDependencies {
+    createDAVClient:      typeof createDAVClient
+    parseICS:             typeof ical.sync.parseICS
+    expandRecurringEvent: typeof expandRecurringEvent
+}
+
+const DEFAULT_DEPENDENCIES: CalDAVClientDependencies = {
+    createDAVClient,
+    parseICS: ical.sync.parseICS,
+    expandRecurringEvent,
+};
 
 /**
  * CalDAV client wrapping tsdav and node-ical for calendar event fetching.
@@ -31,17 +45,20 @@ export class CalDAVClient {
     readonly #timeoutMs:       number;
     readonly #cache =          new Map<string, CachedResult>();
     readonly #healthRegistry?: ServiceHealthRegistry;
+    readonly #dependencies:    CalDAVClientDependencies;
     #consecutiveFailures =     0;
 
-    constructor(optionsOrCacheTtlMs: CalDAVClientOptions | number = {}, timeoutMs = 15_000) {
+    constructor(optionsOrCacheTtlMs: CalDAVClientOptions | number = {}, timeoutMs = 15_000, dependencies: CalDAVClientDependencies = DEFAULT_DEPENDENCIES) {
         if(typeof optionsOrCacheTtlMs === 'number') {
             this.#cacheTtlMs     = optionsOrCacheTtlMs;
             this.#timeoutMs      = timeoutMs;
             this.#healthRegistry = undefined;
+            this.#dependencies   = dependencies;
         } else {
             this.#cacheTtlMs     = optionsOrCacheTtlMs.cacheTtlMs ?? 300_000;
             this.#timeoutMs      = optionsOrCacheTtlMs.timeoutMs ?? 15_000;
             this.#healthRegistry = optionsOrCacheTtlMs.healthRegistry;
+            this.#dependencies   = optionsOrCacheTtlMs.dependencies ?? DEFAULT_DEPENDENCIES;
         }
     }
 
@@ -51,7 +68,6 @@ export class CalDAVClient {
      */
     async discoverCalendars(serverUrl: string, username: string, password: string): Promise<CalendarInfo[]> {
         const client = await this.#createClient(serverUrl, username, password);
-        // Stryker disable next-line StringLiteral -- operation label is informational only; appears in error message text
         const calendars = await this.#withTimeout(client.fetchCalendars(), this.#timeoutMs, 'fetchCalendars');
         return calendars.map((cal) => {
             // boundary cast: tsdav DAVCalendar omits calendarColor/calendarDescription from its .d.ts; these properties exist at runtime per CalDAV RFC 4791
@@ -89,7 +105,7 @@ export class CalDAVClient {
             }
 
             try {
-                // eslint-disable-next-line no-await-in-loop -- must stay sequential: #consecutiveFailures shared state would be corrupted by concurrent #recordSuccess/#recordFailure calls
+                // eslint-disable-next-line no-await-in-loop -- preserve server-order partial results and consecutive-failure threshold health events
                 const result = await this.#fetchServerEvents(server, start, end);
                 this.#cache.set(cacheKey, {
                     events:    result.events,
@@ -155,30 +171,45 @@ export class CalDAVClient {
 
     async #fetchServerEvents(server: CalendarServerEntry, start: Date, end: Date): Promise<CalendarEventsResult> {
         const client = await this.#createClient(server.serverUrl, server.username, server.password);
-        // Stryker disable next-line StringLiteral -- operation label is informational only; appears in error message text
         const calendars = await this.#withTimeout(client.fetchCalendars(), this.#timeoutMs, 'fetchCalendars');
         const events: CalendarEvent[]       = [];
         const failed: FailedCalendarEvent[] = [];
 
-        for(const calEntry of server.calendars) {
-            const davCalendar = calendars.find((c: DAVCalendar) => c.url === calEntry.calendarPath);
-            if(!davCalendar) {
-                continue;
+        const calendarByUrl = new Map(calendars.map((calendar: DAVCalendar) => [calendar.url, calendar]));
+        const matchingCalendars = server.calendars.flatMap((calEntry) => {
+            // Stryker disable next-line llm: calendarPath is required and non-empty in the validated server schema.
+            const davCalendar = calendarByUrl.get(calEntry.calendarPath);
+            return davCalendar ? [{ calEntry, davCalendar }] : [];
+        });
+        const fetched: DAVCalendarObject[][] = [];
+        let nextIndex = 0;
+        let stopped = false;
+        const fetchWorker = async (): Promise<void> => {
+            while(nextIndex < matchingCalendars.length && !stopped) {
+                const index = nextIndex++;
+                const davCalendar = matchingCalendars[index]!.davCalendar;
+                try {
+                    // eslint-disable-next-line no-await-in-loop -- each worker admits one calendar at a time, with at most two in flight
+                    fetched[index] = await this.#withTimeout(client.fetchCalendarObjects({
+                        calendar:  davCalendar,
+                        timeRange: { start: start.toISOString(), end: end.toISOString() },
+                    }), this.#timeoutMs, 'fetchCalendarObjects');
+                } catch (error) {
+                    // eslint-disable-next-line require-atomic-updates -- this flag only transitions from false to true
+                    stopped = true;
+                    throw error;
+                }
             }
-
-            // Stryker disable StringLiteral -- operation label is informational only; appears in error message text
-            // eslint-disable-next-line no-await-in-loop -- sequential calendar fetching within a single server connection
-            const calObjects: DAVCalendarObject[] = await this.#withTimeout(client.fetchCalendarObjects({
-                calendar:  davCalendar,
-                timeRange: { start: start.toISOString(), end: end.toISOString() },
-            }), this.#timeoutMs, 'fetchCalendarObjects');
-            // Stryker restore StringLiteral
-
+        };
+        // Promise.all rejects on the first failure and observes the other in-flight worker.
+        await Promise.all(Array.from({ length: Math.min(2, matchingCalendars.length) }, fetchWorker));
+        for(const [index, calObjects] of fetched.entries()) {
+            const calEntry = matchingCalendars[index]!.calEntry;
             for(const obj of calObjects) {
                 if(!obj.data) {
                     continue;
                 }
-                const parsed = ical.sync.parseICS(obj.data as string);
+                const parsed = this.#dependencies.parseICS(obj.data as string);
                 const result = this.#extractEvents(parsed, calEntry.label, start, end);
                 events.push(...result.events);
                 failed.push(...result.failed);
@@ -190,9 +221,7 @@ export class CalDAVClient {
 
     async #withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
-        // Stryker disable BlockStatement: timeout promise — mutating causes test timeout (race promise never rejects)
         const timeout = new Promise<never>((_resolve, reject) => {
-            // Stryker disable next-line BlockStatement: setTimeout callback — mutating causes test timeout (reject never called)
             timeoutId = setTimeout(() => {
                 reject(new CaldavTimeoutError(
                     `CalDAV operation timed out after ${ms}ms: ${label}`,
@@ -201,7 +230,6 @@ export class CalDAVClient {
             }, ms);
         });
         // Stryker restore BlockStatement
-        // Stryker disable BlockStatement -- clearTimeout in finally is resource cleanup; timer leak not observable without real timer inspection
         try {
             return await Promise.race([promise, timeout]);
         } finally {
@@ -212,7 +240,7 @@ export class CalDAVClient {
 
     async #createClient(serverUrl: string, username: string, password: string) {
         try {
-            return await this.#withTimeout(createDAVClient({
+            return await this.#withTimeout(this.#dependencies.createDAVClient({
                 serverUrl,
                 credentials:        { username, password },
                 authMethod:         'Basic',
@@ -222,7 +250,6 @@ export class CalDAVClient {
             if(error instanceof CaldavTimeoutError) {
                 throw error;
             }
-            // Stryker disable StringLiteral -- error message is informational only
             throw new CaldavAuthError(
                 `Failed to connect to CalDAV server: ${serverUrl}`,
                 { serverUrl, originalError: String(error) }
@@ -243,7 +270,6 @@ export class CalDAVClient {
             // We've confirmed type === 'VEVENT' above
             const vevent = component;
 
-            // Stryker disable next-line LogicalOperator -- both rrule and recurrences indicate a recurring event; either alone is sufficient
             if(vevent.rrule || vevent.recurrences) {
                 const result = this.#expandRecurringVEvent(vevent, calendarLabel, rangeStart, rangeEnd);
                 events.push(...result.events);
@@ -260,24 +286,21 @@ export class CalDAVClient {
     #expandRecurringVEvent(vevent: ical.VEvent, calendarLabel: string, rangeStart: Date, rangeEnd: Date): CalendarEventsResult {
         let instances: ical.EventInstance[];
         try {
-            instances = expandRecurringEvent(vevent, { from: rangeStart, to: rangeEnd, expandOngoing: true });
+            instances = this.#dependencies.expandRecurringEvent(vevent, { from: rangeStart, to: rangeEnd, expandOngoing: true });
         } catch (error) {
             // Extract the rrule string for diagnostics (may be absent for recurrences-only events)
             const rruleRaw = vevent.rrule as unknown;
-            // Stryker disable next-line ConditionalExpression,StringLiteral -- rrule is an opaque object from node-ical; toString() is best-effort representation
             // eslint-disable-next-line @typescript-eslint/no-base-to-string -- rrule is a node-ical RRule object; toString() produces the RRULE string, best-effort for diagnostics
             const rruleStr = rruleRaw ? String(rruleRaw) : undefined;
             const reason   = error instanceof Error ? error.message : String(error);
             logger.warn({ error, uid: vevent.uid, rrule: rruleStr }, 'Failed to expand recurring event; it will appear in failed[] for caller visibility');
             return {
                 events: [],
-                // Stryker disable next-line ObjectLiteral: failed entry fields are all needed for caller diagnostics; removing any field defeats the visibility goal
                 failed: [{ uid: vevent.uid, reason, rrule: rruleStr }],
             };
         }
 
         if(instances.length === 0) {
-            // Stryker disable next-line StringLiteral -- debug message is informational only
             logger.debug({ uid: vevent.uid, summary: vevent.summary }, 'Recurring event had rrule/recurrences but produced no instances in range');
             return { events: [], failed: [] };
         }
@@ -333,13 +356,11 @@ export class CalDAVClient {
                     return a.replace('mailto:', '');
                 }
                 // ParameterValue object with optional CN param
-                // Stryker disable next-line ConditionalExpression,LogicalOperator -- paired typeof+in guards are semantically inseparable; mutating to 'true' would error on objects without params
-                if(typeof a === 'object' && 'params' in a) {
+                if('params' in a) {
                     const cn = (a.params as Record<string, unknown>).CN as string | undefined;
                     if(cn) {
                         return cn;
                     }
-                    // Stryker disable next-line StringLiteral -- defensive fallback for missing val field; val is always present for valid iCal attendees
                     const val = (a as { val?: string }).val ?? '';
                     return val.replace('mailto:', '');
                 }
@@ -377,17 +398,23 @@ export class CalDAVClient {
     }
 
     #buildCacheKey(server: CalendarServerEntry, start: Date, end: Date): string {
-        // Round to the hour for better cache hit rate
+        // Round absolute instants to the UTC hour so repeated local DST hours stay distinct.
+        // Stryker disable next-line llm: valid Date construction and copying its timestamp are equivalent here.
         const startHour = new Date(start);
-        // Stryker disable next-line MethodExpression -- setMinutes rounds within the hour; setHours would round to midnight, losing hour information
-        startHour.setMinutes(0, 0, 0);
+        startHour.setUTCMinutes(0, 0, 0);
+        // Stryker disable next-line llm: valid Date construction and copying its timestamp are equivalent here.
         const endHour = new Date(end);
-        // Stryker disable next-line MethodExpression -- setMinutes rounds within the hour; setHours would round to midnight, losing hour information
-        endHour.setMinutes(0, 0, 0);
+        endHour.setUTCMinutes(0, 0, 0);
 
-        // Stryker disable next-line StringLiteral -- cache key separator is an internal implementation detail
-        const calPaths = server.calendars.map(c => c.calendarPath).toSorted((a, b) => a.localeCompare(b)).join(',');
-        // Stryker disable next-line StringLiteral,ObjectLiteral -- cache key format is internal; separator characters are not observable externally
+        const calPaths = JSON.stringify(server.calendars.map(c => c.calendarPath).toSorted((a, b) => {
+            if(a < b) {
+                return -1;
+            }
+            if(a > b) {
+                return 1;
+            }
+            return 0;
+        }));
         return `${server.serverId}|${server.serverUrl}|${calPaths}|${startHour.toISOString()}|${endHour.toISOString()}`;
     }
 }

@@ -169,6 +169,15 @@ describe('createWakeTurnDelivery', () => {
         expect(h.conductor.deliver).toHaveBeenCalledWith('env-task-1', expect.any(Function));
     });
 
+    it('keeps the task fallback summary empty when the settled task has no text', async () => {
+        const h = build();
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+
+        await h.deliver(makeEnvelope({ kind: 'task', channelId: undefined, text: '' }), makeTurnResult({ response: 'All done.' }));
+
+        expect(h.responseRouter.routeToFallback).toHaveBeenCalledWith('Background work finished () — no origin channel was recorded, so this landed here:\nAll done.');
+    });
+
     it('a \'notification\' envelope with no channelId routes to the fallback channel with the default notification prefix, via conductor.deliver', async () => {
         const h = build();
         jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });

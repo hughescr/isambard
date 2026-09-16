@@ -113,6 +113,13 @@ describe('createTaskLaunchRegistry', () => {
     });
 
     describe('capacity eviction', () => {
+        it('preserves a real task whose ID matches a possible sentinel at capacity one', () => {
+            const registry = createTaskLaunchRegistry({ capacity: 1 });
+            const sentinel = launch({ taskId: 'Stryker was here', toolUseId: 'tool-sentinel' });
+            registry.record(sentinel);
+            expect(registry.lookup({ taskId: sentinel.taskId, toolUseId: sentinel.toolUseId })).toEqual(sentinel);
+        });
+
         it('evicts the oldest taskId once past capacity, dropping its toolUseId index too', () => {
             const registry = createTaskLaunchRegistry({ capacity: 2 });
             registry.record(launch({ taskId: 'task-1', toolUseId: 'tool-1' }));
@@ -287,6 +294,10 @@ describe('parseTaskNotification', () => {
 });
 
 describe('launchIdFromToolResponse', () => {
+    it('rejects non-plain tool responses even when they carry a launch-shaped field', () => {
+        expect(launchIdFromToolResponse('Agent', Object.assign([], { agentId: 'array-id' }))).toBeUndefined();
+        expect(launchIdFromToolResponse('Agent', new Date())).toBeUndefined();
+    });
     it('extracts agentId from an Agent tool_response object', () => {
         expect(launchIdFromToolResponse('Agent', { agentId: 'agent-1', status: 'async_launched' })).toBe('agent-1');
     });

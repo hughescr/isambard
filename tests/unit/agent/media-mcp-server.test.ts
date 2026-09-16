@@ -10,16 +10,23 @@ interface RegisteredTool {
     inputSchema: { shape: Record<string, unknown> }
     annotations: Record<string, boolean>
 }
-interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool>, server: { _serverInfo: { version: string } } }
+interface RegisteredToolInstance { _registeredTools: Partial<Record<string, RegisteredTool>>, server: { _serverInfo: { version: string } } }
 
-function getToolHandler(server: ReturnType<typeof createMediaMCPServer>, toolName: string) {
+function getRegisteredTool(server: ReturnType<typeof createMediaMCPServer>, toolName: string): RegisteredTool {
     const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive guard: Record index returns undefined at runtime when key is missing
     if(!registeredTool) {
         throw new Error(`Tool ${toolName} not found`);
     }
-    return registeredTool.handler;
+    return registeredTool;
 }
+
+function getToolHandler(server: ReturnType<typeof createMediaMCPServer>, toolName: string) {
+    return getRegisteredTool(server, toolName).handler;
+}
+
+test('missing registered tools are rejected by the lookup guard', () => {
+    expect(() => getRegisteredTool(createMediaMCPServer(), 'missing-tool')).toThrow('Tool missing-tool not found');
+});
 
 test('should create server with correct properties', () => {
     const server = createMediaMCPServer();
@@ -36,8 +43,7 @@ test.each([
     ['generateSpectrogramFromAudio', 'Generate an audio spectrogram image from a video or audio file. Useful for identifying speech patterns and audio content.'],
 ])('tool %s should have correct description', (toolName, expectedDescription) => {
     const server         = createMediaMCPServer();
-    const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
-    expect(registeredTool).toBeDefined();
+    const registeredTool = getRegisteredTool(server, toolName);
     expect(registeredTool.description).toBe(expectedDescription);
 });
 
@@ -48,8 +54,7 @@ test.each([
     ['generateSpectrogramFromAudio', ['filePath']],
 ])('tool %s should have correct input schema fields', (toolName, expectedFields) => {
     const server         = createMediaMCPServer();
-    const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
-    expect(registeredTool).toBeDefined();
+    const registeredTool = getRegisteredTool(server, toolName);
     for(const field of expectedFields) {
         expect(registeredTool.inputSchema.shape[field]).toBeDefined();
     }
@@ -156,7 +161,7 @@ describe('getVideoFrames tool — path validation and frame count cap', () => {
 
     test('should reject frame count exceeding max via Zod schema', () => {
         const server         = createMediaMCPServer();
-        const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.getVideoFrames;
+        const registeredTool = getRegisteredTool(server, 'getVideoFrames');
         const countSchema    = registeredTool.inputSchema.shape.count as { safeParse: (v: unknown) => { success: boolean } };
         const parseResult    = countSchema.safeParse(21);
         expect(parseResult.success).toBe(false);
@@ -164,7 +169,7 @@ describe('getVideoFrames tool — path validation and frame count cap', () => {
 
     test('should accept frame count at the max', () => {
         const server         = createMediaMCPServer();
-        const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.getVideoFrames;
+        const registeredTool = getRegisteredTool(server, 'getVideoFrames');
         const countSchema    = registeredTool.inputSchema.shape.count as { safeParse: (v: unknown) => { success: boolean } };
         const parseResult    = countSchema.safeParse(20);
         expect(parseResult.success).toBe(true);
@@ -179,5 +184,95 @@ describe('generateSpectrogramFromAudio tool — path validation', () => {
         const result = await handler({ filePath: '../../../etc/passwd' });
         expect(result.isError).toBe(true);
         expect(textContent(result.content[0])).toMatch(/outside the working directory|SECURITY/u);
+    });
+});
+
+const sampleFrame: Awaited<ReturnType<typeof utils.generateSpectrogram>> = {
+    filename:     'frame-1.png',
+    mediaType:    'image/png',
+    base64Data:   'cG5n',
+    originalSize: 3,
+};
+
+const sampleAnalysis: Awaited<ReturnType<typeof utils.processVideo>> = {
+    metadata: {
+        duration:       10,
+        width:          640,
+        height:         360,
+        videoCodec:     'h264',
+        frameRate:      30,
+        subtitleTracks: [],
+    },
+    frames:           [sampleFrame],
+    metadataMarkdown: '# Video metadata',
+    outputDir:        'output',
+};
+
+describe('media tool result contracts', () => {
+    test('URL analysis returns the generated metadata and frames', async () => {
+        const processSpy = spyOn(utils, 'processVideo').mockResolvedValue(sampleAnalysis);
+        try {
+            const result = await getToolHandler(createMediaMCPServer(), 'analyzeVideoFromUrl')({
+                url: 'https://example.com/video.mp4', outputDir: 'output', alt: 'A meeting',
+            });
+            expect(processSpy).toHaveBeenCalledWith('https://example.com/video.mp4', 'output', expect.objectContaining({ alt: 'A meeting' }));
+            expect(result).toEqual({ content: [
+                { type: 'text', text: '# Video metadata' },
+                { type: 'image', data: 'cG5n', mimeType: 'image/png' },
+            ] });
+        } finally {
+            processSpy.mockRestore();
+        }
+    });
+
+    test('local analysis returns the generated metadata and frames', async () => {
+        const pathSpy = spyOn(utils, 'validateFilePath').mockResolvedValue('/safe/video.mp4');
+        const processSpy = spyOn(utils, 'processLocalVideo').mockResolvedValue(sampleAnalysis);
+        try {
+            const result = await getToolHandler(createMediaMCPServer(), 'analyzeLocalVideo')({
+                videoPath: 'video.mp4', outputDir: 'output', alt: 'A meeting',
+            });
+            expect(processSpy).toHaveBeenCalledWith('/safe/video.mp4', 'output', expect.objectContaining({ alt: 'A meeting' }));
+            expect(result).toEqual({ content: [
+                { type: 'text', text: '# Video metadata' },
+                { type: 'image', data: 'cG5n', mimeType: 'image/png' },
+            ] });
+        } finally {
+            processSpy.mockRestore();
+            pathSpy.mockRestore();
+        }
+    });
+
+    test('frame extraction reports empty results and returns extracted images', async () => {
+        const pathSpy = spyOn(utils, 'validateFilePath').mockResolvedValue('/safe/video.mp4');
+        const framesSpy = spyOn(utils, 'extractFramesInRange').mockResolvedValue([]);
+        try {
+            const handler = getToolHandler(createMediaMCPServer(), 'getVideoFrames');
+            const args = { videoPath: 'video.mp4', startTime: 1, endTime: 4, count: 2 };
+            const empty = await handler(args);
+            expect(empty.isError).toBe(true);
+            expect(textContent(empty.content[0])).toBe('Error: No frames could be extracted in the specified range');
+
+            framesSpy.mockResolvedValue([sampleFrame]);
+            const frames = await handler(args);
+            expect(framesSpy).toHaveBeenCalledWith('/safe/video.mp4', 1, 4, 2, expect.any(Function));
+            expect(frames).toEqual({ content: [{ type: 'image', data: 'cG5n', mimeType: 'image/png' }] });
+        } finally {
+            framesSpy.mockRestore();
+            pathSpy.mockRestore();
+        }
+    });
+
+    test('spectrogram returns the generated image', async () => {
+        const pathSpy = spyOn(utils, 'validateFilePath').mockResolvedValue('/safe/audio.wav');
+        const spectrogramSpy = spyOn(utils, 'generateSpectrogram').mockResolvedValue(sampleFrame);
+        try {
+            const result = await getToolHandler(createMediaMCPServer(), 'generateSpectrogramFromAudio')({ filePath: 'audio.wav' });
+            expect(spectrogramSpy).toHaveBeenCalledWith('/safe/audio.wav', expect.any(Function));
+            expect(result).toEqual({ content: [{ type: 'image', data: 'cG5n', mimeType: 'image/png' }] });
+        } finally {
+            spectrogramSpy.mockRestore();
+            pathSpy.mockRestore();
+        }
     });
 });

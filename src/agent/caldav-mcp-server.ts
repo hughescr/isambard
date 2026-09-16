@@ -52,19 +52,15 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 return result.user.userId;
             }
             case 'ambiguous': {
-                // Stryker disable next-line StringLiteral: error message is informational only
                 return mcpJsonResult({
                     error:   'ambiguous_user',
-                    // Stryker disable next-line StringLiteral: error message is informational only
                     message: `Multiple users match "${user}". Please be more specific.`,
                     matches: result.matches,
                 });
             }
             case 'not_found': {
-                // Stryker disable next-line StringLiteral: error message is informational only
                 return mcpJsonResult({
                     error:   'user_not_found',
-                    // Stryker disable next-line StringLiteral: error message is informational only
                     message: `No user found matching "${user}".`,
                 });
             }
@@ -79,15 +75,11 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 'getCalendarEvents',
                 'Get calendar events for a user in a specific date range. Returns events from all calendars associated with the user plus shared/public calendars.',
                 {
-                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only
                     user:      z.string().min(1).describe("Person's name to look up calendars for (e.g., 'Craig')"),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     startDate: z.string().describe('Start date in ISO 8601 format (e.g., 2026-03-18)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     endDate:   z.string().describe('End date in ISO 8601 format (e.g., 2026-03-25)'),
                 },
                 withHealthGuard(options.healthRegistry, 'caldav', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('getCalendarEvents', async (args): Promise<CallToolResult> => {
                         const resolved = await resolveUserId(args.user);
                         if(typeof resolved !== 'string') {
@@ -106,13 +98,10 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                                 end:   e.end.toISOString(),
                             })),
                             count:        events.length,
-                            // Stryker disable next-line ConditionalExpression,EqualityOperator: surface failed count to agent only when non-zero
                             failedCount:  failed.length > 0 ? failed.length : undefined,
-                            // Stryker disable next-line ConditionalExpression,EqualityOperator: surface failed UIDs to agent only when non-zero
                             failedEvents: failed.length > 0 ? failed.map(f => f.uid) : undefined,
                         });
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Calendar Events', readOnlyHint: true, idempotentHint: true } }
             ),
 
@@ -120,13 +109,10 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 'getUpcomingEvents',
                 'Get upcoming calendar events for a user over the next N days. Convenience wrapper that defaults to 7 days.',
                 {
-                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only
                     user: z.string().min(1).describe("Person's name to look up calendars for (e.g., 'Craig')"),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    days: z.number().int().positive().optional().default(7).describe('Number of days to look ahead (default: 7)'),
+                    days: z.number().int().positive().optional().describe('Number of days to look ahead (default: 7)'),
                 },
                 withHealthGuard(options.healthRegistry, 'caldav', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('getUpcomingEvents', async (args): Promise<CallToolResult> => {
                         const resolved = await resolveUserId(args.user);
                         if(typeof resolved !== 'string') {
@@ -137,7 +123,6 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                             return mcpJsonResult({ events: [], message: 'No calendars configured for this user' });
                         }
 
-                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Zod .default(7) makes type non-optional, but handler is called directly in tests without schema processing
                         const days             = args.days ?? 7;
                         const now              = new Date();
                         const end              = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
@@ -150,13 +135,10 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                             })),
                             count:        events.length,
                             daysAhead:    days,
-                            // Stryker disable next-line ConditionalExpression,EqualityOperator: surface failed count to agent only when non-zero
                             failedCount:  failed.length > 0 ? failed.length : undefined,
-                            // Stryker disable next-line ConditionalExpression,EqualityOperator: surface failed UIDs to agent only when non-zero
                             failedEvents: failed.length > 0 ? failed.map(f => f.uid) : undefined,
                         });
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Upcoming Events', readOnlyHint: true, idempotentHint: true } }
             ),
 
@@ -164,11 +146,9 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 'listUserCalendars',
                 'List all calendar labels configured for a user. Shows calendar names grouped by server, without exposing URLs or credentials.',
                 {
-                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only
                     user: z.string().min(1).describe("Person's name to list calendars for (e.g., 'Craig')"),
                 },
                 withHealthGuard(options.healthRegistry, 'caldav', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('listUserCalendars', async (args): Promise<CallToolResult> => {
                         const resolved = await resolveUserId(args.user);
                         if(typeof resolved !== 'string') {
@@ -189,7 +169,6 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                         }));
                         return mcpJsonResult({ calendars });
                     })),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'List User Calendars', readOnlyHint: true, idempotentHint: true } }
             ),
         ],

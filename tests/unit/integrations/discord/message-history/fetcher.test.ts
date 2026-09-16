@@ -278,13 +278,11 @@ describe.concurrent('createMessageFetcher', () => {
                 expect('title' in result.messages[0].embeds[0]).toBe(false);
             });
 
-            test('should use "unnamed" as filename when attachment.name is null', async () => {
-                // This test specifically targets the mutant that changes
-                // `attachment.name ?? 'unnamed'` to `attachment.name ?? ''` at line 91.
+            test('preserves the attachment filename from Discord', async () => {
                 const message = createMockMessage({
                     id:          '100000000000000000',
                     attachments: [
-                        { url: 'https://cdn.discord.com/file.bin', name: null, contentType: 'application/octet-stream' },
+                        { url: 'https://cdn.discord.com/file.bin', name: 'file.bin', contentType: 'application/octet-stream' },
                     ],
                 });
 
@@ -296,9 +294,25 @@ describe.concurrent('createMessageFetcher', () => {
                 const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
 
                 expect(result.messages[0].attachments).toHaveLength(1);
-                expect(result.messages[0].attachments[0].filename).toBe('unnamed');
+                expect(result.messages[0].attachments[0].filename).toBe('file.bin');
                 expect(result.messages[0].attachments[0].url).toBe('https://cdn.discord.com/file.bin');
                 expect(result.messages[0].attachments[0].contentType).toBe('application/octet-stream');
+            });
+
+            test('preserves attachment order from Discord', async () => {
+                const message = createMockMessage({
+                    id:          '100000000000000007',
+                    attachments: [
+                        { url: 'https://cdn.discord.com/first.txt', name: 'first.txt' },
+                        { url: 'https://cdn.discord.com/second.txt', name: 'second.txt' },
+                    ],
+                });
+                const channel = createMockChannel('123456789012345678', [message]);
+                const fetcher = createMessageFetcher(createMockClient(new Map<string, TextChannel>([['123456789012345678', channel]])));
+
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0]?.attachments.map(attachment => attachment.filename)).toEqual(['first.txt', 'second.txt']);
             });
         });
 
@@ -487,9 +501,9 @@ describe.concurrent('createMessageFetcher', () => {
                     createMockMessage({ id: '100000000000000002', content: 'Third' }),
                 ];
 
-                const fetchCalls: { before?: string }[] = [];
+                const fetchCalls: { before?: string, limit?: number }[] = [];
                 const channel = createMockChannel('123456789012345678', messages, (options) => {
-                    fetchCalls.push({ before: options.before });
+                    fetchCalls.push({ ...options });
                     // Return all messages on first call, empty on subsequent
                     if(!options.before) {
                         return messages.toReversed();
@@ -504,6 +518,8 @@ describe.concurrent('createMessageFetcher', () => {
                 await fetcher.fetchMessages({ channelId: '123456789012345678' });
 
                 expect(fetchCalls[0].before).toBeUndefined();
+                expect(Object.hasOwn(fetchCalls[0], 'before')).toBe(false);
+                expect(fetchCalls[0]).toEqual({ limit: 100 });
             });
 
             test('should update cursor to last message ID for subsequent fetch when paginating', async () => {
@@ -533,7 +549,7 @@ describe.concurrent('createMessageFetcher', () => {
                 const client = createMockClient(channels);
 
                 const fetcher = createMessageFetcher(client);
-                await fetcher.fetchMessages({
+                const result = await fetcher.fetchMessages({
                     channelId: '123456789012345678',
                     limit:     150,
                 });
@@ -541,7 +557,9 @@ describe.concurrent('createMessageFetcher', () => {
                 expect(fetchCalls.length).toBeGreaterThanOrEqual(2);
                 expect(fetchCalls[0].before).toBeUndefined();
                 expect(fetchCalls[1].before).toBeDefined();
-                expect(BigInt(fetchCalls[1].before!)).toBeLessThan(BigInt(fetchCalls[0].before ?? '100000000000000150'));
+                expect(fetchCalls[1].before).toBe(messages[50]?.id);
+                expect(result.messages[0]?.id).toBe(messages[0]?.id);
+                expect(result.messages.at(-1)?.id).toBe(messages.at(-1)?.id);
             });
 
             test('should stop fetching when batch returns empty', async () => {
@@ -570,6 +588,7 @@ describe.concurrent('createMessageFetcher', () => {
                 const result = await fetcher.fetchMessages({ channelId: '123456789012345678', limit: 1000 });
 
                 expect(result.messages).toHaveLength(100);
+                expect(fetchCallCount).toBe(2);
                 expect(fetchCallCount).toBe(2);
             });
 
@@ -677,6 +696,47 @@ describe.concurrent('createMessageFetcher', () => {
                 expect(result.messages).toHaveLength(125);
                 expect(fetchCalls[0].limit).toBe(100);
                 expect(fetchCalls[1].limit).toBe(25);
+            });
+
+            test('requests exactly one message for the final remaining slot', async () => {
+                const messages = Array.from({ length: 101 }, (_, index) => createMockMessage({
+                    id:      (100_000_000_000_000_000n + BigInt(index)).toString(),
+                    content: `Message ${index}`,
+                }));
+                const fetchCalls: { limit?: number, before?: string }[] = [];
+                const channel = createMockChannel('123456789012345678', messages, (options) => {
+                    fetchCalls.push({ ...options });
+                    const candidates = options.before
+                        ? messages.filter(message => BigInt(message.id) < BigInt(options.before!))
+                        : messages;
+                    return candidates.slice(-(options.limit ?? 100)).toReversed();
+                });
+                const fetcher = createMessageFetcher(createMockClient(new Map<string, TextChannel>([['123456789012345678', channel]])));
+
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678', limit: 101 });
+
+                expect(result.messages).toHaveLength(101);
+                expect(fetchCalls.map(call => call.limit)).toEqual([100, 1]);
+            });
+
+            test('does not fetch another page after a short batch', async () => {
+                const messages = Array.from({ length: 99 }, (_, index) => createMockMessage({
+                    id: (100_000_000_000_000_000n + BigInt(index)).toString(),
+                }));
+                let calls = 0;
+                const channel = createMockChannel('123456789012345678', messages, () => {
+                    calls++;
+                    if(calls > 1) {
+                        return [];
+                    }
+                    return messages.toReversed();
+                });
+                const fetcher = createMessageFetcher(createMockClient(new Map<string, TextChannel>([['123456789012345678', channel]])));
+
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages).toHaveLength(99);
+                expect(calls).toBe(1);
             });
 
             test('should return messages in chronological order (oldest first)', async () => {
@@ -855,30 +915,31 @@ describe.concurrent('createMessageFetcher', () => {
                 }
             });
 
-            test('should rethrow ChannelNotAccessibleError from fetchMessages loop when thrown during message fetch', async () => {
+            test('should preserve the original ChannelNotAccessibleError from channel access', async () => {
+                const expected = new ChannelNotAccessibleError('123456789012345678');
+                const client = {
+                    channels: {
+                        fetch: mock(async () => {
+                            throw expected;
+                        }),
+                    },
+                } as unknown as Client;
+                const fetcher = createMessageFetcher(client);
+
+                await expect(fetcher.fetchMessages({ channelId: '123456789012345678' })).rejects.toBe(expected);
+            });
+
+            test('should preserve ChannelNotAccessibleError raised while fetching a message page', async () => {
+                const expected = new ChannelNotAccessibleError('123456789012345678');
                 const channel = {
                     id:          '123456789012345678',
                     isTextBased: () => true,
-                    messages:    {
-                        fetch: mock(async () => {
-                            throw new ChannelNotAccessibleError('123456789012345678');
-                        }),
-                    },
+                    messages:    { fetch: mock(async () => { throw expected; }) },
                 } as unknown as TextChannel;
-
-                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
-                const client = createMockClient(channels);
-
+                const client = createMockClient(new Map<string, TextChannel>([['123456789012345678', channel]]));
                 const fetcher = createMessageFetcher(client);
 
-                try {
-                    await fetcher.fetchMessages({ channelId: '123456789012345678' });
-                    expect(true).toBe(false);
-                } catch (error) {
-                    expect(error).toBeInstanceOf(ChannelNotAccessibleError);
-                    expect((error as ChannelNotAccessibleError).context.channelId).toBe('123456789012345678');
-                    expect(error).not.toBeInstanceOf(MessageFetchError);
-                }
+                await expect(fetcher.fetchMessages({ channelId: '123456789012345678' })).rejects.toBe(expected);
             });
 
             test('should use "Unknown error" as reason when non-Error value is thrown', async () => {
@@ -904,6 +965,24 @@ describe.concurrent('createMessageFetcher', () => {
                     expect(error).toBeInstanceOf(MessageFetchError);
                     expect((error as MessageFetchError).message).toContain('Unknown error');
                 }
+            });
+
+            test('wraps generic transport errors while preserving their message as the reason', async () => {
+                const channel = {
+                    id:          '123456789012345678',
+                    isTextBased: () => true,
+                    messages:    {
+                        fetch: mock(async () => {
+                            throw new Error('connection reset');
+                        }),
+                    },
+                } as unknown as TextChannel;
+                const fetcher = createMessageFetcher(createMockClient(new Map<string, TextChannel>([['123456789012345678', channel]])));
+
+                await expect(fetcher.fetchMessages({ channelId: '123456789012345678' })).rejects.toMatchObject({
+                    name:    'MessageFetchError',
+                    context: { channelId: '123456789012345678', reason: 'connection reset' },
+                });
             });
         });
     });
@@ -980,6 +1059,13 @@ describe.concurrent('createMessageFetcher', () => {
             expect(result[0].content).toBe('First message');
             expect(result[1].content).toBe('Second message');
             expect(result[2].content).toBe('Third message');
+        });
+
+        test('should return immediately for no IDs without fetching a channel', async () => {
+            const client = createMockClient(new Map());
+            const fetcher = createMessageFetcher(client);
+            await expect(fetcher.fetchByIds('123456789012345678', [])).resolves.toEqual([]);
+            expect(client.channels.fetch).not.toHaveBeenCalled();
         });
 
         test('should filter out messages that fail to fetch (missing IDs)', async () => {

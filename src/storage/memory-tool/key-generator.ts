@@ -23,8 +23,7 @@ interface MemoryToolKeys {
  * @returns Content truncated to 100 characters
  */
 export function generateContentPreview(content: string): string {
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: Equivalent mutant - slice(0,100) on short strings returns original, >= boundary is equivalent
-    return content.length > 100 ? content.slice(0, 100) : content;
+    return content.slice(0, 100);
 }
 
 /**
@@ -34,8 +33,7 @@ export function generateContentPreview(content: string): string {
  * @returns Normalized, deduplicated, lowercase tags as Set
  */
 export function normalizeTags(tags: Set<string> | undefined): Set<string> {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - early return for empty/undefined
-    if(!tags || tags.size === 0) {
+    if(!tags) {
         return new Set();
     }
     return new Set([...tags].map(tag => tag.toLowerCase()));
@@ -72,8 +70,7 @@ export const MemoryToolKeyGenerator = {
 
         // Extract layer from path (identity, state, events) or use first path segment as fallback
         const layer = extractLayerFromPath(path);
-        // Stryker disable next-line StringLiteral: Empty string and 'unknown' are functionally equivalent here for edge case of root path
-        const layerStr = layer ?? path.split('/')[1] ?? 'unknown';
+        const layerStr = layer ?? path.split('/')[1];
 
         return {
             PK:     `DIR#${parentPath}`,
@@ -99,11 +96,9 @@ export const MemoryToolKeyGenerator = {
    */
     parsePath(pk: string, sk: string): string {
         if(!pk.startsWith('DIR#')) {
-            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
             throw new InvariantViolationError('MemoryToolKeyGenerator.parsePath', `Invalid PK format: expected DIR#..., got ${pk}`);
         }
         if(!sk.startsWith('FILE#')) {
-            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
             throw new InvariantViolationError('MemoryToolKeyGenerator.parsePath', `Invalid SK format: expected FILE#..., got ${sk}`);
         }
 
@@ -142,10 +137,6 @@ export const MemoryToolKeyGenerator = {
         path: MemoryPath,
         tags: Set<string>
     ): { PK: string, SK: string }[] {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - [].map() returns [] anyway
-        if(tags.size === 0) {
-            return [];
-        }
         return [...tags].map(tag => ({
             PK: `TAG#${tag}`,
             SK: `PATH#${path}`,
@@ -167,7 +158,6 @@ export const MemoryToolKeyGenerator = {
    */
     parseTagFromPK(pk: string): string {
         if(!pk.startsWith('TAG#')) {
-            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
             throw new InvariantViolationError('MemoryToolKeyGenerator.parseTagFromPK', `Invalid tag PK format: expected TAG#..., got ${pk}`);
         }
         return pk.slice(4);
@@ -188,7 +178,6 @@ export const MemoryToolKeyGenerator = {
    */
     parsePathFromTagSK(sk: string): string {
         if(!sk.startsWith('PATH#')) {
-            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
             throw new InvariantViolationError('MemoryToolKeyGenerator.parsePathFromTagSK', `Invalid tag SK format: expected PATH#..., got ${sk}`);
         }
         return sk.slice(5);

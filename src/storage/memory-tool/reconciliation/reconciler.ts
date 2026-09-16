@@ -12,7 +12,7 @@ import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../../client-holder';
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
-import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema  } from '../types';
+import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexReadItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema  } from '../types';
 import type { ReconciliationProgress, ReconciliationResult } from './types';
 
 // ============================================================================
@@ -55,7 +55,6 @@ export interface ReconcilerOptions {
  * Compare two Sets for equality (same size and same elements)
  */
 function setsEqual(a: Set<string>, b: Set<string>): boolean {
-    // Stryker disable next-line EqualityOperator: Size check is optimization before element comparison
     if(a.size !== b.size) {
         return false;
     }
@@ -67,37 +66,36 @@ function setsEqual(a: Set<string>, b: Set<string>): boolean {
     return true;
 }
 
+/** Only a real DOM abort exception escapes item-level error accounting. */
+export function isAbortError(error: unknown): error is DOMException {
+    return error instanceof DOMException && error.name === 'AbortError';
+}
+
 /**
  * Delay that respects abort signal
  * @internal - exported for testing
  */
 export async function delay(ms: number, signal?: AbortSignal): Promise<void> {
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Optimization for zero/negative delays
     if(ms <= 0) {
         return;
     }
 
-    // Stryker disable BlockStatement,StringLiteral: Promise executor for setTimeout with abort handling; DOMException message text is conventional — AbortError name is the semantic contract
     return new Promise((resolve, reject) => {
-        const timeout = setTimeout(resolve, ms);
-
-        if(signal) {
-            const onAbort = () => {
-                clearTimeout(timeout);
-                reject(new DOMException('Aborted', 'AbortError'));
-            };
-
-            // Stryker disable ConditionalExpression,BlockStatement: pre-aborted check — mutating causes test timeout (abort not detected before listener attached)
-            if(signal.aborted) {
-                clearTimeout(timeout);
-                reject(new DOMException('Aborted', 'AbortError'));
-                return;
-            }
-            // Stryker restore ConditionalExpression,BlockStatement
-
-            // Stryker disable next-line BooleanLiteral,ObjectLiteral,StringLiteral: Standard addEventListener option; string 'abort' is the event name
-            signal.addEventListener('abort', onAbort, { once: true });
+        if(signal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
         }
+
+        const timeout = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        function onAbort(): void {
+            clearTimeout(timeout);
+            signal?.removeEventListener('abort', onAbort);
+            reject(new DOMException('Aborted', 'AbortError'));
+        }
+        signal?.addEventListener('abort', onAbort);
     });
     // Stryker restore BlockStatement,StringLiteral
 }
@@ -112,37 +110,29 @@ export async function retryWithBackoff<T>(
     context: string,
     signal?: AbortSignal
 ): Promise<T | undefined> {
-    // Stryker disable next-line UpdateOperator: Loop increment tested via retry behavior
     for(let attempt = 1; attempt <= backoff.maxAttempts; attempt++) {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Try-catch structure for error handling
         try {
             // eslint-disable-next-line no-await-in-loop -- sequential: retry loop, each attempt depends on prior failure
             return await operation();
         } catch (error) {
-            // Stryker disable ConditionalExpression,BlockStatement,StringLiteral: Abort signal check — abort propagation uses DOMException per standard AbortError convention; string args are convention-mandated constants
             if(signal?.aborted) {
                 throw new DOMException('Aborted', 'AbortError');
             }
             // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
 
-            // Stryker disable LogicalOperator,ConditionalExpression,EqualityOperator: Error type guards for throttling detection — mutating causes test timeout (all errors treated as throttled)
             const isThrottled = typeof error === 'object' && error !== null && 'name' in error
               && (error.name === 'ProvisionedThroughputExceededException' || error.name === 'ThrottlingException');
             // Stryker restore LogicalOperator,ConditionalExpression,EqualityOperator
 
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: Retry condition — mutating causes test timeout (unthrottled errors retry indefinitely)
             if(isThrottled && attempt < backoff.maxAttempts) {
-                // Stryker disable next-line ArithmeticOperator: Exponential backoff calculation
                 const delayMs = backoff.baseDelayMs * 2 ** (attempt - 1);
                 // eslint-disable-next-line no-await-in-loop -- sequential: retry backoff delay between attempts
                 await delay(delayMs, signal);
-                /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
                 logger.debug({ attempt, context, msg: `Reconciler retry ${attempt}/${backoff.maxAttempts}` });
                 continue;
             }
 
             // Non-throttling error or exhausted retries
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ error, context, msg: `Reconciler operation failed after ${attempt} attempts` });
             return undefined;
         }
@@ -167,12 +157,11 @@ async function checkTagIndexExists(
     ctx: PhaseAContext,
     memoryPath: MemoryPath,
     tag: string
-): Promise<TagIndexItem | undefined> {
+): Promise<TagIndexReadItem | undefined> {
     const result = await retryWithBackoff(
         async () => ctx.deps.docClient.send(new QueryCommand({
             TableName:                 ctx.deps.tableName,
             KeyConditionExpression:    'PK = :pk AND SK = :sk',
-            // Stryker disable next-line StringLiteral: DynamoDB expression attribute names
             ExpressionAttributeValues: {
                 ':pk': `TAG#${tag}`,
                 ':sk': `PATH#${memoryPath}`,
@@ -180,17 +169,11 @@ async function checkTagIndexExists(
             Limit: 1,
         })),
         ctx.options.backoff,
-        /* Stryker disable next-line StringLiteral: Retry context string is observational */
         `checkTagIndexExists:${tag}:${memoryPath}`,
         ctx.options.signal
     );
 
-    // Stryker disable next-line ConditionalExpression: Defensive check - downstream code handles undefined gracefully
-    if(!result?.Items || result.Items.length === 0) {
-        return undefined;
-    }
-
-    return result.Items[0] as TagIndexItem;
+    return result?.Items?.[0] as TagIndexReadItem | undefined;
 }
 
 /**
@@ -198,10 +181,10 @@ async function checkTagIndexExists(
  */
 function isTagIndexStale(
     memoryItem: MemoryToolItem,
-    indexItem: TagIndexItem
+    indexItem: TagIndexReadItem
 ): boolean {
     return (
-        indexItem.contentPreview !== memoryItem.contentPreview
+        indexItem.contentPreview !== (memoryItem.contentPreview ?? '')
         || indexItem.updatedAt !== memoryItem.updatedAt
         || !setsEqual(indexItem.tags, normalizeTags(memoryItem.tags))
     );
@@ -214,13 +197,7 @@ async function processMemoryItemTags(
     ctx: PhaseAContext,
     memoryItem: MemoryToolItem
 ): Promise<void> {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Early return optimization - normalizeTags handles undefined/empty gracefully
-    if(!memoryItem.tags || memoryItem.tags.size === 0) {
-        return;
-    }
-
     const normalizedTags = normalizeTags(memoryItem.tags);
-    // Stryker disable next-line StringLiteral: Default layer value not exercised in tests
     const layer = extractLayerFromPath(memoryItem.path) ?? 'unknown';
 
     for(const tag of normalizedTags) {
@@ -235,7 +212,6 @@ async function processMemoryItemTags(
                     memoryItem.path,
                     new Set([tag]),
                     memoryItem.updatedAt,
-                    // Stryker disable next-line StringLiteral: Default preview value
                     memoryItem.contentPreview ?? '',
                     layer
                 );
@@ -247,7 +223,6 @@ async function processMemoryItemTags(
                     memoryItem.path,
                     new Set([tag]),
                     memoryItem.updatedAt,
-                    // Stryker disable next-line StringLiteral: Default preview value
                     memoryItem.contentPreview ?? '',
                     layer
                 );
@@ -257,11 +232,9 @@ async function processMemoryItemTags(
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limiting delay between DynamoDB operations
             await delay(ctx.options.operationDelayMs, ctx.options.signal);
         } catch (error) {
-            // Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator,StringLiteral: Re-throw abort; abort propagates via multiple checks so isolating this branch in tests is impractical
-            if(error instanceof DOMException && error.name === 'AbortError') {
+            if(isAbortError(error)) {
                 throw error;
             }
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ error, path: memoryItem.path, tag, msg: 'Failed to process tag index' });
             ctx.progress.errors++;
         }
@@ -277,7 +250,6 @@ async function getAllTagNames(
     let lastEvaluatedKey: Record<string, unknown> | undefined;
     const allTags: string[] = [];
 
-    // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
     do {
         const currentKey = lastEvaluatedKey;
         // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
@@ -286,16 +258,13 @@ async function getAllTagNames(
             async () => ctx.deps.docClient.send(new QueryCommand({
                 TableName:                 ctx.deps.tableName,
                 IndexName:                 'GSI2',
-                /* Stryker disable next-line StringLiteral: DynamoDB expression */
                 KeyConditionExpression:    'GSI2PK = :gsi2pk',
-                // Stryker disable next-line StringLiteral: DynamoDB expression attribute values
                 ExpressionAttributeValues: {
                     ':gsi2pk': 'TAG_COUNTS',
                 },
                 ExclusiveStartKey: currentKey,
             })),
             ctx.options.backoff,
-            /* Stryker disable next-line StringLiteral: Retry context string is observational */
             'getAllTagNames',
             ctx.options.signal
         );
@@ -304,21 +273,17 @@ async function getAllTagNames(
             return undefined;
         }
 
+        // Stryker disable next-line llm: QueryCommandOutput.Items is an array or undefined, so nullish and falsy fallback select the same array.
         for(const item of result.Items ?? []) {
             // Extract tag name from GSI2SK = 'TAG#{tagname}'
-            // Stryker disable next-line StringLiteral: Key prefix parsing
             const gsi2sk = item.GSI2SK as string | undefined;
-            // Stryker disable next-line ConditionalExpression,BlockStatement,StringLiteral: Guard clause for malformed items with TAG# prefix check
             if(gsi2sk?.startsWith('TAG#')) {
                 allTags.push(gsi2sk.slice(4));
             }
         }
 
         lastEvaluatedKey = result.LastEvaluatedKey;
-
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Loop termination
     } while(lastEvaluatedKey);
-    // Stryker restore ConditionalExpression,BlockStatement
 
     return allTags;
 }
@@ -332,11 +297,6 @@ async function checkOldPathIndicesCleanByTags(
     oldPath: string,
     oldTags: string[]
 ): Promise<boolean> {
-    // Stryker disable next-line ConditionalExpression,BlockStatement,BooleanLiteral: Empty old tags means nothing to check — clean by definition
-    if(oldTags.length === 0) {
-        return true;
-    }
-
     const results = await Promise.all(
         oldTags.map(tag =>
             retryWithBackoff(
@@ -344,19 +304,17 @@ async function checkOldPathIndicesCleanByTags(
                     TableName: ctx.deps.tableName,
                     Key:       {
                         PK: `TAG#${tag}`,
-                        // Stryker disable next-line StringLiteral: Key prefix for old path check
                         SK: `PATH#${oldPath}`,
                     },
                 })),
                 ctx.options.backoff,
-                /* Stryker disable next-line StringLiteral: Retry context string is observational */
                 `checkOldPathIndicesClean:${tag}:${oldPath}`,
                 ctx.options.signal
             ))
     );
 
-    // Stryker disable next-line ConditionalExpression,ArrayDeclaration,MethodExpression: Any existing item means not clean; some→every equivalent with single-item test scenarios
-    return !results.some(result => result?.Item);
+    // A failed probe is not evidence that an old-path index is gone.
+    return results.every(result => result !== undefined && !result.Item);
 }
 
 /**
@@ -369,7 +327,6 @@ async function checkOldPathIndicesClean(
     oldPath: string,
     oldTags?: string[]
 ): Promise<boolean> {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: New format fast path — use stored old tags directly
     if(oldTags) {
         return checkOldPathIndicesCleanByTags(ctx, oldPath, oldTags);
     }
@@ -377,31 +334,27 @@ async function checkOldPathIndicesClean(
     // Backward compat: enumerate all tags via GSI2 TAG_COUNTS
     const allTags = await getAllTagNames(ctx);
 
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Guard clause for failed tag enumeration
     if(!allTags) {
         // Failed to enumerate tags - assume not clean (conservative)
         return false;
     }
 
     for(const tag of allTags) {
-        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB check per tag
+        // eslint-disable-next-line no-await-in-loop -- sequential: stop querying when any tag still has an old-path index
         const result = await retryWithBackoff(
             async () => ctx.deps.docClient.send(new GetCommand({
                 TableName: ctx.deps.tableName,
                 Key:       {
                     PK: `TAG#${tag}`,
-                    // Stryker disable next-line StringLiteral: Key prefix for old path check
                     SK: `PATH#${oldPath}`,
                 },
             })),
             ctx.options.backoff,
-            /* Stryker disable next-line StringLiteral: Retry context string is observational */
             `checkOldPathIndicesClean:${tag}:${oldPath}`,
             ctx.options.signal
         );
 
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Found an old index = not clean
-        if(result?.Item) {
+        if(!result || result.Item) {
             return false;
         }
     }
@@ -416,29 +369,29 @@ async function cleanPreviouslyKnownAs(
     ctx: PhaseAContext,
     memoryItem: MemoryToolItem
 ): Promise<void> {
-    /* Stryker disable next-line OptionalChaining: Defensive null check */
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata typed as non-nullable but may be absent in old DynamoDB records
-    const previousPath = memoryItem.metadata?.previouslyKnownAs;
+    // DynamoDB can still return legacy rows without metadata despite the current schema.
+    const rawMetadata: unknown = memoryItem.metadata;
+    const metadata = rawMetadata !== null && typeof rawMetadata === 'object' && !Array.isArray(rawMetadata)
+        ? rawMetadata as Record<string, unknown>
+        : {};
+    const previousPath = metadata.previouslyKnownAs;
 
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Guard clause
     if(!previousPath || typeof previousPath !== 'string') {
         return;
     }
 
     // Extract previouslyKnownAsTags if present (new format) for efficient per-tag check
-    /* Stryker disable next-line OptionalChaining: Defensive null check */
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata typed as non-nullable but may be absent in old DynamoDB records
-    const previousTags = memoryItem.metadata?.previouslyKnownAsTags;
-    // Stryker disable next-line ConditionalExpression: Pass array if present (new format), undefined for backward compat fallback
-    const oldTags = Array.isArray(previousTags) ? previousTags as string[] : undefined;
+    const previousTags = metadata.previouslyKnownAsTags;
+    const oldTags = Array.isArray(previousTags) && previousTags.every((tag: unknown): tag is string => typeof tag === 'string')
+        ? previousTags
+        : undefined;
 
     try {
         const isClean = await checkOldPathIndicesClean(ctx, previousPath, oldTags);
 
         if(isClean) {
             // Remove previouslyKnownAs and previouslyKnownAsTags from metadata
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata typed as non-nullable but may be absent in old DynamoDB records
-            const { previouslyKnownAs: _, previouslyKnownAsTags: __, ...cleanMetadata } = memoryItem.metadata ?? {};
+            const { previouslyKnownAs: _, previouslyKnownAsTags: __, ...cleanMetadata } = metadata;
 
             await ctx.deps.updateMemoryMetadata(
                 memoryItem.path,
@@ -446,18 +399,14 @@ async function cleanPreviouslyKnownAs(
             );
 
             ctx.progress.metadataCleaned++;
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.debug({ path: memoryItem.path, oldPath: previousPath, msg: 'Cleaned previouslyKnownAs metadata' });
-            /* Stryker restore StringLiteral,ObjectLiteral */
         }
 
         await delay(ctx.options.operationDelayMs, ctx.options.signal);
     } catch (error) {
-        // Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator,StringLiteral: Re-throw abort; abort propagates via multiple checks so isolating this branch in tests is impractical
-        if(error instanceof DOMException && error.name === 'AbortError') {
+        if(isAbortError(error)) {
             throw error;
         }
-        /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
         logger.warn({ error, path: memoryItem.path, msg: 'Failed to clean previouslyKnownAs' });
         ctx.progress.errors++;
     }
@@ -488,10 +437,8 @@ async function scanLayer(
 ): Promise<void> {
     let lastEvaluatedKey: Record<string, unknown> | undefined;
 
-    // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
     do {
         if(ctx.options.signal?.aborted) {
-            // Stryker disable next-line StringLiteral: Abort message not exercised in tests
             throw new DOMException('Aborted', 'AbortError');
         }
 
@@ -502,9 +449,7 @@ async function scanLayer(
             async () => ctx.deps.docClient.send(new QueryCommand({
                 TableName:                 ctx.deps.tableName,
                 IndexName:                 'GSI1',
-                /* Stryker disable next-line StringLiteral: DynamoDB expression */
                 KeyConditionExpression:    'GSI1PK = :gsi1pk',
-                // Stryker disable next-line StringLiteral: DynamoDB expression attribute names
                 ExpressionAttributeValues: {
                     ':gsi1pk': `LAYER#${layer}`,
                 },
@@ -512,15 +457,12 @@ async function scanLayer(
                 ExclusiveStartKey: currentKey,
             })),
             ctx.options.backoff,
-            /* Stryker disable next-line StringLiteral: Retry context string is observational */
             `scanLayer:${layer}`,
             ctx.options.signal
         );
 
         if(!result) {
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ layer, msg: 'Failed to scan layer' });
-            /* Stryker restore StringLiteral,ObjectLiteral */
             ctx.progress.errors++;
             break;
         }
@@ -534,10 +476,7 @@ async function scanLayer(
         }
 
         lastEvaluatedKey = result.LastEvaluatedKey;
-
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Loop termination
     } while(lastEvaluatedKey);
-    // Stryker restore ConditionalExpression,BlockStatement
 }
 
 /**
@@ -568,8 +507,8 @@ async function runPhaseA(
     ];
 
     for(const layer of layers) {
+        // Stryker disable next-line llm: AbortSignal.aborted is boolean, so strict comparison with true has the same branch behavior.
         if(options.signal?.aborted) {
-            /* Stryker disable next-line StringLiteral: Abort message is observational */
             throw new DOMException('Aborted', 'AbortError');
         }
 
@@ -596,7 +535,7 @@ interface PhaseBContext {
  */
 async function processTagIndexItem(
     ctx: PhaseBContext,
-    indexItem: TagIndexItem
+    indexItem: TagIndexReadItem
 ): Promise<void> {
     ctx.progress.itemsScanned++;
 
@@ -610,33 +549,24 @@ async function processTagIndexItem(
             // Memory exists - check if tag is still present
             const normalizedTags = normalizeTags(memory.tags);
 
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Tag check
             if(!normalizedTags.has(tag)) {
                 // Tag removed - delete stale index
-                // Stryker disable next-line ArrayDeclaration: Tag derived from parseTagFromPK, tested separately
                 await ctx.deps.tagIndex.deleteTagIndexItems(memory.path, new Set([tag]));
                 ctx.progress.indexItemsDeleted++;
-                /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
                 logger.debug({ path: memory.path, tag, msg: 'Deleted stale tag index' });
-                /* Stryker restore StringLiteral,ObjectLiteral */
             }
         } else {
             // Memory doesn't exist - delete orphaned index
-            // Stryker disable next-line ArrayDeclaration: Tag derived from parseTagFromPK, tested separately
             await ctx.deps.tagIndex.deleteTagIndexItems(createMemoryPath(memoryPath), new Set([tag]));
             ctx.progress.indexItemsDeleted++;
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.debug({ path: memoryPath, tag, msg: 'Deleted orphaned tag index' });
-            /* Stryker restore StringLiteral,ObjectLiteral */
         }
 
         await delay(ctx.options.operationDelayMs, ctx.options.signal);
     } catch (error) {
-        // Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator,StringLiteral: Re-throw abort; abort propagates via multiple checks so isolating this branch in tests is impractical
-        if(error instanceof DOMException && error.name === 'AbortError') {
+        if(isAbortError(error)) {
             throw error;
         }
-        /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
         logger.warn({ error, indexItem, msg: 'Failed to process tag index item' });
         ctx.progress.errors++;
     }
@@ -651,10 +581,8 @@ async function scanTagItems(
 ): Promise<void> {
     let lastEvaluatedKey: Record<string, unknown> | undefined;
 
-    // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
     do {
         if(ctx.options.signal?.aborted) {
-            // Stryker disable next-line StringLiteral: Abort message not exercised in tests
             throw new DOMException('Aborted', 'AbortError');
         }
 
@@ -665,7 +593,6 @@ async function scanTagItems(
             async () => ctx.deps.docClient.send(new QueryCommand({
                 TableName:                 ctx.deps.tableName,
                 KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
-                // Stryker disable next-line StringLiteral: DynamoDB expression attribute values
                 ExpressionAttributeValues: {
                     ':pk':       `TAG#${tag}`,
                     ':skPrefix': 'PATH#',
@@ -674,21 +601,17 @@ async function scanTagItems(
                 ExclusiveStartKey: currentKey,
             })),
             ctx.options.backoff,
-            /* Stryker disable next-line StringLiteral: Retry context string is observational */
             `scanTagItems:${tag}`,
             ctx.options.signal
         );
 
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Null check
         if(!result) {
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ tag, msg: 'Failed to query tag index items' });
-            /* Stryker restore StringLiteral,ObjectLiteral */
             ctx.progress.errors++;
             break;
         }
 
-        const items = (result.Items ?? []) as TagIndexItem[];
+        const items = (result.Items ?? []) as TagIndexReadItem[];
 
         for(const item of items) {
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB op per tag index item
@@ -696,10 +619,7 @@ async function scanTagItems(
         }
 
         lastEvaluatedKey = result.LastEvaluatedKey;
-
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Loop termination
     } while(lastEvaluatedKey);
-    // Stryker restore ConditionalExpression,BlockStatement
 }
 
 /**
@@ -726,18 +646,14 @@ async function runPhaseB(
     const allTags = await getAllTagNames(ctx);
 
     if(!allTags) {
-        /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
         logger.warn({ msg: 'Failed to enumerate tags for Phase B' });
-        /* Stryker restore StringLiteral,ObjectLiteral */
         progress.errors++;
         progress.endTime = new Date();
         return progress;
     }
 
     for(const tag of allTags) {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Abort check in tight loop
         if(options.signal?.aborted) {
-            // Stryker disable next-line StringLiteral: DOMException args are convention-mandated AbortError constants — not exercised in tests
             throw new DOMException('Aborted', 'AbortError');
         }
 
@@ -770,7 +686,6 @@ async function getActualTagCount(
     let totalCount = 0;
     let lastEvaluatedKey: Record<string, unknown> | undefined;
 
-    // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
     do {
         if(ctx.options.signal?.aborted) {
             return undefined;
@@ -783,32 +698,25 @@ async function getActualTagCount(
             async () => ctx.deps.docClient.send(new QueryCommand({
                 TableName:                 ctx.deps.tableName,
                 KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
-                // Stryker disable next-line StringLiteral: DynamoDB expression attribute values
                 ExpressionAttributeValues: {
                     ':pk':       `TAG#${tag}`,
                     ':skPrefix': 'PATH#',
                 },
-                // Stryker disable next-line StringLiteral: Select COUNT instead of fetching all items
                 Select:            'COUNT',
                 ExclusiveStartKey: currentKey,
             })),
             ctx.options.backoff,
-            /* Stryker disable next-line StringLiteral: Retry context string is observational */
             `getActualTagCount:${tag}`,
             ctx.options.signal
         );
 
-        // Stryker disable next-line OptionalChaining,BlockStatement: Null check
         if(!result) {
             return undefined;
         }
 
         totalCount += result.Count ?? 0;
         lastEvaluatedKey = result.LastEvaluatedKey;
-
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Loop termination
     } while(lastEvaluatedKey);
-    // Stryker restore ConditionalExpression,BlockStatement
 
     return totalCount;
 }
@@ -837,11 +745,9 @@ async function updateMetaCount(
             },
         })),
         ctx.options.backoff,
-        /* Stryker disable next-line StringLiteral: Retry context string is observational */
         `updateMetaCount:${tag}`,
         ctx.options.signal
     );
-    // Stryker disable next-line ConditionalExpression: Null check on retryWithBackoff result
     return result !== undefined;
 }
 
@@ -861,11 +767,9 @@ async function deleteMetaCount(
             },
         })),
         ctx.options.backoff,
-        /* Stryker disable next-line StringLiteral: Retry context string is observational */
         `deleteMetaCount:${tag}`,
         ctx.options.signal
     );
-    // Stryker disable next-line ConditionalExpression: Null check on retryWithBackoff result
     return result !== undefined;
 }
 
@@ -879,37 +783,34 @@ async function processMetaCount(
 ): Promise<void> {
     ctx.progress.countsVerified = (ctx.progress.countsVerified ?? 0) + 1;
 
-    // Stryker disable BlockStatement: try-catch block for DynamoDB errors in getActualTagCount
     try {
         const actualCount = await getActualTagCount(ctx, tag);
 
         if(actualCount === undefined) {
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ tag, msg: 'Failed to get actual tag count' });
-            /* Stryker restore StringLiteral,ObjectLiteral */
             ctx.progress.errors++;
             return;
         }
 
+        // Stryker disable next-line llm: DynamoDB counts and their accumulated total are nonnegative, so zero and nonpositive are identical here.
         if(actualCount === 0) {
             // Delete META_COUNT item
             const deleted = await deleteMetaCount(ctx, tag);
             if(deleted) {
                 ctx.progress.countsDeleted = (ctx.progress.countsDeleted ?? 0) + 1;
-                /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
                 logger.debug({ tag, msg: 'Deleted META_COUNT with zero actual count' });
-                /* Stryker restore StringLiteral,ObjectLiteral */
             } else {
                 ctx.progress.errors++;
             }
-        } else if(actualCount !== storedCount) {
+        } else if(
+            // Stryker disable next-line llm: this condition runs only after actualCount === 0 was false, so adding that disjunct is inert.
+            actualCount !== storedCount
+        ) {
             // Correct META_COUNT item
             const updated = await updateMetaCount(ctx, tag, actualCount);
             if(updated) {
                 ctx.progress.countsCorrected = (ctx.progress.countsCorrected ?? 0) + 1;
-                /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
                 logger.debug({ tag, storedCount, actualCount, msg: 'Corrected META_COUNT mismatch' });
-                /* Stryker restore StringLiteral,ObjectLiteral */
             } else {
                 ctx.progress.errors++;
             }
@@ -917,16 +818,12 @@ async function processMetaCount(
 
         await delay(ctx.options.operationDelayMs, ctx.options.signal);
     } catch (error) {
-        // Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator,StringLiteral: Re-throw abort; abort propagates via multiple checks so isolating this branch in tests is impractical
-        if(error instanceof DOMException && error.name === 'AbortError') {
+        if(isAbortError(error)) {
             throw error;
         }
-        /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
         logger.warn({ error, tag, msg: 'Failed to process META_COUNT item' });
-        // Stryker disable next-line UpdateOperator: Error increment in uncovered error path
         ctx.progress.errors++;
     }
-    // Stryker restore BlockStatement
 }
 
 /**
@@ -956,9 +853,7 @@ async function runPhaseC(
         const tagCounts = await deps.tagIndex.listTagCounts();
 
         for(const { tag, count } of tagCounts) {
-            // Stryker disable next-line ConditionalExpression: Abort check in tight loop - tested in reconciler-phase-c.test.ts
             if(options.signal?.aborted) {
-                // Stryker disable next-line StringLiteral,BlockStatement: Abort message not exercised in tests
                 throw new DOMException('Aborted', 'AbortError');
             }
 
@@ -966,12 +861,9 @@ async function runPhaseC(
             await processMetaCount(ctx, tag, count);
         }
     } catch (error) {
-        // Stryker disable next-line ConditionalExpression: Abort signal re-throw vs error logging distinction
         if(options.signal?.aborted) {
-            // Stryker disable next-line BlockStatement: Re-throw abort error
             throw error;
         }
-        /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
         logger.warn({ error, msg: 'Failed to list tag counts' });
         progress.errors++;
     }
@@ -1001,12 +893,10 @@ export async function runReconciliation(
         docClient: resolveDocClientGetter(deps.docClient)(),
     };
 
-    /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({ msg: 'Starting tag index reconciliation' });
     /* Stryker restore StringLiteral,ObjectLiteral */
 
     const phaseA = await runPhaseA(resolvedDeps, options);
-    /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
         phase:               'A',
         itemsScanned:        phaseA.itemsScanned,
@@ -1019,7 +909,6 @@ export async function runReconciliation(
     /* Stryker restore StringLiteral,ObjectLiteral */
 
     const phaseB = await runPhaseB(resolvedDeps, options);
-    /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
         phase:             'B',
         itemsScanned:      phaseB.itemsScanned,
@@ -1030,7 +919,6 @@ export async function runReconciliation(
     /* Stryker restore StringLiteral,ObjectLiteral */
 
     const phaseC = await runPhaseC(resolvedDeps, options);
-    /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
         phase:           'C',
         countsVerified:  phaseC.countsVerified,
@@ -1044,7 +932,6 @@ export async function runReconciliation(
     const totalDurationMs = Date.now() - startTime;
     const success = phaseA.errors === 0 && phaseB.errors === 0 && phaseC.errors === 0;
 
-    /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
         success,
         totalDurationMs,

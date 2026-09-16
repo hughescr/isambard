@@ -24,6 +24,11 @@ describe('MemoryToolBackend - Date Filtering', () => {
     });
 
     describe('listByLayer with date filtering', () => {
+        test('requests newest layer entries first', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+            await backend.listByLayer('identity' as LayerName);
+            expect(ddbMock.commandCalls(QueryCommand)[0]?.args[0].input.ScanIndexForward).toBe(false);
+        });
         test('should use GSI1SK BETWEEN when startDate provided', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
@@ -249,6 +254,7 @@ describe('MemoryToolBackend - Date Filtering', () => {
             const calls = ddbMock.commandCalls(QueryCommand);
             const queryInput = calls[0].args[0].input;
             expect(queryInput.Limit).toBeUndefined();
+            expect(Object.hasOwn(queryInput, 'Limit')).toBe(false);
         });
 
         test('should return results in ascending order (oldest first)', async () => {
@@ -548,6 +554,11 @@ describe('MemoryToolBackend - Date Filtering', () => {
     });
 
     describe('searchSince', () => {
+        test('omits DynamoDB Limit for an unbounded query', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+            await backend.searchSince('2024-01-01T00:00:00.000Z', 'identity' as LayerName);
+            expect(Object.hasOwn(ddbMock.commandCalls(QueryCommand)[0].args[0].input, 'Limit')).toBe(false);
+        });
         test('uses GSI1SK >= :start (not BETWEEN) in KeyConditionExpression', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
@@ -1074,6 +1085,47 @@ describe('MemoryToolBackend - Date Filtering', () => {
             expect(result[1].path).toBe('/state/no-metadata.md' as MemoryPath);
         });
 
+        test('should score missing accessCount like explicit zero', async () => {
+            const stateItems: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#explicit-zero.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-02T00:00:00.000Z',
+                    path:        '/state/explicit-zero.md' as MemoryPath,
+                    content:     'Explicit zero',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 0 },
+                    createdAt:   '2024-01-02T00:00:00.000Z',
+                    updatedAt:   '2024-01-02T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#missing.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/missing.md' as MemoryPath,
+                    content:     'Missing access count',
+                    contentType: 'text/markdown',
+                    metadata:    {},
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({ Items: [] })
+                .resolvesOnce({ Items: stateItems });
+
+            const result = await backend.getAutoLoadItems({ maxStateItems: 2, now: new Date('2024-01-03T00:00:00.000Z') });
+
+            expect(result).toHaveLength(2);
+            expect(result.map(item => item.path)).toEqual([
+                '/state/explicit-zero.md' as MemoryPath,
+                '/state/missing.md' as MemoryPath,
+            ]);
+        });
+
         test('should respect maxStateItems when limiting hot state', async () => {
             const stateItems: MemoryToolItem[] = [
                 {
@@ -1369,6 +1421,42 @@ describe('MemoryToolBackend - Date Filtering', () => {
             // Item with accessCount should rank higher
             expect(result[0].item.path).toBe('/state/with-access.md' as MemoryPath);
             expect(result[1].item.path).toBe('/state/no-metadata.md' as MemoryPath);
+        });
+
+        test('should attach the same score for missing accessCount and explicit zero', async () => {
+            const stateItems: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#explicit-zero.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/explicit-zero.md' as MemoryPath,
+                    content:     'Explicit zero',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 0 },
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#missing.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/missing.md' as MemoryPath,
+                    content:     'Missing access count',
+                    contentType: 'text/markdown',
+                    metadata:    {},
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: stateItems });
+
+            const result = await backend.getStateItemsScored({ maxItems: 2 });
+
+            expect(result).toHaveLength(2);
+            expect(result[0]?.score).toBe(result[1]?.score);
         });
 
         test('should use updatedAt as fallback when lastAccessed is missing', async () => {

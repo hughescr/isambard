@@ -9,7 +9,6 @@ export { WildDuckError, WildDuckAuthError } from '@/errors';
  * Maps IMAP/WildDuck specialUse flag to the logical EmailFolder value.
  * Standard IMAP flags per RFC 6154.
  */
-// Stryker disable StringLiteral,ObjectLiteral: specialUse flag strings and folder values are IMAP RFC 6154 configuration
 const SPECIAL_USE_FLAGS: Record<string, string> = {
     '\\Inbox':   'INBOX',
     '\\Sent':    'Sent Mail',
@@ -20,7 +19,6 @@ const SPECIAL_USE_FLAGS: Record<string, string> = {
 };
 // Stryker restore StringLiteral,ObjectLiteral
 
-// Stryker disable next-line ArithmeticOperator: timeout value is configuration
 const REQUEST_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
@@ -242,28 +240,16 @@ interface FullMessageResponse {
  * Extract and optionally convert body text, truncating at UTF-8 boundary.
  */
 function extractBody(content: string, isHtml: boolean, maxBytes: number): string {
-    // Stryker disable next-line ObjectLiteral: wordwrap:false is configuration for html-to-text conversion
     const text = isHtml ? convert(content, { wordwrap: false }) : content;
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: truncation guard; > vs >= differ only at exact boundary, equivalence holds for non-boundary content
-    if(Buffer.byteLength(text, 'utf8') > maxBytes) {
-        const buf = Buffer.from(text, 'utf8');
-        let end   = maxBytes;
-        // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,UpdateOperator,BlockStatement: UTF-8 continuation byte detection — infinite loop if condition/body mutated; bit manipulation is tested by the multi-byte truncation test
-        while(end > 0) {
-            const byte = buf[end];
-            if(byte === undefined) {
-                break;
-            }
-            // eslint-disable-next-line no-bitwise -- UTF-8 continuation byte detection requires bitwise
-            if((byte & 0xC0) !== 0x80) {
-                break;
-            }
-            end--;
-        }
-        // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,UpdateOperator,BlockStatement
-        return buf.subarray(0, end).toString('utf8');
+    const buf = Buffer.from(text, 'utf8');
+    let end   = Math.min(maxBytes, buf.length);
+    while((buf[end]! & 0xC0) === 0x80) {
+        // eslint-disable-next-line no-bitwise -- UTF-8 continuation byte detection requires bitwise
+        end--;
     }
-    return text;
+    // A Buffer created from UTF-8 text cannot start with a continuation byte; an
+    // out-of-range read bitwise-coerces to zero, so this also stops at byte zero.
+    return buf.subarray(0, end).toString('utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +264,7 @@ function extractBody(content: string, isHtml: boolean, maxBytes: number): string
  */
 export class WildDuckClient {
     private token:             string | null         = null;
+    private authInFlight:      Promise<void> | null  = null;
     private mailboxMap:        Map<string, string>   = new Map<string, string>(); // WildDuck mailbox ID → folder name
     private reverseMailboxMap: Map<string, string>   = new Map<string, string>(); // folder name → WildDuck mailbox ID
 
@@ -295,9 +282,32 @@ export class WildDuckClient {
 
         const missingFolders = Object.values(EmailFolder).filter(folder => !this.reverseMailboxMap.has(folder));
         if(missingFolders.length > 0) {
-            for(const folder of missingFolders) {
-                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited WildDuck API per folder
-                await this.createMailbox(folder);
+            let nextIndex = 0;
+            const state: { stopped: boolean, firstFailure: unknown } = { stopped: false, firstFailure: undefined };
+            const stopAfterFirstFailure = (error: unknown): void => {
+                if(state.stopped) {
+                    return;
+                }
+                state.firstFailure = error;
+                state.stopped = true;
+            };
+            const createWorker = async (): Promise<void> => {
+                while(nextIndex < missingFolders.length && !state.stopped) {
+                    const folder = missingFolders[nextIndex++]!;
+                    try {
+                        // eslint-disable-next-line no-await-in-loop -- each worker admits one folder at a time, with at most two in flight
+                        await this.createMailbox(folder);
+                    } catch (error) {
+                        stopAfterFirstFailure(error);
+                        throw error;
+                    }
+                }
+            };
+            // Wait for every admitted worker before reporting the first failure. This
+            // prevents shutdown from racing a sibling mailbox creation.
+            await Promise.allSettled(Array.from({ length: Math.min(2, missingFolders.length) }, () => createWorker()));
+            if(state.stopped) {
+                throw state.firstFailure;
             }
             await this.loadMailboxes();
         }
@@ -307,7 +317,6 @@ export class WildDuckClient {
      * Invalidate authentication token.
      */
     async shutdown(): Promise<void> {
-        // Stryker disable BlockStatement: try-catch guards token cleanup - non-fatal if server unreachable
         try {
             if(this.token) {
                 await this.makeRequest<unknown>('/authenticate', {
@@ -335,16 +344,13 @@ export class WildDuckClient {
      */
     async searchByKeyword(mailboxPath: string, keyword: string): Promise<number[]> {
         const results = await this.search({
-            // Stryker disable next-line ObjectLiteral: query object is configuration wiring
             query:   { keyword },
             mailbox: mailboxPath,
         });
         const uids = results.map((result) => {
             const colonIdx = result.message.lastIndexOf(':');
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,UnaryOperator,ArithmeticOperator: guard against missing colon in search result; message is always 'folder:uid' format so colonIdx===-1 is defensive; UnaryOperator(-1→+1) is equivalent since message always has a colon
             return colonIdx === -1 ? 0 : Number.parseInt(result.message.slice(colonIdx + 1), 10);
         });
-        // Stryker disable next-line EqualityOperator: filter uids > 0 removes sentinel zeros for bad results
         return uids.filter(uid => uid > 0);
     }
 
@@ -380,7 +386,6 @@ export class WildDuckClient {
      * Update flags on an existing message (add and/or remove).
      */
     async updateMessageFlags(mailboxPath: string, uid: number, options: { addFlags?: string[], removeFlags?: string[] }): Promise<void> {
-        // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: early return when no flags to update — no-op is correct
         if(!options.addFlags?.length && !options.removeFlags?.length) {
             return;
         }
@@ -468,13 +473,16 @@ export class WildDuckClient {
     // Private helpers
     // ---------------------------------------------------------------------------
 
-    // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
     private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {
+        const tokenAtAttempt = this.token;
         try {
             return await fn();
         } catch (err) {
             if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
+                // Another request may have refreshed the token before this 401 arrived.
+                if(this.token === tokenAtAttempt) {
+                    await this.authenticate();
+                }
                 return fn();
             }
             throw err;
@@ -483,6 +491,20 @@ export class WildDuckClient {
     // Stryker restore BlockStatement
 
     private async authenticate(): Promise<void> {
+        if(this.authInFlight) {
+            return this.authInFlight;
+        }
+        const pending = this.performAuthentication();
+        this.authInFlight = pending;
+        try {
+            await pending;
+        } finally {
+            // Both success and failure must release the slot so a later 401 can retry.
+            this.authInFlight = null;
+        }
+    }
+
+    private async performAuthentication(): Promise<void> {
         const response = await this.makeRequest<AuthResponse>('/authenticate', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -494,7 +516,6 @@ export class WildDuckClient {
         }, /* skipAuth */ true);
 
         if(!response.token) {
-            // Stryker disable next-line StringLiteral: Error message is configuration
             throw new WildDuckAuthError('Authentication failed: no token returned');
         }
         this.token = response.token;
@@ -515,12 +536,9 @@ export class WildDuckClient {
             // Also map the logical folder name (e.g. 'Sent Mail') via specialUse flag
             // so that resolveMailboxId() works regardless of server-specific path names
             // (e.g. '[Gmail]/Sent Mail' vs 'Sent Mail')
-            if(mailbox.specialUse) {
-                const logicalName = SPECIAL_USE_FLAGS[mailbox.specialUse];
-                // Stryker disable next-line ConditionalExpression: guard against undefined logicalName — Map.set(undefined, id) stores under undefined key (not string 'undefined'), untestable via getMailboxId() which requires a string argument
-                if(logicalName) {
-                    this.reverseMailboxMap.set(logicalName, mailbox.id);
-                }
+            const mapping = Object.entries(SPECIAL_USE_FLAGS).find(([flag]) => flag === mailbox.specialUse);
+            if(mapping) {
+                this.reverseMailboxMap.set(mapping[1], mailbox.id);
             }
         }
     }
@@ -530,7 +548,6 @@ export class WildDuckClient {
     }
 
     private async doCreateMailbox(path: string): Promise<void> {
-        // Stryker disable ObjectLiteral,StringLiteral: request options and Content-Type header are HTTP wiring
         await this.makeRequest<unknown>(
             '/users/me/mailboxes',
             {
@@ -551,7 +568,6 @@ export class WildDuckClient {
             searchParams.set('q', query.correspondent);
         }
         if(query.content) {
-            // Stryker disable next-line StringLiteral: query param name is API contract
             searchParams.set('query', query.content);
         }
         if(query.before) {
@@ -564,7 +580,6 @@ export class WildDuckClient {
             searchParams.set(`header.${query.header.name}`, query.header.value);
         }
         if(query.keyword) {
-            // Stryker disable next-line StringLiteral: query param name is API contract
             searchParams.set('keyword', query.keyword);
         }
 
@@ -574,7 +589,6 @@ export class WildDuckClient {
             if(mailboxId) {
                 searchParams.set('mailbox', mailboxId);
             } else {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.warn({ folderName: params.mailbox, msg: 'WildDuck search: unknown mailbox name skipped' });
             }
         }
@@ -592,7 +606,6 @@ export class WildDuckClient {
         const folderName = this.mailboxMap.get(result.mailbox) ?? result.mailbox;
         const message    = `${folderName}:${String(result.id)}`;
 
-        // Stryker disable StringLiteral: ?? '' fallbacks for absent address are defensive — in practice WildDuck always provides address
         const from = result.from.name
             ? `${result.from.name} <${result.from.address ?? ''}>`
             : (result.from.address ?? '');
@@ -620,7 +633,7 @@ export class WildDuckClient {
         const mailboxId = this.resolveMailboxId(mailboxPath);
         const response = await this.makeRequest<MailboxInfoResponse>(
             `/users/me/mailboxes/${mailboxId}`,
-            // Stryker disable next-line ObjectLiteral,StringLiteral: HTTP method config — GET is fetch default (equivalent mutant)
+            // Stryker disable next-line ObjectLiteral: omitting an explicit GET retains fetch's GET default
             { method: 'GET' }
         );
         return { total: response.total, unseen: response.unseen };
@@ -629,7 +642,6 @@ export class WildDuckClient {
     private resolveMailboxId(mailboxPath: string): string {
         const mailboxId = this.reverseMailboxMap.get(mailboxPath);
         if(!mailboxId) {
-            // Stryker disable next-line StringLiteral: Error message is configuration
             throw new WildDuckError(`WildDuck: unknown mailbox path: ${mailboxPath}`);
         }
         return mailboxId;
@@ -721,7 +733,6 @@ export class WildDuckClient {
 
     private async doListMessages(mailbox: string, options?: { unseen?: boolean, limit?: number, order?: 'asc' | 'desc' }): Promise<WildDuckMessageSummary[]> {
         const mailboxId    = this.resolveMailboxId(mailbox);
-        // Stryker disable next-line ObjectLiteral: default options are configuration constants
         const opts         = { unseen: true, limit: 20, order: 'asc' as const, ...options };
         const searchParams = new URLSearchParams({
             unseen: String(opts.unseen),
@@ -750,7 +761,6 @@ export class WildDuckClient {
     /**
      * Map raw header record and replyTo into a typed EmailHeaders object.
      */
-    // Stryker disable StringLiteral: header field name strings are RFC config
     private mapHeaders(hdrs: Record<string, string>, replyTo: { address: string, name?: string } | undefined): EmailHeaders {
         return {
             ...(hdrs['message-id']             ? { messageId: hdrs['message-id'] }                         : {}),
@@ -771,7 +781,6 @@ export class WildDuckClient {
         if(response.html) {
             return extractBody(response.html, true, maxBodySizeBytes);
         }
-        // Stryker disable next-line StringLiteral: empty string fallback is correct for missing body
         return '';
     }
 
@@ -800,12 +809,10 @@ export class WildDuckClient {
 
         return {
             uid:            response.id,
-            // Stryker disable next-line StringLiteral: empty string fallback for missing messageId
             messageId:      response.messageId ?? response.headers?.['message-id'] ?? '',
             from,
             to,
             cc,
-            // Stryker disable next-line StringLiteral: empty string fallback for missing subject
             subject:        response.subject ?? '',
             date:           new Date(response.date),
             bodyText,
@@ -826,11 +833,10 @@ export class WildDuckClient {
     }
 
     private async makeRequestBuffer(path: string, options: RequestInit): Promise<Buffer> {
-        // Stryker disable next-line ObjectLiteral: headers object initialization is HTTP wiring
+        // Stryker disable next-line ObjectLiteral: the only private caller passes GET without headers; the access token is inserted below after this copy
+        // Stryker disable next-line SpreadOperandDrop: the only private caller passes headerless GET, so spreading undefined adds no properties.
         const headers: Record<string, string> = {
-            // Stryker disable ObjectLiteral,LogicalOperator: spread of options.headers is defensive
             ...options.headers as Record<string, string>,
-            // Stryker restore ObjectLiteral,LogicalOperator
         };
 
         if(this.token) {
@@ -843,15 +849,12 @@ export class WildDuckClient {
         });
 
         if(response.status === 401) {
-            // Stryker disable next-line StringLiteral: Error message is configuration
             throw new WildDuckAuthError('WildDuck authentication failed (401)');
         }
 
         if(!response.ok) {
             const body = await response.text();
-            // Stryker disable next-line StringLiteral,ConditionalExpression: Error message is configuration
             const bodySuffix = body ? `: ${body}` : '';
-            // Stryker disable next-line StringLiteral: Error message is configuration — template literal content is informational only
             throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`);
         }
 
@@ -860,11 +863,12 @@ export class WildDuckClient {
     }
 
     private async makeRequestNullable<T>(path: string, options: RequestInit): Promise<T | null> {
-        // Stryker disable ObjectLiteral,LogicalOperator: spread of options.headers is defensive — options always has no headers in practice
+        // Stryker disable ObjectLiteral: both private callers pass GET without headers; the access token is inserted below after this copy
+        // Stryker disable next-line SpreadOperandDrop: both private callers pass headerless GET, so spreading undefined adds no properties.
         const headers: Record<string, string> = {
             ...options.headers as Record<string, string>,
         };
-        // Stryker restore ObjectLiteral,LogicalOperator
+        // Stryker restore ObjectLiteral
 
         if(this.token) {
             headers['X-Access-Token'] = this.token;
@@ -880,13 +884,11 @@ export class WildDuckClient {
         }
 
         if(response.status === 401) {
-            // Stryker disable next-line StringLiteral: Error message is configuration
             throw new WildDuckAuthError('WildDuck authentication failed (401)');
         }
 
         if(!response.ok) {
             const body = await response.text();
-            // Stryker disable next-line StringLiteral,ConditionalExpression: Error message is configuration
             const bodySuffix = body ? `: ${body}` : '';
             throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`);
         }
@@ -910,13 +912,11 @@ export class WildDuckClient {
         });
 
         if(response.status === 401) {
-            // Stryker disable next-line StringLiteral: Error message is configuration
             throw new WildDuckAuthError('WildDuck authentication failed (401)');
         }
 
         if(!response.ok) {
             const body = await response.text();
-            // Stryker disable next-line StringLiteral,ConditionalExpression: Error message is configuration
             const bodySuffix = body ? `: ${body}` : '';
             throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`);
         }

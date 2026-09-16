@@ -32,6 +32,11 @@ describe.concurrent('sigmoidScore', () => {
             expect(score).toBeCloseTo(0.25, 2);
         });
 
+        test('uses the documented 7-day half-life precisely at the midpoint', () => {
+            const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+            expect(sigmoidScore(5, sevenDaysMs)).toBeCloseTo(0.25, 5);
+        });
+
         test('returns near-0 at 90 days with moderate count', () => {
             const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
             const score = sigmoidScore(5, ninetyDaysMs);
@@ -122,6 +127,7 @@ describe.concurrent('sigmoidScore', () => {
             const scoreNegative = sigmoidScore(5, -1000);
             const scoreZero = sigmoidScore(5, 0);
             expect(scoreNegative).toBe(scoreZero);
+            expect(scoreZero).toBeCloseTo(0.5, 10);
         });
     });
 });

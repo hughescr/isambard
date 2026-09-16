@@ -138,6 +138,12 @@ describe('SessionJournalBackend', () => {
             expect(entries).toHaveLength(1);
             expect(entries[0]?.type).toBe('shutdown');
             expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                role:  'conversation',
+                raw:   badRow,
+                error: expect.anything(),
+                msg:   'SessionJournalBackend.readSince(): skipping malformed journal row',
+            }));
         });
 
         // Every JournalEntry['type'] member round-trips through journalEntrySchema, exercising

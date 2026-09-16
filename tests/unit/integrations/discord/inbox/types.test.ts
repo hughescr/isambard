@@ -102,6 +102,19 @@ describe.concurrent('discordChannelCheckpointSchema', () => {
     });
 });
 
+describe('inbox schema metadata', () => {
+    test.each([
+        [discordChannelCheckpointSchema, 'Last-seen checkpoint for a Discord channel'],
+        [unreadMessageSchema, 'Single unread message from a Discord channel'],
+        [channelSummarySchema, 'Summary of unread messages in a Discord channel'],
+        [messageMetadataSchema, 'Lightweight message metadata for selection'],
+        [channelSummaryResponseSchema, 'Full channel summary response from getChannelSummary tool'],
+        [unreadOverviewSchema, 'Overview of unread messages across all channels'],
+    ])('preserves the public description %s', (schema, description) => {
+        expect(schema.description).toBe(description);
+    });
+});
+
 describe.concurrent('unreadMessageSchema', () => {
     const validMessage = {
         id:          '123456789',
@@ -136,7 +149,7 @@ describe.concurrent('unreadMessageSchema', () => {
         const result = unreadMessageSchema.safeParse(invalid);
         expect(result.success).toBe(false);
         if(!result.success) {
-            expect(result.error.issues[0]?.message).toContain('Channel name cannot be empty');
+            expect(result.error.issues[0]?.message).toBe('Channel name cannot be empty');
         }
     });
 
@@ -178,6 +191,15 @@ describe.concurrent('channelSummarySchema', () => {
     test('should accept valid channel summary', () => {
         const result = channelSummarySchema.safeParse(validSummary);
         expect(result.success).toBe(true);
+    });
+
+    test('should report the channel-name diagnostic', () => {
+        const invalid = { ...validSummary, channelName: '' };
+        const result = channelSummarySchema.safeParse(invalid);
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toBe('Channel name cannot be empty');
+        }
     });
 
     test('should accept preview at exactly 100 characters', () => {
@@ -326,6 +348,15 @@ describe.concurrent('channelSummaryResponseSchema', () => {
         }
     });
 
+    test('should report the channel-name diagnostic', () => {
+        const invalid = { ...validResponse, channelName: '' };
+        const result = channelSummaryResponseSchema.safeParse(invalid);
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toBe('Channel name cannot be empty');
+        }
+    });
+
     test('should accept empty messages array', () => {
         const emptyMessages = { ...validResponse, messages: [] };
         const result = channelSummaryResponseSchema.safeParse(emptyMessages);
@@ -419,5 +450,48 @@ describe.concurrent('unreadOverviewSchema', () => {
         if(!result.success) {
             expect(result.error.issues[0]?.message).toContain('Message count cannot be negative');
         }
+    });
+});
+
+describe('inbox schema boundaries', () => {
+    const unread = {
+        id:          '123456789', channelId:   createChannelId('987654321'), channelName: 'general', guildId:     createGuildId('111222333'),
+        author:      'TestUser', authorId:    '222333444', content:     'Hello', timestamp:   '2025-01-24T10:00:00.000Z', isRead:      false,
+    };
+    const channel = {
+        channelId:    createChannelId('123456789'), channelName:  'general', messageCount: 1, authors:      ['Alice'],
+        timeRange:    { start: '2025-01-24T09:00:00.000Z', end: '2025-01-24T10:00:00.000Z' }, preview:      'Preview',
+    };
+    const metadata = { id: '111222333', author: 'Alice', timestamp: '2025-01-24T09:00:00.000Z', sizeChars: 1 };
+    const response = {
+        channelId:    createChannelId('123456789'), channelName:  'general', messageCount: 1, summary:      'Summary', authors:      ['Alice'],
+        timeRange:    { start: '2025-01-24T09:00:00.000Z', end: '2025-01-24T10:00:00.000Z' }, messages:     [metadata],
+    };
+    const overview = { totalUnread: 1, channels: [{ channelId: createChannelId('123456789'), channelName: 'general', messageCount: 1 }] };
+
+    test.each([
+        ['unread.channelName', unreadMessageSchema, unread, { channelName: 'x' }],
+        ['unread.author', unreadMessageSchema, unread, { author: 'x' }],
+        ['channelSummary.channelName', channelSummarySchema, channel, { channelName: 'x' }],
+        ['channelSummary.authors', channelSummarySchema, channel, { authors: ['x'] }],
+        ['messageMetadata.author', messageMetadataSchema, metadata, { author: 'x' }],
+        ['summaryResponse.channelName', channelSummaryResponseSchema, response, { channelName: 'x' }],
+        ['summaryResponse.summary', channelSummaryResponseSchema, response, { summary: 'x' }],
+        ['summaryResponse.authors', channelSummaryResponseSchema, response, { authors: ['x'] }],
+    ])('accepts %s boundary value', (_name, schema, parent, override) => {
+        expect(schema.safeParse({ ...parent, ...override }).success).toBe(true);
+    });
+
+    test.each([
+        ['summaryResponse.authors empty item', { authors: [''] }],
+    ])('rejects %s boundary value', (_name, override) => {
+        expect(channelSummaryResponseSchema.safeParse({ ...response, ...override }).success).toBe(false);
+    });
+
+    test.each([
+        ['overview.channels[0].channelName', { channels: [{ ...overview.channels[0], channelName: 'x' }] }],
+        ['overview.channels[0].messageCount zero', { channels: [{ ...overview.channels[0], messageCount: 0 }] }],
+    ])('accepts %s boundary value', (_name, override) => {
+        expect(unreadOverviewSchema.safeParse({ ...overview, ...override }).success).toBe(true);
     });
 });

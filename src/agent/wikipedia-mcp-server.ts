@@ -5,7 +5,6 @@ import { mcpErrorResult, mcpJsonResult, withToolErrorHandling } from './mcp-help
 
 const WIKIPEDIA_API_URL = 'https://en.wikipedia.org/api/rest_v1/page/random/summary';
 
-// Stryker disable ObjectLiteral,StringLiteral: HTTP headers are configuration values
 const WIKIPEDIA_HEADERS = {
     'User-Agent':     'Isambard/1.0 (https://github.com/hughescr/isambard)',
     'Api-User-Agent': 'Isambard/1.0 (https://github.com/hughescr/isambard)',
@@ -31,7 +30,6 @@ export function createWikipediaMCPServer() {
                 'getRandomArticle',
                 'Fetch a random Wikipedia article summary. Returns structured JSON with title, extract, description, thumbnail URL, and full article URL.',
                 {},
-                // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                 withToolErrorHandling('getRandomArticle', async (): Promise<CallToolResult> => {
                     const response = await fetch(WIKIPEDIA_API_URL, {
                         headers:  WIKIPEDIA_HEADERS,
@@ -45,15 +43,12 @@ export function createWikipediaMCPServer() {
                     const data: unknown = await response.json();
                     return mcpJsonResult(data);
                 }),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Random Article', readOnlyHint: true, idempotentHint: false } }
             ),
             tool(
                 'getArticle',
                 'Fetch a Wikipedia article\'s full source content by title. Returns JSON with title, source (wikitext), and metadata.',
-                // Stryker disable next-line StringLiteral: describe() is MCP documentation only
                 { title: z.string().describe('The Wikipedia article title (e.g. "Albert Einstein", "Quantum_mechanics")') },
-                // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                 withToolErrorHandling('getArticle', async ({ title }): Promise<CallToolResult> => {
                     const url = `https://en.wikipedia.org/w/rest.php/v1/page/${encodeURIComponent(title)}`;
                     const response = await fetch(url, {
@@ -68,7 +63,6 @@ export function createWikipediaMCPServer() {
                     const data: unknown = await response.json();
                     return mcpJsonResult(data);
                 }),
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Article', readOnlyHint: true, idempotentHint: true } }
             ),
         ],

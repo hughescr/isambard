@@ -24,9 +24,7 @@ export async function findOrCreateContact(
     const matches = await backend.resolveIdentifier(platform, value);
     if(matches.length > 0) {
         const firstMatch = matches[0];
-        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — matches.length > 0 checked just above; unreachable in practice
         if(firstMatch === undefined) {
-            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
             throw new InvariantViolationError('findOrCreateContact', 'matches[0] undefined despite matches.length > 0');
         }
         return firstMatch.personId;

@@ -615,7 +615,7 @@ describe('createMessageSearchService', () => {
                 expect(result.overflow).toBeDefined();
                 expect(result.overflow!.count).toBe(140); // 150 - 10
                 expect(result.overflow!.hasMore).toBe(true);
-                expect(result.overflow!.hint).toBeDefined();
+                expect(result.overflow!.hint).toBe('Narrow your search with startTime/endTime to see all messages');
 
                 // Summarizer should receive at most 100 messages
                 const batchCall = (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mock.calls[0];
@@ -726,7 +726,7 @@ describe('createMessageSearchService', () => {
                 expect(result.overflow).toBeDefined();
                 expect(result.overflow!.count).toBe(101);
                 expect(result.overflow!.hasMore).toBe(true);
-                expect(result.overflow!.hint).toBeDefined();
+                expect(result.overflow!.hint).toBe('Narrow your search with startTime/endTime to see all messages');
 
                 // Should cap at 100 messages sent to summarizer
                 const batchCall = (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mock.calls[0];
@@ -878,7 +878,7 @@ describe('createMessageSearchService', () => {
             expect(result.overflow!.count).toBe(15);
             expect(result.overflow!.summaries).toBeUndefined();
             expect(result.overflow!.batchSummaries).toBeUndefined();
-            expect(result.overflow!.hint).toBeDefined();
+            expect(result.overflow!.hint).toBe('Use searchMessages with startTime/endTime to get AI summaries of older messages');
             expect(mockSummarizer.summarizeMessages).not.toHaveBeenCalled();
             expect(mockSummarizer.summarizeMessageBatch).not.toHaveBeenCalled();
         });

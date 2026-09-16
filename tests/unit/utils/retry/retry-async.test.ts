@@ -112,6 +112,10 @@ describe('retryAsync', () => {
             expect(classifier).toHaveBeenCalledTimes(1);
             expect(sleepMock).not.toHaveBeenCalled();
             expect(mockLogger.error).toHaveBeenCalledTimes(1);
+            expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                msg:       'Retry aborted due to permanent error',
+                elapsedMs: 0,
+            }));
         });
 
         it('should throw permanent error after initial transient errors', async () => {
@@ -471,10 +475,12 @@ describe('retryAsync', () => {
             const secondElapsed = (secondWarnLog as { elapsedMs: number }).elapsedMs;
             const finalElapsed = (errorLog as { elapsedMs: number }).elapsedMs;
 
-            // CRITICAL: Elapsed time must strictly increase over time
-            // With subtraction (now() - startTime), later calls have larger elapsed
-            expect(secondElapsed).toBeGreaterThan(firstElapsed);
-            expect(finalElapsed).toBeGreaterThanOrEqual(secondElapsed);
+            expect(firstElapsed).toBe(0);
+            expect(secondElapsed).toBeGreaterThanOrEqual(sleepMock.mock.calls[0][0] - 1);
+            expect(secondElapsed).toBeLessThanOrEqual(sleepMock.mock.calls[0][0] + 1);
+            const totalDelay = sleepMock.mock.calls[0][0] + sleepMock.mock.calls[1][0];
+            expect(finalElapsed).toBeGreaterThanOrEqual(totalDelay - 2);
+            expect(finalElapsed).toBeLessThanOrEqual(totalDelay + 2);
 
             // All must be non-negative
             expect(firstElapsed).toBeGreaterThanOrEqual(0);

@@ -1,5 +1,5 @@
 import { isCalendarServerId, type CalendarServerEntry } from './types';
-import { AmbiguousCalendarMatchError, InvariantViolationError } from '@/errors';
+import { AmbiguousCalendarMatchError } from '@/errors';
 
 /**
  * Resolves a server identifier (UUID or description name) to a CalendarServerEntry.
@@ -8,7 +8,6 @@ import { AmbiguousCalendarMatchError, InvariantViolationError } from '@/errors';
  */
 
 export function resolveServer(servers: CalendarServerEntry[], input: string): CalendarServerEntry | null {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — empty string falls through to matching and returns null anyway (no entity has empty description/label)
     if(!input) {
         return null;
     }
@@ -38,7 +37,6 @@ export function resolveCalendar(
     server: CalendarServerEntry,
     input: string
 ): { calendarPath: string, label: string } | null {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — empty string falls through to matching and returns null anyway (no entity has empty description/label)
     if(!input) {
         return null;
     }
@@ -53,12 +51,7 @@ export function resolveCalendar(
         return null;
     }
     if(matches.length === 1) {
-        const cal = matches[0];
-        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — matches.length === 1 ensures index 0 exists; unreachable in practice
-        if(cal === undefined) {
-            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
-            throw new InvariantViolationError('resolveCalendar', 'matches[0] undefined despite matches.length === 1');
-        }
+        const cal = matches[0]!;
         return { calendarPath: cal.calendarPath, label: cal.label };
     }
     throw new AmbiguousCalendarMatchError(

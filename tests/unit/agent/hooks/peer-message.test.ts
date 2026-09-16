@@ -146,6 +146,13 @@ describe('parsePeerMessage', () => {
 
         expect(parsed?.text).toBe('quoting </cross-session-message> inline');
     });
+
+    it('preserves a one-character body without wrapper whitespace', () => {
+        expect(parsePeerMessage('<cross-session-message from="uds:/a.sock">x</cross-session-message>')).toEqual({
+            from: 'uds:/a.sock',
+            text: 'x',
+        });
+    });
 });
 
 describe('createPeerMessageHooks', () => {

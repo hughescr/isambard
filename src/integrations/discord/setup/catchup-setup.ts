@@ -77,6 +77,15 @@ const DEFAULT_BOOT_EVENTS_WINDOW_MS = 24 * 60 * 60 * 1000;
  * redelivery, and again here — on every crash-recovery boot.
  */
 const REDELIVERED_TEXT_PREVIEW_LENGTH = 200;
+const UNHANDLED_INBOX_INITIALIZATION_PREFIX = 'Unhandled error in inbox';
+
+function logUnhandledInboxInitializationError(error: unknown): void {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger.error({
+        error: errorMsg,
+        msg:   `${UNHANDLED_INBOX_INITIALIZATION_PREFIX} initialization`,
+    });
+}
 
 /**
  * The Discord-facing dependencies {@link submitAndDeliverConductorEnvelope} and
@@ -343,7 +352,6 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
                 content:   `${message.author}: ${message.content}`,
                 timestamp: message.timestamp,
                 botUserId: readyClient.user!.id,
-                guildId:   message.guildId === 'DM' ? undefined : message.guildId,
             })),
             authorId:    newest.authorId ?? newest.author,
             authorName:  newest.author,
@@ -369,7 +377,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
 
         for(const [channelId, channelMessages] of byChannel) {
             try {
-                // eslint-disable-next-line no-await-in-loop -- sequential, bounded by the small number of channels a crash can plausibly span
+                // eslint-disable-next-line no-await-in-loop -- submit each channel envelope and watermark in source order
                 await submitReplayChannel(channelId, channelMessages);
             } catch (err) {
                 logger.warn({ err, channelId, msg: 'Boot-time replay submission failed — channel will be replayed again on the next boot' });
@@ -542,7 +550,6 @@ interface SetupInboxParams {
  * @returns A promise settling once inbox initialization finishes — including the deferred
  * discord-online path, when Discord was not yet available at call time.
  */
-// Stryker disable all: Integration function with async IIFE coordinating multiple components - tested via bot integration tests
 export function setupInboxAndCatchUp(params: SetupInboxParams): Promise<void> {
     const {
         inboxManager,
@@ -590,10 +597,9 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): Promise<void> {
             const unsubscribe = healthRegistry.subscribe((change) => {
                 if(change.service === 'discord' && change.newState === 'online') {
                     unsubscribe();
-                    // runInboxInit() never rejects (its own try/catch swallows and logs every
-                    // error), so `.finally` alone is enough to settle this promise once the
-                    // deferred run actually finishes.
-                    void runInboxInit().finally(() => resolve());
+                    void runInboxInit()
+                        .catch(logUnhandledInboxInitializationError)
+                        .finally(() => resolve());
                 }
             });
         });

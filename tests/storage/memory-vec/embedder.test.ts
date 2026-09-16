@@ -111,6 +111,57 @@ describe('loadEmbedder / Embedder.load', () => {
         });
         expect(loadEmbedder()).rejects.toBeInstanceOf(ModelFileNotFoundError);
     });
+
+    it('does not dispose unacquired owners when getLlama rejects', async () => {
+        const loadError = new Error('llama unavailable');
+        mockGetLlama.mockRejectedValueOnce(loadError);
+
+        await expect(loadEmbedder()).rejects.toBe(loadError);
+        expect(mockLlamaInstance.dispose).not.toHaveBeenCalled();
+        expect(mockLlamaModel.dispose).not.toHaveBeenCalled();
+        expect(mockLlamaContext.dispose).not.toHaveBeenCalled();
+    });
+
+    it('releases llama when model loading fails, preserving the load error', async () => {
+        const loadError = new Error('model load failed');
+        mockLlamaInstance.loadModel.mockRejectedValueOnce(loadError);
+        mockLlamaInstance.dispose.mockRejectedValueOnce(new Error('llama disposal failed'));
+
+        await expect(loadEmbedder()).rejects.toBe(loadError);
+        expect(mockLlamaInstance.dispose).toHaveBeenCalledTimes(1);
+        expect(mockLlamaModel.dispose).not.toHaveBeenCalled();
+        expect(mockLlamaContext.dispose).not.toHaveBeenCalled();
+    });
+
+    it('releases model then llama when context loading fails, even if model disposal fails', async () => {
+        const loadError = new Error('context load failed');
+        const order: string[] = [];
+        mockLlamaModel.createEmbeddingContext.mockRejectedValueOnce(loadError);
+        mockLlamaModel.dispose.mockImplementationOnce(async () => {
+            order.push('model');
+            throw new Error('model disposal failed');
+        });
+        mockLlamaInstance.dispose.mockImplementationOnce(async () => {
+            order.push('llama');
+        });
+
+        await expect(loadEmbedder()).rejects.toBe(loadError);
+        expect(order).toEqual(['model', 'llama']);
+        expect(mockLlamaContext.dispose).not.toHaveBeenCalled();
+    });
+
+    it('transfers all three owners on success and closes each exactly once', async () => {
+        const embedder = await loadEmbedder();
+        expect(mockLlamaContext.dispose).not.toHaveBeenCalled();
+        expect(mockLlamaModel.dispose).not.toHaveBeenCalled();
+        expect(mockLlamaInstance.dispose).not.toHaveBeenCalled();
+
+        await embedder.close();
+        await embedder.close();
+        expect(mockLlamaContext.dispose).toHaveBeenCalledTimes(1);
+        expect(mockLlamaModel.dispose).toHaveBeenCalledTimes(1);
+        expect(mockLlamaInstance.dispose).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('loadEmbedder options forwarding', () => {
@@ -212,6 +263,21 @@ describe('Embedder.encode', () => {
     it('calls getEmbeddingFor once per text', async () => {
         await embedder.encode(['text1', 'text2', 'text3']);
         expect(mockLlamaContext.getEmbeddingFor).toHaveBeenCalledTimes(3);
+    });
+
+    it('leaves a sparse input slot zero-filled without passing undefined to the model', async () => {
+        const texts: string[] = [];
+        texts[0] = 'first';
+        texts[2] = 'last';
+
+        const result = await embedder.encode(texts);
+        expect(result.shape).toEqual([3, 128]);
+        expect(mockLlamaContext.getEmbeddingFor).toHaveBeenCalledTimes(2);
+        expect(mockLlamaContext.getEmbeddingFor).toHaveBeenNthCalledWith(1, 'first');
+        expect(mockLlamaContext.getEmbeddingFor).toHaveBeenNthCalledWith(2, 'last');
+        expect(result.data[0]).toBe(0xAA);
+        expect(result.data[128]).toBe(0);
+        expect(result.data[256]).toBe(0xAA);
     });
 
     it('passes the text string to getEmbeddingFor', async () => {
@@ -317,6 +383,71 @@ describe('Embedder.close', () => {
         expect(mockLlamaContext.dispose).toHaveBeenCalledTimes(1);
         expect(mockLlamaModel.dispose).toHaveBeenCalledTimes(1);
         expect(mockLlamaInstance.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('shares a deferred close across concurrent callers and releases owners in order', async () => {
+        const embedder = await loadEmbedder();
+        let signalContextDispose: (() => void) | undefined;
+        const contextDisposeStarted = new Promise<void>((resolve) => {
+            signalContextDispose = resolve;
+        });
+        let finishContextDispose: (() => void) | undefined;
+        mockLlamaContext.dispose.mockImplementationOnce(() => {
+            signalContextDispose?.();
+            return new Promise<undefined>((resolve) => {
+                finishContextDispose = () => {
+                    resolve(undefined);
+                };
+            });
+        });
+
+        const first = embedder.close();
+        const second = embedder.close();
+        expect(second).toBe(first);
+        await contextDisposeStarted;
+        expect(mockLlamaModel.dispose).not.toHaveBeenCalled();
+        expect(mockLlamaInstance.dispose).not.toHaveBeenCalled();
+        finishContextDispose?.();
+        await Promise.all([first, second]);
+        expect(mockLlamaContext.dispose).toHaveBeenCalledTimes(1);
+        expect(mockLlamaModel.dispose).toHaveBeenCalledTimes(1);
+        expect(mockLlamaInstance.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('attempts model and llama after context disposal rejects and retains the failure', async () => {
+        const embedder = await loadEmbedder();
+        const disposalError = new Error('context disposal failed');
+        mockLlamaContext.dispose.mockRejectedValueOnce(disposalError);
+
+        const first = embedder.close();
+        await expect(first).rejects.toBe(disposalError);
+        expect(mockLlamaModel.dispose).toHaveBeenCalledTimes(1);
+        expect(mockLlamaInstance.dispose).toHaveBeenCalledTimes(1);
+        const second = embedder.close();
+        expect(second).toBe(first);
+        await expect(second).rejects.toBe(disposalError);
+        expect(mockLlamaContext.dispose).toHaveBeenCalledTimes(1);
+        expect(mockLlamaModel.dispose).toHaveBeenCalledTimes(1);
+        expect(mockLlamaInstance.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports multiple disposal failures after attempting all owners', async () => {
+        const embedder = await loadEmbedder();
+        const contextError = new Error('context disposal failed');
+        const modelError = new Error('model disposal failed');
+        const llamaError = new Error('llama disposal failed');
+        mockLlamaContext.dispose.mockRejectedValueOnce(contextError);
+        mockLlamaModel.dispose.mockRejectedValueOnce(modelError);
+        mockLlamaInstance.dispose.mockRejectedValueOnce(llamaError);
+
+        const closing = embedder.close();
+        await expect(closing).rejects.toBeInstanceOf(AggregateError);
+        await expect(closing).rejects.toMatchObject({
+            message: 'Failed to close embedder resources',
+            errors:  [contextError, modelError, llamaError],
+        });
+        expect(mockLlamaInstance.dispose).toHaveBeenCalledTimes(1);
+        expect(embedder.close()).toBe(closing);
     });
 });
 

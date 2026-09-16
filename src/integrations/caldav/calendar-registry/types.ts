@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 // Branded type for CalendarServerId
-// Stryker disable ObjectLiteral,StringLiteral: UUID validation error message is informational only
 const calendarServerIdSchema = z
     .string()
     .check(z.uuid({ error: 'Calendar server ID must be a valid UUID' }))

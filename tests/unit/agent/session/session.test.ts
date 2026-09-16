@@ -2,7 +2,7 @@
  * Tests for {@link openSession}, the long-lived session handle. Uses P3's {@link FakeQuery}/
  * {@link fakeQueryFn} test doubles to drive the reader loop deterministically.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { InputQueue } from '../../../../src/agent/session/input-queue';
 import { createInterruptFlag } from '../../../../src/agent/session/interrupt-flag';
@@ -76,6 +76,26 @@ describe('openSession', () => {
         expect(session.sessionId()).toBe('sess-abc');
         expect(session.state()).toBe('open');
         expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ msg: 'Session opened', sessionId: 'sess-abc' }));
+    });
+
+    test('uses an injected logger when one is supplied', async () => {
+        const { queryFn, instances } = fakeQueryFn();
+        const injectedLogger = { debug: mock(), info: mock(), warn: mock(), error: mock() };
+        openSession({
+            role:         'perch',
+            queryFn,
+            options:      OPTIONS,
+            queue:        stubQueue(),
+            interrupting: createInterruptFlag(),
+            logger:       injectedLogger,
+            onFrame:      () => undefined,
+            onClosed:     () => undefined,
+        });
+
+        instances[0].emit(initFrame('injected-session'));
+        await flush();
+
+        expect(injectedLogger.info).toHaveBeenCalledWith(expect.objectContaining({ role: 'perch', sessionId: 'injected-session' }));
     });
 
     test('session id and open state survive a later non-init frame, and "Session opened" logs only once', async () => {
@@ -152,11 +172,27 @@ describe('openSession', () => {
         fake.resolveInterrupt();
         await interruptPromise;
 
+        fake.emit(initFrame('still-open'));
+        await flush();
+        expect(session.isInterrupting()).toBe(true);
+
         // The first result frame AFTER interrupt() resolved clears it.
         fake.emit(resultFrame());
         await flush();
         expect(session.isInterrupting()).toBe(false);
         expect(interrupting.value).toBe(false);
+
+        // Clearing also resets the private latch. A result that arrives while a second interrupt
+        // is still awaiting acknowledgement must not be mistaken for that interrupt's result.
+        const secondInterrupt = session.interrupt();
+        fake.emit(resultFrame());
+        await flush();
+        expect(session.isInterrupting()).toBe(true);
+        fake.resolveInterrupt();
+        await secondInterrupt;
+        fake.emit(resultFrame());
+        await flush();
+        expect(session.isInterrupting()).toBe(false);
     });
 
     test('generator throw sets state failed, calls onClosed(error), clears the interrupt flag, and queryFn was still only called once', async () => {
@@ -176,7 +212,7 @@ describe('openSession', () => {
         expect(closedWith).toBe(boom);
         expect(instances).toHaveLength(1);
         expect(interrupting.value).toBe(false);
-        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({ msg: 'Session failed', error: boom }));
+        expect(mockLogger.error).toHaveBeenCalledWith({ role: 'conversation', msg: 'Session failed', error: boom });
     });
 
     test('generator end sets state closed, calls onClosed(undefined), and clears the interrupt flag', async () => {
@@ -205,7 +241,7 @@ describe('openSession', () => {
         expect(onClosedCalls).toBe(1);
         expect(onClosedArg).toBeUndefined();
         expect(interrupting.value).toBe(false);
-        expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ msg: 'Session closed' }));
+        expect(mockLogger.info).toHaveBeenCalledWith({ role: 'conversation', msg: 'Session closed' });
     });
 
     test('interrupt() rejecting clears the interrupt flag and rethrows to the caller', async () => {
@@ -225,6 +261,7 @@ describe('openSession', () => {
         await expect(interruptPromise).rejects.toBe(boom);
         expect(session.isInterrupting()).toBe(false);
         expect(interrupting.value).toBe(false);
+        expect(mockLogger.error).toHaveBeenCalledWith({ role: 'conversation', error: boom, msg: 'Session interrupt failed' });
 
         // A later result frame must not try to clear an already-cleared flag incorrectly, and
         // isInterrupting() should stay false.
@@ -252,7 +289,7 @@ describe('openSession', () => {
 
         expect(session.state()).toBe('open');
         expect(onClosedCalls).toBe(0);
-        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({ error: boom }));
+        expect(mockLogger.error).toHaveBeenCalledWith({ role: 'conversation', error: boom, msg: 'Frame observer threw' });
 
         // The reader loop must still be alive: a subsequent frame does not throw or fail the session.
         instances[0].emit(resultFrame());

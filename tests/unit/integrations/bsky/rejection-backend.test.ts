@@ -59,6 +59,31 @@ describe('BskyRejectionBackend', () => {
     });
 
     describe('recordRejection', () => {
+        test('does not report completion until persistence completes', async () => {
+            const writeStarted = Promise.withResolvers<void>();
+            const writeGate = Promise.withResolvers<object>();
+            ddbMock.on(PutCommand).callsFake(() => {
+                writeStarted.resolve();
+                return writeGate.promise;
+            });
+
+            const operation = backend.recordRejection(REPLY_ITEM);
+            let completed = false;
+            void operation.then(() => {
+                completed = true;
+                return undefined;
+            });
+
+            try {
+                await writeStarted.promise;
+                await Bun.sleep(0);
+                expect(completed).toBe(false);
+            } finally {
+                writeGate.resolve({});
+                await operation;
+            }
+        });
+
         test('stores reply rejection with correct PK/SK and all fields including TTL', async () => {
             ddbMock.on(PutCommand).resolves({});
 
@@ -202,6 +227,10 @@ describe('BskyRejectionBackend', () => {
             await backend.listRejections();
 
             const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls[0]?.args[0].input).toMatchObject({
+                KeyConditionExpression:   '#pk = :pk',
+                ExpressionAttributeNames: { '#pk': 'PK' },
+            });
             expect(calls).toHaveLength(1);
             expect(calls[0].args[0].input.ScanIndexForward).toBeUndefined();
         });
@@ -219,6 +248,31 @@ describe('BskyRejectionBackend', () => {
     });
 
     describe('deleteRejection', () => {
+        test('does not report completion until deletion completes', async () => {
+            const deleteStarted = Promise.withResolvers<void>();
+            const deleteGate = Promise.withResolvers<object>();
+            ddbMock.on(DeleteCommand).callsFake(() => {
+                deleteStarted.resolve();
+                return deleteGate.promise;
+            });
+
+            const operation = backend.deleteRejection(REPLY_UUID);
+            let completed = false;
+            void operation.then(() => {
+                completed = true;
+                return undefined;
+            });
+
+            try {
+                await deleteStarted.promise;
+                await Bun.sleep(0);
+                expect(completed).toBe(false);
+            } finally {
+                deleteGate.resolve({});
+                await operation;
+            }
+        });
+
         test('deletes with correct PK and SK using uuid', async () => {
             ddbMock.on(DeleteCommand).resolves({});
 
@@ -237,12 +291,55 @@ describe('BskyRejectionBackend', () => {
     });
 
     describe('clearAll', () => {
+        test('waits for the retry backoff before the next write attempt', async () => {
+            jest.useFakeTimers();
+            const firstAttempt = Promise.withResolvers<void>();
+            let attempts = 0;
+            ddbMock.on(QueryCommand).resolves({
+                Items: [{ PK: 'BSKY#REJECTED', SK: `REJECTION#${REPLY_UUID}` }],
+            });
+            ddbMock.on(BatchWriteCommand).callsFake(() => {
+                attempts += 1;
+                if(attempts === 1) {
+                    firstAttempt.resolve();
+                    return {
+                        UnprocessedItems: {
+                            TestTable: [{ DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: `REJECTION#${REPLY_UUID}` } } }],
+                        },
+                    };
+                }
+                return {};
+            });
+
+            const operation = backend.clearAll();
+
+            try {
+                await firstAttempt.promise;
+                await Promise.resolve();
+                expect(attempts).toBe(1);
+                jest.runAllTimers();
+                await expect(operation).resolves.toBe(1);
+                expect(attempts).toBe(2);
+            } finally {
+                jest.runAllTimers();
+                await operation;
+            }
+        });
+
         test('returns 0 and does nothing when no items exist', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const count = await backend.clearAll();
 
             expect(count).toBe(0);
+            const query = ddbMock.commandCalls(QueryCommand)[0]?.args[0].input;
+            expect(query).toEqual({
+                TableName:                 'TestTable',
+                KeyConditionExpression:    '#pk = :pk',
+                ExpressionAttributeNames:  { '#pk': 'PK' },
+                ExpressionAttributeValues: { ':pk': 'BSKY#REJECTED' },
+                ProjectionExpression:      'PK, SK',
+            });
             const batchCalls = ddbMock.commandCalls(BatchWriteCommand);
             expect(batchCalls).toHaveLength(0);
         });
@@ -289,9 +386,21 @@ describe('BskyRejectionBackend', () => {
             expect(batchCalls[1].args[0].input.RequestItems?.TestTable).toHaveLength(1);
         });
 
+        test('does not send an empty batch at the 25-item boundary', async () => {
+            const items = Array.from({ length: 25 }, (_, i) => ({ PK: 'BSKY#REJECTED', SK: `REJECTION#${i}` }));
+            ddbMock.on(QueryCommand).resolves({ Items: items });
+            ddbMock.on(BatchWriteCommand).resolves({});
+
+            expect(await backend.clearAll()).toBe(25);
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input.RequestItems?.TestTable).toHaveLength(25);
+        });
+
         test('warns and returns partial count when all retries exhausted', async () => {
             jest.useFakeTimers();
             const loggerWarnSpy = jest.spyOn(loggerModule.logger, 'warn');
+            const timerSpy = jest.spyOn(globalThis, 'setTimeout');
 
             ddbMock.on(QueryCommand).resolves({
                 Items: [
@@ -322,6 +431,10 @@ describe('BskyRejectionBackend', () => {
 
             // 2 items queried, 1 unprocessed after retries exhausted → count = 2 - 1 = 1
             expect(count).toBe(1);
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(3);
+            expect(timerSpy).toHaveBeenCalledWith(expect.any(Function), 100);
+            expect(timerSpy).toHaveBeenCalledWith(expect.any(Function), 200);
+            expect(timerSpy).toHaveBeenCalledTimes(2);
             expect(loggerWarnSpy).toHaveBeenCalledWith(expect.objectContaining({
                 count: 1,
                 msg:   'Some rejections could not be deleted after retries',
@@ -371,6 +484,22 @@ describe('BskyRejectionBackend', () => {
             expect(retryTable![0]).toEqual({
                 DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#22222222-1111-4222-8333-444444444444' } },
             });
+        });
+
+        test('does not back off or warn when DynamoDB explicitly returns no unprocessed items', async () => {
+            const timerSpy = jest.spyOn(globalThis, 'setTimeout');
+            const loggerWarnSpy = jest.spyOn(loggerModule.logger, 'warn');
+            // The test setup exports one shared logger mock, so only inspect warnings
+            // emitted after this operation begins without consuming shared history.
+            const warningCallCount = loggerWarnSpy.mock.calls.length;
+            ddbMock.on(QueryCommand).resolves({ Items: [{ PK: 'BSKY#REJECTED', SK: 'REJECTION#one' }] });
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: { TestTable: [] } });
+
+            await expect(backend.clearAll()).resolves.toBe(1);
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
+            expect(timerSpy).not.toHaveBeenCalled();
+            expect(loggerWarnSpy.mock.calls.slice(warningCallCount)).toEqual([]);
+            loggerWarnSpy.mockRestore();
         });
     });
 });

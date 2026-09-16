@@ -43,6 +43,20 @@ function makeDefaultDeps(overrides: Partial<LiveSignalsDepsInternal> = {}): Live
     };
 }
 
+async function settlesWithoutWaitingForRefresh(pending: Promise<unknown>): Promise<boolean> {
+    let settled = false;
+    void pending.then(() => {
+        settled = true;
+        return undefined;
+    });
+    let drain = Promise.resolve();
+    for(let step = 0; step < 20; step++) {
+        drain = drain.then(() => undefined);
+    }
+    await drain;
+    return settled;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -92,6 +106,17 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             const perch = signals.find(s => s.kind === 'perch');
             expect(perch!.content).toContain('Late night');
         });
+    });
+
+    test('empty recent tool and channel lists do not throw while building a snapshot', async () => {
+        const debugSpy = spyOn(loggerModule.logger, 'debug');
+        spies.push(debugSpy);
+        const signals = await new LiveSignals(makeDefaultDeps()).snapshot();
+        expect(signals.some(signal => signal.kind === 'tool' || signal.kind === 'channel')).toBe(false);
+        expect(debugSpy.mock.calls.some(([details]) =>
+            typeof details === 'object' && details !== null
+            && /timestamp|channelId/.test(String((details as { error?: unknown }).error))
+        )).toBe(false);
     });
 
     // -------------------------------------------------------------------------
@@ -172,6 +197,11 @@ describe.concurrent('LiveSignals.snapshot()', () => {
     // day signal
     // -------------------------------------------------------------------------
     describe.concurrent('day signal', () => {
+        test('falls back to Monday when the configured timezone cannot produce a weekday', async () => {
+            const signals = await new LiveSignals(makeDefaultDeps({ timezone: 'Invalid/Zone', now: undefined })).snapshot();
+            expect(signals.find(s => s.kind === 'day')?.content).toContain('Monday');
+        });
+
         test.each<[number, string]>([
             [1, 'Monday'],
             [2, 'Tuesday'],
@@ -702,6 +732,38 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             expect(callCount).toBe(2);
         });
 
+        test('stale discover snapshot does not wait for a blocked background refresh', async () => {
+            const old = makeFeedItem('Old discover', 'old.bsky');
+            let release: ((value: { items: BskyFeedItem[] }) => void) | undefined;
+            let calls = 0;
+            const client = makeBskyClient({ getFeed: async () => {
+                calls++;
+                if(calls === 1) {
+                    return { items: [old] };
+                }
+                return new Promise((resolve) => {
+                    release = resolve;
+                });
+            } });
+            let nowMs = 1_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client, nowMs:             () => nowMs,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false, bskyDiscoverCacheMs: 1 },
+            }));
+            await ls.snapshot();
+            nowMs += 2;
+            const pending = ls.snapshot();
+            try {
+                expect(await settlesWithoutWaitingForRefresh(pending)).toBe(true);
+                const signals = await pending;
+                expect(signals.find(s => s.kind === 'bsky-discover')?.content).toContain('Old discover');
+                expect(calls).toBe(2);
+            } finally {
+                release?.({ items: [makeFeedItem('New discover', 'new.bsky')] });
+                await pending;
+            }
+        });
+
         test('first-call timeout: snapshot returns empty if initial fetch takes too long', async () => {
             // getFeed hangs — never resolves during the test
             const client = makeBskyClient({
@@ -711,11 +773,12 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             });
             // Override setTimeout so the bootstrap timer fires immediately
             const originalSetTimeout = globalThis.setTimeout;
+            let bootstrapDelayMs: number | undefined;
 
-            (globalThis as unknown as Record<string, unknown>).setTimeout = (fn: () => void) => {
+            (globalThis as unknown as Record<string, unknown>).setTimeout = (fn: () => void, delayMs?: number) => {
+                bootstrapDelayMs = delayMs;
                 fn();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test shim for return type
-                return 0 as any;
+                return 0;
             };
             try {
                 const ls = new LiveSignals(makeDefaultDeps({
@@ -724,6 +787,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
                 }));
                 const signals = await ls.snapshot();
                 expect(signals.filter(s => s.kind === 'bsky-discover')).toHaveLength(0);
+                expect(bootstrapDelayMs).toBe(2000);
             } finally {
                 (globalThis as unknown as Record<string, unknown>).setTimeout = originalSetTimeout;
             }
@@ -923,10 +987,45 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             // Returns the stale cached items immediately (non-blocking)
             const forYou = signals.filter(s => s.kind === 'bsky-foryou');
             expect(forYou).toHaveLength(1);
+            expect(forYou[0].label).toBe('bsky-foryou');
             // Background refresh should eventually complete (await it)
             await Promise.resolve();
             await Promise.resolve();
             expect(callCount).toBe(2);
+        });
+
+        test('stale for-you snapshot does not wait for a blocked background refresh', async () => {
+            const old = makeFeedItem('Old for-you', 'old.bsky');
+            let release: ((value: { items: BskyFeedItem[] }) => void) | undefined;
+            let calls = 0;
+            const client = makeBskyClient({ getFeed: async () => {
+                calls++;
+                if(calls === 1) {
+                    return { items: [old] };
+                }
+                return new Promise((resolve) => {
+                    release = resolve;
+                });
+            } });
+            let nowMs = 2_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client, nowMs:             () => nowMs,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false, bskyForYouCacheMs: 1 },
+            }));
+            await ls.snapshot();
+            nowMs += 2;
+            const pending = ls.snapshot();
+            try {
+                expect(await settlesWithoutWaitingForRefresh(pending)).toBe(true);
+                const signals = await pending;
+                const signal = signals.find(s => s.kind === 'bsky-foryou');
+                expect(signal?.content).toContain('Old for-you');
+                expect(signal?.label).toBe('bsky-foryou');
+                expect(calls).toBe(2);
+            } finally {
+                release?.({ items: [makeFeedItem('New for-you', 'new.bsky')] });
+                await pending;
+            }
         });
 
         test('feature flag off: for-you is skipped', async () => {
@@ -942,6 +1041,8 @@ describe.concurrent('LiveSignals.snapshot()', () => {
         });
 
         test('bsky-foryou error does not break other signals', async () => {
+            const debugSpy = spyOn(loggerModule.logger, 'debug');
+            spies.push(debugSpy);
             const client = makeBskyClient({
                 getFeed: async (name: string) => {
                     if(name === 'for-you') {
@@ -956,6 +1057,9 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             }));
             const signals = await ls.snapshot();
             expect(signals.find(s => s.kind === 'perch')).toBeDefined();
+            expect(debugSpy).toHaveBeenCalledWith({
+                error: 'for-you broken', msg: 'LiveSignals: bsky-foryou fetch failed',
+            });
         });
     });
 
@@ -1008,6 +1112,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             expect(notifSignal!.content).toContain('2 likes');
             expect(notifSignal!.content).toContain('1 repost');
             expect(notifSignal!.content).toContain('1 new follower');
+            expect(notifSignal!.content).toBe('2 likes, 1 repost, 1 new follower — latest from @alice.bsky');
             // Non-mention notifications are NOT counted as mentions
             expect(notifSignal!.content).not.toContain('mention');
         });
@@ -1030,12 +1135,14 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             const signals = await ls.snapshot();
             const notifSignal = signals.find(s => s.kind === 'bsky-notifications');
             expect(notifSignal).toBeDefined();
-            expect(notifSignal!.content).toContain('1 like');
+            expect(notifSignal!.content).toMatch(/(?:^|, )1 like(?:,| —)/);
             expect(notifSignal!.content).not.toContain('Stryker');
             expect(notifSignal!.content).toContain('2 reposts');
         });
 
         test('no notifications: signal is omitted', async () => {
+            const debugSpy = spyOn(loggerModule.logger, 'debug');
+            spies.push(debugSpy);
             const client = makeBskyClient({
                 getNotifications: async () => ({ notifications: [] }),
             });
@@ -1045,6 +1152,21 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             }));
             const signals = await ls.snapshot();
             expect(signals.find(s => s.kind === 'bsky-notifications')).toBeUndefined();
+            expect(debugSpy.mock.calls.some(([details]) =>
+                typeof details === 'object' && details !== null
+                && String((details as { error?: unknown }).error).includes('author')
+            )).toBe(false);
+        });
+
+        test('unrecognized notification reasons produce no empty summary', async () => {
+            const unknownReason = { ...makeNotification('like', 'unknown.bsky'), reason: 'future-reason' as BskyNotification['reason'] };
+            const client = makeBskyClient({ getNotifications: async () => ({ notifications: [unknownReason] }) });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.some(s => s.kind === 'bsky-notifications')).toBe(false);
         });
 
         test('cache hit: second call within TTL does not re-fetch notifications', async () => {
@@ -1059,9 +1181,44 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             }));
             await ls.snapshot();
             nowMs += 60_000;
-            await ls.snapshot();
+            const cached = await ls.snapshot();
+            expect(cached.find(s => s.kind === 'bsky-notifications')?.label).toBe('bsky-notifications');
             const getNotifMock = client.getNotifications as ReturnType<typeof mock>;
             expect(getNotifMock.mock.calls).toHaveLength(1);
+        });
+
+        test('stale notifications return immediately and start one background refresh', async () => {
+            const old = makeNotification('like', 'old.bsky');
+            let release: ((value: { notifications: BskyNotification[] }) => void) | undefined;
+            let calls = 0;
+            const client = makeBskyClient({ getNotifications: async () => {
+                calls++;
+                if(calls === 1) {
+                    return { notifications: [old] };
+                }
+                return new Promise((resolve) => {
+                    release = resolve;
+                });
+            } });
+            let nowMs = 3_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client, nowMs:             () => nowMs,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false, bskyNotificationsCacheMs: 1 },
+            }));
+            await ls.snapshot();
+            nowMs += 2;
+            const pending = ls.snapshot();
+            try {
+                expect(await settlesWithoutWaitingForRefresh(pending)).toBe(true);
+                const signals = await pending;
+                const signal = signals.find(s => s.kind === 'bsky-notifications');
+                expect(signal?.content).toContain('@old.bsky');
+                expect(signal?.label).toBe('bsky-notifications');
+                expect(calls).toBe(2);
+            } finally {
+                release?.({ notifications: [makeNotification('follow', 'new.bsky')] });
+                await pending;
+            }
         });
 
         test('feature flag off: notifications signal is skipped', async () => {
@@ -1077,6 +1234,8 @@ describe.concurrent('LiveSignals.snapshot()', () => {
         });
 
         test('notifications error does not break other signals', async () => {
+            const debugSpy = spyOn(loggerModule.logger, 'debug');
+            spies.push(debugSpy);
             const client = makeBskyClient({
                 getNotifications: async () => {
                     throw new Error('notif API broken');
@@ -1088,6 +1247,29 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             }));
             const signals = await ls.snapshot();
             expect(signals.find(s => s.kind === 'perch')).toBeDefined();
+            expect(debugSpy).toHaveBeenCalledWith({
+                error: 'notif API broken', msg: 'LiveSignals: bsky-notifications fetch failed',
+            });
+        });
+
+        test('notification fetch failure clears the in-flight state so the next snapshot retries', async () => {
+            let calls = 0;
+            const client = makeBskyClient({ getNotifications: async () => {
+                calls++;
+                if(calls === 1) {
+                    throw new Error('temporary notification outage');
+                }
+                return { notifications: [makeNotification('follow', 'recovered.bsky')] };
+            } });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const failedSignals = await ls.snapshot();
+            expect(failedSignals.find(s => s.kind === 'bsky-notifications')).toBeUndefined();
+            const recoveredSignals = await ls.snapshot();
+            expect(recoveredSignals.find(s => s.kind === 'bsky-notifications')?.content).toContain('@recovered.bsky');
+            expect(calls).toBe(2);
         });
 
         test('reply and quote notifications counted as mentions', async () => {
@@ -1336,6 +1518,51 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             expect(callCount).toBe(2);
         });
 
+        test('stale activity snapshot does not wait for a blocked background refresh', async () => {
+            const old = makeActivityItem('old-event', '2026-05-03T09:00:00Z');
+            let release: ((items: MemoryToolItemData[]) => void) | undefined;
+            let calls = 0;
+            let nowMs = 5_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                loadRecentActivityLog: async () => {
+                    calls++;
+                    if(calls === 1) {
+                        return [old];
+                    }
+                    return new Promise((resolve) => {
+                        release = resolve;
+                    });
+                },
+                nowMs:             () => nowMs,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogCacheMs: 1 },
+            }));
+            await ls.snapshot();
+            nowMs += 2;
+            const pending = ls.snapshot();
+            try {
+                expect(await settlesWithoutWaitingForRefresh(pending)).toBe(true);
+                const signals = await pending;
+                expect(signals.find(s => s.kind === 'activity')?.content).toContain('old-event');
+                expect(calls).toBe(2);
+            } finally {
+                release?.([makeActivityItem('new-event', '2026-05-03T09:00:00Z')]);
+                await pending;
+            }
+        });
+
+        test('activity path shape distinguishes auto-logged events from nested manual events and malformed short paths', async () => {
+            const items = [
+                makeActivityItem('auto', '2026-05-03T09:00:00Z'),
+                { ...makeActivityItem('unused', '2026-05-03T09:01:00Z'), path: '/events/other/nested/entry' as MemoryToolItemData['path'] },
+                { ...makeActivityItem('unused', '2026-05-03T09:02:00Z'), path: '/' as MemoryToolItemData['path'] },
+            ];
+            const ls = new LiveSignals(makeActivityDeps(items));
+            const snapshot = await ls.snapshot();
+            const signals = snapshot.filter(s => s.kind === 'activity');
+            expect(signals.map(signal => signal.content.split(' ')[0])).toEqual(['auto', 'other/nested', 'event']);
+            expect(signals.every(signal => signal.label === 'activity')).toBe(true);
+        });
+
         test('feature flag off: activity-log is skipped', async () => {
             let callCount = 0;
             const ls = new LiveSignals(makeDefaultDeps({
@@ -1359,6 +1586,8 @@ describe.concurrent('LiveSignals.snapshot()', () => {
         });
 
         test('activity-log fetch error does not break other signals', async () => {
+            const debugSpy = spyOn(loggerModule.logger, 'debug');
+            spies.push(debugSpy);
             const ls = new LiveSignals(makeDefaultDeps({
                 loadRecentActivityLog: async () => {
                     throw new Error('DDB read failed');
@@ -1368,6 +1597,9 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             const signals = await ls.snapshot();
             expect(signals.find(s => s.kind === 'perch')).toBeDefined();
             expect(signals.find(s => s.kind === 'time')).toBeDefined();
+            expect(debugSpy).toHaveBeenCalledWith({
+                error: 'DDB read failed', msg: 'LiveSignals: activity-log fetch failed',
+            });
         });
 
         test('returns at most 3 activity signals (last 3 of sorted items)', async () => {
@@ -1402,6 +1634,19 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             expect(activity).toHaveLength(1);
             expect(activity[0].content).toContain('conversation');
         });
+
+        test.each(['activity/foo/bar', 'project/deploy'])(
+            'manual logEvent path preserves nested eventType %s',
+            async (eventType) => {
+                // logEvent accepts an unrestricted string and interpolates it into
+                // /events/${eventType}/${timestamp}; nested segments are producer-valid.
+                const now = new Date('2026-05-03T10:00:00Z');
+                const items = [makeManualEventItem(eventType, new Date(now.getTime() - 5 * 60_000).toISOString())];
+                const ls = new LiveSignals(makeActivityDeps(items, () => now.getTime()));
+                const signals = await ls.snapshot();
+                expect(signals.find(s => s.kind === 'activity')?.content).toBe(`${eventType} 5m ago`);
+            }
+        );
 
         test('mixed path shapes: both auto-logged and manual events render correctly', async () => {
             const now = new Date('2026-05-03T10:00:00Z');
@@ -1458,6 +1703,55 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             expect(activity.some(s => s.content.includes('conversation'))).toBe(true);
             expect(activity.some(s => s.content.includes('perch-end'))).toBe(true);
             expect(activity.some(s => s.content.includes('email-sent'))).toBe(true);
+        });
+    });
+
+    describe('preservation boundaries', () => {
+        test.each<[number, string]>([
+            [59_999, 'just now'], [59_000, 'just now'],
+            [59 * 60_000, '59m ago'], [118 * 60_000, '1h ago'],
+        ])('formats %d ms at the documented relative-time boundary', async (elapsed, expected) => {
+            const nowMs = 10_000_000;
+            const signals = await new LiveSignals(makeDefaultDeps({
+                nowMs:          () => nowMs,
+                getRecentTools: () => [{ toolName: 'boundary', timestamp: nowMs - elapsed }],
+            })).snapshot();
+            expect(signals.find(signal => signal.kind === 'tool')?.content).toBe(`${expected}: boundary`);
+        });
+
+        test('preserves source order when collecting core signals', async () => {
+            const signals = await new LiveSignals(makeDefaultDeps()).snapshot();
+            expect(signals.map(signal => signal.kind)).toEqual(['perch', 'perch-next', 'time', 'day']);
+        });
+
+        test('retains a recent tool whose public tool name is empty', async () => {
+            const signals = await new LiveSignals(makeDefaultDeps({
+                nowMs:          () => 10_000,
+                getRecentTools: () => [{ toolName: '', timestamp: 10_000 }],
+            })).snapshot();
+            expect(signals.find(signal => signal.kind === 'tool')).toEqual({
+                kind: 'tool', label: 'tool', content: 'just now: ',
+            });
+        });
+
+        test('orders notification categories and requests the bounded source limits', async () => {
+            const client = makeBskyClient({
+                getFeed:          async () => ({ items: [] }),
+                getNotifications: async () => ({ notifications: [makeNotification('mention', 'm'), makeNotification('like', 'l')] }),
+            });
+            const limits: number[] = [];
+            const signals = await new LiveSignals(makeDefaultDeps({
+                bskyClient:            client,
+                idleSignalsConfig:     FULL_CONFIG,
+                loadRecentActivityLog: async (limit) => {
+                    limits.push(limit);
+                    return [];
+                },
+            })).snapshot();
+            expect(signals.find(signal => signal.kind === 'bsky-notifications')?.content).toBe('1 mention, 1 like — latest from @m');
+            expect((client.getFeed as ReturnType<typeof mock>).mock.calls).toEqual([['discover', 5], ['for-you', 10]]);
+            expect((client.getNotifications as ReturnType<typeof mock>).mock.calls).toEqual([[20]]);
+            expect(limits).toEqual([10]);
         });
     });
 

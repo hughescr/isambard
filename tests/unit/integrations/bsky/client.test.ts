@@ -1,6 +1,8 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
+import { AppBskyFeedDefs } from '@atproto/api';
 import { mockLogger } from '../../../setup';
 import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/errors';
+import { BlueskyClient, type BlueskyClientApi } from '@/integrations/bsky/client';
 import type { ServiceHealthRegistry } from '@/services';
 
 // ---------------------------------------------------------------------------
@@ -18,7 +20,7 @@ interface MockLikeResponse { uri: string, cid: string }
 interface MockPostResponse { uri: string, cid: string }
 
 // ---------------------------------------------------------------------------
-// Mock @atproto/api
+// Per-client @atproto/api test double
 // ---------------------------------------------------------------------------
 
 const mockAgentPost           = mock(async (): Promise<MockPostResponse> => ({ uri: 'at://new/post/uri', cid: 'new-post-cid' }));
@@ -40,6 +42,7 @@ const mockGetConvoForMembers = mock(async (): Promise<{ data: { convo: unknown }
 const mockGetMessages        = mock(async (): Promise<{ data: { messages: unknown[], cursor?: string } }> => ({ data: { messages: [] } }));
 const mockSendMessage        = mock(async (): Promise<{ data: unknown }> => ({ data: {} }));
 const mockUpdateRead         = mock(async (): Promise<{ data: unknown }> => ({ data: {} }));
+let latestAgentOptions: { service: string } | undefined;
 
 const mockWithProxy = mock(() => ({
     chat: {
@@ -58,15 +61,22 @@ const mockWithProxy = mock(() => ({
 // RichText mock state — tests can override these per-test via mockRichTextState
 const mockDetectFacets = mock(async (): Promise<void> => undefined);
 
+function hasLexiconType(value: unknown, type: string): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && '$type' in value && value.$type === type;
+}
+
 const mockRichTextState = {
     graphemeLength: 10,
     text:           'Hello Bluesky!',
     facets:         undefined as Record<string, unknown>[] | undefined,
 };
 
-// eslint-disable-next-line @hughescr/test-hygiene/no-mock-module-in-test-body, @typescript-eslint/no-floating-promises -- @atproto/api mock is bsky-client-specific and cannot be shared via tests/setup.ts; mock.module() is a floating promise (module mock setup)
-mock.module('@atproto/api', () => ({
+const MOCK_API_DOUBLE = {
     AtpAgent: class MockAtpAgent {
+        constructor(options: { service: string }) {
+            latestAgentOptions = options;
+        }
+
         app = {
             bsky: {
                 feed: {
@@ -103,44 +113,24 @@ mock.module('@atproto/api', () => ({
         },
     },
     AppBskyEmbedRecord: {
-        isView: (v: unknown) => {
-            const record = v as Record<string, unknown>;
-            return record.$type === 'app.bsky.embed.record#view' || (typeof record.record === 'object' && record.record !== null);
-        },
-        isViewRecord: (v: unknown) => {
-            const record = v as Record<string, unknown>;
-            return record.$type === 'app.bsky.embed.record#viewRecord' || (typeof record.uri === 'string' && typeof record.cid === 'string' && typeof record.author === 'object' && record.author !== null && typeof record.value === 'object' && record.value !== null);
-        },
+        isView:       (v: unknown) => hasLexiconType(v, 'app.bsky.embed.record#view'),
+        isViewRecord: (v: unknown) => hasLexiconType(v, 'app.bsky.embed.record#viewRecord'),
     },
     AppBskyEmbedImages: {
-        isView: (v: unknown) => {
-            const record = v as Record<string, unknown>;
-            return record.$type === 'app.bsky.embed.images#view';
-        },
+        isView: (v: unknown) => hasLexiconType(v, 'app.bsky.embed.images#view'),
     },
     AppBskyEmbedVideo: {
-        isView: (v: unknown) => {
-            const record = v as Record<string, unknown>;
-            return record.$type === 'app.bsky.embed.video#view';
-        },
+        isView: (v: unknown) => hasLexiconType(v, 'app.bsky.embed.video#view'),
     },
     AppBskyEmbedExternal: {
-        isView: (v: unknown) => {
-            const record = v as Record<string, unknown>;
-            return record.$type === 'app.bsky.embed.external#view';
-        },
+        isView: (v: unknown) => hasLexiconType(v, 'app.bsky.embed.external#view'),
     },
     AppBskyEmbedRecordWithMedia: {
-        isView: (v: unknown) => {
-            const record = v as Record<string, unknown>;
-            return record.$type === 'app.bsky.embed.recordWithMedia#view';
-        },
+        isView: (v: unknown) => hasLexiconType(v, 'app.bsky.embed.recordWithMedia#view'),
     },
-}));
-
-// Import AFTER mocks are registered (top-level await is intentional: ensures mock.module() runs first)
-// eslint-disable-next-line no-restricted-syntax -- top-level await import is required here to ensure mock.module() is registered before the module loads; this is module-scope setup, not per-test overhead
-const { BlueskyClient } = await import('@/integrations/bsky/client');
+} satisfies Record<keyof BlueskyClientApi, unknown>;
+// The test double intentionally implements only the methods exercised by this client.
+const MOCK_API = MOCK_API_DOUBLE as unknown as BlueskyClientApi;
 
 // ---------------------------------------------------------------------------
 // Shared test data
@@ -158,6 +148,7 @@ const CLIENT_OPTIONS = {
     handle:      'test.bsky.social',
     appPassword: 'app-password-secret',
     retryDeps:   NOOP_RETRY_DEPS,
+    api:         MOCK_API,
 };
 
 const AUTHOR_BASIC = {
@@ -263,6 +254,15 @@ function makeXRPCError(status: number, error = 'Error', message = 'Something fai
     return err;
 }
 
+async function capturedError(operation: () => Promise<unknown>): Promise<Error> {
+    try {
+        await operation();
+    } catch (error) {
+        return error as Error;
+    }
+    throw new Error('Expected operation to reject');
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -307,7 +307,9 @@ describe.concurrent('BlueskyClient', () => {
         mockRichTextState.graphemeLength = 10;
         mockRichTextState.text           = 'Hello Bluesky!';
         mockRichTextState.facets         = undefined;
+        latestAgentOptions                = undefined;
         mockLogger.error.mockClear();
+        mockLogger.debug.mockClear();
     });
 
     // -----------------------------------------------------------------------
@@ -436,9 +438,9 @@ describe.concurrent('BlueskyClient', () => {
                 mockLogin.mockRejectedValueOnce(errWithHeaders);
                 const client = new BlueskyClient(CLIENT_OPTIONS);
 
-                await expect(client.login()).rejects.not.toMatchObject({
-                    context: expect.objectContaining({ retryAfterMs: expect.anything() }),
-                });
+                const failure = await client.login().catch((error: unknown) => error);
+                expect(failure).toBeInstanceOf(BskyRateLimitError);
+                expect(Object.hasOwn((failure as BskyRateLimitError).context ?? {}, 'retryAfterMs')).toBe(false);
             });
         });
 
@@ -460,6 +462,17 @@ describe.concurrent('BlueskyClient', () => {
             await expect(client.login()).rejects.toBeInstanceOf(BskyError);
         });
 
+        test('does not trust a numeric status unless the XRPC error code is a string', async () => {
+            mockLogin.mockRejectedValueOnce(Object.assign(new Error('Malformed XRPC envelope'), {
+                status: 401,
+                error:  123,
+            }));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const failure = await client.login().catch((error: unknown) => error);
+            expect(failure).toBeInstanceOf(BskyError);
+            expect(failure).not.toBeInstanceOf(BskyAuthError);
+        });
+
         test('configures chat proxy after successful login', async () => {
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await client.login();
@@ -467,27 +480,27 @@ describe.concurrent('BlueskyClient', () => {
         });
 
         test('throws BskyError when chat method called before login', async () => {
-            const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
+            const uninitializedClient = new BlueskyClient({ ...CLIENT_OPTIONS, appPassword: 'test-password' });
             await expect(uninitializedClient.listConversations()).rejects.toThrow('Chat not available');
         });
 
         test('getConversationForMembers re-throws BskyError unchanged when called before login', async () => {
-            const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
+            const uninitializedClient = new BlueskyClient({ ...CLIENT_OPTIONS, appPassword: 'test-password' });
             await expect(uninitializedClient.getConversationForMembers(['did:plc:test'])).rejects.toThrow('Chat not available');
         });
 
         test('getMessages re-throws BskyError unchanged when called before login', async () => {
-            const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
+            const uninitializedClient = new BlueskyClient({ ...CLIENT_OPTIONS, appPassword: 'test-password' });
             await expect(uninitializedClient.getMessages('convo-id')).rejects.toThrow('Chat not available');
         });
 
         test('sendDirectMessage re-throws BskyError unchanged when called before login', async () => {
-            const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
+            const uninitializedClient = new BlueskyClient({ ...CLIENT_OPTIONS, appPassword: 'test-password' });
             await expect(uninitializedClient.sendDirectMessage('convo-id', 'hello')).rejects.toThrow('Chat not available');
         });
 
         test('markConversationRead re-throws BskyError unchanged when called before login', async () => {
-            const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
+            const uninitializedClient = new BlueskyClient({ ...CLIENT_OPTIONS, appPassword: 'test-password' });
             await expect(uninitializedClient.markConversationRead('convo-id')).rejects.toThrow('Chat not available');
         });
     });
@@ -700,8 +713,7 @@ describe.concurrent('BlueskyClient', () => {
             const client = new BlueskyClient(CLIENT_OPTIONS);
             const result = await client.getFeed();
             const author = result.items[0].post.author;
-            expect(author.displayName).toBeUndefined();
-            expect(author.avatar).toBeUndefined();
+            expect(author).toEqual(AUTHOR_BASIC_NO_OPTIONAL);
         });
 
         test('throws BskyAuthError on 401', async () => {
@@ -812,6 +824,32 @@ describe.concurrent('BlueskyClient', () => {
             mockGetPosts.mockResolvedValueOnce({ data: { posts: [] } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await expect(client.getPost('at://missing/post')).rejects.toBeInstanceOf(BskyError);
+        });
+
+        test('reports an invariant violation when a non-empty API result has no first post', async () => {
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [undefined] } } as never);
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+
+            await expect(client.getPost('at://malformed/post')).rejects.toMatchObject({
+                context: { originalMessage: expect.stringContaining('Invariant violated in getPost') },
+            });
+        });
+
+        test('maps a lexicon-valid post whose opaque record cannot supply iterable facets without retrying', async () => {
+            const lexiconValidPost = {
+                ...POST_VIEW,
+                cid:    'bafkreicl6ujc6ncfktctxxroxognfn7d2fqavvrryoc2lv6m4i6hpbkfti',
+                record: { facets: {} },
+            };
+            expect(AppBskyFeedDefs.validatePostView(lexiconValidPost)).toMatchObject({ success: true });
+
+            mockGetPosts.mockResolvedValue({ data: { posts: [lexiconValidPost] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+
+            await expect(client.getPost(lexiconValidPost.uri)).rejects.toMatchObject({
+                message: 'Failed to fetch post',
+            });
+            expect(mockGetPosts).toHaveBeenCalledTimes(1);
         });
 
         test('not-found error context includes uri', async () => {
@@ -1002,6 +1040,7 @@ describe.concurrent('BlueskyClient', () => {
             expect(profile.followersCount).toBeUndefined();
             expect(profile.followsCount).toBeUndefined();
             expect(profile.postsCount).toBeUndefined();
+            expect(profile).toEqual({ did: 'did:plc:minimal', handle: 'minimal.bsky.social' });
         });
 
         test('preserves zero counts', async () => {
@@ -1714,6 +1753,17 @@ describe.concurrent('BlueskyClient', () => {
             });
         });
 
+        test('preserves false chatDisabled on a member and omits absent conversation status', async () => {
+            mockListConvos.mockResolvedValueOnce({
+                data: { convos: [{ ...CONVO_VIEW, members: [{ did: 'did:plc:member1', handle: 'alice.bsky.social', chatDisabled: false }], status: undefined }] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.listConversations();
+            expect(result.conversations[0]?.members[0]).toEqual({ did: 'did:plc:member1', handle: 'alice.bsky.social', chatDisabled: false });
+            expect(Object.hasOwn(result.conversations[0], 'status')).toBe(false);
+        });
+
         test('normalizes lastMessage when it is a MessageView', async () => {
             mockListConvos.mockResolvedValueOnce({
                 data: { convos: [CONVO_VIEW] },
@@ -1738,6 +1788,7 @@ describe.concurrent('BlueskyClient', () => {
             await client.login();
             const result = await client.listConversations();
             expect(result.conversations[0]?.lastMessage).toBeUndefined();
+            expect(Object.hasOwn(result.conversations[0], 'lastMessage')).toBe(false);
         });
 
         test('handles empty conversations list', async () => {
@@ -2020,6 +2071,10 @@ describe.concurrent('BlueskyClient', () => {
             expect(embed?.replyCount).toBeUndefined();
             expect(embed?.likeCount).toBeUndefined();
             expect(embed?.repostCount).toBeUndefined();
+            expect(Object.hasOwn(embed!, 'replyCount')).toBe(false);
+            expect(Object.hasOwn(embed!, 'likeCount')).toBe(false);
+            expect(Object.hasOwn(embed!, 'repostCount')).toBe(false);
+            expect(Object.hasOwn(embed!, 'embeds')).toBe(false);
         });
 
         test('falls back to empty string for embedded record text when value.text is not a string', async () => {
@@ -2566,6 +2621,10 @@ describe.concurrent('BlueskyClient', () => {
             const client = new BlueskyClient(CLIENT_OPTIONS);
             const post   = await client.getPost(POST_VIEW.uri);
             expect(post.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'did:plc:unknown999' });
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                { error: expect.any(Error) },
+                'Failed to resolve mention DID to handle, using DID as fallback'
+            );
         });
 
         test('deduplicates DID lookups within a single post (caching)', async () => {
@@ -2685,6 +2744,32 @@ describe.concurrent('BlueskyClient', () => {
             const post   = await client.getPost(POST_VIEW.uri);
             // Facet with all-unknown features should be omitted
             expect(post.facets).toBeUndefined();
+            expect(Object.hasOwn(post, 'facets')).toBe(false);
+        });
+
+        test('rejects malformed and mismatched facet feature discriminants', async () => {
+            const postView = {
+                ...POST_VIEW,
+                record: {
+                    ...POST_RECORD,
+                    facets: [{
+                        index:    { byteStart: 0, byteEnd: 10 },
+                        features: [
+                            { $type: 'app.bsky.richtext.facet#future', did: 'did:plc:unrelated' },
+                            { $type: 'app.bsky.richtext.facet#mention', did: 42 },
+                            { $type: 'app.bsky.richtext.facet#future', uri: 'https://example.com' },
+                            { $type: 'app.bsky.richtext.facet#link', uri: 42 },
+                            { $type: 'app.bsky.richtext.facet#future', tag: 'unrelated' },
+                            { $type: 'app.bsky.richtext.facet#tag', tag: 42 },
+                        ],
+                    }],
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [postView] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post = await client.getPost(POST_VIEW.uri);
+            expect(post.facets).toBeUndefined();
+            expect(mockGetProfile).not.toHaveBeenCalled();
         });
 
         test('returns undefined facets when post has no facets', async () => {
@@ -2701,6 +2786,7 @@ describe.concurrent('BlueskyClient', () => {
             await client.login();
             const result = await client.getPost(POST_VIEW.uri);
             expect(result.facets).toBeUndefined();
+            expect(Object.hasOwn(result, 'facets')).toBe(false);
         });
 
         test('normalizes facets in a DM message', async () => {
@@ -2849,6 +2935,11 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
         mockLogger.error.mockClear();
     });
 
+    afterEach(() => {
+        jest.restoreAllMocks();
+        jest.useRealTimers();
+    });
+
     describe('Read methods succeed on retry after a single 429', () => {
         test('getFeed retries once on 429 and succeeds', async () => {
             mockGetTimeline.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
@@ -2974,6 +3065,318 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
             await client.login();
             await expect(client.markConversationRead('convo-123')).rejects.toBeInstanceOf(BskyRateLimitError);
             expect(mockUpdateRead).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('mutation contract boundaries', () => {
+        test('uses the production default service and preserves the complete retry policy', async () => {
+            const delays: number[] = [];
+            const client = new BlueskyClient({
+                ...CLIENT_OPTIONS,
+                retryDeps: {
+                    ...NOOP_RETRY_DEPS,
+                    sleep: async (delayMs: number) => {
+                        delays.push(delayMs);
+                    },
+                },
+            });
+            expect(latestAgentOptions).toEqual({ service: 'https://bsky.social' });
+
+            mockGetTimeline.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockGetTimeline.mockResolvedValueOnce({ data: { feed: [] } });
+            await expect(client.getFeed()).resolves.toEqual({ items: [], cursor: undefined });
+            expect(delays).toHaveLength(1);
+            expect(delays[0]).toBeGreaterThanOrEqual(4500);
+            expect(delays[0]).toBeLessThan(5500);
+        });
+
+        test('uses three rate-limit attempts with deterministic exponential jitter', async () => {
+            const delays: number[] = [];
+            const random = jest.spyOn(Math, 'random').mockReturnValue(0.75);
+            try {
+                const client = new BlueskyClient({
+                    ...CLIENT_OPTIONS,
+                    retryDeps: {
+                        ...NOOP_RETRY_DEPS,
+                        sleep: async (delayMs: number) => {
+                            delays.push(delayMs);
+                        },
+                    },
+                });
+                mockGetTimeline.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
+
+                await expect(client.getFeed()).rejects.toBeInstanceOf(BskyRateLimitError);
+                expect(mockGetTimeline).toHaveBeenCalledTimes(3);
+                expect(delays).toEqual([5250, 10_500]);
+            } finally {
+                random.mockRestore();
+            }
+        });
+
+        test('uses the first rate-limit reset value when the response supplies repeated headers', async () => {
+            jest.useFakeTimers();
+            try {
+                jest.setSystemTime(new Date(1_000_000_500));
+                const client = new BlueskyClient(CLIENT_OPTIONS);
+                mockLogin.mockRejectedValueOnce(Object.assign(new Error('Rate limited'), {
+                    status:  429,
+                    error:   'RateLimitExceeded',
+                    headers: { 'ratelimit-reset': ['1000030', '1000999'] },
+                }));
+
+                await expect(client.login()).rejects.toMatchObject({
+                    context: expect.objectContaining({ retryAfterMs: 30_000 }),
+                });
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
+        test('measures a rate-limit reset from the start of its Unix second', async () => {
+            jest.useFakeTimers();
+            try {
+                jest.setSystemTime(new Date(1_000_000_500));
+                const client = new BlueskyClient(CLIENT_OPTIONS);
+                mockLogin.mockRejectedValueOnce(Object.assign(new Error('Rate limited'), {
+                    status:  429,
+                    error:   'RateLimitExceeded',
+                    headers: { 'ratelimit-reset': '1000030' },
+                }));
+
+                await expect(client.login()).rejects.toMatchObject({
+                    context: expect.objectContaining({ retryAfterMs: 30_000 }),
+                });
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
+        test('waits for and propagates facet-detection failures from each text validator', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const assertDetectionFailurePropagates = async (validate: () => Promise<void>) => {
+                let rejectDetection: ((reason: Error) => void) | undefined;
+                let settled = false;
+                const detection = new Promise<void>((_resolve, reject) => {
+                    rejectDetection = (reason) => {
+                        if(!settled) {
+                            settled = true;
+                            reject(reason);
+                        }
+                    };
+                });
+                mockDetectFacets.mockImplementationOnce(() => detection);
+                const validation = validate();
+                const detectionFailure = new Error('facet detection failed');
+                try {
+                    rejectDetection?.(detectionFailure);
+                    await expect(validation).rejects.toBe(detectionFailure);
+                } finally {
+                    rejectDetection?.(new Error('test cleanup'));
+                }
+            };
+
+            await assertDetectionFailurePropagates(() => client.validatePostText('post facets'));
+            await assertDetectionFailurePropagates(() => client.validateDMText('DM facets'));
+        });
+
+        test('waits for follow mutations and maps their rejection', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            mockGetProfile.mockResolvedValueOnce({ data: { did: 'did:plc:target', handle: 'target.bsky.social', viewer: {} } });
+            mockFollow.mockImplementationOnce(async () => {
+                await Promise.resolve();
+                throw new Error('follow write failed');
+            });
+
+            await expect(client.follow('target.bsky.social')).rejects.toMatchObject({ message: 'Failed to follow user' });
+        });
+
+        test('waits for unfollow mutations and maps their rejection', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            mockGetProfile.mockResolvedValueOnce({ data: { did: 'did:plc:target', handle: 'target.bsky.social', viewer: { following: 'at://follow/record' } } });
+            mockDeleteFollow.mockImplementationOnce(async () => {
+                await Promise.resolve();
+                throw new Error('unfollow write failed');
+            });
+
+            await expect(client.unfollow('target.bsky.social')).rejects.toMatchObject({ message: 'Failed to unfollow user' });
+        });
+
+        test('maps failures that occur while normalizing chat API responses', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            mockGetConvoForMembers.mockResolvedValueOnce({ data: { convo: {} } });
+            await expect(client.getConversationForMembers(['did:plc:member'])).rejects.toMatchObject({ message: 'Failed to get conversation for members' });
+
+            mockSendMessage.mockResolvedValueOnce({ data: {} });
+            await expect(client.sendDirectMessage('convo', 'hello')).rejects.toMatchObject({ message: 'Failed to send direct message' });
+        });
+
+        test('preserves normalized output boundaries, facet order, and XRPC detail', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS) as unknown as {
+                normalizePost:   (post: Record<string, unknown>) => Promise<Record<string, unknown>>
+                normalizeFacets: (facets: Record<string, unknown>[], cache: Map<string, Promise<string>>) => Promise<Record<string, unknown>[]>
+            };
+            const post = await client.normalizePost({
+                ...POST_VIEW,
+                author: { ...AUTHOR_BASIC, unexpected: 'must not escape the domain boundary' },
+            });
+            expect(post.author).toEqual(AUTHOR_BASIC);
+
+            const timestampWithoutMilliseconds = await client.normalizePost({
+                ...POST_VIEW,
+                record: { ...POST_RECORD, createdAt: '2026-03-07T12:00:00Z' },
+            });
+            expect(timestampWithoutMilliseconds.createdAt).toBe('2026-03-07T12:00:00Z');
+
+            const postWithoutEmbed = await client.normalizePost(POST_VIEW);
+            expect(postWithoutEmbed).not.toHaveProperty('embed');
+
+            const facets = await client.normalizeFacets([
+                { index: { byteStart: 0, byteEnd: 1 }, features: [{ $type: 'app.bsky.richtext.facet#tag', tag: 'first' }] },
+                { index: { byteStart: 2, byteEnd: 3 }, features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://example.com/second' }] },
+            ], new Map());
+            expect(facets.map(facet => facet.index)).toEqual([
+                { byteStart: 0, byteEnd: 1 },
+                { byteStart: 2, byteEnd: 3 },
+            ]);
+
+            mockLogin.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired', 'server detail'));
+            await expect((client as unknown as BlueskyClient).login()).rejects.toMatchObject({
+                context: { originalMessage: 'server detail', error: 'AuthenticationRequired' },
+            });
+        });
+
+        test('keeps malformed XRPC envelopes as generic errors without throwing while probing null', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            mockLogin.mockRejectedValueOnce(null);
+            const nullError = await capturedError(() => client.login());
+            expect(nullError).toMatchObject({ message: 'Login failed', context: undefined });
+
+            mockLogin.mockRejectedValueOnce(Object.assign(new Error('Malformed'), { status: '401', error: 'AuthenticationRequired' }));
+            const malformedError = await capturedError(() => client.login());
+            expect(malformedError).toBeInstanceOf(BskyError);
+            expect(malformedError).not.toBeInstanceOf(BskyAuthError);
+            expect(malformedError).toMatchObject({ context: { originalMessage: 'Malformed' } });
+            expect((malformedError as BskyError).context).not.toHaveProperty('status');
+        });
+
+        test('retains each operation-specific error message', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            mockLogin.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.login())).toHaveProperty('message', 'Login failed');
+
+            mockGetTimeline.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.getFeed())).toHaveProperty('message', 'Failed to fetch feed');
+            mockGetAuthorFeed.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.getAuthorFeed('actor'))).toHaveProperty('message', 'Failed to fetch author feed');
+            mockGetPosts.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.getPost('at://post'))).toHaveProperty('message', 'Failed to fetch post');
+            mockListNotifications.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.getNotifications())).toHaveProperty('message', 'Failed to fetch notifications');
+            mockUpdateSeen.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.updateNotificationsSeen())).toHaveProperty('message', 'Failed to update notifications seen');
+            mockGetProfile.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.getProfile('actor'))).toHaveProperty('message', 'Failed to fetch profile');
+            mockSearchPosts.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.searchPosts('query'))).toHaveProperty('message', 'Failed to search posts');
+            mockLike.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.likePost('at://post', 'cid'))).toHaveProperty('message', 'Failed to like post');
+            mockAgentPost.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.sendPost('text'))).toHaveProperty('message', 'Failed to send post');
+            mockAgentPost.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.replyToPost('text', 'at://post', 'cid'))).toHaveProperty('message', 'Failed to reply to post');
+            mockGetProfile.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.follow('actor'))).toHaveProperty('message', 'Failed to follow user');
+            mockGetProfile.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.unfollow('actor'))).toHaveProperty('message', 'Failed to unfollow user');
+
+            await client.login();
+            mockListConvos.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.listConversations())).toHaveProperty('message', 'Failed to list conversations');
+            mockGetConvoForMembers.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.getConversationForMembers(['did:plc:member']))).toHaveProperty('message', 'Failed to get conversation for members');
+            mockGetMessages.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.getMessages('convo'))).toHaveProperty('message', 'Failed to get messages');
+            mockDetectFacets.mockResolvedValue(undefined);
+            mockSendMessage.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.sendDirectMessage('convo', 'text'))).toHaveProperty('message', 'Failed to send direct message');
+            mockUpdateRead.mockRejectedValueOnce(new Error('down'));
+            expect(await capturedError(() => client.markConversationRead('convo'))).toHaveProperty('message', 'Failed to mark conversation as read');
+        });
+
+        test('keeps optional normalization fields only when they have meaningful values', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS) as unknown as {
+                normalizeAuthor:             (profile: Record<string, unknown>) => unknown
+                normalizeDetailedProfile:    (profile: Record<string, unknown>) => unknown
+                normalizeViewer:             (viewer: Record<string, unknown>) => unknown
+                normalizeProfileView:        (profile: Record<string, unknown>) => unknown
+                normalizeConversationMember: (profile: Record<string, unknown>) => unknown
+                normalizeEmbeddedRecord:     (record: Record<string, unknown>) => unknown
+                normalizePostEmbed:          (embed: unknown) => unknown
+            };
+            expect(client.normalizeAuthor(AUTHOR_BASIC)).toEqual(AUTHOR_BASIC);
+            expect(client.normalizeDetailedProfile({ ...AUTHOR_BASIC, followersCount: 0, followsCount: 0, postsCount: 0 })).toEqual({ ...AUTHOR_BASIC, followersCount: 0, followsCount: 0, postsCount: 0 });
+            const detailedWithoutCounts = client.normalizeDetailedProfile(AUTHOR_BASIC) as Record<string, unknown>;
+            expect(detailedWithoutCounts).toEqual(AUTHOR_BASIC);
+            for(const key of ['followersCount', 'followsCount', 'postsCount']) {
+                expect(Object.hasOwn(detailedWithoutCounts, key)).toBe(false);
+            }
+            expect(client.normalizeViewer({ bookmarked: false, threadMuted: false, replyDisabled: false, embeddingDisabled: false })).toEqual({ bookmarked: false, threadMuted: false, replyDisabled: false, embeddingDisabled: false });
+            const viewerWithoutFlags = client.normalizeViewer({}) as Record<string, unknown>;
+            expect(viewerWithoutFlags).toEqual({});
+            for(const key of ['bookmarked', 'threadMuted', 'replyDisabled', 'embeddingDisabled']) {
+                expect(Object.hasOwn(viewerWithoutFlags, key)).toBe(false);
+            }
+            expect(client.normalizeProfileView({ ...AUTHOR_BASIC, description: 'Bio' })).toEqual({ ...AUTHOR_BASIC, description: 'Bio' });
+            const conversationMember = { did: 'did:plc:member1', handle: 'alice.bsky.social', displayName: 'Alice', avatar: 'https://cdn.bsky.app/avatar1.jpg', chatDisabled: false };
+            expect(client.normalizeConversationMember(conversationMember)).toEqual(conversationMember);
+            const memberWithoutChatFlag = client.normalizeConversationMember({ did: conversationMember.did, handle: conversationMember.handle }) as Record<string, unknown>;
+            expect(Object.hasOwn(memberWithoutChatFlag, 'chatDisabled')).toBe(false);
+            expect(client.normalizePostEmbed(null)).toBeUndefined();
+
+            const emptyEmbeds = client.normalizeEmbeddedRecord({ ...POST_VIEW, value: {}, embeds: [{ $type: 'unknown' }] });
+            expect(emptyEmbeds).not.toHaveProperty('embeds');
+        });
+
+        test('omits empty normalized facets and rejects incomplete post-view shapes', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS) as unknown as {
+                normalizePost:    (post: Record<string, unknown>) => Promise<Record<string, unknown>>
+                normalizeMessage: (message: Record<string, unknown>) => Promise<Record<string, unknown>>
+                isPostView:       (view: Record<string, unknown>) => boolean
+            };
+            const emptyFacet = [{ index: { byteStart: 0, byteEnd: 1 }, features: [{ $type: 'unknown' }] }];
+            const post = await client.normalizePost({ ...POST_VIEW, record: { ...POST_RECORD, facets: emptyFacet } });
+            expect(post).not.toHaveProperty('facets');
+            const message = await client.normalizeMessage({ id: 'message', rev: 'revision', text: 'Hello', sender: { did: 'did:plc:member' }, sentAt: '2026-03-07T12:00:00.000Z', facets: emptyFacet });
+            expect(message).not.toHaveProperty('facets');
+
+            for(const view of [
+                { cid: 'cid', author: {} },
+                { uri: 'at://post', author: {} },
+                { uri: 'at://post', cid: 'cid' },
+                { uri: 1, cid: 'cid', author: {} },
+                { uri: 'at://post', cid: 1, author: {} },
+                { uri: 'at://post', cid: 'cid', author: null },
+            ]) {
+                expect(client.isPostView(view)).toBe(false);
+            }
+        });
+
+        test('keeps validation and absence diagnostics specific', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [] } });
+            expect(await capturedError(() => client.getPost('at://missing'))).toHaveProperty('message', 'Post not found');
+
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [undefined] } } as never);
+            expect(await capturedError(() => client.getPost('at://invalid'))).toMatchObject({
+                message: 'Failed to fetch post',
+                context: { originalMessage: 'Invariant violated in getPost: posts[0] undefined after posts.length === 0 guard' },
+            });
+
+            mockRichTextState.graphemeLength = 301;
+            expect(await capturedError(() => client.validatePostText('too long'))).toHaveProperty('message', 'Post exceeds 300 graphemes (301)');
+            mockRichTextState.graphemeLength = 1001;
+            expect(await capturedError(() => client.validateDMText('too long'))).toHaveProperty('message', 'DM exceeds 1000 graphemes (1001)');
         });
     });
 });

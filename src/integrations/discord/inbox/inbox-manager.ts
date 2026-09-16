@@ -17,8 +17,9 @@
 import { logger } from '@hughescr/logger';
 import type { CheckpointManager } from './checkpoint-manager';
 import { type InboxConfig, DEFAULT_INBOX_CONFIG  } from './config';
-import type { UnreadMessage, UnreadOverview } from './types';
+import type { DiscordChannelCheckpoint, UnreadMessage, UnreadOverview } from './types';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import { mapBounded } from '@/integrations/discord/map-bounded';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import type { ChannelId, GuildId } from '@/integrations/discord/types';
 
@@ -119,18 +120,14 @@ export class InboxManager {
      * inboxManager.setBotUserId(client.user.id);
      * ```
      */
-    // Stryker disable BlockStatement: Simple setter with logging - tested via integration
     setBotUserId(botUserId: string): void {
         this.botUserId = botUserId;
 
-        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
         logger.debug({
             botUserId,
             msg: 'Bot user ID set for inbox filtering',
         });
-        // Stryker restore ObjectLiteral,StringLiteral
     }
-    // Stryker restore BlockStatement
 
     /**
      * Updates channel metadata cache with channel name and guild ID.
@@ -153,14 +150,12 @@ export class InboxManager {
     updateChannelMetadata(channelId: ChannelId, channelName: string, guildId: GuildId | 'DM'): void {
         this.channelMetadata.set(channelId, { channelName, guildId });
 
-        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
         logger.debug({
             channelId,
             channelName,
             guildId,
             msg: 'Channel metadata updated',
         });
-        // Stryker restore ObjectLiteral,StringLiteral
     }
 
     /**
@@ -188,51 +183,38 @@ export class InboxManager {
      * ```
      */
     async loadUnread(): Promise<number> {
-        let totalLoaded = 0;
-        let successCount = 0;
-        let failCount = 0;
-
         // Get unmuted channels from registry instead of static list
         const channels = await this.channelRegistry.getUnmutedChannels();
         const startMs = Date.now();
 
-        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
         logger.info({
             channelCount: channels.length,
             msg:          'Loading unread messages...',
         });
-        // Stryker restore ObjectLiteral,StringLiteral
 
-        for(const [index, channel] of channels.entries()) {
+        const outcomes = await mapBounded(channels, 5, async (channel, index) => {
             const channelId = channel.channelId;
 
-            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
             logger.debug({
                 index:       index + 1,
                 total:       channels.length,
                 channelName: channel.channelName,
                 msg:         'Loading channel...',
             });
-            // Stryker restore ObjectLiteral,StringLiteral
-            // Stryker disable BlockStatement: Error handling logs failure but continues processing other channels
             try {
                 // Initialize checkpoint if it doesn't exist (creates new checkpoint with lastSeenAt = now)
-                // eslint-disable-next-line no-await-in-loop -- sequential: DynamoDB init then load for each channel
                 await this.checkpointManager.initializeIfMissing(channelId, channel.guildId);
 
                 // Load the checkpoint (now guaranteed to exist)
-                // eslint-disable-next-line no-await-in-loop -- sequential: load depends on prior init
                 const checkpoint = await this.checkpointManager.load(channelId);
 
                 // If checkpoint doesn't exist after initialization, skip this channel
                 if(!checkpoint) {
-                    // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                     logger.warn({
                         channelId,
                         msg: 'Checkpoint missing after initialization',
                     });
-                    // Stryker restore ObjectLiteral,StringLiteral
-                    continue;
+                    return { status: 'skipped' as const, channelId, messages: [] as UnreadMessage[] };
                 }
 
                 // Skip if gap is too small (avoid noise from brief disconnects)
@@ -240,25 +222,20 @@ export class InboxManager {
                 const now = new Date();
                 const gapMs = now.getTime() - lastSeen.getTime();
 
-                // Stryker disable next-line EqualityOperator: Boundary condition for noise reduction - < vs <= makes no practical difference
                 if(gapMs < this.config.minGapDurationMs) {
-                    // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                     logger.debug({
                         channelId,
                         gapMs,
                         minGapMs: this.config.minGapDurationMs,
                         msg:      'Skipping channel - gap too small',
                     });
-                    // Stryker restore ObjectLiteral,StringLiteral
-                    continue;
+                    return { status: 'success' as const, channelId, messages: [] as UnreadMessage[] };
                 }
 
                 // Limit catch-up age to prevent overwhelming the inbox
                 const maxAgeMs = this.config.maxCatchUpAgeDays * 24 * 60 * 60 * 1000;
-                // Stryker disable next-line ArithmeticOperator: +1 to exclude lastSeen message itself - off-by-one doesn't affect catch-up behavior
                 const effectiveStartTime = new Date(Math.max(lastSeen.getTime() + 1, now.getTime() - maxAgeMs));
 
-                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
                 const response = await this.messageSearchService.searchMessages({
                     channelId,
                     startTime: effectiveStartTime,
@@ -266,53 +243,51 @@ export class InboxManager {
                     limit:     this.config.maxCatchUpMessages,
                 });
 
-                // Stryker disable next-line ConditionalExpression,EqualityOperator: Guard clause - equivalent when empty (filter produces [] either way, inner guard catches 0-length)
-                if(response.messages.length > 0) {
-                    // Filter out bot messages (if botUserId is set) and convert to UnreadMessage format
-                    const filteredMessages = response.messages.filter(msg => !this.botUserId || msg.author.id !== this.botUserId);
-                    const unreadMessages: UnreadMessage[] = filteredMessages.map(msg => ({
-                        id:          msg.id,
+                // Filter out bot messages (if botUserId is set) and convert to UnreadMessage format.
+                // filter and map preserve the empty-result contract without a separate branch.
+                const filteredMessages = response.messages.filter(msg => !this.botUserId || msg.author.id !== this.botUserId);
+                const unreadMessages = filteredMessages.map(msg => ({
+                    id:          msg.id,
+                    channelId,
+                    channelName: channel.channelName,
+                    guildId:     channel.guildId,
+                    author:      msg.author.displayName,
+                    content:     msg.content,
+                    timestamp:   msg.timestamp,
+                    isRead:      false,
+                }));
+
+                if(unreadMessages.length > 0) {
+                    logger.info({
                         channelId,
-                        channelName: channel.channelName,
-                        guildId:     channel.guildId,
-                        author:      msg.author.displayName,
-                        content:     msg.content,
-                        timestamp:   msg.timestamp,
-                        isRead:      false,
-                    }));
-
-                    // Stryker disable next-line ConditionalExpression,EqualityOperator: Guard clause - equivalent when empty (totalLoaded += 0, no entry stored - same result)
-                    if(unreadMessages.length > 0) {
-                        this.unreadMessages.set(channelId, unreadMessages);
-                        totalLoaded += unreadMessages.length;
-
-                        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-                        logger.info({
-                            channelId,
-                            channelName:  channel.channelName,
-                            messageCount: unreadMessages.length,
-                            msg:          `Loaded ${unreadMessages.length} unread messages for channel`,
-                        });
-                        // Stryker restore ObjectLiteral,StringLiteral
-                    }
+                        channelName:  channel.channelName,
+                        messageCount: unreadMessages.length,
+                        msg:          `Loaded ${unreadMessages.length} unread messages for channel`,
+                    });
                 }
-                successCount++;
+                return { status: 'success' as const, channelId, messages: unreadMessages };
             } catch (error) {
-                failCount++;
                 const message = error instanceof Error ? error.message : String(error);
-                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                 logger.warn({
                     channelId,
                     error,
                     msg: `Failed to load unread messages for channel: ${message}`,
                 });
-                // Stryker restore ObjectLiteral,StringLiteral
                 // Continue processing other channels despite errors
+                return { status: 'failed' as const, channelId, messages: [] as UnreadMessage[] };
             }
-            // Stryker restore BlockStatement
-        }
+        });
 
-        // Stryker disable ObjectLiteral,StringLiteral,ArithmeticOperator: Logging for observability
+        let totalLoaded = 0;
+        for(const outcome of outcomes) {
+            if(outcome.messages.length > 0) {
+                this.unreadMessages.set(outcome.channelId, outcome.messages);
+                totalLoaded += outcome.messages.length;
+            }
+        }
+        const successCount = outcomes.filter(outcome => outcome.status === 'success').length;
+        const failCount = outcomes.filter(outcome => outcome.status === 'failed').length;
+
         logger.info({
             successCount,
             failCount,
@@ -324,7 +299,6 @@ export class InboxManager {
             channelCount: this.unreadMessages.size,
             msg:          `Inbox loaded: ${totalLoaded} unread messages across ${this.unreadMessages.size} channels`,
         });
-        // Stryker restore ObjectLiteral,StringLiteral,ArithmeticOperator
 
         return totalLoaded;
     }
@@ -400,7 +374,6 @@ export class InboxManager {
      * ```
      */
     getMessage(channelId: ChannelId, messageId: string): UnreadMessage | undefined {
-        // Stryker disable next-line ConditionalExpression: ?? [] fallback is equivalent when channel has no messages — find() on [] returns undefined same as short-circuit
         return (this.unreadMessages.get(channelId) ?? []).find(msg => msg.id === messageId);
     }
 
@@ -433,7 +406,6 @@ export class InboxManager {
                 msg.isRead = true;
 
                 // Track the latest message for checkpoint update
-                // Stryker disable next-line EqualityOperator: > vs >= makes no practical difference for unique ISO timestamps; ConditionalExpression is T-class (tests verify latest timestamp wins)
                 if(!latestTimestamp || msg.timestamp > latestTimestamp) {
                     latestTimestamp = msg.timestamp;
                     latestMessageId = msg.id;
@@ -452,14 +424,12 @@ export class InboxManager {
                 latestMessageId
             );
 
-            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
             logger.debug({
                 channelId,
                 messageCount: messageIds.length,
                 latestTimestamp,
                 msg:          `Marked ${messageIds.length} messages as read`,
             });
-            // Stryker restore ObjectLiteral,StringLiteral
         }
     }
 
@@ -478,8 +448,7 @@ export class InboxManager {
      */
     async markChannelRead(channelId: ChannelId): Promise<void> {
         const messages = this.unreadMessages.get(channelId);
-        // Stryker disable next-line ConditionalExpression: Equivalent — messages.length === 0 is dead code (only non-empty arrays are stored); !messages guard ensures no crash on unknown channel; → false mutant crashes on undefined (L-class: same observable output, test runner may not surface the throw through Stryker)
-        if(!messages || messages.length === 0) {
+        if(!messages?.length) {
             return;
         }
 
@@ -488,7 +457,6 @@ export class InboxManager {
         for(const msg of messages) {
             msg.isRead = true;
 
-            // Stryker disable next-line EqualityOperator: > vs >= makes no practical difference for unique ISO timestamps; ConditionalExpression is T-class (tests verify latest timestamp wins)
             if(!latestMessage || msg.timestamp > latestMessage.timestamp) {
                 latestMessage = msg;
             }
@@ -502,17 +470,16 @@ export class InboxManager {
                 channelId,
                 guildId,
                 latestMessage.timestamp,
+                // Stryker disable next-line llm: UnreadMessage.id is required string data, so an empty-string fallback returns the same value.
                 latestMessage.id
             );
 
-            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
             logger.info({
                 channelId,
                 messageCount:    messages.length,
                 latestTimestamp: latestMessage.timestamp,
                 msg:             'Channel marked as read',
             });
-            // Stryker restore ObjectLiteral,StringLiteral
         }
     }
 
@@ -539,14 +506,12 @@ export class InboxManager {
     async recordActivity(channelId: ChannelId, guildId: GuildId | 'DM', messageId: string, timestamp: string): Promise<void> {
         await this.checkpointManager.updateLastSeen(channelId, guildId, timestamp, messageId);
 
-        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
         logger.debug({
             channelId,
             messageId,
             timestamp,
             msg: 'Channel activity recorded',
         });
-        // Stryker restore ObjectLiteral,StringLiteral
     }
 
     /**
@@ -614,14 +579,12 @@ export class InboxManager {
     async recordHandled(channelId: ChannelId, messageId: string, at: string): Promise<void> {
         await this.checkpointManager.updateHandled(channelId, messageId, at);
 
-        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
         logger.debug({
             channelId,
             messageId,
             at,
             msg: 'Channel handled watermark recorded',
         });
-        // Stryker restore ObjectLiteral,StringLiteral
     }
 
     /**
@@ -650,26 +613,19 @@ export class InboxManager {
     async replayUnhandled(options?: { excludeChannelIds?: ReadonlySet<ChannelId> }): Promise<UnreadMessage[]> {
         const excludeChannelIds = options?.excludeChannelIds;
         const checkpoints = await this.checkpointManager.listAll();
+        const eligible = checkpoints.filter((checkpoint): checkpoint is DiscordChannelCheckpoint & { handled: NonNullable<DiscordChannelCheckpoint['handled']> } =>
+            checkpoint.handled !== undefined
+            && !excludeChannelIds?.has(checkpoint.channelId)
+            && checkpoint.handled.at < checkpoint.lastSeenAt
+        );
+
         const replayed: UnreadMessage[] = [];
-
-        for(const checkpoint of checkpoints) {
-            if(!checkpoint.handled) {
-                continue;
-            }
-
-            if(excludeChannelIds?.has(checkpoint.channelId)) {
-                continue;
-            }
-
-            if(checkpoint.handled.at >= checkpoint.lastSeenAt) {
-                continue;
-            }
-
+        for(const checkpoint of eligible) {
             const handled = checkpoint.handled;
             const startTime = new Date(new Date(handled.at).getTime() + 1);
             const endTime = new Date(checkpoint.lastSeenAt);
 
-            // eslint-disable-next-line no-await-in-loop -- sequential per-channel replay fetch, mirrors loadUnread's established pattern
+            // eslint-disable-next-line no-await-in-loop -- rate-limited Discord replay search; stop before later channels on failure
             const response = await this.messageSearchService.searchMessages({
                 channelId: checkpoint.channelId,
                 startTime,

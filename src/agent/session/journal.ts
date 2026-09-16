@@ -36,7 +36,6 @@ export function createSessionJournal(params: CreateSessionJournalParams): Sessio
         append(entry: JournalEntry): void {
             const appended: Promise<void> = backend.append(role, entry)
                 .catch((error: unknown) => {
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
                     logger.error({ error, kind: entry.type, at: clock.now(), msg: 'SessionJournal: failed to write journal entry' });
                 })
                 .finally(() => {

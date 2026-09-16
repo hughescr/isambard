@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest, type Mock } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
+import { CronExpressionParser } from 'cron-parser';
 import { createPerchScheduler, type PerchSchedulerDeps } from '@/agent/perch/scheduler';
 import type { PerchConfig } from '@/agent/perch/types';
 
@@ -63,6 +64,15 @@ describe('PerchScheduler', () => {
 
             const scheduler = createPerchScheduler(deps);
             expect(scheduler).toBeDefined();
+        });
+
+        test('default local hour uses the configured timezone', () => {
+            jest.setSystemTime(new Date('2026-09-12T17:00:00Z'));
+            const scheduler = createPerchScheduler({
+                logger: mockLogger, config, onPerchTrigger: mockOnPerchTrigger,
+            });
+            scheduler.triggerNow();
+            expect(mockOnPerchTrigger).toHaveBeenCalledWith('mid-morning');
         });
 
         test('should use custom local hour function if provided', () => {
@@ -203,6 +213,16 @@ describe('PerchScheduler', () => {
             scheduler.stop();
 
             expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('stopped'));
+        });
+
+        test('cancels the scheduled trigger', () => {
+            const scheduler = createPerchScheduler({ logger: mockLogger, config, onPerchTrigger: mockOnPerchTrigger });
+            scheduler.start();
+            scheduler.stop();
+
+            jest.advanceTimersByTime(3_600_000);
+
+            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
         });
     });
 
@@ -389,6 +409,28 @@ describe('PerchScheduler', () => {
     });
 
     describe('randomized scheduling with H option', () => {
+        test('uses the UTC hourly hash seed and H cron expression', () => {
+            const now = new Date('2026-09-12T02:00:00Z');
+            jest.setSystemTime(now);
+            const utcConfig = { ...config, timezone: 'UTC' };
+            const scheduler = createPerchScheduler({
+                logger: mockLogger, config: utcConfig, onPerchTrigger: mockOnPerchTrigger,
+            });
+            scheduler.start();
+            const expected = CronExpressionParser.parse('H * * * *', {
+                tz:          'UTC',
+                currentDate: now,
+                hashSeed:    Math.floor(now.getTime() / 3_600_000).toString(),
+            }).next().toDate();
+            const scheduleCall = (mockLogger.debug as Mock<Logger['debug']>).mock.calls.find(call =>
+                call[1] === 'Next perch trigger scheduled');
+            expect(scheduleCall?.[0]).toEqual({
+                delaySeconds: Math.round((expected.getTime() - now.getTime()) / 1000),
+                nextTrigger:  expected.toISOString().replace('.000Z', 'Z'),
+            });
+            scheduler.stop();
+        });
+
         test('should schedule next trigger using cron-parser H option', () => {
             const deps: PerchSchedulerDeps = {
                 logger:         mockLogger,
@@ -527,6 +569,8 @@ describe('PerchScheduler', () => {
             scheduler.triggerTestPerch();
 
             expect(mockOnPerchTrigger).toHaveBeenCalledWith('evening');
+            expect(mockLogger.info).toHaveBeenCalledWith({ slot: 'evening' }, 'Triggering test perch with forced slot');
+            expect(mockLogger.info).toHaveBeenCalledWith({ slot: 'evening' }, 'Triggering perch time');
         });
 
         test('triggerTestPerch should cycle through slots when forceSlot not provided', () => {
@@ -548,6 +592,7 @@ describe('PerchScheduler', () => {
             // First call should be pre-dawn
             scheduler.triggerTestPerch();
             expect(mockOnPerchTrigger).toHaveBeenCalledWith('pre-dawn');
+            expect(mockLogger.info).toHaveBeenCalledWith({ slot: 'pre-dawn', nextIndex: 1 }, 'Triggering test perch with cycling slot');
 
             // Second call should be mid-morning
             scheduler.triggerTestPerch();
@@ -702,23 +747,41 @@ describe('PerchScheduler', () => {
     });
 
     describe('scheduled trigger behavior', () => {
-        test('should reschedule even when disabled', () => {
-            const disabledConfig = { ...config, enabled: false };
+        test('should reschedule when disabled after start', () => {
+            const runtimeConfig = { ...config, enabled: true };
             const deps: PerchSchedulerDeps = {
                 logger:         mockLogger,
-                config:         disabledConfig,
+                config:         runtimeConfig,
                 onPerchTrigger: mockOnPerchTrigger,
             };
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
+            runtimeConfig.enabled = false;
 
             // Advance time to trigger scheduled check
             jest.advanceTimersByTime(3_600_000); // 1 hour
 
-            // Should have logged but not triggered
+            const scheduleCalls = (mockLogger.debug as Mock<Logger['debug']>).mock.calls
+                .filter(call => typeof call[1] === 'string' && call[1].includes('Next perch trigger scheduled'));
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();
+            expect(scheduleCalls.length).toBeGreaterThanOrEqual(2);
 
+            scheduler.stop();
+        });
+
+        test('starting twice replaces the first scheduled timeout', () => {
+            const scheduler = createPerchScheduler({ logger: mockLogger, config, onPerchTrigger: mockOnPerchTrigger });
+            scheduler.start();
+            const firstSchedule = (mockLogger.debug as Mock<Logger['debug']>).mock.calls.find(call =>
+                typeof call[1] === 'string' && call[1].includes('Next perch trigger scheduled'));
+            expect(firstSchedule).toBeDefined();
+            const firstTriggerAt = new Date((firstSchedule![0] as { nextTrigger: string }).nextTrigger).getTime();
+
+            scheduler.start();
+            jest.advanceTimersByTime(firstTriggerAt - Date.now() + 1);
+
+            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
             scheduler.stop();
         });
 
@@ -1110,6 +1173,23 @@ describe('PerchScheduler', () => {
     });
 
     describe('double-fire prevention', () => {
+        test('keeps a trigger exactly at the start of the next hour', () => {
+            const deps: PerchSchedulerDeps = {
+                logger:         mockLogger, config:         { ...config, timezone: 'UTC' },
+                onPerchTrigger: mockOnPerchTrigger,
+            };
+            jest.setSystemTime(new Date('2026-11-19T22:00:00Z'));
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+            const scheduled = () => (mockLogger.debug as unknown as Mock<(...args: unknown[]) => void>).mock.calls
+                .findLast(call => typeof call[1] === 'string' && call[1].includes('Next perch trigger scheduled'))?.[0] as
+                { nextTrigger: string } | undefined;
+            expect(scheduled()?.nextTrigger).toBe('2026-11-19T23:00:00Z');
+            jest.advanceTimersByTime(3_600_001);
+            expect(scheduled()?.nextTrigger).toBe('2026-11-20T00:00:00Z');
+            scheduler.stop();
+        });
+
         test('should not schedule two triggers in the same hour', () => {
             // Verifies the lastScheduledTime guard prevents double-fires:
             // rapid successive calls to scheduleNextTrigger() skip past the
@@ -1120,9 +1200,11 @@ describe('PerchScheduler', () => {
                 onPerchTrigger: mockOnPerchTrigger,
             };
 
-            // Start at a known time
-            const startTime = new Date('2026-02-08T12:00:00Z').getTime();
+            // At this hour the next hash minute (03:16) falls in the same hour
+            // as the first trigger (03:00), so the collision guard must skip it.
+            const startTime = new Date('2026-09-12T02:00:00Z').getTime();
             jest.setSystemTime(startTime);
+            deps.config = { ...config, timezone: 'UTC' };
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
@@ -1133,7 +1215,7 @@ describe('PerchScheduler', () => {
                 typeof call[1] === 'string' && call[1].includes('Next perch trigger scheduled'));
             expect(firstScheduleCall).toBeDefined();
             const firstLog = firstScheduleCall![0] as { delaySeconds: number, nextTrigger: string };
-            const firstTriggerHour = new Date(firstLog.nextTrigger).getUTCHours();
+            expect(firstLog.nextTrigger).toBe('2026-09-12T03:00:00Z');
 
             // Advance past the first trigger to fire onScheduledTrigger,
             // which calls scheduleNextTrigger() again
@@ -1145,10 +1227,7 @@ describe('PerchScheduler', () => {
                 typeof call[1] === 'string' && call[1].includes('Next perch trigger scheduled'));
             expect(secondScheduleCall).toBeDefined();
             const secondLog = secondScheduleCall![0] as { delaySeconds: number, nextTrigger: string };
-            const secondTriggerHour = new Date(secondLog.nextTrigger).getUTCHours();
-
-            // The two triggers must be in different hours
-            expect(secondTriggerHour).not.toBe(firstTriggerHour);
+            expect(new Date(secondLog.nextTrigger).getTime()).toBeGreaterThanOrEqual(Date.parse('2026-09-12T04:00:00Z'));
 
             scheduler.stop();
         });

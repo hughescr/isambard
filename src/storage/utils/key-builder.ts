@@ -56,7 +56,6 @@ export function createPrefixedKey(prefix: string, ...parts: string[]): string {
 export function parsePrefixedKey(prefix: string, key: string): string {
     const expectedStart = `${prefix}#`;
     if(!key.startsWith(expectedStart)) {
-        // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
         throw new InvariantViolationError('parsePrefixedKey', `Invalid key format: expected ${prefix}#..., got ${key}`);
     }
     return key.slice(expectedStart.length);

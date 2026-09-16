@@ -1,11 +1,9 @@
 import type { OutboxPriority } from './types';
 
-// Stryker disable StringLiteral: PK/SK key constants are configuration values
 const OUTBOX_PK_PREFIX = 'OUTBOX#';
 const ITEM_SK_PREFIX   = 'ITEM#';
 // Stryker restore StringLiteral
 
-// Stryker disable StringLiteral,ObjectLiteral: Priority sort constants are static configuration
 const PRIORITY_SORT: Record<OutboxPriority, string> = {
     high:   '0',
     medium: '1',
@@ -31,9 +29,7 @@ export const OutboxKeyGenerator = {
      */
     createKeys(item: { service: string, priority: OutboxPriority, dedupeKey: string }): { PK: string, SK: string } {
         return {
-            // Stryker disable next-line StringLiteral: PK prefix is a configuration constant
             PK: `${OUTBOX_PK_PREFIX}${item.service}`,
-            // Stryker disable next-line StringLiteral: SK prefix is a configuration constant
             SK: `${ITEM_SK_PREFIX}${PRIORITY_SORT[item.priority]}#${item.dedupeKey}`,
         };
     },
@@ -50,7 +46,6 @@ export const OutboxKeyGenerator = {
         const withoutPrefix = sk.slice(ITEM_SK_PREFIX.length);
         // Format: {priorityChar}#{dedupeKey}
         const hashIdx = withoutPrefix.indexOf('#');
-        // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent — with hashIdx=-1, slice(0,-1) and slice(0) produce priorityChar/dedupeKey that won't match any PRIORITY_SORT entry, so parseSK returns undefined either way
         if(hashIdx === -1) {
             return undefined;
         }
@@ -71,7 +66,6 @@ export const OutboxKeyGenerator = {
      * Creates the PK for querying all items for a service.
      */
     createServicePK(service: string): string {
-        // Stryker disable next-line StringLiteral: PK prefix is a configuration constant
         return `${OUTBOX_PK_PREFIX}${service}`;
     },
 };

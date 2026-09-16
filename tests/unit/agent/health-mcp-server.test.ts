@@ -1,14 +1,15 @@
 import { describe, test, expect } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createHealthMCPServer } from '../../../src/agent/health-mcp-server';
+import type { ServiceHealthRegistry } from '../../../src/services/health-registry';
 import { makeHealthEntry, makeHealthRegistry } from '../../helpers/fake-health-registry';
-import { textContent } from '../../setup';
+import { mockLogger, textContent } from '../../setup';
 
 interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<CallToolResult>
     description: string
     inputSchema: { shape: Record<string, unknown> }
-    annotations: Record<string, boolean>
+    annotations: Record<string, boolean | string>
 }
 interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool>, server: { _serverInfo: { version: string } } }
 
@@ -37,6 +38,23 @@ describe('createHealthMCPServer', () => {
     });
 
     describe('getServiceHealth tool', () => {
+        test('logs its tool identity if collecting health fails', async () => {
+            mockLogger.warn.mockClear();
+            const registry = {
+                ...makeHealthRegistry(),
+                getAll: () => { throw new Error('registry unavailable'); },
+            } as ServiceHealthRegistry;
+            const tool = getTool(createHealthMCPServer({ healthRegistry: registry }), 'getServiceHealth');
+
+            const result = await tool.handler({});
+
+            expect(result.isError).toBe(true);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                { tool: 'getServiceHealth', error: 'registry unavailable' },
+                'MCP tool error'
+            );
+        });
+
         test('returns state/epoch/lastError per service from getAll()', async () => {
             const discordEntry = makeHealthEntry({ state: 'online', epoch: 4 });
             const emailEntry   = makeHealthEntry({ state: 'offline', epoch: 1, lastError: { code: 'AUTH', message: 'bad creds' } });
@@ -114,6 +132,7 @@ describe('createHealthMCPServer', () => {
             const tool   = getTool(server, 'getServiceHealth');
 
             expect(tool.annotations.readOnlyHint).toBe(true);
+            expect(tool.annotations.title).toBe('Get Service Health');
             expect(tool.annotations.destructiveHint).toBe(false);
             expect(tool.annotations.idempotentHint).toBe(true);
             expect(tool.annotations.openWorldHint).toBe(false);

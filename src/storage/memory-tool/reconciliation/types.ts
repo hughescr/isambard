@@ -23,7 +23,6 @@ export {
 /**
  * Phase identifier for reconciliation job
  */
-/* Stryker disable StringLiteral: Enum values are configuration */
 const reconciliationPhaseSchema = z.enum(['phaseA', 'phaseB', 'phaseC']);
 /* Stryker restore StringLiteral */
 

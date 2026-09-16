@@ -24,9 +24,7 @@ describe.concurrent('createDiscordClient', () => {
         expect(intents).toBeDefined();
 
         // Check that GuildMessages intent is set
-        const expectedIntents = GatewayIntentBits.GuildMessages;
-        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
-        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+        expect(intents.has(GatewayIntentBits.GuildMessages)).toBe(true);
     });
 
     test('should configure client with MessageContent intent', () => {
@@ -36,9 +34,7 @@ describe.concurrent('createDiscordClient', () => {
         expect(intents).toBeDefined();
 
         // Check that MessageContent intent is set
-        const expectedIntents = GatewayIntentBits.MessageContent;
-        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
-        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+        expect(intents.has(GatewayIntentBits.MessageContent)).toBe(true);
     });
 
     test('should configure client with Guilds intent', () => {
@@ -48,9 +44,7 @@ describe.concurrent('createDiscordClient', () => {
         expect(intents).toBeDefined();
 
         // Check that Guilds intent is set
-        const expectedIntents = GatewayIntentBits.Guilds;
-        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
-        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+        expect(intents.has(GatewayIntentBits.Guilds)).toBe(true);
     });
 
     test('should configure client with DirectMessages intent', () => {
@@ -60,9 +54,7 @@ describe.concurrent('createDiscordClient', () => {
         expect(intents).toBeDefined();
 
         // Check that DirectMessages intent is set
-        const expectedIntents = GatewayIntentBits.DirectMessages;
-        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
-        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+        expect(intents.has(GatewayIntentBits.DirectMessages)).toBe(true);
     });
 
     test('should configure client with GuildMessageReactions intent', () => {
@@ -72,9 +64,7 @@ describe.concurrent('createDiscordClient', () => {
         expect(intents).toBeDefined();
 
         // Check that GuildMessageReactions intent is set
-        const expectedIntents = GatewayIntentBits.GuildMessageReactions;
-        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
-        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+        expect(intents.has(GatewayIntentBits.GuildMessageReactions)).toBe(true);
     });
 
     test('should configure client with DirectMessageReactions intent', () => {
@@ -84,9 +74,7 @@ describe.concurrent('createDiscordClient', () => {
         expect(intents).toBeDefined();
 
         // Check that DirectMessageReactions intent is set
-        const expectedIntents = GatewayIntentBits.DirectMessageReactions;
-        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
-        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+        expect(intents.has(GatewayIntentBits.DirectMessageReactions)).toBe(true);
     });
 
     test('should configure client with GuildPresences intent', () => {
@@ -96,9 +84,7 @@ describe.concurrent('createDiscordClient', () => {
         expect(intents).toBeDefined();
 
         // Check that GuildPresences intent is set
-        const expectedIntents = GatewayIntentBits.GuildPresences;
-        // eslint-disable-next-line no-bitwise -- Discord.js uses bitfields for intents
-        expect(Number(intents) & Number(expectedIntents)).toBe(Number(expectedIntents));
+        expect(intents.has(GatewayIntentBits.GuildPresences)).toBe(true);
     });
 
     test('should configure client with all seven required intents', () => {
@@ -108,18 +94,17 @@ describe.concurrent('createDiscordClient', () => {
         expect(intents).toBeDefined();
 
         // Check all seven intents are set together
-        /* eslint-disable no-bitwise -- Discord.js uses bitfields for intents */
-        const expectedIntents
-            = Number(GatewayIntentBits.Guilds)
-              | Number(GatewayIntentBits.GuildMessages)
-              | Number(GatewayIntentBits.MessageContent)
-              | Number(GatewayIntentBits.DirectMessages)
-              | Number(GatewayIntentBits.GuildMessageReactions)
-              | Number(GatewayIntentBits.DirectMessageReactions)
-              | Number(GatewayIntentBits.GuildPresences);
+        const expectedIntents = [
+            GatewayIntentBits.Guilds,
+            GatewayIntentBits.GuildMessages,
+            GatewayIntentBits.MessageContent,
+            GatewayIntentBits.DirectMessages,
+            GatewayIntentBits.GuildMessageReactions,
+            GatewayIntentBits.DirectMessageReactions,
+            GatewayIntentBits.GuildPresences,
+        ];
 
-        expect(Number(intents) & expectedIntents).toBe(expectedIntents);
-        /* eslint-enable no-bitwise -- Re-enable after bitfield operations */
+        expect(intents.has(expectedIntents)).toBe(true);
     });
 
     test('should configure client with Channel partial for DM support', () => {

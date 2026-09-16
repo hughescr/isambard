@@ -9,7 +9,6 @@ function isNetworkErrorByMessage(error: unknown): ErrorClassification | undefine
         return undefined;
     }
 
-    // Stryker disable StringLiteral,ConditionalExpression,BlockStatement: network error code constants — mutating strings/conditions causes test timeout (retry classification loop)
     const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
     if(!networkErrorCodes.some(code => error.message.includes(code))) {
         return undefined;
@@ -43,15 +42,6 @@ function getErrorMessage(error: unknown): string {
  * - All other errors -> permanent
  */
 export function classifyClaudeError(error: unknown): ErrorClassification {
-    // Handle non-object errors as permanent.
-    // All downstream classifiers (classifyNetworkError, classifyHttpStatus) also guard against
-    // non-objects, so removing this check produces the same 'permanent' result — equivalent mutants.
-    // Stryker disable ConditionalExpression,LogicalOperator,BlockStatement: Equivalent — downstream classifiers also guard non-objects; removing this guard produces identical results for all tested inputs
-    if(!(typeof error === 'object' && error !== null)) {
-        return { category: 'permanent', message: getErrorMessage(error) };
-    }
-    // Stryker restore ConditionalExpression,LogicalOperator,BlockStatement
-
     // Check for network errors by code property (uses 'Network error' as fallback for Claude)
     const networkByCode = classifyNetworkError(error, 'Network error');
     if(networkByCode) {

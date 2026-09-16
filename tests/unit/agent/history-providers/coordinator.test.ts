@@ -103,6 +103,19 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             expect(result.person).toBeUndefined();
         });
 
+        test('rejects a sparse contact result from the backend', async () => {
+            const backend = makeMockBackend();
+            backend.fuzzyLookup.mockImplementation(async (): Promise<Contact[]> => [undefined] as unknown as Contact[]);
+            const coord = new PersonHistoryCoordinator(makeOptions({ backend }));
+
+            expect(coord.getPersonHistory('craig')).rejects.toThrow(
+                'contacts[0] undefined after contacts.length === 0 guard'
+            );
+            expect(coord.getPersonHistory('craig')).rejects.toMatchObject({
+                context: { location: 'getPersonHistory' },
+            });
+        });
+
         test('returns first fuzzy match as person', async () => {
             const contact1 = makeContact({ personId: 'craig-hughes' as ContactId, displayName: 'Craig Hughes' });
             const contact2 = makeContact({ personId: 'craig-other'  as ContactId, displayName: 'Craig Other' });
@@ -162,6 +175,30 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             expect(result.history).toContain('[09:05]');
             // Past entry should use YYYY-MM-DD format
             expect(result.history).toContain('[2025-01-01]');
+        });
+
+        test('formats a different year, month, or day as a date even when the other fields match today', async () => {
+            const now = new Date();
+            const dates = [
+                new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate(), 9, 5)),
+                new Date(Date.UTC(now.getUTCFullYear(), (now.getUTCMonth() + 6) % 12, now.getUTCDate(), 9, 5)),
+                new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() === 1 ? 2 : 1, 9, 5)),
+            ];
+            const entries = dates.map((date, index) => makeEntry({ timestamp: date.toISOString(), summary: `date-case-${index}` }));
+            const coord = new PersonHistoryCoordinator(makeOptions({ providers: [makeProvider('discord', entries)] }));
+            const { history } = await coord.getPersonHistory('craig');
+
+            for(const [index, date] of dates.entries()) {
+                expect(history).toContain(`[${date.toISOString().slice(0, 10)}] date-case-${index}`);
+            }
+            expect(history).not.toContain('[09:05]');
+        });
+
+        test('separates every formatted interaction with a newline', async () => {
+            const entries = [makeEntry({ summary: 'first' }), makeEntry({ summary: 'second' })];
+            const coord = new PersonHistoryCoordinator(makeOptions({ providers: [makeProvider('discord', entries)] }));
+            const { history } = await coord.getPersonHistory('craig');
+            expect(history).toMatch(/first\n\[discord\].*second/);
         });
 
         test('entries are sorted descending by timestamp', async () => {
@@ -267,6 +304,13 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             expect(result.history!.length).toBeLessThan(10_000);
         });
 
+        test('does not truncate provider history when maxCharacters is NaN', async () => {
+            const coord = new PersonHistoryCoordinator(makeOptions({ providers: [makeProvider('discord', [makeEntry({ summary: 'complete' })])] }));
+            const result = await coord.getPersonHistory('craig', { maxCharacters: Number.NaN });
+            expect(result.history).toContain('complete');
+            expect(result.history).toContain('--- End of recent history ---');
+        });
+
         test('continues when one provider fails (error isolation)', async () => {
             const failingProvider: PlatformHistoryProvider = {
                 platform:     'discord',
@@ -292,6 +336,10 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             expect(result.history).toContain('email works');
             // Logger should have been called with the error
             expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                { err: expect.objectContaining({ message: 'Provider error' }) },
+                'PersonHistoryCoordinator: provider query failed'
+            );
         });
 
         test('returns undefined history when all providers fail', async () => {
@@ -482,6 +530,7 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             await coord.getPersonHistory('craig');
 
             expect(capturedParams?.metadata).toBeUndefined();
+            expect(capturedParams).not.toHaveProperty('metadata');
         });
 
         test('does not pass discordUserId metadata to non-discord provider', async () => {
@@ -635,6 +684,14 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             expect(result).toContain('--- Recent interactions with channel ---');
         });
 
+        test('keeps messages without IDs when exclusion is omitted', async () => {
+            mockSearch.getRecentMessages.mockImplementation(async () => ({ messages: [
+                { content: 'message without an ID', timestamp: '2025-01-01T10:00:00.000Z' },
+            ] }));
+            const coord = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
+            expect(await coord.getChannelLocalHistory('ch-123')).toContain('message without an ID');
+        });
+
         test('excludes the specified messageId', async () => {
             mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
                 messages: [
@@ -704,6 +761,16 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             expect(result).toBeDefined();
             expect(result).toContain('--- End of recent history ---');
             expect(result!.length).toBeLessThan(10_000);
+        });
+
+        test('does not truncate channel history when maxCharacters is NaN', async () => {
+            mockSearch.getRecentMessages.mockImplementation(async () => ({ messages: [
+                { id: 'message', content: 'complete', timestamp: '2025-01-01T10:00:00.000Z' },
+            ] }));
+            const coord = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
+            const result = await coord.getChannelLocalHistory('ch-123', undefined, { maxCharacters: Number.NaN });
+            expect(result).toContain('complete');
+            expect(result).toContain('--- End of recent history ---');
         });
 
         test('messages are sorted descending by timestamp', async () => {

@@ -53,6 +53,7 @@ import { createGuildId } from '@/integrations/discord/types';
 import * as staticWildDuckClientModule from '@/integrations/email';
 import type { HealthChangeListener } from '@/services';
 import * as staticServicesModule from '@/services';
+import type { ApprovalSaga } from '@/services/approval-saga/types';
 import * as staticPersonAllowlistModule from '@/storage';
 import * as staticStorageClientModule from '@/storage/client';
 import * as staticMemoryToolModule from '@/storage/memory-tool';
@@ -263,6 +264,168 @@ describe('createApp', () => {
         }
         spies.length = 0;
         resetMockSstResource();
+    });
+
+    test('closes the eager WildDuck client after setupEmail fails', async () => {
+        const { emailSetupSpy } = wireHappyPath(spies);
+        emailSetupSpy.mockRejectedValueOnce(new Error('email wiring failed'));
+        const init = mock(async () => undefined);
+        const shutdown = mock(async () => undefined);
+        // @ts-expect-error - Test replaces the constructor with a client that records shutdown
+        const wildDuckSpy = spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+            init, shutdown,
+        } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>));
+        const storageClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client:    { destroy: mock(() => undefined) } as unknown as DynamoDBClient,
+            docClient: { send: mock(async () => ({ Items: [], Count: 0 })) } as unknown as DynamoDBDocumentClient,
+            tableName: 'IsambardMemory',
+        });
+        spies.unshift(wildDuckSpy, storageClientSpy);
+
+        const app = await staticIndexModule.createApp();
+        expect(emailSetupSpy).toHaveBeenCalledTimes(1);
+        expect(init).toHaveBeenCalledTimes(1);
+        await app.stop();
+        expect(shutdown).toHaveBeenCalledTimes(1);
+    });
+
+    test('waits for an in-flight email reconnect before closing its client', async () => {
+        const { emailSetupSpy } = wireHappyPath(spies);
+        emailSetupSpy.mockRejectedValueOnce(new Error('email wiring failed'));
+        let resolveRetry: (() => void) | undefined;
+        let signalRetry: (() => void) | undefined;
+        const retryStarted = new Promise<void>((resolve) => {
+            signalRetry = resolve;
+        });
+        let attempts = 0;
+        let authenticated = false;
+        const init = mock((): Promise<void> => {
+            attempts += 1;
+            if(attempts === 1) {
+                return Promise.reject(new Error('initial auth failed'));
+            }
+            signalRetry?.();
+            return new Promise<void>((resolve) => {
+                resolveRetry = () => {
+                    authenticated = true;
+                    resolve();
+                };
+            });
+        });
+        const shutdown = mock(async () => {
+            authenticated = false;
+        });
+        // @ts-expect-error - Test replaces the constructor with a client that records shutdown
+        const wildDuckSpy = spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+            init, shutdown,
+        } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>));
+        const storageClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client:    { destroy: mock(() => undefined) } as unknown as DynamoDBClient,
+            docClient: { send: mock(async () => ({ Items: [], Count: 0 })) } as unknown as DynamoDBDocumentClient,
+            tableName: 'IsambardMemory',
+        });
+        spies.unshift(wildDuckSpy, storageClientSpy);
+
+        const app = await staticIndexModule.createApp();
+        await retryStarted;
+        const stop = app.stop();
+        await Promise.resolve();
+        expect(shutdown).not.toHaveBeenCalled();
+        resolveRetry?.();
+        await stop;
+        expect(init).toHaveBeenCalledTimes(2);
+        expect(shutdown).toHaveBeenCalledTimes(1);
+        expect(authenticated).toBe(false);
+    });
+
+    test('construction rollback waits for an in-flight email reconnect before closing its client', async () => {
+        const { emailSetupSpy } = wireHappyPath(spies);
+        emailSetupSpy.mockRejectedValueOnce(new Error('email wiring failed'));
+        const constructionError = new Error('context wiring failed');
+        let signalRetry: (() => void) | undefined;
+        const retryStarted = new Promise<void>((resolve) => {
+            signalRetry = resolve;
+        });
+        let rejectRetry: ((error: Error) => void) | undefined;
+        let attempts = 0;
+        const init = mock((): Promise<void> => {
+            attempts += 1;
+            if(attempts === 1) {
+                return Promise.reject(new Error('initial auth failed'));
+            }
+            signalRetry?.();
+            return new Promise<void>((_resolve, reject) => {
+                rejectRetry = reject;
+            });
+        });
+        const shutdown = mock(async () => undefined);
+        // @ts-expect-error - Test replaces the constructor with a client that records shutdown
+        const wildDuckSpy = spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+            init, shutdown,
+        } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>));
+        const contextSpy = spyOn(staticContextBuilderModule, 'createContextBuilder').mockImplementation(() => {
+            throw constructionError;
+        });
+        const storageClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client:    { destroy: mock(() => undefined) } as unknown as DynamoDBClient,
+            docClient: { send: mock(async () => ({ Items: [], Count: 0 })) } as unknown as DynamoDBDocumentClient,
+            tableName: 'IsambardMemory',
+        });
+        spies.unshift(wildDuckSpy, contextSpy, storageClientSpy);
+
+        const building = staticIndexModule.createApp();
+        await retryStarted;
+        let settled = false;
+        void building.finally(() => {
+            settled = true;
+        }).catch(() => undefined);
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        expect(shutdown).not.toHaveBeenCalled();
+        rejectRetry?.(new Error('retry mailbox creation failed'));
+        await expect(building).rejects.toBe(constructionError);
+        expect(shutdown).toHaveBeenCalledTimes(1);
+    });
+
+    test('awaits Discord client disposal when construction fails after acquisition', async () => {
+        wireHappyPath(spies);
+        const constructionError = new Error('registry construction failed');
+        let signalDestroy: (() => void) | undefined;
+        const destroyStarted = new Promise<void>((resolve) => {
+            signalDestroy = resolve;
+        });
+        let finishDestroy: (() => void) | undefined;
+        const destroy = mock((): Promise<void> => {
+            signalDestroy?.();
+            return new Promise<void>((resolve) => {
+                finishDestroy = resolve;
+            });
+        });
+        const clientSpy = spyOn(staticDiscordClientModule, 'createDiscordClient').mockReturnValue({
+            destroy,
+        } as unknown as ReturnType<typeof staticDiscordClientModule.createDiscordClient>);
+        // @ts-expect-error - Deliberately failing manager constructor after client acquisition
+        const managerSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => {
+            throw constructionError;
+        });
+        const storageClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client:    { destroy: mock(() => undefined) } as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
+            tableName: 'IsambardMemory',
+        });
+        spies.unshift(clientSpy, managerSpy, storageClientSpy);
+
+        const building = staticIndexModule.createApp();
+        await destroyStarted;
+        let settled = false;
+        void building.finally(() => {
+            settled = true;
+        }).catch(() => undefined);
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        finishDestroy?.();
+        await expect(building).rejects.toBe(constructionError);
+        expect(destroy).toHaveBeenCalledTimes(1);
     });
 
     describe('Memory initialization failure handling', () => {
@@ -1281,6 +1444,70 @@ describe('createApp', () => {
             await app.stop();
 
             expect(unsubscribeHealthNotifications).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('Saga reconnect retry ordering', () => {
+        test('admits failed saga updates in list order and stops after the first write failure', async () => {
+            wireHappyPath(spies);
+            const listeners: HealthChangeListener[] = [];
+            spies.push(spyOn(staticServicesModule.ServiceHealthRegistryImpl.prototype, 'subscribe').mockImplementation(
+                (listener: HealthChangeListener) => {
+                    listeners.push(listener);
+                    return () => undefined;
+                }
+            ));
+            const timestamp = '2026-09-12T00:00:00.000Z';
+            const makeSaga = (id: string, type: ApprovalSaga['type']): ApprovalSaga => ({
+                id, type, state: 'failed', params: {}, createdAt: timestamp, updatedAt: timestamp,
+            });
+            const failed = [
+                makeSaga('00000000-0000-4000-8000-000000000001', 'email_send'),
+                makeSaga('00000000-0000-4000-8000-000000000002', 'bsky_reply'),
+                makeSaga('00000000-0000-4000-8000-000000000003', 'email_reply'),
+                makeSaga('00000000-0000-4000-8000-000000000004', 'email_send'),
+            ];
+            const listSpy = spyOn(staticServicesModule.ApprovalSagaBackend.prototype, 'listByState').mockResolvedValue(failed);
+            const firstEntered = Promise.withResolvers<void>();
+            const releaseFirst = Promise.withResolvers<void>();
+            const secondAttempted = Promise.withResolvers<void>();
+            const updateOrder: string[] = [];
+            const updateSpy = spyOn(staticServicesModule.ApprovalSagaBackend.prototype, 'updateState').mockImplementation(async (id) => {
+                updateOrder.push(id);
+                if(id === failed[0].id) {
+                    firstEntered.resolve();
+                    await releaseFirst.promise;
+                } else if(id === failed[2].id) {
+                    secondAttempted.resolve();
+                    throw new Error('second write failed');
+                }
+            });
+            spies.push(listSpy, updateSpy);
+
+            await staticIndexModule.createApp();
+            // The saga listener is registered immediately before the health-outage
+            // listener; app.start() has not registered its recovery listener yet.
+            const sagaListener = listeners.at(-2);
+            expect(sagaListener).toBeDefined();
+            if(!sagaListener) {
+                throw new Error('Saga retry listener was not registered');
+            }
+            mockLogger.warn.mockClear();
+            sagaListener({
+                service: 'email', previousState: 'offline', newState: 'online', epoch: 1, timestamp: new Date(timestamp),
+            });
+            await firstEntered.promise;
+            expect(updateOrder).toEqual([failed[0].id]);
+            releaseFirst.resolve();
+            await secondAttempted.promise;
+            await Bun.sleep(1);
+
+            expect(listSpy).toHaveBeenCalledWith('failed');
+            expect(updateOrder).toEqual([failed[0].id, failed[2].id]);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                error: 'second write failed',
+                msg:   'Failed to reset sagas on reconnect',
+            }));
         });
     });
 

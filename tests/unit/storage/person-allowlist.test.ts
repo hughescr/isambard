@@ -43,6 +43,7 @@ let mockBackend: ContactBackend;
 beforeEach(() => {
     ddbMock.reset();
     mockLogger.warn.mockClear();
+    mockLogger.info.mockClear();
     mockBackend = {
         getContact: mock(async (_id: unknown) => undefined as Contact | undefined),
     } as unknown as ContactBackend;
@@ -56,9 +57,169 @@ function makeAllowlist(): PersonAllowlist {
     );
 }
 
+function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void, reject: (reason: unknown) => void } {
+    let release!: (value: T) => void;
+    let fail!: (reason: unknown) => void;
+    const promise = new Promise<T>((resolve, reject) => {
+        release = resolve;
+        fail = reject;
+    });
+    return { promise, resolve: release, reject: fail };
+}
+
 // ─── load() ──────────────────────────────────────────────────────────────────
 
 describe('PersonAllowlist.load()', () => {
+    test('normalizes identifiers without collapsing distinct German sharp-s spellings', async () => {
+        ddbMock.on(GetCommand).resolves({ Item: { personIds: new Set([ALICE_ID]) } });
+        (mockBackend.getContact as ReturnType<typeof mock>).mockResolvedValue(
+            makeContact(ALICE_ID, [{ platform: 'email', value: 'straße@example.com' }])
+        );
+        const allowlist = makeAllowlist();
+        await allowlist.load();
+        expect(allowlist.isAllowed('email', 'Straße@example.com')).toBe(true);
+        expect(allowlist.isAllowed('email', 'STRASSE@example.com')).toBe(false);
+    });
+    test('bounds contact reads while allowing queued reads to start as slots free', async () => {
+        const ids = Array.from({ length: 10 }, (_, index) => createContactId(`person-${index}`));
+        const gates = new Map(ids.map(id => [id, deferred<Contact | undefined>()]));
+        const started: string[] = [];
+        let active = 0;
+        let maximumActive = 0;
+        ddbMock.on(GetCommand).resolves({ Item: { personIds: new Set(ids) } });
+        (mockBackend.getContact as ReturnType<typeof mock>).mockImplementation((id: string) => {
+            started.push(id);
+            active++;
+            maximumActive = Math.max(maximumActive, active);
+            const gate = gates.get(createContactId(id));
+            if(!gate) {
+                throw new Error(`Missing gate for ${id}`);
+            }
+            return gate.promise.finally(() => {
+                active--;
+            });
+        });
+
+        const loading = makeAllowlist().load();
+        await Bun.sleep(0);
+        expect(started).toEqual(ids.slice(0, 8));
+        expect(maximumActive).toBe(8);
+
+        gates.get(ids[0])?.resolve(makeContact(ids[0], []));
+        await Bun.sleep(0);
+        expect(started).toEqual(ids.slice(0, 9));
+        gates.get(ids[1])?.resolve(makeContact(ids[1], []));
+        await Bun.sleep(0);
+        expect(started).toEqual(ids);
+
+        for(const id of ids.slice(2)) {
+            gates.get(id)?.resolve(makeContact(id, []));
+        }
+        await loading;
+        expect(maximumActive).toBe(8);
+    });
+
+    test('publishes contacts in INDEX order despite reverse completion, preserving last-wins collisions', async () => {
+        const alice = deferred<Contact | undefined>();
+        const bob = deferred<Contact | undefined>();
+        ddbMock.on(GetCommand).resolves({ Item: { personIds: new Set([ALICE_ID, BOB_ID]) } });
+        ddbMock.on(TransactWriteCommand).resolves({});
+        (mockBackend.getContact as ReturnType<typeof mock>).mockImplementation((id: string) => {
+            return id === ALICE_ID ? alice.promise : bob.promise;
+        });
+
+        const allowlist = makeAllowlist();
+        const loading = allowlist.load();
+        await Bun.sleep(0);
+        bob.resolve(makeContact(BOB_ID, [{ platform: 'email', value: 'shared@example.com' }]));
+        await Bun.sleep(0);
+        expect(allowlist.isAllowed('email', 'shared@example.com')).toBe(false);
+
+        alice.resolve(makeContact(ALICE_ID, [{ platform: 'email', value: 'shared@example.com' }]));
+        await loading;
+        await allowlist.removePerson(ALICE_ID);
+        expect(allowlist.isAllowed('email', 'shared@example.com')).toBe(true);
+    });
+
+    test('reports invalid and orphaned entries in INDEX order despite reverse read completion', async () => {
+        const alice = deferred<Contact | undefined>();
+        const bob = deferred<Contact | undefined>();
+        const charlie = deferred<Contact | undefined>();
+        ddbMock.on(GetCommand).resolves({ Item: { personIds: new Set([ALICE_ID, 'INVALID ID!!!', BOB_ID, CHARLIE_ID]) } });
+        (mockBackend.getContact as ReturnType<typeof mock>).mockImplementation((id: string) => {
+            if(id === ALICE_ID) {
+                return alice.promise;
+            }
+            if(id === BOB_ID) {
+                return bob.promise;
+            }
+            return charlie.promise;
+        });
+
+        const loading = makeAllowlist().load();
+        await Bun.sleep(0);
+        charlie.resolve(undefined);
+        bob.resolve(undefined);
+        alice.resolve(ALICE_CONTACT);
+        await loading;
+
+        expect(mockLogger.warn.mock.calls.map(([fields]) => fields)).toMatchObject([
+            { personIdStr: 'INVALID ID!!!', msg: 'PersonAllowlist: invalid personId format in INDEX — skipping' },
+            { personId: BOB_ID, msg: 'PersonAllowlist: orphaned personId — no contact found, skipping' },
+            { personId: CHARLIE_ID, msg: 'PersonAllowlist: orphaned personId — no contact found, skipping' },
+        ]);
+        expect(mockBackend.getContact).toHaveBeenCalledTimes(3);
+    });
+
+    test('publishes only the successful prefix and drains held later reads before the first INDEX-order failure returns', async () => {
+        const alice = deferred<Contact | undefined>();
+        const bob = deferred<Contact | undefined>();
+        const charlie = deferred<Contact | undefined>();
+        const dave = deferred<Contact | undefined>();
+        const daveId = createContactId('dave-person');
+        ddbMock.on(GetCommand).resolves({ Item: { personIds: new Set([ALICE_ID, BOB_ID, CHARLIE_ID, daveId, 'INVALID ID!!!']) } });
+        (mockBackend.getContact as ReturnType<typeof mock>).mockImplementation((id: string) => {
+            if(id === ALICE_ID) {
+                return alice.promise;
+            }
+            if(id === BOB_ID) {
+                return bob.promise;
+            }
+            if(id === CHARLIE_ID) {
+                return charlie.promise;
+            }
+            return dave.promise;
+        });
+
+        const allowlist = makeAllowlist();
+        let settled = false;
+        const loading = allowlist.load()
+            .then(() => {
+                settled = true;
+                return undefined;
+            })
+            .catch((error: unknown) => {
+                settled = true;
+                return error;
+            });
+        await Bun.sleep(0);
+        dave.reject(new Error('later failure'));
+        alice.resolve(ALICE_CONTACT);
+        await Bun.sleep(0);
+        expect(allowlist.isAllowed('email', 'alice@example.com')).toBe(true);
+        expect(settled).toBe(false);
+
+        const firstFailure = new Error('first INDEX-order failure');
+        bob.reject(firstFailure);
+        await Bun.sleep(0);
+        expect(settled).toBe(false);
+        charlie.resolve(makeContact(CHARLIE_ID, [{ platform: 'email', value: 'charlie@example.com' }]));
+        expect(await loading).toBe(firstFailure);
+        expect(allowlist.isAllowed('email', 'charlie@example.com')).toBe(false);
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+        expect(mockLogger.info).not.toHaveBeenCalledWith(expect.objectContaining({ msg: 'PersonAllowlist loaded' }));
+    });
+
     test('loads personIds from INDEX and builds reverse map from contacts', async () => {
         ddbMock.on(GetCommand, {
             TableName: TABLE_NAME,
@@ -86,6 +247,10 @@ describe('PersonAllowlist.load()', () => {
         expect(allowlist.isAllowed('email', 'alice@example.com')).toBe(true);
         expect(allowlist.isAllowed('bsky', '@alice.bsky.social')).toBe(true);
         expect(allowlist.isAllowed('email', 'bob@example.com')).toBe(true);
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            count: 2,
+            msg:   'PersonAllowlist loaded',
+        });
     });
 
     test('handles empty INDEX — personIds and reverseMap both empty', async () => {
@@ -133,6 +298,9 @@ describe('PersonAllowlist.load()', () => {
         const getContactCalls = (mockBackend.getContact as ReturnType<typeof mock>).mock.calls;
         const calledIds = getContactCalls.map(([id]) => id);
         expect(calledIds).not.toContain('INVALID ID!!!');
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+            personIdStr: 'INVALID ID!!!',
+        }));
     });
 
     test('logs warning and skips when contact not found for a personId (orphaned entry)', async () => {
@@ -155,6 +323,9 @@ describe('PersonAllowlist.load()', () => {
         // Alice is still loaded
         expect(allowlist.isPersonAllowed(ALICE_ID)).toBe(true);
         expect(allowlist.isAllowed('email', 'alice@example.com')).toBe(true);
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+            personId: createContactId('orphaned-person'),
+        }));
     });
 });
 
@@ -319,12 +490,20 @@ describe('PersonAllowlist.addPerson()', () => {
         // Second item: Update the INDEX StringSet
         expect(transactItems[1]).toMatchObject({
             Update: {
-                TableName: TABLE_NAME,
-                Key:       { PK: 'PERSON#ALLOWLIST', SK: 'INDEX' },
+                TableName:                 TABLE_NAME,
+                Key:                       { PK: 'PERSON#ALLOWLIST', SK: 'INDEX' },
+                UpdateExpression:          'ADD #personIds :newId',
+                ExpressionAttributeNames:  { '#personIds': 'personIds' },
+                ExpressionAttributeValues: { ':newId': new Set([ALICE_ID]) },
             },
         });
+        expect([...(transactItems[1]?.Update?.ExpressionAttributeValues?.[':newId'] as Set<string>)]).toEqual([ALICE_ID]);
 
         expect(allowlist.isPersonAllowed(ALICE_ID)).toBe(true);
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+            personId: ALICE_ID,
+            msg:      'PersonAllowlist: person added',
+        }));
     });
 
     test('after addPerson, isAllowed returns true for that person\'s identifiers', async () => {
@@ -401,12 +580,20 @@ describe('PersonAllowlist.removePerson()', () => {
         // Second item: Update the INDEX StringSet
         expect(transactItems[1]).toMatchObject({
             Update: {
-                TableName: TABLE_NAME,
-                Key:       { PK: 'PERSON#ALLOWLIST', SK: 'INDEX' },
+                TableName:                 TABLE_NAME,
+                Key:                       { PK: 'PERSON#ALLOWLIST', SK: 'INDEX' },
+                UpdateExpression:          'DELETE #personIds :oldId',
+                ExpressionAttributeNames:  { '#personIds': 'personIds' },
+                ExpressionAttributeValues: { ':oldId': new Set([ALICE_ID]) },
             },
         });
+        expect([...(transactItems[1]?.Update?.ExpressionAttributeValues?.[':oldId'] as Set<string>)]).toEqual([ALICE_ID]);
 
         expect(allowlist.isPersonAllowed(ALICE_ID)).toBe(false);
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+            personId: ALICE_ID,
+            msg:      'PersonAllowlist: person removed',
+        }));
     });
 
     test('after removePerson, isAllowed returns false for that person\'s identifiers', async () => {
@@ -454,6 +641,24 @@ describe('PersonAllowlist.removePerson()', () => {
         expect(allowlist.isAllowed('bsky', '@alice.bsky.social')).toBe(false);
         // Bob's entry still present
         expect(allowlist.isAllowed('email', 'bob@example.com')).toBe(true);
+    });
+
+    test('does not retain removed identifiers when the person is added again', async () => {
+        ddbMock.on(GetCommand).resolves({ Item: { personIds: new Set([ALICE_ID]) } });
+        (mockBackend.getContact as ReturnType<typeof mock>).mockResolvedValue(ALICE_CONTACT);
+        ddbMock.on(TransactWriteCommand).resolves({});
+
+        const allowlist = makeAllowlist();
+        await allowlist.load();
+        await allowlist.removePerson(ALICE_ID);
+
+        (mockBackend.getContact as ReturnType<typeof mock>).mockResolvedValue(makeContact('alice-smith', [
+            { platform: 'email', value: 'new-alice@example.com' },
+        ]));
+        await allowlist.addPerson(ALICE_ID, { addedBy: 'test' });
+
+        expect(allowlist.isAllowed('email', 'alice@example.com')).toBe(false);
+        expect(allowlist.isAllowed('email', 'new-alice@example.com')).toBe(true);
     });
 });
 
@@ -620,6 +825,7 @@ describe('PersonAllowlist.list()', () => {
         expect(queryCalls[0]?.args[0].input).toMatchObject({
             TableName:                 TABLE_NAME,
             KeyConditionExpression:    expect.stringContaining('begins_with') as string,
+            ExpressionAttributeNames:  { '#pk': 'PK', '#sk': 'SK' },
             ExpressionAttributeValues: expect.objectContaining({
                 ':pk': 'PERSON#ALLOWLIST',
             }) as Record<string, unknown>,

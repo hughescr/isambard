@@ -379,3 +379,62 @@ describe('searchResponseSchema', () => {
         expect(result.success).toBe(false);
     });
 });
+
+describe('message-history schema boundaries', () => {
+    const validSearchResult: DiscordSearchResult = {
+        id:          '999888777666555444', channelId:   '123456789012345678' as ChannelId,
+        guildId:     '987654321098765432' as GuildId,
+        author:      { id: '111222333444555666', username: 'testuser', displayName: 'Test User' },
+        content:     'Hello', timestamp:   '2024-01-15T10:30:00.000Z', attachments: [], embeds:      [], reactions:   [],
+    };
+    const validResponse: SearchResponse = {
+        messages: [validSearchResult],
+        metadata: {
+            totalFound: 1,
+            timeRange:  { start: '2024-01-15T00:00:00.000Z', end: '2024-01-15T23:59:59.999Z' },
+        },
+    };
+    const validOverflow = {
+        id: '999888777666555444', timestamp: '2024-01-15T10:30:00.000Z', author: 'testuser', synopsis: 'Summary',
+    };
+    const validBatch = {
+        startTimestamp: '2024-01-14T10:00:00.000Z', endTimestamp:   '2024-01-14T11:00:00.000Z',
+        messageCount:   1, authors:        ['alice'], synopsis:       'Summary',
+    };
+
+    test.each([
+        ['author.id', { author: { ...validSearchResult.author, id: '1' } }, true],
+        ['author.username', { author: { ...validSearchResult.author, username: 'x' } }, true],
+        ['author.displayName', { author: { ...validSearchResult.author, displayName: 'x' } }, true],
+        ['attachment.filename', {
+            attachments: [{ url: 'https://example.com/file', filename: 'x' }],
+        }, true],
+        ['result.id', { id: '1' }, true],
+        ['replyTo', { replyTo: '1' }, true],
+        ['replyTo empty', { replyTo: '' }, false],
+    ])('validates %s at its public boundary', (_name, override, expected) => {
+        expect(discordSearchResultSchema.safeParse({ ...validSearchResult, ...override }).success).toBe(expected);
+    });
+
+    test.each([
+        ['overflow.id', { id: '1' }, true],
+        ['overflow.author', { author: 'x' }, true],
+        ['overflow.synopsis', { synopsis: 'x' }, true],
+    ])('accepts %s boundary value', (_name, override, expected) => {
+        expect(overflowSummarySchema.safeParse({ ...validOverflow, ...override }).success).toBe(expected);
+    });
+
+    test.each([
+        ['batch.authors', { authors: ['x'] }],
+        ['batch.synopsis', { synopsis: 'x' }],
+    ])('accepts %s boundary value', (_name, override) => {
+        expect(batchOverflowSummarySchema.safeParse({ ...validBatch, ...override }).success).toBe(true);
+    });
+
+    test.each([
+        ['metadata.totalFound zero', { metadata: { ...validResponse.metadata, totalFound: 0 } }, true],
+        ['metadata.totalFound negative', { metadata: { ...validResponse.metadata, totalFound: -1 } }, false],
+    ])('checks %s', (_name, override, expected) => {
+        expect(searchResponseSchema.safeParse({ ...validResponse, ...override }).success).toBe(expected);
+    });
+});

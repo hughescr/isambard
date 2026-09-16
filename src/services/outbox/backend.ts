@@ -31,7 +31,6 @@ export class OutboxBackend extends BaseRepository<OutboxItem> {
      * Does not remove them from the outbox.
      */
     async dequeue(service: string, limit = 10): Promise<OutboxItem[]> {
-        // Stryker disable StringLiteral,ObjectLiteral: DynamoDB expression strings and attribute maps are configuration
         const items = await this.query<Record<string, unknown>>({
             KeyConditionExpression:    '#pk = :pk',
             ExpressionAttributeNames:  { '#pk': 'PK' },
@@ -59,6 +58,7 @@ export class OutboxBackend extends BaseRepository<OutboxItem> {
     async markFailed(item: OutboxItem, error: string): Promise<void> {
         const updated: OutboxItem = {
             ...item,
+            // Stryker disable next-line SpreadOperandDrop: progress schema contains only lastError and lastAttemptAt, both overwritten below.
             progress: {
                 ...item.progress,
                 lastError:     error,

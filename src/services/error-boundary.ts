@@ -40,7 +40,6 @@ export interface ErrorBoundaryRegistration {
  */
 export function registerErrorBoundaries(boundaryLogger: ErrorBoundaryLogger): ErrorBoundaryRegistration {
     const rejectionHandler = (reason: unknown, _promise: Promise<unknown>): void => {
-        // Stryker disable ObjectLiteral,StringLiteral: observability-only logging
         boundaryLogger.error(
             {
                 reason: reason instanceof Error ? reason.message : String(reason),
@@ -52,7 +51,6 @@ export function registerErrorBoundaries(boundaryLogger: ErrorBoundaryLogger): Er
     };
 
     const exceptionHandler = (err: Error): void => {
-        // Stryker disable ObjectLiteral,StringLiteral: observability-only logging
         boundaryLogger.error(
             {
                 err:   err.message,
@@ -63,7 +61,6 @@ export function registerErrorBoundaries(boundaryLogger: ErrorBoundaryLogger): Er
         // Stryker restore ObjectLiteral,StringLiteral
         // Exit with failure code after logging — uncaughtException means the process
         // is in an indeterminate state and cannot continue safely.
-        // Stryker disable next-line BlockStatement: process.exit is the required side effect
         // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- uncaughtException leaves the process in an indeterminate state; exit is mandatory
         process.exit(1);
     };
@@ -71,7 +68,6 @@ export function registerErrorBoundaries(boundaryLogger: ErrorBoundaryLogger): Er
     process.on('unhandledRejection', rejectionHandler);
     process.on('uncaughtException', exceptionHandler);
 
-    // Stryker disable next-line ObjectLiteral: return object is a thin wrapper
     return {
         unregister: () => {
             process.removeListener('unhandledRejection', rejectionHandler);

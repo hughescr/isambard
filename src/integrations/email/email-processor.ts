@@ -66,11 +66,9 @@ export class EmailProcessor {
     }
 
     private async routeAllowlistBypass(email: EmailMetadata): Promise<ProcessingResult> {
-        // Stryker disable BlockStatement — WildDuck HTTP API call; catch re-throws as typed EmailProcessingError
         try {
             await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, EmailFolder.CleanInbox);
         } catch (err) {
-            // Stryker disable StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
             throw new EmailProcessingError(
                 `Failed to move allowlist-bypassed email (uid=${email.uid}): ${err instanceof Error ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address }
@@ -78,7 +76,6 @@ export class EmailProcessor {
             // Stryker restore StringLiteral,ObjectLiteral
         }
         // Stryker restore BlockStatement
-        // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Log message content is not behavior-affecting
         logger.info({
             uid:               email.uid,
             from:              email.from.address,
@@ -97,11 +94,9 @@ export class EmailProcessor {
 
     private async routeViaClassifier(email: EmailMetadata, senderAllowed: boolean): Promise<ProcessingResult> {
         let verdict: ClassifierVerdict;
-        // Stryker disable BlockStatement — external classifier call; catch re-throws as typed EmailProcessingError
         try {
             verdict = await this.classifier.classify(email);
         } catch (err) {
-            // Stryker disable StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
             throw new EmailProcessingError(
                 `Classification failed (uid=${email.uid}): ${err instanceof Error ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address }
@@ -112,11 +107,9 @@ export class EmailProcessor {
 
         const destination = this.verdictToFolder(verdict.verdict);
 
-        // Stryker disable BlockStatement — WildDuck HTTP API call; catch re-throws as typed EmailProcessingError
         try {
             await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, destination);
         } catch (err) {
-            // Stryker disable StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
             throw new EmailProcessingError(
                 `Failed to move email (uid=${email.uid}, destination=${destination}): ${err instanceof Error ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address, destination }
@@ -127,13 +120,11 @@ export class EmailProcessor {
 
         // onSafe is suppressed for allowlisted senders — onAuthFailed already handles that case.
         // onReview/onUnsafe still fire regardless: admin must know about suspicious emails even from known senders.
-        // Stryker disable ConditionalExpression,EqualityOperator,BlockStatement: safe+allowed guard — mutating causes test timeout (callback always fires, creates feedback loop)
         if(!(verdict.verdict === 'safe' && senderAllowed)) {
             await this.invokeCallback(email, verdict);
         }
         // Stryker restore ConditionalExpression,EqualityOperator,BlockStatement
 
-        // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({
             uid:        email.uid,
             from:       email.from.address,

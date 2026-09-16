@@ -123,6 +123,60 @@ describe('AsyncIndexer', () => {
             expect(encodeCallCount).toBe(2);
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(2);
         });
+
+        it('a drain waits for its captured work while a later enqueue remains pending', async () => {
+            let resolveFirst!: (result: EmbedResult) => void;
+            let resolveSecond!: (result: EmbedResult) => void;
+            const firstResult = new Promise<EmbedResult>((resolve) => {
+                resolveFirst = resolve;
+            });
+            const secondResult = new Promise<EmbedResult>((resolve) => {
+                resolveSecond = resolve;
+            });
+            let encodeCount = 0;
+            mockEmbedder.encode.mockImplementation(() => {
+                return encodeCount++ === 0 ? firstResult : secondResult;
+            });
+
+            indexer.enqueue({ kind: 'upsert', pk: 'pk1', sk: 'sk1', layer: 'identity', path: '/a', content: 'a' });
+            const firstDrain = indexer.drain();
+            indexer.enqueue({ kind: 'upsert', pk: 'pk2', sk: 'sk2', layer: 'identity', path: '/b', content: 'b' });
+
+            try {
+                resolveFirst(makeEmbedResult());
+                await firstDrain;
+                expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
+
+                resolveSecond(makeEmbedResult());
+                await indexer.drain();
+                expect(mockEmbedder.encode).toHaveBeenCalledTimes(2);
+                expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(2);
+            } finally {
+                resolveFirst(makeEmbedResult());
+                resolveSecond(makeEmbedResult());
+                await firstDrain;
+                await indexer.drain();
+            }
+        });
+    });
+
+    describe('queue bookkeeping', () => {
+        it('removes completed jobs before calculating later queue pressure', async () => {
+            indexer.enqueue({ kind: 'delete', pk: 'completed', sk: 'completed' });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            for(let i = 0; i < 1100; i++) {
+                indexer.enqueue({ kind: 'delete', pk: `pk-${i}`, sk: `sk-${i}` });
+            }
+            await indexer.drain();
+
+            expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                queueLen: 1100,
+                pk:       'pk-1099',
+                sk:       'sk-1099',
+            }));
+        });
     });
 
     describe('hash short-circuit', () => {
@@ -239,8 +293,7 @@ describe('AsyncIndexer', () => {
             await indexer.drain();
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
             const upsertCalls = mockVectorIndex.upsert.mock.calls as unknown as [{ vector: Uint8Array }][];
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- noUncheckedIndexedAccess; upsert called once per check above
-            const arg = upsertCalls[0]![0];
+            const arg = upsertCalls[0][0];
             expect(arg.vector).toHaveLength(128);
         });
     });
@@ -254,8 +307,7 @@ describe('AsyncIndexer', () => {
             await indexer.drain();
             expect(logger.warn).toHaveBeenCalledTimes(1);
             const warnCalls = logger.warn.mock.calls as unknown as Record<string, unknown>[][];
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- noUncheckedIndexedAccess; warn called once per check above
-            const warnArg = warnCalls[0]![0]!;
+            const warnArg = warnCalls[0][0];
             expect(warnArg.pk).toBe('pk-log');
             expect(warnArg.sk).toBe('sk-log');
             expect(typeof warnArg.msg).toBe('string');
@@ -269,8 +321,7 @@ describe('AsyncIndexer', () => {
             indexer.enqueue({ kind: 'upsert', pk: 'pk1', sk: 'sk1', layer: 'identity', path: '/a', content: 'a' });
             await indexer.drain();
             const warnCalls = logger.warn.mock.calls as unknown as Record<string, unknown>[][];
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- noUncheckedIndexedAccess; warn called once per test setup
-            const warnArg = warnCalls[0]![0]!;
+            const warnArg = warnCalls[0][0];
             expect(warnArg.msg).toContain('AsyncIndexer');
         });
     });
@@ -305,8 +356,7 @@ describe('AsyncIndexer', () => {
             indexer.enqueue({ kind: 'delete', pk: 'pk-trigger', sk: 'sk-trigger' });
             await indexer.drain();
             const warnCalls = logger.warn.mock.calls as unknown as Record<string, unknown>[][];
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- noUncheckedIndexedAccess; warn called at least once per expect check above
-            const warnArg = warnCalls[0]![0]!;
+            const warnArg = warnCalls[0][0];
             expect(warnArg.pk).toBe('pk-trigger');
             expect(warnArg.sk).toBe('sk-trigger');
         });

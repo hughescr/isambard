@@ -46,13 +46,13 @@ export class AsyncIndexer {
     readonly #embedder:    EmbedderLike;
     readonly #logger:      IndexerLogger;
 
-    #queue: IndexerJob[] = [];
+    #pending = 0;
     /**
      * The currently running worker chain.
      * A single linked chain: each job appends a `.then()` to the previous promise.
      * Draining just awaits #tail, which resolves when all enqueued work is done.
      */
-    #tail:  Promise<void> = Promise.resolve();
+    #tail: Promise<void> = Promise.resolve();
     #closed = false;
 
     constructor(deps: AsyncIndexerDeps) {
@@ -84,12 +84,11 @@ export class AsyncIndexer {
     enqueue(job: IndexerJob): void {
         // Chain: previous tail resolves → process this job → new tail resolves
         this.#tail = this.#tail.then(() => this.#processJob(job));
-        this.#queue.push(job);
+        this.#pending++;
 
         // Soft cap: warn if queue is growing large, throttled to avoid flooding logs
-        const queueLen = this.#queue.length;
-        // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,ArithmeticOperator,BlockStatement,ObjectLiteral,StringLiteral: queue depth warn guard — logging-only side effect; Bun inspector cannot map per-test coverage for class method bodies, so these mutants appear as NoCoverage
-        if(queueLen > AsyncIndexer.QUEUE_WARN_THRESHOLD && (queueLen - AsyncIndexer.QUEUE_WARN_THRESHOLD) % AsyncIndexer.QUEUE_WARN_THROTTLE === 0) {
+        const queueLen = this.#pending;
+        if(queueLen > AsyncIndexer.QUEUE_WARN_THRESHOLD && queueLen % AsyncIndexer.QUEUE_WARN_THROTTLE === 0) {
             this.#logger.warn({
                 msg: 'AsyncIndexer queue is growing large — embedder may be falling behind writes',
                 queueLen,
@@ -105,8 +104,6 @@ export class AsyncIndexer {
      */
     async drain(): Promise<void> {
         await this.#tail;
-        // Clear queue reference (the tail already resolved these)
-        this.#queue = [];
     }
 
     /**
@@ -170,8 +167,6 @@ export class AsyncIndexer {
             };
             this.#logger.warn(warnPayload);
         }
-        // Always dequeue the processed job from tracking — drain() resets queue to [] anyway
-        // Stryker disable next-line BlockStatement: queue bookkeeping only — drain() resets #queue to [] unconditionally, so shift() has no externally-observable effect
-        this.#queue.shift();
+        this.#pending--;
     }
 }

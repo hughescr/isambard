@@ -158,6 +158,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         expect(result.status).toBe('queued');
         expect(outbox.enqueue).toHaveBeenCalledTimes(1);
         expect(logger.warn).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith({ error: 'Discord error', channelId: 'channel-1' }, 'Discord send failed, attempting outbox queue');
     });
 
     test('when not ready: queues to outbox, returns {status: queued}', async () => {
@@ -373,11 +374,12 @@ describe('DiscordCapabilityImpl.fetchChannel', () => {
                 }),
             },
         } as unknown as Client;
-        const { cap } = makeCapability(true);
+        const { cap, logger } = makeCapability(true);
         cap.setClient(errorClient);
 
         const result = await cap.fetchChannel('ch-1');
         expect(result).toBeNull();
+        expect(logger.warn).toHaveBeenCalledWith({ error: 'network error', channelId: 'ch-1' }, 'Discord fetchChannel failed, returning null');
     });
 
     test('when fetch throws: logs a warning', async () => {

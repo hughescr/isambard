@@ -52,6 +52,16 @@ function createMockSearchResult(overrides: Partial<{
     };
 }
 
+function waitForMicrotaskCondition(predicate: () => boolean, description: string, remainingTurns = 20): Promise<void> {
+    if(predicate()) {
+        return Promise.resolve();
+    }
+    if(remainingTurns === 0) {
+        return Promise.reject(new Error(`Timed out waiting for ${description}`));
+    }
+    return Promise.resolve().then(() => waitForMicrotaskCondition(predicate, description, remainingTurns - 1));
+}
+
 describe('createMessageSummarizer', () => {
     beforeEach(() => {
         mockGenerateText.mockReset();
@@ -64,12 +74,28 @@ describe('createMessageSummarizer', () => {
     });
 
     describe('summarizeMessages', () => {
+        test('sends message text under the single-message prompt instructions', async () => {
+            const summarizer = createMessageSummarizer({});
+            await summarizer.summarizeMessages([createMockSearchResult({ content: 'Launch decision: Tuesday' })]);
+            const prompt = mockGenerateText.mock.calls[0]?.[0];
+            expect(prompt).toContain('Summarize this Discord message');
+            expect(prompt).toContain('Launch decision: Tuesday');
+            expect(prompt).not.toContain('{content}');
+        });
+
         test('should return empty array for empty input', async () => {
             const summarizer = createMessageSummarizer({});
 
             const result = await summarizer.summarizeMessages([]);
 
             expect(result).toEqual([]);
+            expect(mockGenerateText).not.toHaveBeenCalled();
+        });
+
+        test('returns empty input before constructing an invalid zero-concurrency limiter', async () => {
+            const summarizer = createMessageSummarizer({ maxConcurrent: 0 });
+
+            await expect(summarizer.summarizeMessages([])).resolves.toEqual([]);
             expect(mockGenerateText).not.toHaveBeenCalled();
         });
 
@@ -200,32 +226,23 @@ describe('createMessageSummarizer', () => {
 
             const resultPromise = summarizer.summarizeMessages(messages);
 
-            // Wait for all tasks to be queued (give event loop time to start them)
-            // queueMicrotask has higher priority than Promise microtasks, ensuring p-limit concurrency pool has queued all initial tasks
-            await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: higher priority than Promise; ensures p-limit concurrency pool has queued all initial tasks before we observe maxConcurrent
-                queueMicrotask(resolve);
-            });
-            await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: second flush to ensure all concurrent slots are filled
-                queueMicrotask(resolve);
-            });
+            await waitForMicrotaskCondition(() => deferreds.length === 10, 'all default p-limit slots to start');
 
-            // Should not exceed default of 10 concurrent requests
-            expect(maxConcurrent).toBeLessThanOrEqual(10);
+            expect(maxConcurrent).toBe(10);
 
-            // Resolve all pending promises
-            while(deferreds.length > 0) {
+            for(let resolved = 0; resolved < messages.length; resolved++) {
                 const resolver = deferreds.shift();
-                resolver?.('Summary');
-                // eslint-disable-next-line no-await-in-loop -- sequential: must drain microtasks between each deferred resolution so p-limit picks up the next task
-                await new Promise((resolve) => {
-                    // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: ensures p-limit picks up the next queued task before we resolve the next deferred
-                    queueMicrotask(resolve);
-                });
+                expect(resolver).toBeDefined();
+                resolver!('Summary');
+                if(resolved < messages.length - 1) {
+                    // eslint-disable-next-line no-await-in-loop -- preserve resolver order while yielding until a pending deferred is available
+                    await waitForMicrotaskCondition(() => deferreds.length > 0, 'p-limit to schedule the next default worker');
+                }
             }
 
-            await resultPromise;
+            const result = await resultPromise;
+            expect(result).toHaveLength(messages.length);
+            expect(maxConcurrent).toBeLessThanOrEqual(10);
         });
 
         test('should respect custom maxConcurrent setting', async () => {
@@ -253,31 +270,23 @@ describe('createMessageSummarizer', () => {
 
             const resultPromise = summarizer.summarizeMessages(messages);
 
-            // Wait for tasks to be queued
-            await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: ensures p-limit concurrency pool has queued all initial tasks before we observe maxConcurrent
-                queueMicrotask(resolve);
-            });
-            await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: second flush to ensure all concurrent slots are filled
-                queueMicrotask(resolve);
-            });
+            await waitForMicrotaskCondition(() => deferreds.length === 3, 'all custom p-limit slots to start');
 
-            // Should not exceed 3 concurrent requests
-            expect(maxConcurrent).toBeLessThanOrEqual(3);
+            expect(maxConcurrent).toBe(3);
 
-            // Resolve all pending promises
-            while(deferreds.length > 0) {
+            for(let resolved = 0; resolved < messages.length; resolved++) {
                 const resolver = deferreds.shift();
-                resolver?.('Summary');
-                // eslint-disable-next-line no-await-in-loop -- sequential: must drain microtasks between each deferred resolution
-                await new Promise((resolve) => {
-                    // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: ensures p-limit picks up the next queued task before we resolve the next deferred
-                    queueMicrotask(resolve);
-                });
+                expect(resolver).toBeDefined();
+                resolver!('Summary');
+                if(resolved < messages.length - 1) {
+                    // eslint-disable-next-line no-await-in-loop -- preserve resolver order while yielding until a pending deferred is available
+                    await waitForMicrotaskCondition(() => deferreds.length > 0, 'p-limit to schedule the next custom worker');
+                }
             }
 
-            await resultPromise;
+            const result = await resultPromise;
+            expect(result).toHaveLength(messages.length);
+            expect(maxConcurrent).toBeLessThanOrEqual(3);
         });
 
         test('should release semaphore slot on error', async () => {
@@ -365,12 +374,28 @@ describe('createMessageSummarizer', () => {
     });
 
     describe('summarizeMessageBatch', () => {
+        test('sends author and content under batch instructions', async () => {
+            const summarizer = createMessageSummarizer({});
+            await summarizer.summarizeMessageBatch([createMockSearchResult({ authorUsername: 'alice', content: 'Ship on Friday' })]);
+            const prompt = mockGenerateText.mock.calls[0]?.[0];
+            expect(prompt).toContain('Summarize these Discord messages');
+            expect(prompt).toContain('[alice] Ship on Friday');
+            expect(prompt).not.toContain('{messages}');
+        });
+
         test('should return empty array for empty input', async () => {
             const summarizer = createMessageSummarizer({});
 
             const result = await summarizer.summarizeMessageBatch([]);
 
             expect(result).toEqual([]);
+            expect(mockGenerateText).not.toHaveBeenCalled();
+        });
+
+        test('returns empty batches before constructing an invalid zero-concurrency limiter', async () => {
+            const summarizer = createMessageSummarizer({ maxConcurrent: 0 });
+
+            await expect(summarizer.summarizeMessageBatch([])).resolves.toEqual([]);
             expect(mockGenerateText).not.toHaveBeenCalled();
         });
 
@@ -591,30 +616,23 @@ describe('createMessageSummarizer', () => {
 
             const resultPromise = summarizer.summarizeMessageBatch(messages, 10);
 
-            // Wait for tasks to be queued
-            await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: ensures p-limit concurrency pool has queued all initial tasks before we observe maxConcurrent
-                queueMicrotask(resolve);
-            });
-            await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: second flush to ensure all concurrent slots are filled
-                queueMicrotask(resolve);
-            });
+            await waitForMicrotaskCondition(() => deferreds.length === 2, 'all batch p-limit slots to start');
 
-            expect(maxConcurrent).toBeLessThanOrEqual(2);
+            expect(maxConcurrent).toBe(2);
 
-            // Resolve all pending promises
-            while(deferreds.length > 0) {
+            for(let resolved = 0; resolved < 3; resolved++) {
                 const resolver = deferreds.shift();
-                resolver?.('Summary');
-                // eslint-disable-next-line no-await-in-loop -- sequential: must drain microtasks between each deferred resolution
-                await new Promise((resolve) => {
-                    // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: ensures p-limit picks up the next queued task before we resolve the next deferred
-                    queueMicrotask(resolve);
-                });
+                expect(resolver).toBeDefined();
+                resolver!('Summary');
+                if(resolved < 2) {
+                    // eslint-disable-next-line no-await-in-loop -- preserve resolver order while yielding until a pending deferred is available
+                    await waitForMicrotaskCondition(() => deferreds.length > 0, 'p-limit to schedule the next batch');
+                }
             }
 
-            await resultPromise;
+            const result = await resultPromise;
+            expect(result).toHaveLength(3);
+            expect(maxConcurrent).toBeLessThanOrEqual(2);
         });
     });
 });

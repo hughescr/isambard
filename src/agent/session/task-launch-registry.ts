@@ -15,6 +15,7 @@
  *
  * @module agent/session/task-launch-registry
  */
+import { isPlainObject } from 'lodash-es';
 import type { SessionJournal } from './ports';
 import type { EnvelopeKind, JournalEntry } from './types';
 
@@ -79,8 +80,7 @@ function tryParseJson(text: string): unknown {
 /** Parses `toolResponse` (object or JSON string) into a plain object, or `undefined` when it is neither. */
 function parseToolResponse(toolResponse: unknown): Record<string, unknown> | undefined {
     const parsed = typeof toolResponse === 'string' ? tryParseJson(toolResponse) : toolResponse;
-    // Stryker disable next-line ConditionalExpression: equivalent — forcing this to `parsed !== null` (dropping the `typeof parsed === 'object'` half) only changes behavior for a non-null PRIMITIVE `parsed` (string/number/boolean — neither `JSON.parse` nor a raw `tool_response` field ever yields a function or symbol); the ternary would then return that primitive itself instead of `undefined`. That primitive flows into `launchIdFromToolResponse`'s three `typeof response.<field> === 'string'` checks, which JS evaluates via safe auto-boxing on any primitive (e.g. `(42).agentId` is `undefined`, never a throw), so every check is `false` regardless and the function still falls through to `return undefined`. No caller can observe `parseToolResponse` returning `undefined` vs. a bare primitive.
-    return parsed !== null && typeof parsed === 'object' ? parsed as Record<string, unknown> : undefined;
+    return isPlainObject(parsed) ? parsed as Record<string, unknown> : undefined;
 }
 
 /**
@@ -139,7 +139,6 @@ export function createTaskLaunchRegistry(params: CreateTaskLaunchRegistryParams 
 
     const byTaskId = new Map<string, TaskLaunch>();
     const byToolUseId = new Map<string, string>();
-    // Stryker disable next-line ArrayDeclaration: a non-empty initializer here is equivalent — `evictOverCapacity`'s own tolerant guard (see its doc) silently absorbs any entry with no matching `byTaskId` record on the very first eviction it triggers, with no effect on any real, live entry thereafter; no `lookup()` result can distinguish an empty start from a garbage one.
     /** `taskId`s in insertion order, for FIFO eviction. */
     const order: string[] = [];
 
@@ -154,13 +153,11 @@ export function createTaskLaunchRegistry(params: CreateTaskLaunchRegistryParams 
     function evictOverCapacity(): void {
         while(order.length > capacity) {
             const oldestTaskId = order.shift();
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: unreachable by construction — the `while` guard (`order.length > capacity`, and capacity is never negative) guarantees `order` is non-empty here, so `shift()` always returns a value.
             if(oldestTaskId === undefined) {
                 break;
             }
             const evicted = byTaskId.get(oldestTaskId);
             byTaskId.delete(oldestTaskId);
-            // Stryker disable next-line ConditionalExpression,BlockStatement: unreachable by construction per this function's own doc — `oldestTaskId` came from `order`, which only ever holds `taskId`s with a live `byTaskId` entry. The `byToolUseId.delete` call itself is NOT covered by this disable (and must not be — dropping it is a real bug, see `tests/unit/agent/session/task-launch-registry.test.ts`'s "eviction ... removes the toolUseId index entry too" case): a stale `byToolUseId` entry would outlive its `byTaskId` record and let a LATER launch that reuses the evicted `taskId` under a different `toolUseId` be reached, incorrectly, via the old, evicted `toolUseId`.
             if(evicted !== undefined) {
                 byToolUseId.delete(evicted.toolUseId);
             }
@@ -179,10 +176,9 @@ export function createTaskLaunchRegistry(params: CreateTaskLaunchRegistryParams 
         if(existing === undefined) {
             order.push(launch.taskId);
         } else {
-            // Stryker disable next-line ConditionalExpression: equivalent — forcing this branch to always run when the taskId already existed only matters when `existing.toolUseId` genuinely differs from `launch.toolUseId`; when it does not, this deletes `byToolUseId`'s entry for that key and the very next line (`byToolUseId.set(launch.toolUseId, ...)`, unconditional below) immediately re-adds the SAME key with the SAME value — a delete-then-re-add with no observable effect on any `lookup()` result. (Written as `else { if }` rather than `else if` so this disable comment precedes a standalone statement Stryker's next-line disable can attach to — an `else if` clause continues the enclosing `if` statement instead.)
-            if(existing.toolUseId !== launch.toolUseId) {
-                byToolUseId.delete(existing.toolUseId);
-            }
+            // Re-adding the same mapping below is harmless, while removing a
+            // superseded tool-use id prevents stale wake routing.
+            byToolUseId.delete(existing.toolUseId);
         }
         byTaskId.set(launch.taskId, launch);
         byToolUseId.set(launch.toolUseId, launch.taskId);
@@ -223,10 +219,8 @@ export function createTaskLaunchRegistry(params: CreateTaskLaunchRegistryParams 
         byTaskId.delete(taskId);
         byToolUseId.delete(launch.toolUseId);
         const index = order.indexOf(taskId);
-        // Stryker disable next-line ConditionalExpression: unreachable by construction — reaching this point means `taskId` was found in `byTaskId` (the early return above), and `insert()` only ever pushes a `taskId` to `order` at the same moment it first adds it to `byTaskId`, so the two share exactly the same key set; `index` is never -1 here.
-        if(index !== -1) {
-            order.splice(index, 1);
-        }
+        // Every byTaskId entry was inserted into order exactly once.
+        order.splice(index, 1);
     }
 
     return { record, lookup, seed, forget };

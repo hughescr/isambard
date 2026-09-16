@@ -35,6 +35,22 @@ describe('InputQueue', () => {
         expect(result.value).toEqual(userMessage('world'));
     });
 
+    test('two independently parked iterators both complete when one message arrives and the queue closes', async () => {
+        const queue = new InputQueue();
+        const firstPending = queue[Symbol.asyncIterator]().next();
+        const secondPending = queue[Symbol.asyncIterator]().next();
+
+        queue.push(userMessage('one'));
+        queue.close();
+
+        const results = await Promise.all([firstPending, secondPending]);
+        expect(results.map(result => result.value)).toEqual(expect.arrayContaining([
+            userMessage('one'),
+            undefined,
+        ]));
+        expect(results.map(result => result.done)).toEqual(expect.arrayContaining([false, true]));
+    });
+
     test('drains three pushed messages in FIFO order', async () => {
         const queue = new InputQueue();
         queue.push(userMessage('one'));
@@ -92,9 +108,11 @@ describe('InputQueue', () => {
         const queue = new InputQueue();
         queue.close();
 
-        expect(() => {
+        const pushAfterClose = (): void => {
             queue.push(userMessage('too late'));
-        }).toThrow(InvariantViolationError);
+        };
+        expect(pushAfterClose).toThrow(InvariantViolationError);
+        expect(pushAfterClose).toThrow('Invariant violated in InputQueue.push: push called after close()');
     });
 
     test('size() reflects queued-but-undrained messages', async () => {

@@ -105,7 +105,6 @@ export interface BskySetupResult {
  */
 export async function setupBsky(options: BskySetupOptions): Promise<BskySetupResult> {
     const { bskyClient, docClient, tableName, client, adminDiscordChannelId } = options;
-    // Stryker disable next-line ObjectLiteral: Dependency injection for testability — sleep override is a no-op in production
     const retryDeps = options._deps?.sleep ? { deps: { sleep: options._deps.sleep } } : {};
 
     // Use the pre-loaded PersonAllowlist passed in by the caller
@@ -115,12 +114,10 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     const rejectionBackend = new BskyRejectionBackend(docClient, tableName);
 
     // Create rate limiter for outbound Bluesky posts
-    // Stryker disable next-line ObjectLiteral: TokenBucketRateLimiter config object is integration wiring
-    const rateLimiter = new TokenBucketRateLimiter({ capacity: 24, refillRatePerHour: 1 });
+    const rateLimiter = new TokenBucketRateLimiter();
 
     // Build sendApprovalRequest callback (posts approval embed to #admin channel)
     // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.
-    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression: sendApprovalRequest callback is integration wiring
     const sendApprovalRequest = async (
         text:         string,
         targetHandle: string,
@@ -165,13 +162,12 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
                 } else {
                     throw new ChannelNotAccessibleError(adminDiscordChannelId);
                 }
-            }, { policy: { maxAttempts: 3 }, ...retryDeps }));
+            }, retryDeps));
     };
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression
 
     // Build sendDMApprovalRequest callback (posts DM approval embed to #admin channel)
     // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.
-    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression,LogicalOperator: sendDMApprovalRequest callback is integration wiring
     const sendDMApprovalRequest = async (
         text:          string,
         targetHandles: string[],
@@ -180,7 +176,6 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
         const { embed, actionRow } = buildBskyApprovalEmbed({
             type:             'dm',
             text,
-            targetHandle:     targetHandles[0] ?? '',
             recipientHandles: targetHandles,
             convoId,
         });
@@ -199,12 +194,11 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
                 } else {
                     throw new ChannelNotAccessibleError(adminDiscordChannelId);
                 }
-            }, { policy: { maxAttempts: 3 }, ...retryDeps }));
+            }, retryDeps));
     };
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression,LogicalOperator
 
     // Create outbound approval handler (handles bsky-send-* and bsky-dm-* button/modal interactions)
-    // Stryker disable next-line ObjectLiteral: outbound approval handler wiring is integration-only
     const outboundApprovalHandler = new BskyOutboundApprovalHandler({
         client:                      bskyClient,
         rejectionBackend,
@@ -217,7 +211,6 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     // Q8: DM checkpoint manager + health-gated poller. Built here but not started — the caller
     // (src/index.ts) starts/stops it alongside the other Bluesky lifecycle pieces.
     const checkpointManager = new BskyCheckpointManager({ backend: options.memoryBackend });
-    // Stryker disable next-line ObjectLiteral: DM poller wiring is integration-only
     const dmPoller = createBskyDmPoller({
         client:         bskyClient,
         checkpointManager,
@@ -227,10 +220,8 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
         logger,
     });
 
-    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
     logger.info({ msg: 'Bluesky integration initialized' });
 
-    // Stryker disable next-line ObjectLiteral: return object is integration wiring
     return {
         client: bskyClient,
         allowlist,

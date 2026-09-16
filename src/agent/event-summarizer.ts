@@ -1,4 +1,3 @@
-import { isEmpty } from 'lodash-es';
 import pLimit from 'p-limit';
 import { generateText } from './text-generator';
 import type { MemoryToolItemData } from '@/storage';
@@ -14,9 +13,7 @@ interface EventBatchSummary {
 // Type for the summarizer function (for DI)
 export type SummarizeEventBatchesFn = typeof summarizeEventBatches;
 
-// Stryker disable next-line ArithmeticOperator: Concurrency limit is a config constant
 const CONCURRENCY_LIMIT = 4;
-// Stryker disable next-line ArithmeticOperator: Content preview length is a config constant
 const CONTENT_PREVIEW_LENGTH = 200;
 
 export async function summarizeEventBatches(
@@ -24,11 +21,6 @@ export async function summarizeEventBatches(
     batchSize: number,
     now: Date
 ): Promise<EventBatchSummary[]> {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive empty array guard
-    if(isEmpty(events)) {
-        return [];
-    }
-
     // Sort all events by updatedAt ascending, then split into batches
     const sortedEvents = events.toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt));
     const batches = Array.from({ length: Math.ceil(sortedEvents.length / batchSize) }, (_, i) => sortedEvents.slice(i * batchSize, (i + 1) * batchSize));
@@ -42,7 +34,6 @@ export async function summarizeEventBatches(
             const endTime = batch.at(-1)!.updatedAt;
 
             // Format events for the prompt
-            // Stryker disable StringLiteral: Cosmetic join separator for prompt formatting
             const formattedEvents = batch.map((event) => {
                 const eventDate = new Date(event.updatedAt);
                 const relativeAge = formatShortRelativeTime(eventDate, now);

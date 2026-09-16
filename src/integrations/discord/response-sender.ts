@@ -48,7 +48,6 @@ async function sendChunksViaCapability(
         if(result.status === 'queued' || result.status === 'unavailable') {
             anyQueued = true;
         }
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.info({ envelopeId, kind, chunkIndex: i, totalChunks: chunks.length, msg: 'Envelope response chunk sent via capability facade' });
     }
     return { sent: !anyQueued, queued: anyQueued || undefined };
@@ -75,24 +74,15 @@ async function sendChunksViaClient(
             throw new ChannelNotAccessibleError(targetChannelId);
         }
 
-        // Stryker disable next-line UpdateOperator: i-- would cause infinite loop — untestable without real Discord API
-        for(let i = 0; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — splitMessage guarantees every index in range; unreachable in practice
-            if(chunk === undefined) {
-                // Stryker disable next-line StringLiteral,CallExpression: invariant violation — debug context only
-                throw new InvariantViolationError('sendEnvelopeResponse', 'chunks[i] undefined despite i < chunks.length');
-            }
+        for(const [i, chunk] of chunks.entries()) {
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API, message ordering
             await withDiscordRetry(() => rateLimiter.sendToChannel(targetChannel as TextChannel, chunk));
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
             logger.info({ envelopeId, kind, chunkIndex: i, totalChunks: chunks.length, msg: 'Envelope response chunk sent successfully' });
         }
 
         return { sent: true };
     } catch (sendError) {
         const err = sendError instanceof Error ? sendError : new Error(String(sendError));
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.warn({ error: err, envelopeId, kind, msg: `Envelope response send failed, no outbox to queue to: ${err.message}` });
         return { sent: false };
     }
@@ -163,7 +153,6 @@ export async function sendEnvelopeResponse(config: SendEnvelopeResponseConfig): 
     const { envelopeId, kind, channelId, text, responseRouter, client, rateLimiter, discordCapability } = config;
 
     if((kind === 'discord' || kind === 'notification') && channelId === undefined) {
-        // Stryker disable next-line StringLiteral: invariant detail string is debug-only metadata
         throw new InvariantViolationError('sendEnvelopeResponse', `channelId is required for envelope kind: ${kind}`);
     }
 
@@ -172,7 +161,6 @@ export async function sendEnvelopeResponse(config: SendEnvelopeResponseConfig): 
         resolved = await responseRouter.resolveEnvelopeTarget(kind, text, channelId);
     } catch (routeError: unknown) {
         if(routeError instanceof WellKnownChannelNotFoundError) {
-            // Stryker disable all: Logging for observability
             logger.error({
                 error:       routeError,
                 envelopeId,
@@ -190,7 +178,6 @@ export async function sendEnvelopeResponse(config: SendEnvelopeResponseConfig): 
     }
 
     if(!resolved.shouldSend) {
-        // Stryker disable all: Logging for observability
         logger.info({
             envelopeId,
             kind,

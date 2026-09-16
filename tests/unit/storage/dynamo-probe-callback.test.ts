@@ -199,8 +199,7 @@ describe('runDynamoDBProbe', () => {
             // Two warn calls: one for the probe failure, one for the sendEvent failure
             expect(warnMock).toHaveBeenCalledTimes(2);
             const calls = warnMock.mock.calls as [Record<string, unknown>][];
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; calls[1] is verified by toHaveBeenCalledTimes(2) above
-            const sendEventWarnArg = calls[1]![0];
+            const sendEventWarnArg = calls[1][0];
             expect(sendEventWarnArg.msg).toBe('DynamoDB probe: failed to send CONNECTION_LOST event');
             expect(sendEventWarnArg.error).toBe('registry stopped');
         });

@@ -120,8 +120,7 @@ describe('BskyHistoryProvider', () => {
                 direction: 'inbound',
                 timestamp: '2026-03-28T09:00:00.000Z',
             });
-            expect(results[0].summary).toContain('@alice.bsky.social');
-            expect(results[0].summary).toContain('Post one');
+            expect(results[0].summary).toBe('@alice.bsky.social: Post one');
         });
 
         test('respects maxMessages parameter', async () => {
@@ -159,7 +158,7 @@ describe('BskyHistoryProvider', () => {
             const results = await provider.fetchHistory({ identifier: 'alice.bsky.social' });
 
             expect(results).toEqual([]);
-            expect(mockLogger.warn).toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledWith({ err: expect.any(Error) }, 'BskyHistoryProvider: failed to fetch history');
         });
 
         test('returns empty array when feed is empty', async () => {
@@ -213,7 +212,7 @@ describe('BskyHistoryProvider', () => {
                 platform:  'bsky',
                 timestamp: '2026-03-27T12:00:00.000Z',
             });
-            expect(results[0].summary).toContain('Parent post content');
+            expect(results[0].summary).toBe('@alice.bsky.social: Parent post content');
         });
 
         test('returns entry with inbound direction for parent post', async () => {

@@ -2,7 +2,7 @@
  * Tests for Discord infrastructure factory.
  */
 
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
 import { mockLogger } from '../../setup';
@@ -66,7 +66,8 @@ describe('createDiscordInfrastructure', () => {
 
     test('returns all required infrastructure components', () => {
         // Mock all the Discord integration modules
-        const mockDiscordClient = {} as unknown as Client;
+        const destroy = mock(async () => undefined);
+        const mockDiscordClient = { destroy } as unknown as Client;
         const mockChannelRegistryBackend = {};
         const mockChannelRegistry = {} as unknown as ChannelRegistryManager;
         const mockMessageFetcher = {} as unknown as MessageFetcher;
@@ -124,6 +125,9 @@ describe('createDiscordInfrastructure', () => {
             messageSearchService: mockMessageSearchService,
             inboxManager:         mockInboxManager,
         });
+        expect(mockLogger.info).toHaveBeenNthCalledWith(1, 'Discord message history enabled');
+        expect(mockLogger.info).toHaveBeenNthCalledWith(2, 'Inbox system initialized');
+        expect(destroy).not.toHaveBeenCalled();
     });
 
     test('passes discordConfig to createDiscordClient', () => {
@@ -338,10 +342,12 @@ describe('createDiscordInfrastructure', () => {
         })).toThrow(testError);
     });
 
-    test('throws when ChannelRegistryBackend constructor throws', () => {
+    test('throws when ChannelRegistryBackend constructor throws', async () => {
         const testError = new Error('Backend creation failed');
-
-        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client));
+        const destroy = mock(async () => {
+            throw new Error('dispose failed');
+        });
+        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({ destroy } as unknown as Client));
         // @ts-expect-error - Mocking constructor that throws
         const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => {
             throw testError;
@@ -354,6 +360,71 @@ describe('createDiscordInfrastructure', () => {
             tableName:     mockTableName,
             memoryBackend: mockMemoryBackend,
         })).toThrow(testError);
+        await Promise.resolve();
+        expect(destroy).toHaveBeenCalledTimes(1);
+    });
+
+    test('releases a client if the registry manager constructor fails', async () => {
+        const testError = new Error('Manager creation failed');
+        const destroy = mock(async () => undefined);
+        spies.push(
+            spyOn(clientModule, 'createDiscordClient').mockReturnValue({ destroy } as unknown as Client),
+            // @ts-expect-error - Mocking constructor
+            spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({})),
+            // @ts-expect-error - Deliberately failing manager constructor
+            spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => { throw testError; })
+        );
+
+        expect(() => discordInfrastructureModule.createDiscordInfrastructure({
+            discordConfig: mockDiscordConfig,
+            docClient:     mockDocClient,
+            tableName:     mockTableName,
+            memoryBackend: mockMemoryBackend,
+        })).toThrow(testError);
+        await Promise.resolve();
+        expect(destroy).toHaveBeenCalledTimes(1);
+    });
+
+    test('transfers the client at acquisition when a construction owner is supplied', async () => {
+        const testError = new Error('Backend creation failed');
+        const destroy = mock(async () => undefined);
+        const client = { destroy } as unknown as Client;
+        const acquired: Client[] = [];
+        spies.push(
+            spyOn(clientModule, 'createDiscordClient').mockReturnValue(client),
+            // @ts-expect-error - Deliberately failing backend constructor
+            spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => { throw testError; })
+        );
+
+        expect(() => discordInfrastructureModule.createDiscordInfrastructure({
+            discordConfig:   mockDiscordConfig,
+            docClient:       mockDocClient,
+            tableName:       mockTableName,
+            memoryBackend:   mockMemoryBackend,
+            onClientCreated: (owner) => { acquired.push(owner); },
+        })).toThrow(testError);
+        expect(acquired).toEqual([client]);
+        expect(destroy).not.toHaveBeenCalled();
+        await acquired[0].destroy();
+        expect(destroy).toHaveBeenCalledTimes(1);
+    });
+
+    test('disposes locally if acquisition registration itself throws', async () => {
+        const registrationError = new Error('owner registration failed');
+        const destroy = mock(async () => undefined);
+        spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({ destroy } as unknown as Client));
+
+        expect(() => discordInfrastructureModule.createDiscordInfrastructure({
+            discordConfig:   mockDiscordConfig,
+            docClient:       mockDocClient,
+            tableName:       mockTableName,
+            memoryBackend:   mockMemoryBackend,
+            onClientCreated: () => {
+                throw registrationError;
+            },
+        })).toThrow(registrationError);
+        await Promise.resolve();
+        expect(destroy).toHaveBeenCalledTimes(1);
     });
 
     test('handles missing presence config', () => {

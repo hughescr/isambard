@@ -110,16 +110,14 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
 
             manager.startHydration(loop);
 
-            // Flush the in-flight warmCache() call
-            await Promise.resolve();
-            await Promise.resolve();
+            await manager.ready;
 
             expect(manager.isReady()).toBe(true);
 
             let resolved = false;
-            // eslint-disable-next-line promise/always-return -- side-effect setter, no return value needed
             void manager.ready.then(() => {
                 resolved = true;
+                return undefined;
             });
             await Promise.resolve();
             expect(resolved).toBe(true);
@@ -197,9 +195,9 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
             expect(manager.isReady()).toBe(true);
 
             let resolved = false;
-            // eslint-disable-next-line promise/always-return -- side-effect setter, no return value needed
             void manager.ready.then(() => {
                 resolved = true;
+                return undefined;
             });
             await Promise.resolve();
             expect(resolved).toBe(true);
@@ -436,7 +434,9 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
             manager.startHydration(loop1);
 
             // Second call should throw (already started)
-            expect(() => manager.startHydration(loop2)).toThrow();
+            expect(() => manager.startHydration(loop2)).toThrow(
+                'Invariant violated in startHydration: ChannelRegistryManager: hydration loop already started — call stop() first'
+            );
 
             // Flush
             await Promise.resolve();
@@ -504,16 +504,14 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
 
             manager.startHydration(loop1);
 
-            // Flush first warmCache
-            await Promise.resolve();
-            await Promise.resolve();
+            await manager.ready;
 
             // After first hydration, ready should be resolved and isReady() true
             expect(manager.isReady()).toBe(true);
             let ready1Resolved = false;
-            // eslint-disable-next-line promise/always-return -- side-effect setter
             void manager.ready.then(() => {
                 ready1Resolved = true;
+                return undefined;
             });
             await Promise.resolve();
             expect(ready1Resolved).toBe(true);
@@ -540,17 +538,15 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
 
             manager.startHydration(loop2);
 
-            // Flush second warmCache
-            await Promise.resolve();
-            await Promise.resolve();
+            await manager.ready;
 
             // After second hydration, ready resolves again and isReady() is true again
             expect(manager.isReady()).toBe(true);
 
             let ready2Resolved = false;
-            // eslint-disable-next-line promise/always-return -- side-effect setter
             void manager.ready.then(() => {
                 ready2Resolved = true;
+                return undefined;
             });
             await Promise.resolve();
             expect(ready2Resolved).toBe(true);
@@ -591,8 +587,7 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
     // -------------------------------------------------------------------------
     describe('Fix 5: onReady callback rejection is caught and logged', () => {
         it('logs error and does not throw unhandled rejection when onReady callback rejects', async () => {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- spy mock; only call presence matters, return value ignored
-            const errorSpy = jest.spyOn(loggerModule.logger, 'error').mockImplementation((_args: any) => loggerModule.logger);
+            const errorSpy = jest.spyOn(loggerModule.logger, 'error').mockImplementation(() => loggerModule.logger);
 
             const backend = createMockBackend(() => Promise.resolve([]));
             const client = createMockClient();
@@ -618,6 +613,35 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
 
             errorSpy.mockRestore();
         });
+
+        it('logs a rejection again after the ready gate is re-armed', async () => {
+            const errorSpy = jest.spyOn(loggerModule.logger, 'error').mockImplementation(() => loggerModule.logger);
+            const backend = createMockBackend(() => Promise.resolve([]));
+            const manager = new ChannelRegistryManager({ backend, homeGuildId, client: createMockClient() });
+            manager.onReady(async () => {
+                throw new Error('callback boom');
+            });
+
+            await manager.warmCache();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            const afterFirstCycle = errorSpy.mock.calls.length;
+            manager.stop();
+            await manager.warmCache();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(afterFirstCycle).toBeGreaterThan(0);
+            expect(errorSpy.mock.calls.length).toBeGreaterThan(afterFirstCycle);
+            expect(errorSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+                err: expect.objectContaining({ message: 'callback boom' }),
+                msg: 'onReady callback rejected',
+            }));
+            errorSpy.mockRestore();
+        });
     });
 
     // -------------------------------------------------------------------------
@@ -635,7 +659,9 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
             };
 
             manager.onReady(cb);
+            expect((manager as unknown as { readyCallbacks: unknown[] }).readyCallbacks).toHaveLength(1);
             manager.offReady(cb);
+            expect((manager as unknown as { readyCallbacks: unknown[] }).readyCallbacks).toHaveLength(0);
 
             await manager.warmCache();
             await Promise.resolve();
@@ -672,6 +698,29 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
             expect(countB).toBe(1); // still fires
         });
 
+        it('removes the requested later callback without removing an earlier registration', async () => {
+            const backend = createMockBackend(() => Promise.resolve([]));
+            const manager = new ChannelRegistryManager({ backend, homeGuildId, client: createMockClient() });
+            let countA = 0;
+            let countB = 0;
+            const cbA = (): void => {
+                countA++;
+            };
+            const cbB = (): void => {
+                countB++;
+            };
+
+            manager.onReady(cbA);
+            manager.onReady(cbB);
+            manager.offReady(cbB);
+            await manager.warmCache();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(countA).toBe(1);
+            expect(countB).toBe(0);
+        });
+
         it('offReady on a never-registered callback is a no-op', () => {
             const backend = createMockBackend(() => Promise.resolve([]));
             const client = createMockClient();
@@ -680,6 +729,29 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
             const unregistered = (): void => undefined;
             // Should not throw
             expect(() => manager.offReady(unregistered)).not.toThrow();
+        });
+
+        it('does not remove any registration when the requested callback is absent', async () => {
+            const backend = createMockBackend(() => Promise.resolve([]));
+            const manager = new ChannelRegistryManager({ backend, homeGuildId, client: createMockClient() });
+            let callCount = 0;
+            const registered = (): void => {
+                callCount++;
+            };
+            const unregistered = (): void => undefined;
+
+            manager.onReady(registered);
+            manager.offReady(unregistered);
+            await manager.warmCache();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            manager.stop();
+            await manager.warmCache();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(callCount).toBe(2);
         });
 
         it('Fix 8: callback registered then unregistered fires 0 times even across stop/restart cycle', async () => {

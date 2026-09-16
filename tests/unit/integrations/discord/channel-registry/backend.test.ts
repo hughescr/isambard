@@ -343,6 +343,15 @@ describe('ChannelRegistryBackend', () => {
 
             expect(result).toBeNull();
         });
+
+        test('should report a sparse query result as an invariant violation', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: Array.from({ length: 1 }) });
+
+            await expect(backend.getWellKnownChannel('general')).rejects.toThrow(
+                'Invariant violated in getWellKnownChannelByType: items[0] undefined despite items.length !== 0'
+            );
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+        });
     });
 
     describe('getAllWellKnownChannels', () => {

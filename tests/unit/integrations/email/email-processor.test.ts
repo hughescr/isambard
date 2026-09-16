@@ -187,6 +187,38 @@ describe('EmailProcessor', () => {
             expect(classifier.classify).toHaveBeenCalledTimes(1);
         });
 
+        test('sender on allowlist + auth failed → waits for onAuthFailed before classifying or moving', async () => {
+            const email          = makeEmail({ verificationResults: { spf: false, dkim: false } });
+            const classifier     = makeClassifier(makeVerdict('safe'));
+            const { conn, moveMessage } = makeImap();
+            const callbackStarted = Promise.withResolvers<void>();
+            const callbackGate    = Promise.withResolvers<void>();
+            const onAuthFailed    = mock(async () => {
+                callbackStarted.resolve();
+                await callbackGate.promise;
+            });
+
+            const processor = new EmailProcessor(
+                {
+                    allowlist:      makeAllowlist(true),
+                    classifier,
+                    wildDuckClient: conn,
+                },
+                { onAuthFailed }
+            );
+
+            const processing = processor.processEmail(email);
+            await callbackStarted.promise;
+
+            try {
+                expect(classifier.classify).not.toHaveBeenCalled();
+                expect(moveMessage).not.toHaveBeenCalled();
+            } finally {
+                callbackGate.resolve();
+                await processing;
+            }
+        });
+
         test('sender on allowlist + auth failed + classified safe → onAuthFailed fires, onSafe does NOT fire', async () => {
             const email        = makeEmail({ verificationResults: { spf: false, dkim: false } });
             const classifier   = makeClassifier(makeVerdict('safe'));
@@ -272,6 +304,50 @@ describe('EmailProcessor', () => {
     });
 
     describe('non-allowlist routing', () => {
+        test.each([
+            ['safe', 'onSafe'],
+            ['uncertain', 'onReview'],
+            ['unsafe', 'onUnsafe'],
+        ] as const)('waits for the %s callback before processEmail resolves', async (verdictValue, callbackName) => {
+            const email           = makeEmail();
+            const verdict         = makeVerdict(verdictValue);
+            const classifier      = makeClassifier(verdict);
+            const { conn }        = makeImap();
+            const callbackStarted = Promise.withResolvers<void>();
+            const callbackGate    = Promise.withResolvers<void>();
+            const callback        = mock(async () => {
+                callbackStarted.resolve();
+                await callbackGate.promise;
+            });
+            const processor = new EmailProcessor(
+                {
+                    allowlist:      makeAllowlist(false),
+                    classifier,
+                    wildDuckClient: conn,
+                },
+                { [callbackName]: callback }
+            );
+            let settled = false;
+            const processing = processor.processEmail(email).then(() => {
+                settled = true;
+                return undefined;
+            });
+            await callbackStarted.promise;
+
+            try {
+                await new Promise<void>((resolve) => {
+                    globalThis.setImmediate(resolve);
+                });
+                expect(settled).toBe(false);
+                expect(mockLogger.info).not.toHaveBeenCalled();
+            } finally {
+                callbackGate.resolve();
+                await processing;
+            }
+
+            expect(callback).toHaveBeenCalledWith(email, verdict);
+        });
+
         test('safe verdict → CleanInbox', async () => {
             const email      = makeEmail();
             const verdict    = makeVerdict('safe');
@@ -518,6 +594,26 @@ describe('EmailProcessor', () => {
     });
 
     describe('error handling', () => {
+        test('preserves failure messages and context for every routing boundary', async () => {
+            const email = makeEmail();
+            const allowlistMove = mock(async () => {
+                throw new Error('allowlist move failed');
+            });
+            const bypass = new EmailProcessor({ allowlist: makeAllowlist(true), classifier: makeClassifier(makeVerdict('safe')), wildDuckClient: { moveMessage: allowlistMove } as unknown as WildDuckClient });
+            await expect(bypass.processEmail(email)).rejects.toMatchObject({ message: 'Failed to move allowlist-bypassed email (uid=42): allowlist move failed', context: { uid: 42, from: 'alice@example.com' } });
+
+            const classify = new EmailProcessor({ allowlist: makeAllowlist(false), classifier: makeClassifier(new Error('classifier failed')), wildDuckClient: makeImap().conn });
+            await expect(classify.processEmail(email)).rejects.toMatchObject({ message: 'Classification failed (uid=42): classifier failed', context: { uid: 42, from: 'alice@example.com' } });
+
+            const move = new EmailProcessor({
+                allowlist:      makeAllowlist(false),
+                classifier:     makeClassifier(makeVerdict('spam')),
+                wildDuckClient: { moveMessage: mock(async () => {
+                    throw new Error('route move failed');
+                }) } as unknown as WildDuckClient,
+            });
+            await expect(move.processEmail(email)).rejects.toMatchObject({ message: 'Failed to move email (uid=42, destination=Junk): route move failed', context: { uid: 42, from: 'alice@example.com', destination: EmailFolder.Junk } });
+        });
         test('classifier error → throws EmailProcessingError', async () => {
             const classifier = makeClassifier(new Error('API failed'));
             const { conn }   = makeImap();
@@ -528,7 +624,7 @@ describe('EmailProcessor', () => {
                 wildDuckClient: conn,
             });
 
-            expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
+            await expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
         });
 
         test('IMAP move error → throws EmailProcessingError', async () => {
@@ -545,7 +641,7 @@ describe('EmailProcessor', () => {
                 wildDuckClient: conn,
             });
 
-            expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
+            await expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
         });
 
         test('IMAP move error on allowlist bypass → throws EmailProcessingError', async () => {
@@ -561,7 +657,7 @@ describe('EmailProcessor', () => {
                 wildDuckClient: conn,
             });
 
-            expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
+            await expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
         });
     });
 
@@ -579,8 +675,10 @@ describe('EmailProcessor', () => {
             await processor.processEmail(email);
 
             expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
-                uid:  42,
-                from: 'alice@example.com',
+                uid:               42,
+                from:              'alice@example.com',
+                allowlistBypassed: true,
+                msg:               'Email routed (allowlist bypass)',
             }));
         });
 
@@ -601,6 +699,7 @@ describe('EmailProcessor', () => {
                 uid:     42,
                 from:    'alice@example.com',
                 verdict: 'spam',
+                msg:     'Email routed',
             }));
         });
     });

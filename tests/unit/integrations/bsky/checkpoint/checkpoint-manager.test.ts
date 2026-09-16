@@ -299,6 +299,8 @@ describe.concurrent('BskyCheckpointManager', () => {
             const result = await manager.processFeedItems('following', items);
             expect(result.newItems).toHaveLength(2);
             expect(result.totalFetched).toBe(2);
+            const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0][0] as { content: string };
+            expect((JSON.parse(createCall.content) as BskyFeedCheckpoint).processedUris).toEqual(['at://uri/1', 'at://uri/2']);
         });
 
         test('filters already-processed items when checkpoint exists', async () => {
@@ -374,6 +376,8 @@ describe.concurrent('BskyCheckpointManager', () => {
             const result        = await manager.processNotifications(notifications);
             expect(result.newNotifications).toHaveLength(2);
             expect(result.totalFetched).toBe(2);
+            const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0][0] as { content: string };
+            expect((JSON.parse(createCall.content) as BskyNotificationCheckpoint).processedUris).toEqual(['at://notif/1', 'at://notif/2']);
         });
 
         test('filters already-processed notifications when checkpoint exists', async () => {
@@ -585,6 +589,8 @@ describe.concurrent('BskyCheckpointManager', () => {
             expect(result.newConvos).toHaveLength(1);
             expect(result.newConvos[0].id).toBe('convo-1');
             expect(result.totalFetched).toBe(1);
+            const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0][0] as { content: string };
+            expect((JSON.parse(createCall.content) as BskyDmCheckpoint).processedUris).toEqual(['msg-1']);
         });
 
         test('a second poll with no activity returns nothing', async () => {
@@ -759,6 +765,94 @@ describe.concurrent('BskyCheckpointManager', () => {
             await manager.unprocessDirectMessages(['z']);
 
             expect(mockBackend.update).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('public persistence completion boundaries', () => {
+        async function isPendingUntilWrite(
+            method: 'create' | 'update',
+            start:  () => Promise<unknown>
+        ): Promise<boolean> {
+            const writeStarted = Promise.withResolvers<void>();
+            const writeGate    = Promise.withResolvers<MemoryToolItemData>();
+            if(method === 'create') {
+                mockBackend.create = mock(() => {
+                    writeStarted.resolve();
+                    return writeGate.promise;
+                });
+            } else {
+                mockBackend.update = mock(() => {
+                    writeStarted.resolve();
+                    return writeGate.promise;
+                });
+            }
+            let completed = false;
+            const operation = start().then((): void => {
+                completed = true;
+                return undefined;
+            });
+
+            try {
+                await writeStarted.promise;
+                await Bun.sleep(0);
+                return !completed;
+            } finally {
+                writeGate.resolve(makeItem('{}'));
+                await operation;
+            }
+        }
+
+        test('saveFeedCheckpoint waits for the backend write', async () => {
+            expect(await isPendingUntilWrite('create', () => manager.saveFeedCheckpoint(FEED_CHECKPOINT, false))).toBeTrue();
+        });
+
+        test('saveNotificationCheckpoint waits for the backend write', async () => {
+            expect(await isPendingUntilWrite('create', () => manager.saveNotificationCheckpoint(NOTIF_CHECKPOINT, false))).toBeTrue();
+        });
+
+        test('saveDmCheckpoint waits for the backend write', async () => {
+            expect(await isPendingUntilWrite('create', () => manager.saveDmCheckpoint(DM_CHECKPOINT, false))).toBeTrue();
+        });
+
+        test('processFeedItems waits for checkpoint persistence before returning items', async () => {
+            const item: BskyFeedItem = {
+                post: {
+                    uri:         'at://uri/new',
+                    cid:         'bafycid',
+                    author:      { did: 'did:plc:author', handle: 'author.bsky.social' },
+                    text:        'Hello',
+                    createdAt:   NOW,
+                    replyCount:  0,
+                    likeCount:   0,
+                    repostCount: 0,
+                    indexedAt:   NOW,
+                },
+            };
+            expect(await isPendingUntilWrite('create', () => manager.processFeedItems('following', [item]))).toBeTrue();
+        });
+
+        test('processNotifications waits for checkpoint persistence before returning notifications', async () => {
+            const notification: BskyNotification = {
+                reason: 'like', uri: 'at://notif/new', author: { did: 'did:plc:author', handle: 'author.bsky.social' }, indexedAt: NOW,
+            };
+            expect(await isPendingUntilWrite('create', () => manager.processNotifications([notification]))).toBeTrue();
+        });
+
+        test('processDirectMessages waits for checkpoint persistence before returning conversations', async () => {
+            const conversation: BskyConversation = {
+                id:          'convo-new',
+                rev:         'rev-1',
+                members:     [],
+                muted:       false,
+                unreadCount: 1,
+                lastMessage: { id: 'msg-new', rev: 'msg-rev-1', text: 'hi', senderDid: 'did:plc:sender', sentAt: NOW },
+            };
+            expect(await isPendingUntilWrite('create', () => manager.processDirectMessages([conversation]))).toBeTrue();
+        });
+
+        test('unprocessDirectMessages waits for the updated checkpoint to persist', async () => {
+            mockBackend.get = mock(async () => makeItem(JSON.stringify({ ...DM_CHECKPOINT, processedUris: ['keep', 'remove'] })));
+            expect(await isPendingUntilWrite('update', () => manager.unprocessDirectMessages(['remove']))).toBeTrue();
         });
     });
 });

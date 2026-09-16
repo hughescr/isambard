@@ -95,7 +95,6 @@ describe('classifyDiscordError', () => {
         expect(result.category).toBe('permanent');
     });
 
-    // Stryker disable next-line ConditionalExpression, BlockStatement: Testing error without code property
     test('classifies error without code property as permanent', () => {
         const error = { message: 'Some error without code' };
 

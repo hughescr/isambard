@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on cast values for defensive access */
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock, spyOn } from 'bun:test';
 import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
 import type { AllowlistInteractionHandler } from '../../../../src/integrations/discord/allowlist-interaction-handler';
 import { OutboundApprovalHandler, type OutboundApprovalHandlerDeps  } from '../../../../src/integrations/email/outbound-approval-handler';
@@ -106,6 +105,14 @@ function makeDeps(overrides: Partial<OutboundApprovalHandlerDeps> = {}): Outboun
     };
 }
 
+function makeDeferred(): { promise: Promise<void>, resolve: () => void } {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    return { promise, resolve: release };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -118,27 +125,217 @@ describe('OutboundApprovalHandler', () => {
         mockLogger.debug.mockClear();
     });
 
+    describe('async completion contracts', () => {
+        test('does not acknowledge rejection before the rejection flag is persisted', async () => {
+            const gate = makeDeferred();
+            const started = makeDeferred();
+            const deps = makeDeps();
+            (deps.wildDuckClient.updateMessageFlags as ReturnType<typeof mock>).mockImplementation(async () => {
+                started.resolve();
+                await gate.promise;
+            });
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42');
+            const operation = handler.handleModalSubmit(interaction);
+
+            try {
+                await started.promise;
+                await Bun.sleep(0);
+                expect(editReply).not.toHaveBeenCalled();
+                expect(Bun.peek.status(operation)).toBe('pending');
+            } finally {
+                gate.resolve();
+                await operation;
+            }
+
+            expect(editReply).toHaveBeenCalledTimes(1);
+        });
+
+        test('does not start select-menu persistence before acknowledgement completes', async () => {
+            const gate = makeDeferred();
+            const started = makeDeferred();
+            const deps = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, deferUpdate } = makeSelectMenuInteraction('email-allowlist-select:42', []);
+            deferUpdate.mockImplementation(async () => {
+                started.resolve();
+                await gate.promise;
+                return {};
+            });
+            const operation = handler.handleSelectMenu(interaction);
+
+            try {
+                await started.promise;
+                await Bun.sleep(0);
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(Bun.peek.status(operation)).toBe('pending');
+            } finally {
+                gate.resolve();
+                await operation;
+            }
+
+            expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+        });
+
+        test('waits for the selected recipient allowlist handoff', async () => {
+            const gate = makeDeferred();
+            const started = makeDeferred();
+            const startFromApproval = mock(async () => {
+                started.resolve();
+                await gate.promise;
+                return { allowlistSuffix: '' };
+            });
+            const deps = makeDeps({
+                allowlistInteractionHandler: {
+                    startFromApproval,
+                    handleButton:      mock(async () => {}),
+                    handleModalSubmit: mock(async () => {}),
+                } as unknown as AllowlistInteractionHandler,
+            });
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', ['target@example.com']);
+            const operation = handler.handleSelectMenu(interaction);
+
+            try {
+                await started.promise;
+                await Bun.sleep(0);
+                expect(Bun.peek.status(operation)).toBe('pending');
+            } finally {
+                gate.resolve();
+                await operation;
+            }
+        });
+
+        test('waits for the select-menu success acknowledgement before notifying', async () => {
+            const gate = makeDeferred();
+            const started = makeDeferred();
+            const notify = mock((_params: NotifyParams) => true);
+            const deps = makeDeps({ notify });
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
+            editReply.mockImplementation(async () => {
+                started.resolve();
+                await gate.promise;
+                return {};
+            });
+            const operation = handler.handleSelectMenu(interaction);
+
+            try {
+                await started.promise;
+                await Bun.sleep(0);
+                expect(notify).not.toHaveBeenCalled();
+                expect(Bun.peek.status(operation)).toBe('pending');
+            } finally {
+                gate.resolve();
+                await operation;
+            }
+
+            expect(notify).toHaveBeenCalledTimes(1);
+        });
+
+        test.each([
+            ['draft lookup fails',   'reject' as const],
+            ['draft has no address', 'empty' as const],
+        ])('waits for fallback approval persistence when %s', async (_name, outcome) => {
+            const gate = makeDeferred();
+            const started = makeDeferred();
+            const create = mock(async () => {
+                started.resolve();
+                await gate.promise;
+            });
+            const deps = makeDeps({ sagaBackend: { create } as unknown as ApprovalSagaBackend });
+            if(outcome === 'reject') {
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockRejectedValue(new Error('lookup unavailable'));
+            } else {
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({ id: 42, to: [], cc: [] });
+            }
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
+            const operation = handler.handleButton(interaction);
+
+            try {
+                await started.promise;
+                await Bun.sleep(0);
+                expect(Bun.peek.status(operation)).toBe('pending');
+            } finally {
+                gate.resolve();
+                await operation;
+            }
+        });
+
+        test('waits for the recipient selection prompt to be displayed', async () => {
+            const gate = makeDeferred();
+            const started = makeDeferred();
+            const deps = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
+            editReply.mockImplementation(async () => {
+                started.resolve();
+                await gate.promise;
+                return {};
+            });
+            const operation = handler.handleButton(interaction);
+
+            try {
+                await started.promise;
+                await Bun.sleep(0);
+                expect(Bun.peek.status(operation)).toBe('pending');
+            } finally {
+                gate.resolve();
+                await operation;
+            }
+        });
+    });
+
+    test('handleButton waits for Discord acknowledgement before approval work', async () => {
+        const acknowledgement = Promise.withResolvers<void>();
+        const acknowledgementStarted = Promise.withResolvers<void>();
+        const deps = makeDeps();
+        const handler = new OutboundApprovalHandler(deps);
+        const { interaction, deferUpdate } = makeButtonInteraction('email-send-approve:42');
+        deferUpdate.mockImplementation(async () => {
+            acknowledgementStarted.resolve();
+            await acknowledgement.promise;
+            return {};
+        });
+        const operation = handler.handleButton(interaction);
+
+        try {
+            await acknowledgementStarted.promise;
+            await Bun.sleep(0);
+            expect(Bun.peek.status(operation)).toBe('pending');
+            expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+        } finally {
+            acknowledgement.resolve();
+            await operation;
+        }
+    });
+
     describe('handleButton()', () => {
         test('should return early for unknown prefix', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
+            const parseId = spyOn(handler as unknown as { parseId: (raw: string) => number | null }, 'parseId');
             const { interaction, deferUpdate } = makeButtonInteraction('email-other:42');
 
             await handler.handleButton(interaction);
 
             expect(deferUpdate).not.toHaveBeenCalled();
             expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
+            expect(parseId).not.toHaveBeenCalled();
         });
 
         test('should return early for malformed customId with no colon', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
+            const parseId = spyOn(handler as unknown as { parseId: (raw: string) => number | null }, 'parseId');
             const { interaction, deferUpdate } = makeButtonInteraction('email-send-approve');
 
             await handler.handleButton(interaction);
 
             expect(deferUpdate).not.toHaveBeenCalled();
             expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
+            expect(parseId).not.toHaveBeenCalled();
         });
 
         test('should return early for invalid UID', async () => {
@@ -163,6 +360,28 @@ describe('OutboundApprovalHandler', () => {
                 expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
                 expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
                 expect(editReply).toHaveBeenCalledTimes(1);
+            });
+
+            test('should log a rejected fire-and-forget activity write on the direct approval path', async () => {
+                const activityError = new Error('activity unavailable');
+                const activityLogger = { log: mock(async () => {
+                    throw activityError;
+                }) };
+                const deps    = makeDeps({ activityLogger });
+                const handler = new OutboundApprovalHandler(deps);
+                const { interaction } = makeButtonInteraction('email-send-approve:42');
+
+                await handler.handleButton(interaction);
+                await Promise.resolve();
+
+                expect(activityLogger.log).toHaveBeenCalledWith({
+                    type:    'email-sent',
+                    summary: 'Email approved for sending',
+                });
+                expect(mockLogger.warn).toHaveBeenCalledWith({
+                    err: activityError,
+                    msg: 'Activity log failed for email send (direct path)',
+                });
             });
 
             test('should create saga with correct type and uid param', async () => {
@@ -226,10 +445,10 @@ describe('OutboundApprovalHandler', () => {
                 expect(order).toEqual(['editReply', 'notify']);
                 expect(notify).toHaveBeenCalledTimes(1);
                 const call = notify.mock.calls[0]?.[0];
-                expect(call?.source).toBe('email-approval');
-                expect(call?.wake).toBe(true);
-                expect(call?.dedupeKey).toBe('email:42:approved');
-                expect(call?.text).toBe('Outbound email (uid 42) approved for sending');
+                expect(call.source).toBe('email-approval');
+                expect(call.wake).toBe(true);
+                expect(call.dedupeKey).toBe('email:42:approved');
+                expect(call.text).toBe('Outbound email (uid 42) approved for sending');
             });
 
             test('should still resolve and leave editReply outcome intact when notify throws', async () => {
@@ -261,10 +480,10 @@ describe('OutboundApprovalHandler', () => {
                 expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
                 expect(notify).toHaveBeenCalledTimes(1);
                 const call = notify.mock.calls[0]?.[0];
-                expect(call?.source).toBe('email-approval');
-                expect(call?.wake).toBe(true);
-                expect(call?.dedupeKey).toBe('email:42:approved');
-                expect(call?.text).toBe('Outbound email (uid 42) approved for sending');
+                expect(call.source).toBe('email-approval');
+                expect(call.wake).toBe(true);
+                expect(call.dedupeKey).toBe('email:42:approved');
+                expect(call.text).toBe('Outbound email (uid 42) approved for sending');
                 expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                     uid: 42,
                     msg: 'Failed to update Discord embed after email approval',
@@ -309,7 +528,7 @@ describe('OutboundApprovalHandler', () => {
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
-                expect(handler.handleButton(interaction)).resolves.toBeUndefined();
+                await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
                 // Falls back to simple approve — saga is created
                 expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
                 expect(editReply).toHaveBeenCalledTimes(1);
@@ -321,7 +540,7 @@ describe('OutboundApprovalHandler', () => {
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
-                expect(handler.handleButton(interaction)).resolves.toBeUndefined();
+                await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
                 // Falls back to simple approve — saga is created
                 expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
                 expect(mockLogger.warn).toHaveBeenCalled();
@@ -337,7 +556,7 @@ describe('OutboundApprovalHandler', () => {
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
-                expect(handler.handleButton(interaction)).resolves.toBeUndefined();
+                await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
                 // Falls back to simple approve — saga is created
                 expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
             });
@@ -362,7 +581,7 @@ describe('OutboundApprovalHandler', () => {
                 const replyArg = editReply.mock.calls[0]?.[0];
                 // The select menu component should have deduplicated options
                 const menuOptions = (replyArg as { components: { components: { options: { data: { value: string } }[] }[] }[] })
-                    .components?.[0]?.components?.[0]?.options;
+                    .components[0].components[0].options;
                 expect(menuOptions).toBeDefined();
                 // 'duplicate@example.com' should appear only once; 'other@example.com' once → total 2
                 expect(menuOptions).toHaveLength(2);
@@ -371,6 +590,60 @@ describe('OutboundApprovalHandler', () => {
                 expect(values).toContain('other@example.com');
                 // No duplicates
                 expect(new Set(values).size).toBe(2);
+            });
+
+            test('should omit missing recipient fields instead of presenting a synthetic recipient', async () => {
+                const deps = makeDeps();
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
+                    id: 42,
+                    to: [{ address: 'recipient@example.com' }],
+                });
+                const handler = new OutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
+
+                await handler.handleButton(interaction);
+
+                const replyArg = editReply.mock.calls[0]?.[0] as { components: { components: { options: { data: { value: string } }[] }[] }[] };
+                const options = replyArg.components[0].components[0].options;
+                expect(options.map(option => option.data.value)).toEqual(['recipient@example.com']);
+            });
+
+            test('should preserve recipient addresses and allowlist prompt text in the select menu', async () => {
+                const deps = makeDeps();
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
+                    id: 42,
+                    to: [{ address: 'recipient@example.com' }],
+                    cc: [],
+                });
+                const handler = new OutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
+
+                await handler.handleButton(interaction);
+
+                const replyArg = editReply.mock.calls[0]?.[0] as {
+                    content:    string
+                    components: { components: { data: { placeholder: string, min_values: number }, options: { data: { value: string } }[] }[] }[]
+                };
+                expect(replyArg.content).toBe('Select recipients to add to allowlist, then click Submit:');
+                expect(replyArg.components[0].components[0].data.placeholder).toBe('Select recipients to add to allowlist');
+                expect(replyArg.components[0].components[0].data.min_values).toBe(0);
+                expect(replyArg.components[0].components[0].options[0].data.value).toBe('recipient@example.com');
+            });
+
+            test('should log the failed draft lookup before falling back to plain approval', async () => {
+                const error = new Error('fetch failed');
+                const deps = makeDeps();
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockRejectedValue(error);
+                const handler = new OutboundApprovalHandler(deps);
+                const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
+
+                await handler.handleButton(interaction);
+
+                expect(mockLogger.warn).toHaveBeenCalledWith({
+                    err: error,
+                    uid: 42,
+                    msg: 'Failed to fetch draft message before allowlist select — falling back to simple approve',
+                });
             });
         });
 
@@ -396,7 +669,7 @@ describe('OutboundApprovalHandler', () => {
 
                 expect(showModal).toHaveBeenCalledTimes(1);
                 const modalArg = showModal.mock.calls[0]?.[0] as { data: { custom_id: string } };
-                expect(modalArg.data?.custom_id).toContain('99');
+                expect(modalArg.data.custom_id).toContain('99');
             });
 
             test('should set rejection reason text input as not required', async () => {
@@ -410,12 +683,13 @@ describe('OutboundApprovalHandler', () => {
                 // Use toJSON() to access the serialized modal data including component properties
                 // LabelBuilder (Components V2) produces { components: [{ component: { required } }] }
                 const modalArg = showModal.mock.calls[0]?.[0] as { toJSON: () => {
-                    components: { component: { required?: boolean } }[]
+                    components: { component: { custom_id?: string, required?: boolean } }[]
                 } };
                 const modalJson = modalArg.toJSON();
                 // The text input should be optional (not required)
-                const textInput = modalJson.components?.[0]?.component;
-                expect(textInput?.required).toBe(false);
+                const textInput = modalJson.components[0].component;
+                expect(textInput.custom_id).toBe('reject-reason');
+                expect(textInput.required).toBe(false);
             });
         });
 
@@ -429,7 +703,10 @@ describe('OutboundApprovalHandler', () => {
                 await handler.handleButton(interaction);
 
                 expect(editReply).toHaveBeenCalledTimes(1);
-                expect(mockLogger.error).toHaveBeenCalled();
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    prefix: 'email-send-approve',
+                    msg:    'Outbound approval button handler failed',
+                }));
             });
 
             test('should call editReply with embeds and components cleared on error', async () => {
@@ -456,6 +733,9 @@ describe('OutboundApprovalHandler', () => {
                 await handler.handleButton(interaction);
 
                 expect(mockLogger.error).toHaveBeenCalledTimes(2);
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    msg: 'Failed to send error editReply',
+                }));
             });
 
             test('should NOT call editReply when reject path (showModal) throws', async () => {
@@ -489,12 +769,14 @@ describe('OutboundApprovalHandler', () => {
         test('should return early for malformed customId with no colon', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
+            const parseId = spyOn(handler as unknown as { parseId: (raw: string) => number | null }, 'parseId');
             const { interaction, deferUpdate } = makeModalInteraction('email-send-reject-reason');
 
             await handler.handleModalSubmit(interaction);
 
             expect(deferUpdate).not.toHaveBeenCalled();
             expect(deps.wildDuckClient.updateMessageMetadata).not.toHaveBeenCalled();
+            expect(parseId).not.toHaveBeenCalled();
         });
 
         test('should return early for invalid UID', async () => {
@@ -515,11 +797,12 @@ describe('OutboundApprovalHandler', () => {
             await handler.handleModalSubmit(interaction);
 
             expect(deferUpdate).toHaveBeenCalledTimes(1);
+            expect(interaction.fields.getTextInputValue).toHaveBeenCalledWith('reject-reason');
             expect(deps.wildDuckClient.updateMessageMetadata).toHaveBeenCalledTimes(1);
             const updateArgs = (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mock.calls[0];
-            expect(updateArgs?.[0]).toBe('Drafts');
-            expect(updateArgs?.[1]).toBe(42);
-            expect((updateArgs?.[2] as Record<string, unknown>)?.reason).toBe('Not appropriate');
+            expect(updateArgs[0]).toBe('Drafts');
+            expect(updateArgs[1]).toBe(42);
+            expect((updateArgs[2] as Record<string, unknown>).reason).toBe('Not appropriate');
             expect(deps.wildDuckClient.updateMessageFlags).toHaveBeenCalledWith('Drafts', 42, { addFlags: ['SendRejectedByAdmin'] });
             expect(editReply).toHaveBeenCalledTimes(1);
             expect(mockLogger.info).toHaveBeenCalledTimes(1);
@@ -530,6 +813,28 @@ describe('OutboundApprovalHandler', () => {
             expect(infoArg.msg).toBe('Discord admin rejected outbound email');
         });
 
+        test('should log a rejected fire-and-forget activity write on the rejection path', async () => {
+            const activityError = new Error('activity unavailable');
+            const activityLogger = { log: mock(async () => {
+                throw activityError;
+            }) };
+            const deps    = makeDeps({ activityLogger });
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction } = makeModalInteraction('email-send-reject-reason:42');
+
+            await handler.handleModalSubmit(interaction);
+            await Promise.resolve();
+
+            expect(activityLogger.log).toHaveBeenCalledWith({
+                type:    'email-rejected',
+                summary: 'Email rejected',
+            });
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                err: activityError,
+                msg: 'Activity log failed for email rejection',
+            });
+        });
+
         test('should include rejectedAt timestamp in updateMessageMetadata call', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
@@ -538,7 +843,7 @@ describe('OutboundApprovalHandler', () => {
             await handler.handleModalSubmit(interaction);
 
             const updateArgs = (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mock.calls[0];
-            expect((updateArgs?.[2] as Record<string, unknown>)?.rejectedAt).toBeDefined();
+            expect((updateArgs[2] as Record<string, unknown>).rejectedAt).toBeDefined();
         });
 
         test('should NOT include to or subject in updateMessageMetadata call (stored as message fields)', async () => {
@@ -549,8 +854,8 @@ describe('OutboundApprovalHandler', () => {
             await handler.handleModalSubmit(interaction);
 
             const updateArgs = (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mock.calls[0];
-            expect((updateArgs?.[2] as Record<string, unknown>)?.to).toBeUndefined();
-            expect((updateArgs?.[2] as Record<string, unknown>)?.subject).toBeUndefined();
+            expect((updateArgs[2] as Record<string, unknown>).to).toBeUndefined();
+            expect((updateArgs[2] as Record<string, unknown>).subject).toBeUndefined();
         });
 
         test('should NOT call getMessage during rejection (no metadata preservation needed)', async () => {
@@ -576,8 +881,8 @@ describe('OutboundApprovalHandler', () => {
             };
             expect(replyArg.embeds).toHaveLength(1);
             expect(replyArg.components).toHaveLength(0);
-            expect(replyArg.embeds[0]?.data?.title).toBe('Rejected');
-            expect(replyArg.embeds[0]?.data?.description).toBe('Off topic');
+            expect(replyArg.embeds[0].data.title).toBe('Rejected');
+            expect(replyArg.embeds[0].data.description).toBe('Off topic');
         });
 
         test('should use "No reason given" when reason is empty', async () => {
@@ -585,10 +890,10 @@ describe('OutboundApprovalHandler', () => {
             const handler = new OutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', '');
 
-            expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
+            await expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
 
             const updateArgs = (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mock.calls[0];
-            expect((updateArgs?.[2] as Record<string, unknown>)?.reason).toBe('No reason given');
+            expect((updateArgs[2] as Record<string, unknown>).reason).toBe('No reason given');
         });
 
         test('should set flag via wildDuckClient.updateMessageFlags after rejection', async () => {
@@ -635,8 +940,9 @@ describe('OutboundApprovalHandler', () => {
                 components: unknown[]
             };
             expect(replyArg.embeds.length).toBeGreaterThan(0);
+            expect(replyArg.embeds).toHaveLength(2);
             const lastEmbed = replyArg.embeds[replyArg.embeds.length - 1] as { data: { title: string } };
-            expect(lastEmbed?.data?.title).toContain('Rejection failed');
+            expect(lastEmbed.data.title).toContain('Rejection failed');
             expect(replyArg.components).toBe(originalComponents);
         });
 
@@ -650,6 +956,9 @@ describe('OutboundApprovalHandler', () => {
             await handler.handleModalSubmit(interaction);
 
             expect(mockLogger.error).toHaveBeenCalledTimes(2);
+            expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to send error editReply for rejection',
+            }));
         });
 
         test('should notify wake:true with dedupeKey email:<uid>:rejected after the Discord editReply block', async () => {
@@ -671,10 +980,10 @@ describe('OutboundApprovalHandler', () => {
             expect(order).toEqual(['editReply', 'notify']);
             expect(notify).toHaveBeenCalledTimes(1);
             const call = notify.mock.calls[0]?.[0];
-            expect(call?.source).toBe('email-approval');
-            expect(call?.wake).toBe(true);
-            expect(call?.dedupeKey).toBe('email:42:rejected');
-            expect(call?.text).toBe('Outbound email (uid 42) rejected by admin. Reason: Not appropriate');
+            expect(call.source).toBe('email-approval');
+            expect(call.wake).toBe(true);
+            expect(call.dedupeKey).toBe('email:42:rejected');
+            expect(call.text).toBe('Outbound email (uid 42) rejected by admin. Reason: Not appropriate');
         });
 
         test('should leave the rejection resolved and persisted when notify throws', async () => {
@@ -771,6 +1080,28 @@ describe('OutboundApprovalHandler', () => {
             expect(editReply).toHaveBeenCalledTimes(1);
         });
 
+        test('should log a rejected fire-and-forget activity write on the allowlist approval path', async () => {
+            const activityError = new Error('activity unavailable');
+            const activityLogger = { log: mock(async () => {
+                throw activityError;
+            }) };
+            const deps    = makeDeps({ activityLogger });
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', ['addr@example.com']);
+
+            await handler.handleSelectMenu(interaction);
+            await Promise.resolve();
+
+            expect(activityLogger.log).toHaveBeenCalledWith({
+                type:    'email-sent',
+                summary: 'Email approved for sending',
+            });
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                err: activityError,
+                msg: 'Activity log failed for email send (allowlist path)',
+            });
+        });
+
         test('should create saga with correct type and uid param', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
@@ -816,8 +1147,12 @@ describe('OutboundApprovalHandler', () => {
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
-            expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
-            expect(mockLogger.error).toHaveBeenCalled();
+            await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err: expect.any(Error),
+                uid: 42,
+                msg: 'Failed to process allowlist select menu',
+            });
             expect(editReply).toHaveBeenCalledTimes(1);
             const replyArg = editReply.mock.calls[0]?.[0];
             expect(replyArg.content).toContain('error occurred');
@@ -830,8 +1165,12 @@ describe('OutboundApprovalHandler', () => {
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
             editReply.mockRejectedValue(new Error('Discord error'));
 
-            expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
+            await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
             expect(mockLogger.error).toHaveBeenCalledTimes(2);
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err: expect.any(Error),
+                msg: 'Failed to send error editReply for select menu',
+            });
         });
 
         test('should show Sent embed with no components on success', async () => {
@@ -866,10 +1205,10 @@ describe('OutboundApprovalHandler', () => {
             expect(order).toEqual(['editReply', 'notify']);
             expect(notify).toHaveBeenCalledTimes(1);
             const call = notify.mock.calls[0]?.[0];
-            expect(call?.source).toBe('email-approval');
-            expect(call?.wake).toBe(true);
-            expect(call?.dedupeKey).toBe('email:42:approved');
-            expect(call?.text).toBe('Outbound email (uid 42) approved for sending');
+            expect(call.source).toBe('email-approval');
+            expect(call.wake).toBe(true);
+            expect(call.dedupeKey).toBe('email:42:approved');
+            expect(call.text).toBe('Outbound email (uid 42) approved for sending');
         });
 
         test('should still resolve and leave editReply outcome intact when notify throws', async () => {

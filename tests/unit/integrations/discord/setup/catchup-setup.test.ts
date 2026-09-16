@@ -114,8 +114,17 @@ describe('submitAndDeliverConductorEnvelope', () => {
     });
 
     test('delivers a produced response via sendEnvelopeResponse, keyed on the envelope id', async () => {
-        const conductor = makeFakeConductor();
+        let deliveredTarget: unknown;
+        const conductor = makeFakeConductor({
+            deliver: mock(async (_envelopeId: string, send: () => Promise<unknown>) => {
+                deliveredTarget = await send();
+                return { delivered: true };
+            }),
+        });
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const warnSpy = spyOn(loggerModule.logger, 'warn');
+        spies.push(warnSpy);
+        const warnCount = warnSpy.mock.calls.length;
 
         await submitAndDeliverConductorEnvelope(
             { id: 'e1', kind: 'catchup', text: 'x', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0) },
@@ -124,11 +133,16 @@ describe('submitAndDeliverConductorEnvelope', () => {
 
         expect(conductor.deliver).toHaveBeenCalledWith('e1', expect.any(Function));
         expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({ envelopeId: 'e1', kind: 'catchup', text: 'ok' }));
+        expect(deliveredTarget).toEqual({ channelId: '', messageIds: [] });
+        expect(warnSpy).toHaveBeenCalledTimes(warnCount);
     });
 
     test('a queued send does not throw inside the deliver callback (still counts as delivered)', async () => {
         const conductor = makeFakeConductor();
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: true }));
+        const warnSpy = spyOn(loggerModule.logger, 'warn');
+        spies.push(warnSpy);
+        const warnCount = warnSpy.mock.calls.length;
 
         await expect(submitAndDeliverConductorEnvelope(
             { id: 'e1', kind: 'catchup', text: 'x', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0) },
@@ -136,16 +150,27 @@ describe('submitAndDeliverConductorEnvelope', () => {
         )).resolves.toBeUndefined();
 
         expect(conductor.deliver).toHaveBeenCalled();
+        expect(warnSpy).toHaveBeenCalledTimes(warnCount);
     });
 
     test('a well-known-channel-missing skip is swallowed, never thrown to the caller', async () => {
         const conductor = makeFakeConductor();
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, skipReason: 'missing' }));
+        const warnSpy = spyOn(loggerModule.logger, 'warn');
+        spies.push(warnSpy);
+        warnSpy.mockClear();
 
         await expect(submitAndDeliverConductorEnvelope(
             { id: 'e1', kind: 'catchup', text: 'x', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         )).resolves.toBeUndefined();
+
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({
+            err:        expect.objectContaining({ message: expect.stringContaining('missing') }) as unknown,
+            envelopeId: 'e1',
+            msg:        'Conductor envelope delivery failed',
+        }));
     });
 
     test('a skip with no skipReason logs "unknown reason" rather than an empty explanation', async () => {
@@ -153,14 +178,18 @@ describe('submitAndDeliverConductorEnvelope', () => {
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false }));
         const warnSpy = spyOn(loggerModule.logger, 'warn');
         spies.push(warnSpy);
+        warnSpy.mockClear();
 
         await submitAndDeliverConductorEnvelope(
             { id: 'e1', kind: 'catchup', text: 'x', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         );
 
+        expect(warnSpy).toHaveBeenCalledTimes(1);
         expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({
-            err: expect.objectContaining({ message: expect.stringContaining('unknown reason') }) as unknown,
+            err:        expect.objectContaining({ message: expect.stringContaining('unknown reason') }) as unknown,
+            envelopeId: 'e1',
+            msg:        'Conductor envelope delivery failed',
         }));
     });
 });
@@ -293,6 +322,17 @@ describe('runConductorInboxInit', () => {
         expect(ingressGate.open).toHaveBeenCalledTimes(1);
     });
 
+    test('reads recovery entries from exactly 24 hours before the current time', async () => {
+        const now = Date.UTC(2026, 8, 12, 12);
+        const dateNowSpy = spyOn(Date, 'now').mockReturnValue(now);
+        spies.push(dateNowSpy);
+        const journal = makeFakeJournal();
+
+        await runConductorInboxInit(conductorParams({ journal }));
+
+        expect(journal.readSince).toHaveBeenCalledWith(now - 24 * 60 * 60 * 1000);
+    });
+
     test('opens the ingress gate with an empty set when nothing was replayed', async () => {
         const ingressGate = makeFakeIngressGate();
 
@@ -410,38 +450,56 @@ describe('runConductorInboxInit', () => {
         expect(sendEnvelopeResponseSpy).not.toHaveBeenCalled();
     });
 
-    test('a boot-time undelivered redelivery that neither sends nor queues (e.g. its well-known channel is now missing) is swallowed and logged, never thrown to the caller', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, skipReason: 'missing well-known channel' }));
-        const conductor = makeFakeConductor();
-        const journal = makeFakeJournal({
-            readSince: mock(async () => [
-                { type: 'envelope_submitted', at: 0, envelopeId: 'env-undelivered', kind: 'catchup' },
-                { type: 'turn_completed', at: 1, envelopeId: 'env-undelivered', responseText: 'a stale reply' },
-            ]),
-        });
-
-        await expect(runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }))).resolves.toBeUndefined();
-
-        expect(conductor.deliver).toHaveBeenCalledWith('env-undelivered', expect.any(Function));
-    });
-
-    test('a boot-time undelivered redelivery with no skipReason logs "unknown reason" rather than an empty explanation', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false }));
-        const conductor = makeFakeConductor();
+    test('boot-time undelivered redelivery logs the exact skip reason, including the unknown-reason fallback', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse')
+            .mockResolvedValueOnce({ sent: false, skipReason: 'missing well-known channel' })
+            .mockResolvedValueOnce({ sent: false }));
         const warnSpy = spyOn(loggerModule.logger, 'warn');
         spies.push(warnSpy);
-        const journal = makeFakeJournal({
+        const missingConductor = makeFakeConductor();
+        const missingJournal = makeFakeJournal({
             readSince: mock(async () => [
-                { type: 'envelope_submitted', at: 0, envelopeId: 'env-undelivered', kind: 'catchup' },
-                { type: 'turn_completed', at: 1, envelopeId: 'env-undelivered', responseText: 'a stale reply' },
+                { type: 'envelope_submitted', at: 0, envelopeId: 'env-missing-channel', kind: 'catchup' },
+                { type: 'turn_completed', at: 1, envelopeId: 'env-missing-channel', responseText: 'a stale reply' },
             ]),
         });
 
-        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
+        await expect(runConductorInboxInit(conductorParams({
+            conversationConductor: missingConductor as never, journal: missingJournal,
+        }))).resolves.toBeUndefined();
 
-        expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({
-            err: expect.objectContaining({ message: expect.stringContaining('unknown reason') }) as unknown,
+        const unknownConductor = makeFakeConductor();
+        const unknownJournal = makeFakeJournal({
+            readSince: mock(async () => [
+                { type: 'envelope_submitted', at: 0, envelopeId: 'env-unknown-reason', kind: 'catchup' },
+                { type: 'turn_completed', at: 1, envelopeId: 'env-unknown-reason', responseText: 'a stale reply' },
+            ]),
+        });
+
+        await runConductorInboxInit(conductorParams({
+            conversationConductor: unknownConductor as never, journal: unknownJournal,
         }));
+
+        expect(missingConductor.deliver).toHaveBeenCalledWith('env-missing-channel', expect.any(Function));
+        expect(unknownConductor.deliver).toHaveBeenCalledWith('env-unknown-reason', expect.any(Function));
+        const missingWarning = warnSpy.mock.calls.find(([details]) => (
+            details as { envelopeId?: string }
+        ).envelopeId === 'env-missing-channel');
+        const unknownWarning = warnSpy.mock.calls.find(([details]) => (
+            details as { envelopeId?: string }
+        ).envelopeId === 'env-unknown-reason');
+        expect(missingWarning?.[0]).toEqual(expect.objectContaining({
+            envelopeId: 'env-missing-channel', msg: 'Boot-time undelivered redelivery failed',
+        }));
+        expect(unknownWarning?.[0]).toEqual(expect.objectContaining({
+            envelopeId: 'env-unknown-reason', msg: 'Boot-time undelivered redelivery failed',
+        }));
+        expect((missingWarning?.[0] as { err: Error }).err.message).toBe(
+            'Boot-time undelivered redelivery skipped: missing well-known channel'
+        );
+        expect((unknownWarning?.[0] as { err: Error }).err.message).toBe(
+            'Boot-time undelivered redelivery skipped: unknown reason'
+        );
     });
 
     test('an undelivered turn that completed with no response text (interrupted, nothing to say) is skipped, never calling deliver', async () => {
@@ -488,7 +546,7 @@ describe('runConductorInboxInit', () => {
         const inboxManager = makeFakeInboxManager({
             replayUnhandled: mock(async () => [
                 { id: '100', channelId: 'chan-1', channelName: 'general', guildId: 'guild-1', author: 'alice', content: 'hi', timestamp: new Date(0).toISOString(), isRead: false },
-                { id: '200', channelId: 'chan-2', channelName: 'random', guildId: 'guild-1', author: 'bob', content: 'yo', timestamp: new Date(0).toISOString(), isRead: false },
+                { id: '200', channelId: 'chan-2', channelName: 'DM with Bob', guildId: 'DM', author: 'bob', content: 'yo', timestamp: new Date(0).toISOString(), isRead: false },
             ]),
         });
 
@@ -496,6 +554,11 @@ describe('runConductorInboxInit', () => {
 
         const discordSubmissions = conductor.submit.mock.calls.filter(([envelope]: [{ kind: string }]) => envelope.kind === 'discord');
         expect(discordSubmissions).toHaveLength(2);
+        const replayTexts = (discordSubmissions as unknown as [{ text: string }][]).map(([envelope]) => envelope.text);
+        expect(replayTexts.some(text => text.includes('alice: hi'))).toBe(true);
+        expect(replayTexts.some(text => text.includes('bob: yo'))).toBe(true);
+        expect(replayTexts.some(text => text.startsWith('[DISCORD #general'))).toBe(true);
+        expect(replayTexts.some(text => text.startsWith('[DISCORD DM'))).toBe(true);
     });
 
     test('renders both boot envelopes\' time headers through an injected provider (session-peers block 4)', async () => {
@@ -569,18 +632,26 @@ describe('runConductorInboxInit', () => {
         expect(recordHandled).toHaveBeenCalledTimes(2);
         expect(recordHandled).toHaveBeenCalledWith('chan-1', '150', new Date(1).toISOString());
         expect(recordHandled).toHaveBeenCalledWith('chan-2', '200', new Date(2).toISOString());
+        const replayCalls = conductor.submit.mock.calls as unknown as [{ channelId?: string, text: string }][];
+        const chanOneEnvelope = replayCalls.map(([envelope]) => envelope)
+            .find(envelope => envelope.channelId === 'chan-1');
+        expect(chanOneEnvelope?.text).toContain('alice: hi');
+        expect(chanOneEnvelope?.text).toContain('alice: again');
     });
 
     test('does NOT advance the HANDLED watermark for a channel whose replay submission failed (so it is replayed again on the next boot)', async () => {
+        const submissionError = new Error('conductor busy');
         const conductor = makeFakeConductor({
             submit: mock(async (envelope: { id: string, kind: string, channelId?: string }) => {
                 if(envelope.channelId === 'chan-1') {
-                    throw new Error('conductor busy');
+                    throw submissionError;
                 }
                 return { envelopeId: envelope.id, response: 'ok', wasInterrupted: false, sessionId: 'sess-1', isError: false, contextUsagePercent: 0 };
             }),
         });
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const warnSpy = spyOn(loggerModule.logger, 'warn');
+        spies.push(warnSpy);
         const recordHandled = mock(async () => undefined);
         const inboxManager = makeFakeInboxManager({
             recordHandled,
@@ -594,6 +665,9 @@ describe('runConductorInboxInit', () => {
 
         expect(recordHandled).toHaveBeenCalledTimes(1);
         expect(recordHandled).toHaveBeenCalledWith('chan-2', '200', new Date(2).toISOString());
+        expect(warnSpy).toHaveBeenCalledWith({
+            err: submissionError, channelId: 'chan-1', msg: 'Boot-time replay submission failed — channel will be replayed again on the next boot',
+        });
     });
 
     test('opens the ingress gate with exactly the replayed message ids', async () => {
@@ -904,19 +978,25 @@ describe('setupInboxAndCatchUp', () => {
 
     test('resolves immediately (Discord already available / no health registry given)', async () => {
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const infoSpy = spyOn(loggerModule.logger, 'info');
+        spies.push(infoSpy);
         const result = setupInboxAndCatchUp(conductorInboxParams() as never);
         await expect(result).resolves.toBeUndefined();
+        expect(infoSpy).toHaveBeenCalledWith({ msg: 'Starting inbox initialization...' });
     });
 
     test('the returned promise settles only after a deferred discord-online change fires, not merely when the subscription is registered', async () => {
         let changeListener: ((change: { service: string, newState: string }) => void) | undefined;
+        const unsubscribe = mock(() => undefined);
         const healthRegistry = {
             isAvailable: mock(() => false),
             subscribe:   mock((cb: (change: { service: string, newState: string }) => void) => {
                 changeListener = cb;
-                return mock(() => undefined);
+                return unsubscribe;
             }),
         };
+        const infoSpy = spyOn(loggerModule.logger, 'info');
+        spies.push(infoSpy);
         const inboxManager = makeFakeInboxManager();
 
         let resolved = false;
@@ -930,12 +1010,22 @@ describe('setupInboxAndCatchUp', () => {
         await Promise.resolve();
         expect(resolved).toBe(false);
         expect(inboxManager.loadUnread).not.toHaveBeenCalled();
+        expect(infoSpy).toHaveBeenCalledWith({
+            msg: 'Discord not yet available — deferring inbox initialization until Discord is online',
+        });
+
+        changeListener?.({ service: 'email', newState: 'online' });
+        changeListener?.({ service: 'discord', newState: 'offline' });
+        await Promise.resolve();
+        expect(inboxManager.loadUnread).not.toHaveBeenCalled();
+        expect(unsubscribe).not.toHaveBeenCalled();
 
         changeListener?.({ service: 'discord', newState: 'online' });
         await promise;
 
         expect(resolved).toBe(true);
         expect(inboxManager.loadUnread).toHaveBeenCalled();
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
 
     test('loadUnread happens before replayUnhandled (runBootSequence)', async () => {
@@ -972,7 +1062,60 @@ describe('setupInboxAndCatchUp', () => {
             }),
         });
 
+        const warnSpy = spyOn(loggerModule.logger, 'warn');
+        spies.push(warnSpy);
         await expect(setupInboxAndCatchUp(conductorInboxParams({ inboxManager }) as never)).resolves.toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith({ error: 'boom', msg: 'Failed to load inbox on startup' });
+    });
+
+    test('reports a deferred inbox initialization logging failure with its initialization context', async () => {
+        let changeListener: ((change: { service: string, newState: string }) => void) | undefined;
+        const healthRegistry = {
+            isAvailable: mock(() => false),
+            subscribe:   mock((cb: (change: { service: string, newState: string }) => void) => {
+                changeListener = cb;
+                return mock(() => undefined);
+            }),
+        };
+        const inboxManager = makeFakeInboxManager({
+            loadUnread: mock(async () => {
+                throw new Error('load failed');
+            }),
+        });
+        const warnSpy = spyOn(loggerModule.logger, 'warn').mockImplementation(() => {
+            throw new Error('logger sink failed');
+        });
+        const errorSpy = spyOn(loggerModule.logger, 'error');
+        spies.push(warnSpy, errorSpy);
+
+        const setup = setupInboxAndCatchUp(conductorInboxParams({ healthRegistry, inboxManager }) as never);
+        changeListener?.({ service: 'discord', newState: 'online' });
+        await setup;
+
+        expect(errorSpy).toHaveBeenCalledWith({
+            error: 'logger sink failed',
+            msg:   'Unhandled error in inbox initialization',
+        });
+    });
+
+    test('contains a logging failure while reporting an inbox initialization failure', async () => {
+        const inboxManager = makeFakeInboxManager({
+            loadUnread: mock(async () => {
+                throw new Error('load failed');
+            }),
+        });
+        const warnSpy = spyOn(loggerModule.logger, 'warn').mockImplementation(() => {
+            throw new Error('logger sink failed');
+        });
+        const errorSpy = spyOn(loggerModule.logger, 'error');
+        spies.push(warnSpy, errorSpy);
+
+        await expect(setupInboxAndCatchUp(conductorInboxParams({ inboxManager }) as never)).resolves.toBeUndefined();
+
+        expect(errorSpy).toHaveBeenCalledWith({
+            error: 'logger sink failed',
+            msg:   'Unhandled error in inbox initialization',
+        });
     });
 
     test('a failure that happens BEFORE the boot sequence (loadUnread rejects) still opens the ingress gate, so live messages are not buffered forever', async () => {

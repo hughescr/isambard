@@ -41,7 +41,5 @@ export function formatSlotName(slot: PerchSlot): string {
     }
     // TypeScript exhaustiveness - this line should be unreachable
 
-    // Stryker disable next-line all: Unreachable exhaustiveness check
-    // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Unreachable exhaustiveness check
-    throw new InvariantViolationError('getSlotDescription', `Unknown slot: ${slot}`);
+    throw new InvariantViolationError('getSlotDescription', `Unknown slot: ${String(slot)}`);
 }

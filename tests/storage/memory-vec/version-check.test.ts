@@ -14,6 +14,11 @@ describe('getBundledLlamaCppVersion', () => {
         resetMockFs();
     });
 
+    it('rejects a build tag too large to represent exactly', async () => {
+        mockFsPromises.readFile.mockImplementation(async () => JSON.stringify({ tag: 'b9007199254740993' }));
+        expect(await getBundledLlamaCppVersion()).toBeNull();
+    });
+
     it('parses a valid info file and returns build number and tag', async () => {
         mockFsPromises.readFile.mockImplementation(async (_path, _opts) =>
             JSON.stringify({ tag: 'b8953', llamaCppGithubRepo: 'ggml-org/llama.cpp' })
@@ -22,6 +27,7 @@ describe('getBundledLlamaCppVersion', () => {
         expect(result).not.toBeNull();
         expect(result?.build).toBe(8953);
         expect(result?.releaseTag).toBe('b8953');
+        expect(mockFsPromises.readFile.mock.calls[0]?.[0]).toBe(`${process.cwd()}/node_modules/node-llama-cpp/llama/llama.cpp.info.json`);
     });
 
     it('parses build number 8950 correctly', async () => {

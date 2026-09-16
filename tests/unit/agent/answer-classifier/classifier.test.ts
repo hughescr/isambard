@@ -90,6 +90,16 @@ describe('AnswerClassifier', () => {
         const classifier = new AnswerClassifier();
 
         describe('Answer patterns', () => {
+            it('trims leading whitespace before matching an answer', async () => {
+                expect(await classifier.classify(baseQuestion, { ...baseMessage, content: '  yes  ' })).toBe('answer');
+            });
+
+            it('does not treat embedded or suffixed numbers as answers', async () => {
+                expect(await classifier.classify(baseQuestion, { ...baseMessage, content: 'x42' })).toBe('unrelated');
+                expect(await classifier.classify(baseQuestion, { ...baseMessage, content: '42x' })).toBe('unrelated');
+                expect(await classifier.classify(baseQuestion, { ...baseMessage, content: '3.14x' })).toBe('unrelated');
+            });
+
             it('should classify "yes" as answer', async () => {
                 const message: MessageToClassify = { ...baseMessage, content: 'yes' };
                 expect(await classifier.classify(baseQuestion, message)).toBe('answer');
@@ -193,6 +203,11 @@ describe('AnswerClassifier', () => {
 
             it('should be case-insensitive', async () => {
                 const message: MessageToClassify = { ...baseMessage, content: 'YES' };
+                expect(await classifier.classify(baseQuestion, message)).toBe('answer');
+            });
+
+            it('normalizes Unicode Kelvin sign before matching an answer', async () => {
+                const message: MessageToClassify = { ...baseMessage, content: 'oKay' };
                 expect(await classifier.classify(baseQuestion, message)).toBe('answer');
             });
         });

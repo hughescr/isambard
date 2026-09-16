@@ -80,7 +80,6 @@ export class ResponseRouter {
         }
 
         if(!originChannelId) {
-            // Stryker disable next-line StringLiteral: invariant detail string is debug-only metadata
             throw new InvariantViolationError('resolveEnvelopeTarget', `originChannelId is required for envelope kind: ${kind}`);
         }
 

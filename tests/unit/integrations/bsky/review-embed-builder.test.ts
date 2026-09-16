@@ -1,12 +1,16 @@
 import { describe, test, expect } from 'bun:test';
 import type { APIButtonComponentWithCustomId } from 'discord.js';
-import { buildBskyApprovalEmbed, type BskyApprovalEmbedParams } from '@/integrations/bsky/review-embed-builder';
+import {
+    buildBskyApprovalEmbed,
+    type BskyDmApprovalEmbedParams,
+    type BskyReplyApprovalEmbedParams
+} from '@/integrations/bsky/review-embed-builder';
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-function makeParams(overrides: Partial<BskyApprovalEmbedParams> = {}): BskyApprovalEmbedParams {
+function makeParams(overrides: Partial<BskyReplyApprovalEmbedParams> = {}): BskyReplyApprovalEmbedParams {
     return {
         type:         'reply',
         text:         'Hello @user.bsky.social, great post!',
@@ -17,11 +21,10 @@ function makeParams(overrides: Partial<BskyApprovalEmbedParams> = {}): BskyAppro
     };
 }
 
-function makeDMParams(overrides: Partial<BskyApprovalEmbedParams> = {}): BskyApprovalEmbedParams {
+function makeDMParams(overrides: Partial<BskyDmApprovalEmbedParams> = {}): BskyDmApprovalEmbedParams {
     return {
         type:             'dm',
         text:             'Hello, want to collaborate?',
-        targetHandle:     'alice.bsky.social',
         recipientHandles: ['alice.bsky.social'],
         convoId:          'convo-abc123',
         ...overrides,
@@ -84,12 +87,24 @@ describe('buildBskyApprovalEmbed', () => {
             expect(field?.inline).toBe(true);
         });
 
+        test('embed uses an empty Parent URI when parentUri is not provided', () => {
+            const result = buildBskyApprovalEmbed(makeParams({ parentUri: undefined }));
+            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent URI');
+            expect(field?.value).toBe('');
+        });
+
         test('embed includes Parent CID field', () => {
             const params = makeParams({ parentCid: 'bafyreidxyz' });
             const result = buildBskyApprovalEmbed(params);
             const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent CID');
             expect(field?.value).toBe('bafyreidxyz');
             expect(field?.inline).toBe(true);
+        });
+
+        test('embed uses an empty Parent CID when parentCid is not provided', () => {
+            const result = buildBskyApprovalEmbed(makeParams({ parentCid: undefined }));
+            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent CID');
+            expect(field?.value).toBe('');
         });
 
         describe('without rootUri/rootCid', () => {
@@ -257,21 +272,18 @@ describe('buildBskyApprovalEmbed', () => {
             expect(field?.inline).toBe(false);
         });
 
-        test('embed falls back to targetHandle when recipientHandles is not provided', () => {
-            // Covers the [params.targetHandle] fallback when recipientHandles is undefined
-            // Mutant: [params.targetHandle] → [] would make Recipients field empty
-            const params = makeDMParams({ recipientHandles: undefined });
-            const result = buildBskyApprovalEmbed(params);
-            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Recipients');
-            expect(field?.value).toBe('["alice.bsky.social"]');
-        });
-
         test('embed includes Conversation ID field', () => {
             const params = makeDMParams({ convoId: 'convo-xyz789' });
             const result = buildBskyApprovalEmbed(params);
             const field  = result.embed.toJSON().fields?.find(f => f.name === 'Conversation ID');
             expect(field?.value).toBe('convo-xyz789');
             expect(field?.inline).toBe(true);
+        });
+
+        test('embed uses an empty Conversation ID when convoId is not provided', () => {
+            const result = buildBskyApprovalEmbed(makeDMParams({ convoId: undefined }));
+            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Conversation ID');
+            expect(field?.value).toBe('');
         });
 
         test('embed does NOT include Parent URI field', () => {

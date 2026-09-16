@@ -3,9 +3,7 @@ import { AmbiguousCalendarMatchError } from '@/errors';
 import { resolveServer, resolveCalendar } from '@/integrations/caldav/calendar-registry/resolve';
 import { createCalendarServerId, type CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
 
-// Stryker disable next-line StringLiteral: Test UUID constants are test configuration
 const SERVER_UUID_1 = createCalendarServerId('550e8400-e29b-41d4-a716-446655440001');
-// Stryker disable next-line StringLiteral: Test UUID constants are test configuration
 const SERVER_UUID_2 = createCalendarServerId('550e8400-e29b-41d4-a716-446655440002');
 
 function makeServer(overrides: Partial<CalendarServerEntry> & { serverId: CalendarServerEntry['serverId'], description: string }): CalendarServerEntry {
@@ -29,9 +27,14 @@ describe.concurrent('resolveServer()', () => {
         expect(result).toBe(server1);
     });
 
+    test('preserves the exact casing of a valid stored UUID', () => {
+        const serverId = createCalendarServerId(SERVER_UUID_1.toUpperCase());
+        const server = makeServer({ serverId, description: 'iCloud' });
+        expect(resolveServer([server], serverId)).toBe(server);
+    });
+
     test('returns null when UUID does not match any server', () => {
         const server = makeServer({ serverId: SERVER_UUID_1, description: 'iCloud' });
-        // Stryker disable next-line StringLiteral: Non-existent UUID is test input data
         const result = resolveServer([server], 'ffffffff-aaaa-bbbb-cccc-dddddddddddd');
         expect(result).toBeNull();
     });
@@ -95,6 +98,12 @@ describe.concurrent('resolveServer()', () => {
         expect(resolveServer([serverA], '')).toBeNull();
     });
 
+    test('does not resolve an empty input to a malformed persisted server description', () => {
+        const rawPersistedServer = makeServer({ serverId: SERVER_UUID_1, description: '' });
+
+        expect(resolveServer([rawPersistedServer], '')).toBeNull();
+    });
+
     test('should not match partial substrings (regression: was .includes, now ===)', () => {
         // 'cloud' should NOT match 'iCloud' or 'Apple iCloud'
         expect(resolveServer([makeServer({ serverId: SERVER_UUID_1, description: 'iCloud' })], 'cloud')).toBeNull();
@@ -114,6 +123,11 @@ describe.concurrent('resolveCalendar()', () => {
         ],
     });
 
+    test.each(['Team / Planning', 'Team http Archive'])('resolves an accepted label containing path-like text: %s', (label) => {
+        const labeled = makeServer({ serverId: SERVER_UUID_1, description: 'iCloud', calendars: [{ calendarPath: '/cal/team', label }] });
+        expect(resolveCalendar(labeled, label)).toEqual({ calendarPath: '/cal/team', label });
+    });
+
     test('returns calendar entry on exact calendarPath match (starts with /)', () => {
         const result = resolveCalendar(server, '/cal/home');
         expect(result).toEqual({ calendarPath: '/cal/home', label: 'Home Calendar' });
@@ -129,6 +143,29 @@ describe.concurrent('resolveCalendar()', () => {
         });
         const result = resolveCalendar(httpServer, 'https://caldav.google.com/user/calendar');
         expect(result).toEqual({ calendarPath: 'https://caldav.google.com/user/calendar', label: 'My Calendar' });
+    });
+
+    test('prefers an exact http path over a matching label', () => {
+        const httpPath = 'http://caldav.example.com/user/calendar';
+        const httpServer = makeServer({
+            serverId:    SERVER_UUID_1,
+            description: 'Google',
+            calendars:   [
+                { calendarPath: httpPath, label: 'Web Calendar' },
+                { calendarPath: '/cal/label', label: httpPath },
+            ],
+        });
+        expect(resolveCalendar(httpServer, httpPath)).toEqual({ calendarPath: httpPath, label: 'Web Calendar' });
+    });
+
+    test('resolves the root path as a valid path-like calendar identifier', () => {
+        const rootServer = makeServer({ serverId: SERVER_UUID_1, description: 'Root', calendars: [{ calendarPath: '/', label: 'Root Calendar' }] });
+        expect(resolveCalendar(rootServer, '/')).toEqual({ calendarPath: '/', label: 'Root Calendar' });
+    });
+
+    test('keeps calendar path matching case-sensitive', () => {
+        const caseServer = makeServer({ serverId: SERVER_UUID_1, description: 'Case', calendars: [{ calendarPath: '/CAL/Work', label: 'Work' }] });
+        expect(resolveCalendar(caseServer, '/cal/work')).toBeNull();
     });
 
     test('returns null when path input does not match any calendarPath', () => {
@@ -167,6 +204,16 @@ describe.concurrent('resolveCalendar()', () => {
         expect(resolveCalendar(server, '')).toBeNull();
     });
 
+    test('does not resolve an empty input to a malformed persisted calendar label', () => {
+        const rawPersistedServer = makeServer({
+            serverId:    SERVER_UUID_1,
+            description: 'iCloud',
+            calendars:   [{ calendarPath: '/cal/malformed', label: '' }],
+        });
+
+        expect(resolveCalendar(rawPersistedServer, '')).toBeNull();
+    });
+
     test('should not match partial substrings (regression: was .includes, now ===)', () => {
         // 'Airlines' should NOT match 'Alaska Airlines'
         const airlineServer = makeServer({
@@ -175,6 +222,11 @@ describe.concurrent('resolveCalendar()', () => {
             calendars:   [{ calendarPath: '/cal/alaska', label: 'Alaska Airlines' }],
         });
         expect(resolveCalendar(airlineServer, 'Airlines')).toBeNull();
+    });
+
+    test('preserves whitespace in persisted labels', () => {
+        const paddedServer = makeServer({ serverId: SERVER_UUID_1, description: 'iCloud', calendars: [{ calendarPath: '/cal/padded', label: ' Home Calendar ' }] });
+        expect(resolveCalendar(paddedServer, ' Home Calendar ')).toEqual({ calendarPath: '/cal/padded', label: ' Home Calendar ' });
     });
 
     test('AmbiguousCalendarMatchError includes match details for ambiguous label', () => {

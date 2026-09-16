@@ -32,6 +32,24 @@ const DEFAULT_QUANT: Record<ModelSlug, ModelQuant> = {
     '4b':   'Q4_K_M',
 };
 
+async function disposeOwnedResources(llama: Llama, model: LlamaModel | undefined, ctx: LlamaEmbeddingContext | undefined): Promise<Error[]> {
+    const failures: Error[] = [];
+    const record = (error: unknown): void => {
+        failures.push(error instanceof Error ? error : new Error(String(error)));
+    };
+    // Reverse acquisition order; a failed disposal must not skip later owners.
+    try {
+        await ctx?.dispose();
+    } catch (error) { record(error); }
+    try {
+        await model?.dispose();
+    } catch (error) { record(error); }
+    try {
+        await llama.dispose();
+    } catch (error) { record(error); }
+    return failures;
+}
+
 /**
  * Embedder wraps node-llama-cpp to produce 1024-bit packed binary embeddings.
  *
@@ -43,10 +61,11 @@ export class Embedder {
     readonly quant:     ModelQuant;
     readonly modelPath: string;
 
-    #llama: Llama;
-    #model: LlamaModel;
-    #ctx:   LlamaEmbeddingContext;
+    #llama:        Llama;
+    #model:        LlamaModel;
+    #ctx:          LlamaEmbeddingContext;
     #closed = false;
+    #closePromise: Promise<void> | undefined;
 
     private constructor(
         slug: ModelSlug,
@@ -97,16 +116,22 @@ export class Embedder {
         // 4. Initialize node-llama-cpp with warn log level (suppress debug output)
         const llamaOpts = { logLevel: LlamaLogLevel.warn };
         const llama = await getLlama(llamaOpts);
+        let model: LlamaModel | undefined;
+        let ctx: LlamaEmbeddingContext | undefined;
+        try {
+            // Build model options with the resolved modelPath and gpuLayers
+            const modelOpts = { modelPath, gpuLayers };
+            model = await llama.loadModel(modelOpts);
 
-        // Build model options with the resolved modelPath and gpuLayers
-        const modelOpts = { modelPath, gpuLayers };
-        const model = await llama.loadModel(modelOpts);
+            // Build embedding context options with the resolved contextSize
+            const embedCtxOpts = { contextSize };
+            ctx = await model.createEmbeddingContext(embedCtxOpts);
 
-        // Build embedding context options with the resolved contextSize
-        const embedCtxOpts = { contextSize };
-        const ctx = await model.createEmbeddingContext(embedCtxOpts);
-
-        return new Embedder(slug, quant, modelPath, llama, model, ctx);
+            return new Embedder(slug, quant, modelPath, llama, model, ctx);
+        } catch (error) {
+            await disposeOwnedResources(llama, model, ctx);
+            throw error;
+        }
     }
 
     /**
@@ -128,10 +153,9 @@ export class Embedder {
 
         // NLC embeds sequentially — one call per text. The embedding context is single-threaded
         // and cannot handle concurrent requests; await in loop is intentional here.
-        // Stryker disable next-line EqualityOperator,UpdateOperator: i <= batchSize processes an extra undefined text (caught by guard); i-- causes an infinite loop — neither changes output
-        for(let i = 0; i < batchSize; i++) {
+        for(const [i] of texts.entries()) {
+            // Sparse arrays retain their output slot but must not reach the model as undefined.
             const text = texts[i];
-            // Stryker disable next-line ConditionalExpression,BlockStatement: text === undefined → false still works because getEmbeddingFor(undefined) returns a valid mock and type safety prevents undefined in valid inputs; emptying the block body is equivalent since undefined check always short-circuits
             if(text === undefined) {
                 continue;
             }
@@ -140,13 +164,11 @@ export class Embedder {
             const vec = embedding.vector;
             // Base offset for this batch's floats in allFloats
             const floatOffset = i * EMBED_DIM;
-            // dim is the per-vector dimensionality (1024 for pplx-embed-v1)
-            const dim = EMBED_DIM;
-            // Stryker disable next-line EqualityOperator,UpdateOperator: j <= dim writes one OOB element (no-op); j-- causes an infinite loop — neither changes output for valid inputs
-            for(let j = 0; j < dim; j++) {
+            const outputSlot = allFloats.subarray(floatOffset, floatOffset + EMBED_DIM);
+            for(const [j] of outputSlot.entries()) {
                 // Fallback to 0 for any undefined element (pplx returns exactly 1024 floats; fallback is defensive only)
                 const FLOAT_FALLBACK = 0;
-                allFloats[floatOffset + j] = vec[j] ?? FLOAT_FALLBACK;
+                outputSlot[j] = vec[j] ?? FLOAT_FALLBACK;
             }
         }
 
@@ -163,17 +185,27 @@ export class Embedder {
 
     /**
      * Releases all GPU/memory resources.
-     * Idempotent — calling close() multiple times is safe.
+     * Concurrent and later callers share the same completion or failure.
      */
-    async close(): Promise<void> {
-        // Idempotent: second call is a no-op to allow safe repeated disposal
-        if(this.#closed === true) {
-            return;
+    close(): Promise<void> {
+        if(this.#closePromise) {
+            return this.#closePromise;
         }
         this.#closed = true;
-        await this.#ctx.dispose();
-        await this.#model.dispose();
-        await this.#llama.dispose();
+        // Store the outcome before disposal starts, including for synchronous
+        // re-entry from an owner's dispose implementation.
+        this.#closePromise = Promise.resolve().then(() => this.#disposeAll());
+        return this.#closePromise;
+    }
+
+    async #disposeAll(): Promise<void> {
+        const failures = await disposeOwnedResources(this.#llama, this.#model, this.#ctx);
+        if(failures.length > 1) {
+            throw new AggregateError(failures, 'Failed to close embedder resources');
+        }
+        if(failures.length === 1) {
+            throw failures[0]!;
+        }
     }
 }
 

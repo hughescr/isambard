@@ -38,36 +38,12 @@ export interface App {
     config: Config
 }
 
-/**
- * Creates the Isambard application with all components wired together.
- *
- * Initialization flow:
- * 1. Load configuration (Discord, Agent OAuth token)
- * 2. Set CLAUDE_CODE_OAUTH_TOKEN for Agent SDK
- * 3. Create memory system (context builder + MCP server) if DynamoDB is available
- * 4. Create Claude agent with hybrid memory support
- * 5. Create Discord bot with agent as message handler
- *
- * Error handling:
- * - Missing required config (Discord, OAuth token) throws immediately
- * - Factory functions throw with descriptive errors if initialization fails
- *
- * @returns Application instance with start/stop methods
- * @throws {Error} If required configuration is missing or invalid
- */
-// eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- createApp is a composition root; branching is inherent — wires email, bsky, and all optional integrations
-export async function createApp(): Promise<App> {
-    // Load configuration (required)
-
-    const config = loadConfig(Resource);
+// Route every Agent SDK invocation through utraque while retaining an explicit direct-Claude
+// fallback. Header filtering avoids carrying a stale local token across configuration changes.
+function configureAgentGateway(config: Config): NonNullable<Config['agent']['gateway']> {
     const gateway = config.agent.gateway ?? {
         enabled: true, baseUrl: 'http://127.0.0.1:8317', reportRequestTimeoutMs: 100_000,
     };
-
-    // Route every Agent SDK invocation in this process (long-lived sessions and one-shot text
-    // generators) through utraque. The first-party flag preserves Claude's native context-window
-    // handling behind the transparent loopback proxy. Direct Claude mode is an explicit config
-    // fallback; it does not expose the cross-provider model definitions at runtime.
     const otherCustomHeaders = process.env.ANTHROPIC_CUSTOM_HEADERS?.split('\n')
         .filter(header => !/^\s*X-Utraque-Token\s*:/i.test(header)).join('\n');
     if(gateway.enabled) {
@@ -86,62 +62,33 @@ export async function createApp(): Promise<App> {
             process.env.ANTHROPIC_CUSTOM_HEADERS = otherCustomHeaders;
         }
     }
-
-    // Set OAuth token for Agent SDK
     process.env.CLAUDE_CODE_OAUTH_TOKEN = config.agent.oauthToken;
+    return gateway;
+}
 
-    // Create health registry for service lifecycle tracking
-    const healthRegistry = new ServiceHealthRegistryImpl({ logger });
-
-    // Create question registry for interactive questions (shared between MCP and bot)
-    const questionRegistry = new QuestionRegistry();
-
-    // Create DynamoDB client (REQUIRED)
-
-    const dynamoDBConfig = loadDynamoDBConfig(Resource);
-
-    // Load embedder for vector indexing (if enabled)
-    // Stryker disable BlockStatement: Composition root — embedder loading is not unit-testable (requires GGUF model file on disk)
-    let embedder: EmbedderLike | undefined;
-    if(config.vectorIndex?.enabled) {
-        try {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Composition root — embedder options are configuration
-            embedder = await loadEmbedder({ slug: config.vectorIndex.modelSlug, quant: config.vectorIndex.modelQuant });
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info(`Embedder loaded: ${config.vectorIndex.modelSlug}/${config.vectorIndex.modelQuant}`);
-        } catch (err) {
-            // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.warn({
-                error: err instanceof Error ? err.message : String(err),
-                msg:   'Embedder load failed — vector indexing disabled for this session',
-            });
-            // Stryker restore ObjectLiteral,StringLiteral
-            embedder = undefined;
-        }
+async function loadConfiguredEmbedder(config: Config): Promise<EmbedderLike | undefined> {
+    if(!config.vectorIndex?.enabled) {
+        return undefined;
     }
-    // Stryker restore BlockStatement
+    try {
+        const embedder = await loadEmbedder({ slug: config.vectorIndex.modelSlug, quant: config.vectorIndex.modelQuant });
+        logger.info(`Embedder loaded: ${config.vectorIndex.modelSlug}/${config.vectorIndex.modelQuant}`);
+        return embedder;
+    } catch (err) {
+        logger.warn({
+            error: err instanceof Error ? err.message : String(err),
+            msg:   'Embedder load failed — vector indexing disabled for this session',
+        });
+        return undefined;
+    }
+}
 
-    // Create a stable callback slot for identity-write invalidation.
-    // The identityCache is created below after identityContext is loaded, but
-    // MemoryToolBackend needs the callback at construction time.
-    // Indirection: a mutable slot object whose reference is captured by the closure.
-    // Stryker disable all: Composition root — identity cache wiring is not unit-testable
-    const identityCacheSlot: { cache: IdentityCache | undefined } = { cache: undefined };
-    const onIdentityWrite = (): void => {
-        identityCacheSlot.cache?.invalidate();
-    };
-    // Stryker restore all
-
-    // Create infrastructure layers
-    const storage = await createStorageLayer(
-        dynamoDBConfig,
-        config.reconciliation,
-        config.contactReconciliation,
-        config.vectorIndex,
-        embedder,
-        onIdentityWrite
-    );
-
+async function wireDynamoDBHealth(
+    storage: Awaited<ReturnType<typeof createStorageLayer>>,
+    dynamoDBConfig: ReturnType<typeof loadDynamoDBConfig>,
+    healthRegistry: ServiceHealthRegistryImpl,
+    registerCleanup: (step: ShutdownStep) => void
+) {
     // Wire DynamoDB health monitoring.
     // DynamoDB is a required dependency — we probe it with DescribeTable to detect
     // persistent failures (e.g. FailedToOpenSocket after a transient outage).
@@ -149,8 +96,6 @@ export async function createApp(): Promise<App> {
     // Reconnect strategy: probe the LIVE client (via holder.getClient()) first.
     // On persistent failure, build a fresh DynamoDBClient pair and call holder.swap()
     // so all backends immediately start using the new connection pool without restart.
-    // Stryker disable BlockStatement: Composition root — dynamodb reconnection wiring is not unit-testable
-    // Stryker disable next-line StringLiteral: composition root — CONFIGURE event code is not unit-testable
     healthRegistry.sendEvent('dynamodb', 'CONFIGURE');
 
     const dynamoDBReconnectionLoop = createReconnectionLoop({
@@ -162,7 +107,6 @@ export async function createApp(): Promise<App> {
             // backends pick up the new connection pool on their next operation.
             let probeClient = storage.holder.getClient();
             let freshPair: ReturnType<typeof createDynamoDBClient> | undefined;
-            // Stryker disable BlockStatement,BooleanLiteral,ConditionalExpression: try-finally ensures fresh client is destroyed on probe failure — composition root, not unit-testable
             try {
                 await probeDynamoDB(probeClient, dynamoDBConfig.tableName);
             } catch{
@@ -185,43 +129,38 @@ export async function createApp(): Promise<App> {
             // Stryker restore BlockStatement,BooleanLiteral,ConditionalExpression
         },
     });
+    registerCleanup({ name: 'DynamoDB reconnection loop', run: () => dynamoDBReconnectionLoop.stop() });
 
     // Subscribe to health changes: auto-start reconnection loop when DynamoDB goes offline
-    // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral: Composition root — subscriber callback is not unit-testable
     const unsubscribeDynamoDBReconnect = healthRegistry.subscribe((change) => {
         if(change.service === 'dynamodb' && change.newState === 'offline' && !dynamoDBReconnectionLoop.isRunning()) {
             dynamoDBReconnectionLoop.start();
         }
     });
+    registerCleanup({ name: 'DynamoDB reconnect subscription', run: unsubscribeDynamoDBReconnect });
     // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral
 
     // Wire the DynamoDB health notifier so any network-classified errors thrown by
     // withDynamoTimeout (in BaseRepository) also signal CONNECTION_LOST to the
     // health registry — triggering the reconnection loop without waiting for the
     // next periodic probe.
-    // Stryker disable BlockStatement,StringLiteral,ObjectLiteral: Composition root — health notifier wiring is not unit-testable
     setDynamoHealthNotifier((err) => {
         healthRegistry.sendEvent('dynamodb', 'CONNECTION_LOST', {
             error: err instanceof Error ? err.message : String(err),
         });
     });
+    registerCleanup({ name: 'DynamoDB health notifier', run: () => setDynamoHealthNotifier(undefined) });
     // Stryker restore BlockStatement,StringLiteral,ObjectLiteral
 
     // Perform initial DynamoDB health probe against the live client.
     // On success: mark online. On failure: start reconnection loop.
-    // Stryker disable BlockStatement: try-catch wraps DynamoDB probe - error handling
     try {
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('Probing DynamoDB connectivity...');
         await probeDynamoDB(storage.holder.getClient(), dynamoDBConfig.tableName);
-        // Stryker disable next-line StringLiteral: health event string is composition root configuration
         healthRegistry.sendEvent('dynamodb', 'CONNECT_SUCCESS');
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('DynamoDB connectivity verified');
     } catch (err) {
-        // Stryker disable next-line StringLiteral,ObjectLiteral: health event string and context are composition root configuration
         healthRegistry.sendEvent('dynamodb', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
-        // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.error({
             error: err instanceof Error ? err.message : String(err),
             msg:   'DynamoDB probe failed at startup, starting reconnection loop',
@@ -236,17 +175,158 @@ export async function createApp(): Promise<App> {
     // Interval: 60s. Sends CONNECTION_LOST on failure, which the lifecycle state machine
     // handles by transitioning online/degraded → offline, triggering the reconnection loop.
     const dynamoDBProbeIntervalMs = 60_000;
-    // Stryker disable BlockStatement: Composition root — interval wiring is not unit-testable
     const dynamoDBProbeInterval = setInterval(() => {
         void runDynamoDBProbe(storage.holder.getClient(), dynamoDBConfig.tableName, healthRegistry, logger);
     }, dynamoDBProbeIntervalMs);
+    registerCleanup({ name: 'DynamoDB probe', run: () => clearInterval(dynamoDBProbeInterval) });
     // Stryker restore BlockStatement
 
+    return { dynamoDBReconnectionLoop, unsubscribeDynamoDBReconnect, dynamoDBProbeInterval };
+}
+
+interface ShutdownStep {
+    name:               string
+    run:                () => void | Promise<void>
+    bestEffortMessage?: string
+}
+
+/** Preserve shutdown order while allowing later owners to release resources after a failure. */
+async function runShutdownSteps(steps: readonly ShutdownStep[]): Promise<void> {
+    const failures: { step: ShutdownStep, error: unknown }[] = [];
+    for(const step of steps) {
+        try {
+            // eslint-disable-next-line no-await-in-loop -- shutdown owners must settle in dependency order
+            await step.run();
+        } catch (error) {
+            failures.push({ step, error });
+        }
+    }
+    reportShutdownFailures(failures);
+}
+
+function reportShutdownFailures(failures: readonly { step: ShutdownStep, error: unknown }[]): void {
+    const fatalFailures: { name: string, error: Error }[] = [];
+    for(const { step, error } of failures) {
+        if(step.bestEffortMessage === undefined) {
+            fatalFailures.push({ name: step.name, error: error instanceof Error ? error : new Error(String(error)) });
+        } else {
+            logger.error({
+                error: error instanceof Error ? error.message : String(error),
+                msg:   step.bestEffortMessage,
+            });
+        }
+    }
+
+    const [first] = fatalFailures;
+    if(first === undefined) {
+        return;
+    }
+    if(fatalFailures.length === 1) {
+        throw first.error;
+    }
+    throw new AggregateError(
+        fatalFailures.map(({ name, error }) => new Error(`${name} shutdown failed`, { cause: error })),
+        'Application shutdown failed'
+    );
+}
+
+/**
+ * Creates the Isambard application with all components wired together.
+ *
+ * Initialization flow:
+ * 1. Load configuration (Discord, Agent OAuth token)
+ * 2. Set CLAUDE_CODE_OAUTH_TOKEN for Agent SDK
+ * 3. Create memory system (context builder + MCP server) if DynamoDB is available
+ * 4. Create Claude agent with hybrid memory support
+ * 5. Create Discord bot with agent as message handler
+ *
+ * Error handling:
+ * - Missing required config (Discord, OAuth token) throws immediately
+ * - Factory functions throw with descriptive errors if initialization fails
+ *
+ * @returns Application instance with start/stop methods
+ * @throws {Error} If required configuration is missing or invalid
+ */
+async function createAppLifecycle(): Promise<App> {
+    const cleanupSteps: ShutdownStep[] = [];
+    const registerCleanup = (step: ShutdownStep): void => {
+        cleanupSteps.unshift(step);
+    };
+    try {
+        return await buildAppLifecycle(registerCleanup);
+    } catch (error) {
+        try {
+            await runShutdownSteps(cleanupSteps);
+        } catch (cleanupError) {
+            try {
+                logger.error({ cleanupError, msg: 'Lifecycle construction cleanup failed' });
+            } catch{
+                // A logger failure must not replace the construction error.
+            }
+        }
+        throw error;
+    }
+}
+
+async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void): Promise<App> {
+    // Load configuration (required)
+
+    const config = loadConfig(Resource);
+    const gateway = configureAgentGateway(config);
+    // Create health registry for service lifecycle tracking
+    const healthRegistry = new ServiceHealthRegistryImpl({ logger });
+    registerCleanup({ name: 'health registry', run: () => healthRegistry.stop() });
+
+    // Create question registry for interactive questions (shared between MCP and bot)
+    const questionRegistry = new QuestionRegistry();
+
+    // Create DynamoDB client (REQUIRED)
+
+    const dynamoDBConfig = loadDynamoDBConfig(Resource);
+
+    // Load embedder for vector indexing (if enabled)
+    const embedder = await loadConfiguredEmbedder(config);
+    let embedderCloseAttemptedByIndexer = false;
+    registerCleanup({ name: 'embedder', run: () => (embedderCloseAttemptedByIndexer ? undefined : embedder?.close()) });
+
+    // Create a stable callback slot for identity-write invalidation.
+    // The identityCache is created below after identityContext is loaded, but
+    // MemoryToolBackend needs the callback at construction time.
+    // Indirection: a mutable slot object whose reference is captured by the closure.
+    const identityCacheSlot: { cache: IdentityCache | undefined } = { cache: undefined };
+    const onIdentityWrite = (): void => {
+        identityCacheSlot.cache?.invalidate();
+    };
+    // Stryker restore all
+
+    // Create infrastructure layers
+    const storage = await createStorageLayer(
+        dynamoDBConfig,
+        config.reconciliation,
+        config.contactReconciliation,
+        config.vectorIndex,
+        embedder,
+        onIdentityWrite,
+        () => { embedderCloseAttemptedByIndexer = true; }
+    );
+    registerCleanup({ name: 'DynamoDB client holder', run: () => storage.holder.destroy() });
+    registerCleanup({ name: 'vector index', run: () => storage.vectorIndex?.close() });
+    registerCleanup({ name: 'async indexer', run: () => storage.asyncIndexer?.close() });
+    registerCleanup({ name: 'tag reconciliation scheduler', run: () => storage.reconciliationScheduler?.stop() });
+    registerCleanup({ name: 'contact reconciliation scheduler', run: () => storage.contactReconciliationScheduler?.stop() });
+
+    const { dynamoDBReconnectionLoop, unsubscribeDynamoDBReconnect, dynamoDBProbeInterval } = await wireDynamoDBHealth(storage, dynamoDBConfig, healthRegistry, registerCleanup);
+
+    const botForConstructionCleanup: { bot: DiscordBot | undefined } = { bot: undefined };
     const discordInfra = createDiscordInfrastructure({
-        discordConfig: config.discord,
-        docClient:     storage.holder,
-        tableName:     storage.tableName,
-        memoryBackend: storage.memoryBackend,
+        discordConfig:   config.discord,
+        docClient:       storage.holder,
+        tableName:       storage.tableName,
+        memoryBackend:   storage.memoryBackend,
+        onClientCreated: client => registerCleanup({
+            name: 'Discord bot/client',
+            run:  () => botForConstructionCleanup.bot?.stop() ?? client.destroy(),
+        }),
     });
 
     // Outbox and approval saga backends (always available — DynamoDB is required)
@@ -265,10 +345,8 @@ export async function createApp(): Promise<App> {
 
     // Create unified PersonAllowlist singleton (always available — shared by email + bsky)
     const personAllowlist = new PersonAllowlist(storage.holder, storage.tableName, storage.contactBackend);
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Loading person allowlist...');
     await personAllowlist.load();
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Person allowlist loaded');
 
     // Create AllowlistSagaBackend, AllowlistSagaExecutor, and AllowlistInteractionHandler.
@@ -321,6 +399,7 @@ export async function createApp(): Promise<App> {
             requestTimeoutMs:     gateway.reportRequestTimeoutMs,
         },
     });
+    registerCleanup({ name: 'quota poller', run: () => ambience.quotaPoller.stop() });
     const conversationTimeHeader = ambience.timeHeaderFor('conversation');
     const perchTimeHeader = ambience.timeHeaderFor('perch');
 
@@ -330,6 +409,7 @@ export async function createApp(): Promise<App> {
         timeHeader: () => conversationTimeHeader(config.session.timezone),
         logger,
     });
+    registerCleanup({ name: 'notification bridge', run: () => notificationBridge.detach() });
 
     // Set up email integration if email config is present (conditional — non-fatal)
     // Must happen before contextLayer so the email service can be wired into the perch prompt
@@ -339,216 +419,233 @@ export async function createApp(): Promise<App> {
     // stable.  Only init() (authenticate + load mailboxes) is retried on failure — the client
     // object itself never changes, so no stale-reference problem exists after reconnection.
     let emailSetup: EmailSetupResult | undefined;
+    let eagerWildDuckClient: WildDuckClient | undefined;
+    let emailInitInFlight: Promise<void> | undefined;
+    let emailStopping = false;
     let emailReconnectionLoop: ReconnectionLoop | undefined;
     let unsubscribeEmailReconnect: (() => void) | undefined;
-    // Stryker disable BlockStatement: outer if-block body — composition root, not unit-testable
-    if(config.email) {
-        // Stryker disable next-line StringLiteral: health event string is composition root configuration
-        healthRegistry.sendEvent('email', 'CONFIGURE');
-        // Stryker disable BlockStatement: try-catch wraps email setup - error handling
+    function trackEmailInit(client: WildDuckClient): Promise<void> {
+        if(emailStopping) {
+            return Promise.reject(new Error('Email integration is stopping'));
+        }
+        const attempt = client.init();
+        emailInitInFlight = attempt;
+        const clear = (): void => {
+            if(emailInitInFlight === attempt) {
+                emailInitInFlight = undefined;
+            }
+        };
+        void attempt.finally(clear).catch(() => { /* The original attempt handles this rejection. */ });
+        return attempt;
+    }
+    async function shutdownEmailClient(): Promise<void> {
+        emailStopping = true;
+        try {
+            await emailInitInFlight;
+        } catch{ /* A failed init still must settle before shutdown. */ }
+        await eagerWildDuckClient?.shutdown();
+    }
+    async function initializeEmailIntegration(): Promise<void> {
+        if(config.email) {
+            healthRegistry.sendEvent('email', 'CONFIGURE');
 
-        // Create client eagerly so all downstream objects can capture a stable reference.
-        // Stryker disable ObjectLiteral,StringLiteral: WildDuck client creation is integration-only
-        const eagerWildDuckClient = new WildDuckClient({
-            url:              config.email.wildDuckApiUrl,
-            user:             config.email.user,
-            password:         config.email.password,
-            maxBodySizeBytes: config.email.maxBodySizeBytes,
-        });
-        // Stryker restore ObjectLiteral,StringLiteral
+            // Create client eagerly so all downstream objects can capture a stable reference.
+            eagerWildDuckClient = new WildDuckClient({
+                url:              config.email.wildDuckApiUrl,
+                user:             config.email.user,
+                password:         config.email.password,
+                maxBodySizeBytes: config.email.maxBodySizeBytes,
+            });
+            const stableWildDuckClient = eagerWildDuckClient;
+            registerCleanup({ name: 'WildDuck client', run: shutdownEmailClient });
+            // Stryker restore ObjectLiteral,StringLiteral
 
-        // Create reconnection loop eagerly so post-connect drops are also handled.
-        emailReconnectionLoop = createReconnectionLoop({
-            service:   'email',
-            registry:  healthRegistry,
-            connectFn: async () => {
-                await eagerWildDuckClient.init();
-            },
-        });
+            // Create reconnection loop eagerly so post-connect drops are also handled.
+            emailReconnectionLoop = createReconnectionLoop({
+                service:   'email',
+                registry:  healthRegistry,
+                connectFn: async () => {
+                    await trackEmailInit(stableWildDuckClient);
+                },
+            });
+            registerCleanup({ name: 'email reconnection loop', run:  () => {
+                emailStopping = true;
+                emailReconnectionLoop?.stop();
+            } });
 
-        // Subscribe to health changes: auto-start reconnection loop when email goes offline
-        // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral: Composition root — subscriber callback is not unit-testable
-        unsubscribeEmailReconnect = healthRegistry.subscribe((change) => {
-            if(change.service === 'email' && change.newState === 'offline' && emailReconnectionLoop && !emailReconnectionLoop.isRunning()) {
+            // Subscribe to health changes: auto-start reconnection loop when email goes offline
+            unsubscribeEmailReconnect = healthRegistry.subscribe((change) => {
+                if(!emailStopping && change.service === 'email' && change.newState === 'offline' && emailReconnectionLoop && !emailReconnectionLoop.isRunning()) {
+                    emailReconnectionLoop.start();
+                }
+            });
+            registerCleanup({ name: 'email reconnect subscription', run: () => unsubscribeEmailReconnect?.() });
+            // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral
+
+            // Wire all downstream objects now (before init succeeds).
+            // Health guards on MCP tools prevent usage until init() succeeds.
+            // setupEmail with a pre-created wildDuckClient skips client creation and init().
+            logger.info('Setting up email integration...');
+            try {
+                emailSetup = await setupEmail({
+                    emailConfig:        config.email,
+                    docClient:          storage.holder,
+                    tableName:          storage.tableName,
+                    client:             discordInfra.discordClient,
+                    adminDiscordUserId: config.adminDiscordUserId,
+                    activityLogger,
+                    wildDuckClient:     stableWildDuckClient,
+                    healthRegistry,
+                    reconnectionLoop:   emailReconnectionLoop,
+                    discordCapability,
+                    approvalSagaBackend,
+                    personAllowlist,
+                    allowlistInteractionHandler,
+                    notify:             notificationBridge.notify,
+                });
+                registerCleanup({ name: 'email listener', run: () => emailSetup?.listener.stop() });
+            } catch (err) {
+                // Non-WildDuck setup failure (e.g. allowlist DynamoDB load) — log and skip email.
+                logger.error({
+                    error: err instanceof Error ? err.message : String(err),
+                    msg:   'Email integration setup failed (non-WildDuck), email unavailable for this session',
+                });
+                // Stryker restore ObjectLiteral,StringLiteral
+            }
+
+            // Attempt to authenticate the WildDuck client (init = authenticate + load mailboxes).
+            // Even if emailSetup failed above, we try init so health state is correct.
+            try {
+                logger.info('Starting WildDuck client...');
+                await trackEmailInit(stableWildDuckClient);
+                healthRegistry.sendEvent('email', 'CONNECT_SUCCESS');
+                logger.info('WildDuck client initialized');
+            } catch (err) {
+                healthRegistry.sendEvent('email', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
+                logger.error({
+                    error: err instanceof Error ? err.message : String(err),
+                    msg:   'WildDuck init failed, starting reconnection loop',
+                });
+                // Stryker restore ObjectLiteral,StringLiteral
+                // Retry only init() — downstream objects already hold stable refs to the same client.
                 emailReconnectionLoop.start();
             }
-        });
-        // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral
-
-        // Wire all downstream objects now (before init succeeds).
-        // Health guards on MCP tools prevent usage until init() succeeds.
-        // setupEmail with a pre-created wildDuckClient skips client creation and init().
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.info('Setting up email integration...');
-        try {
-            emailSetup = await setupEmail({
-                emailConfig:        config.email,
-                docClient:          storage.holder,
-                tableName:          storage.tableName,
-                client:             discordInfra.discordClient,
-                adminDiscordUserId: config.adminDiscordUserId,
-                activityLogger,
-                wildDuckClient:     eagerWildDuckClient,
-                healthRegistry,
-                reconnectionLoop:   emailReconnectionLoop,
-                discordCapability,
-                approvalSagaBackend,
-                personAllowlist,
-                allowlistInteractionHandler,
-                notify:             notificationBridge.notify,
-            });
-        } catch (err) {
-            // Non-WildDuck setup failure (e.g. allowlist DynamoDB load) — log and skip email.
-            // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.error({
-                error: err instanceof Error ? err.message : String(err),
-                msg:   'Email integration setup failed (non-WildDuck), email unavailable for this session',
-            });
-            // Stryker restore ObjectLiteral,StringLiteral
-        }
-
-        // Attempt to authenticate the WildDuck client (init = authenticate + load mailboxes).
-        // Even if emailSetup failed above, we try init so health state is correct.
-        try {
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Starting WildDuck client...');
-            await eagerWildDuckClient.init();
-            healthRegistry.sendEvent('email', 'CONNECT_SUCCESS');
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('WildDuck client initialized');
-        } catch (err) {
-            healthRegistry.sendEvent('email', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
-            // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.error({
-                error: err instanceof Error ? err.message : String(err),
-                msg:   'WildDuck init failed, starting reconnection loop',
-            });
-            // Stryker restore ObjectLiteral,StringLiteral
-            // Retry only init() — downstream objects already hold stable refs to the same client.
-            emailReconnectionLoop.start();
+            // Stryker restore BlockStatement
         }
         // Stryker restore BlockStatement
     }
-    // Stryker restore BlockStatement
+    await initializeEmailIntegration();
 
     // Set up Bluesky integration if bsky config is present (conditional — non-fatal)
     let bskyClient: BlueskyClient | undefined;
     let bskyReconnectionLoop: ReconnectionLoop | undefined;
     let unsubscribeBskyReconnect: (() => void) | undefined;
-    // Stryker disable BlockStatement: Composition root — optional bsky integration guard not unit-testable
-    if(config.bsky) {
-        // Stryker disable next-line StringLiteral: health event string is composition root configuration
-        healthRegistry.sendEvent('bluesky', 'CONFIGURE');
+    async function initializeBlueskyIntegration(): Promise<void> {
+        if(config.bsky) {
+            healthRegistry.sendEvent('bluesky', 'CONFIGURE');
 
-        // Create client eagerly so reconnection loop can capture a stable reference.
-        // Stryker disable ObjectLiteral,StringLiteral: BlueskyClient creation is integration-only
-        bskyClient = new BlueskyClient({
-            handle:      config.bsky.handle,
-            appPassword: config.bsky.appPassword,
-            serviceUrl:  config.bsky.serviceUrl,
-            healthRegistry,
-        });
-        // Stryker restore ObjectLiteral,StringLiteral
-
-        // Capture a stable reference for the reconnection closure — TS cannot narrow
-        // the outer mutable variable inside an async callback.
-        const stableBskyClient = bskyClient;
-
-        // Create reconnection loop eagerly so post-connect drops are also handled.
-        bskyReconnectionLoop = createReconnectionLoop({
-            service:   'bluesky',
-            registry:  healthRegistry,
-            connectFn: async () => {
-                await stableBskyClient.login();
-            },
-        });
-
-        // Subscribe to health changes: auto-start reconnection loop when bluesky goes offline
-        // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral: Composition root — subscriber callback is not unit-testable
-        unsubscribeBskyReconnect = healthRegistry.subscribe((change) => {
-            if(change.service === 'bluesky' && change.newState === 'offline' && bskyReconnectionLoop && !bskyReconnectionLoop.isRunning()) {
-                bskyReconnectionLoop.start();
-            }
-        });
-        // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral
-
-        // Stryker disable BlockStatement: try-catch wraps bsky login - error handling
-        try {
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Logging into Bluesky...');
-            await bskyClient.login();
-            // Stryker disable next-line StringLiteral: health event string is composition root configuration
-            healthRegistry.sendEvent('bluesky', 'CONNECT_SUCCESS');
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Bluesky login successful');
-        } catch (err) {
-            // Stryker disable next-line StringLiteral,ObjectLiteral: health event strings and context are composition root configuration
-            healthRegistry.sendEvent('bluesky', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
-            // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.error({
-                error: err instanceof Error ? err.message : String(err),
-                msg:   'Bluesky login failed, starting reconnection loop',
+            // Create client eagerly so reconnection loop can capture a stable reference.
+            bskyClient = new BlueskyClient({
+                handle:      config.bsky.handle,
+                appPassword: config.bsky.appPassword,
+                serviceUrl:  config.bsky.serviceUrl,
+                healthRegistry,
             });
             // Stryker restore ObjectLiteral,StringLiteral
-            // Keep bskyClient alive so reconnection can retry login on the same client.
-            // Health guards on MCP tools will prevent usage until login succeeds.
-            bskyReconnectionLoop.start();
+
+            // Capture a stable reference for the reconnection closure — TS cannot narrow
+            // the outer mutable variable inside an async callback.
+            const stableBskyClient = bskyClient;
+
+            // Create reconnection loop eagerly so post-connect drops are also handled.
+            bskyReconnectionLoop = createReconnectionLoop({
+                service:   'bluesky',
+                registry:  healthRegistry,
+                connectFn: async () => {
+                    await stableBskyClient.login();
+                },
+            });
+            registerCleanup({ name: 'Bluesky reconnection loop', run: () => bskyReconnectionLoop?.stop() });
+
+            // Subscribe to health changes: auto-start reconnection loop when bluesky goes offline
+            unsubscribeBskyReconnect = healthRegistry.subscribe((change) => {
+                if(change.service === 'bluesky' && change.newState === 'offline' && bskyReconnectionLoop && !bskyReconnectionLoop.isRunning()) {
+                    bskyReconnectionLoop.start();
+                }
+            });
+            registerCleanup({ name: 'Bluesky reconnect subscription', run: () => unsubscribeBskyReconnect?.() });
+            // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral
+
+            try {
+                logger.info('Logging into Bluesky...');
+                await bskyClient.login();
+                healthRegistry.sendEvent('bluesky', 'CONNECT_SUCCESS');
+                logger.info('Bluesky login successful');
+            } catch (err) {
+                healthRegistry.sendEvent('bluesky', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
+                logger.error({
+                    error: err instanceof Error ? err.message : String(err),
+                    msg:   'Bluesky login failed, starting reconnection loop',
+                });
+                // Stryker restore ObjectLiteral,StringLiteral
+                // Keep bskyClient alive so reconnection can retry login on the same client.
+                // Health guards on MCP tools will prevent usage until login succeeds.
+                bskyReconnectionLoop.start();
+            }
+            // Stryker restore BlockStatement
         }
         // Stryker restore BlockStatement
     }
-    // Stryker restore BlockStatement
+    await initializeBlueskyIntegration();
 
     // Set up Bluesky safety rails if bsky client was created and email config provides admin channel
     let bskySetup: BskySetupResult | undefined;
-    // Stryker disable BlockStatement: Composition root — optional bsky safety rails guard not unit-testable
-    if(bskyClient && config.email) {
-        // Stryker disable BlockStatement: try-catch wraps bsky safety rails setup - error handling
-        try {
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Setting up Bluesky safety rails...');
-            bskySetup = await setupBsky({
-                bskyClient,
-                docClient:             storage.holder,
-                tableName:             storage.tableName,
-                client:                discordInfra.discordClient,
-                adminDiscordChannelId: config.email.adminDiscordChannelId,
-                activityLogger,
-                discordCapability,
-                approvalSagaBackend,
-                personAllowlist,
-                allowlistInteractionHandler,
-                memoryBackend:         storage.memoryBackend,
-                healthRegistry,
-                notify:                notificationBridge.notify,
-            });
-        } catch (err) {
-            // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.error({
-                error: err instanceof Error ? err.message : String(err),
-                msg:   'Bluesky safety rails setup failed, disabling Bluesky integration',
-            });
-            // Stryker restore ObjectLiteral,StringLiteral
+    async function initializeBlueskySafetyRails(): Promise<void> {
+        if(bskyClient && config.email) {
+            try {
+                logger.info('Setting up Bluesky safety rails...');
+                bskySetup = await setupBsky({
+                    bskyClient,
+                    docClient:             storage.holder,
+                    tableName:             storage.tableName,
+                    client:                discordInfra.discordClient,
+                    adminDiscordChannelId: config.email.adminDiscordChannelId,
+                    activityLogger,
+                    discordCapability,
+                    approvalSagaBackend,
+                    personAllowlist,
+                    allowlistInteractionHandler,
+                    memoryBackend:         storage.memoryBackend,
+                    healthRegistry,
+                    notify:                notificationBridge.notify,
+                });
+                registerCleanup({ name: 'Bluesky DM poller', run: () => bskySetup?.dmPoller.stop() });
+            } catch (err) {
+                logger.error({
+                    error: err instanceof Error ? err.message : String(err),
+                    msg:   'Bluesky safety rails setup failed, disabling Bluesky integration',
+                });
+                // Stryker restore ObjectLiteral,StringLiteral
+            }
+            // Stryker restore BlockStatement
         }
         // Stryker restore BlockStatement
-    }
-    // Stryker restore BlockStatement
 
-    // If bsky client exists and login succeeded (health=online) but safety rails were not set up,
-    // disable Bluesky for the current session to prevent unguarded posting.
-    // If login failed (health!=online), bskyClient is kept alive for reconnection; safety rails
-    // will remain unavailable until a restart, so write tools stay disabled via approval-flow checks.
-    // Stryker disable ConditionalExpression,BooleanLiteral,BlockStatement,LogicalOperator: Composition root safety guard — not unit-testable
-    if(bskyClient && !bskySetup && healthRegistry.isAvailable('bluesky')) {
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.warn({ msg: 'Bluesky client available but safety rails not configured — disabling Bluesky writes for this session' });
-        bskyClient = undefined;
+        // If bsky client exists and login succeeded (health=online) but safety rails were not set up,
+        // disable Bluesky for the current session to prevent unguarded posting.
+        // If login failed (health!=online), bskyClient is kept alive for reconnection; safety rails
+        // will remain unavailable until a restart, so write tools stay disabled via approval-flow checks.
+        if(bskyClient && !bskySetup && healthRegistry.isAvailable('bluesky')) {
+            logger.warn({ msg: 'Bluesky client available but safety rails not configured — disabling Bluesky writes for this session' });
+            bskyClient = undefined;
+        }
+        // Stryker restore ConditionalExpression,BooleanLiteral,BlockStatement
     }
-    // Stryker restore ConditionalExpression,BooleanLiteral,BlockStatement
+    await initializeBlueskySafetyRails();
 
     // Create Discord reconnection loop eagerly — must be created before createMCPServers() so it
     // can be threaded into Discord MCP health guards.  The connectFn is deferred through a
     // mutable reference so the loop can be created before `bot` is constructed.
-    // Stryker disable BlockStatement: Composition root — reconnection loop wiring is not unit-testable
     // eslint-disable-next-line prefer-const -- assigned below after bot is constructed; `let` is required for the deferred-wiring pattern
     let discordReconnectFn: (() => Promise<void>) | undefined;
     const discordReconnectionLoop = createReconnectionLoop({
@@ -556,25 +653,24 @@ export async function createApp(): Promise<App> {
         registry:  healthRegistry,
         connectFn: async () => {
             if(discordReconnectFn === undefined) {
-                // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
                 throw new InvariantViolationError('discordReconnectionLoop.connectFn', 'discordReconnectFn not yet wired — reconnection loop fired before bot was constructed');
             }
             await discordReconnectFn();
         },
     });
+    registerCleanup({ name: 'Discord reconnection loop', run: () => discordReconnectionLoop.stop() });
 
     // Subscribe to health changes: auto-start reconnection loop when Discord goes offline
-    // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral: Composition root — subscriber callback is not unit-testable
     const unsubscribeDiscordReconnect = healthRegistry.subscribe((change) => {
         if(change.service === 'discord' && change.newState === 'offline' && !discordReconnectionLoop.isRunning()) {
             discordReconnectionLoop.start();
         }
     });
+    registerCleanup({ name: 'Discord reconnect subscription', run: unsubscribeDiscordReconnect });
     // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral
     // Stryker restore BlockStatement
 
     // Outbox drainer — delivers queued Discord messages when Discord comes back online
-    // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator: Composition root — deliverFn wiring is not unit-testable
     const outboxDrainer: OutboxDrainer = createOutboxDrainer({
         outboxBackend,
         registry:  healthRegistry,
@@ -597,10 +693,10 @@ export async function createApp(): Promise<App> {
         },
         logger,
     });
+    registerCleanup({ name: 'outbox drainer', run: () => outboxDrainer.stop() });
     // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator
 
     // Zod schemas for saga executor param validation
-    // Stryker disable ObjectLiteral,StringLiteral: Composition root — schema definitions are configuration constants
     const bskyReplyParamsSchema = z.object({
         text:      z.string(),
         parentUri: z.string(),
@@ -613,14 +709,12 @@ export async function createApp(): Promise<App> {
     // Stryker restore ObjectLiteral,StringLiteral
 
     // Saga executor — re-executes approved bsky/email actions after service recovery
-    // Stryker disable BlockStatement,ObjectLiteral: Composition root — executor closures capture optional clients — not unit-testable
     const sagaExecutor: SagaExecutor = createSagaExecutor({
         backend:   approvalSagaBackend,
         registry:  healthRegistry,
         executors: {
             bsky_reply: async (params) => {
                 if(!bskyClient) {
-                    // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
                     throw new InvariantViolationError('sagaExecutor.bsky_reply', 'Bluesky client not available');
                 }
                 const parsed = bskyReplyParamsSchema.parse(params);
@@ -628,7 +722,6 @@ export async function createApp(): Promise<App> {
             },
             bsky_dm: async (params) => {
                 if(!bskyClient) {
-                    // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
                     throw new InvariantViolationError('sagaExecutor.bsky_dm', 'Bluesky client not available');
                 }
                 const parsed = bskyDMParamsSchema.parse(params);
@@ -636,7 +729,6 @@ export async function createApp(): Promise<App> {
             },
             email_send: async (params) => {
                 if(!emailSetup) {
-                    // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
                     throw new InvariantViolationError('sagaExecutor.email_send', 'Email not available');
                 }
                 const uid = z.object({ uid: z.number().int() }).parse(params).uid;
@@ -644,7 +736,6 @@ export async function createApp(): Promise<App> {
             },
             email_reply: async (params) => {
                 if(!emailSetup) {
-                    // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
                     throw new InvariantViolationError('sagaExecutor.email_reply', 'Email not available');
                 }
                 const uid = z.object({ uid: z.number().int() }).parse(params).uid;
@@ -653,67 +744,65 @@ export async function createApp(): Promise<App> {
         },
         logger,
     });
+    registerCleanup({ name: 'saga executor', run: () => sagaExecutor.stop() });
     // Stryker restore BlockStatement,ObjectLiteral
 
-    // History providers
-    // Stryker disable ObjectLiteral,ConditionalExpression,StringLiteral,BlockStatement,ArrayDeclaration: Composition root — history provider wiring is not unit-testable
-    const historyProviders = [
-        new DiscordHistoryProvider(
-            discordInfra.messageSearchService,
-            {
-                resolveChannelId:   nameOrId => resolveChannelId(nameOrId, discordInfra.channelRegistry),
-                muteChannel:        channelId => discordInfra.channelRegistry.muteChannel(channelId),
-                unmuteChannel:      channelId => discordInfra.channelRegistry.unmuteChannel(channelId),
-                getAllChannels:     () => discordInfra.channelRegistry.getAllChannels(),
-                getUnmutedChannels: () => discordInfra.channelRegistry.getUnmutedChannels(),
-            },
-            // botUserId may be empty if constructed before Discord login; direction defaults to 'mutual' for unknown authors
-            discordInfra.discordClient.user?.id ?? ''
-            // Note: dmTracker is created inside bot.ts at clientReady — not available here.
-            // DM-specific history search will be wired when DMTracker is elevated to composition root.
-        ),
-    ] as PlatformHistoryProvider[];
+    function createHistoryCoordinator(): PersonHistoryCoordinator {
+        // History providers
+        const historyProviders = [
+            new DiscordHistoryProvider(
+                discordInfra.messageSearchService,
+                {
+                    resolveChannelId:   nameOrId => resolveChannelId(nameOrId, discordInfra.channelRegistry),
+                    muteChannel:        channelId => discordInfra.channelRegistry.muteChannel(channelId),
+                    unmuteChannel:      channelId => discordInfra.channelRegistry.unmuteChannel(channelId),
+                    getAllChannels:     () => discordInfra.channelRegistry.getAllChannels(),
+                    getUnmutedChannels: () => discordInfra.channelRegistry.getUnmutedChannels(),
+                },
+                // botUserId may be empty if constructed before Discord login; direction defaults to 'mutual' for unknown authors
+                discordInfra.discordClient.user?.id ?? ''
+                // Note: dmTracker is created inside bot.ts at clientReady — not available here.
+                // DM-specific history search will be wired when DMTracker is elevated to composition root.
+            ),
+        ] as PlatformHistoryProvider[];
 
-    // Add email history provider if wildDuckClient available
-    if(emailSetup && config.email) {
-        historyProviders.push(new EmailHistoryProvider(
-            config.email.user,
-            emailSetup.wildDuckClient
-        ));
+        // Add email history provider if wildDuckClient available
+        if(emailSetup && config.email) {
+            historyProviders.push(new EmailHistoryProvider(
+                config.email.user,
+                emailSetup.wildDuckClient
+            ));
+        }
+
+        // Add bsky history provider if bskyClient available
+        if(bskyClient) {
+            historyProviders.push(new BskyHistoryProvider(bskyClient));
+        }
+
+        // History coordinator
+        // Stryker restore ObjectLiteral,ConditionalExpression,StringLiteral,BlockStatement
+
+        return new PersonHistoryCoordinator({
+            contactBackend:       storage.contactBackend,
+            providers:            historyProviders,
+            messageSearchService: discordInfra.messageSearchService,
+        });
     }
-
-    // Add bsky history provider if bskyClient available
-    if(bskyClient) {
-        historyProviders.push(new BskyHistoryProvider(bskyClient));
-    }
-
-    // History coordinator
-    const historyCoordinator = new PersonHistoryCoordinator({
-        contactBackend:       storage.contactBackend,
-        providers:            historyProviders,
-        messageSearchService: discordInfra.messageSearchService,
-    });
-    // Stryker restore ObjectLiteral,ConditionalExpression,StringLiteral,BlockStatement
+    const historyCoordinator = createHistoryCoordinator();
 
     // Build email service from emailSetup components (if available)
-    // Stryker disable next-line ConditionalExpression,ObjectLiteral: Composition root — optional service wiring
     const emailService = emailSetup
         ? { wildDuckClient: emailSetup.wildDuckClient }
         : undefined;
 
     // Build bsky DM service from bskyClient (if available and safety rails active)
-    // Stryker disable next-line ConditionalExpression,ObjectLiteral: Composition root — optional service wiring
     const bskyDMService = bskyClient ? { client: bskyClient } : undefined;
 
     // Create CalDAV components (always available — DynamoDB is required)
-    // Stryker disable next-line ObjectLiteral: Composition root — CalDAV client options object is wiring
     const caldavClient = new CalDAVClient({ healthRegistry });
-    // Stryker disable next-line StringLiteral,ObjectLiteral: Composition root — CalDAV has no auth step, always available
     healthRegistry.sendEvent('caldav', 'CONFIGURE');
-    // Stryker disable next-line StringLiteral,ObjectLiteral: Composition root — CalDAV has no auth step, always available
     healthRegistry.sendEvent('caldav', 'CONNECT_SUCCESS');
     const caldavRegistry = new CalendarRegistryBackend(storage.holder, storage.tableName);
-    // Stryker disable next-line ObjectLiteral: Composition root — CalDAV service wiring object is configuration
     const calendarService = { client: caldavClient, registry: caldavRegistry };
     const calendarHandler = new CalendarCommandHandler(
         caldavClient,
@@ -726,15 +815,13 @@ export async function createApp(): Promise<App> {
 
     // Build sendContactApprovalRequest callback — posts approval embed to admin channel
     // Only wired when email config provides the admin channel ID
-    // Stryker disable BlockStatement: Composition root — optional contact approval callback, not unit-testable
     const emailConfig = config.email;
     const sendContactApprovalRequest = emailConfig
-        // eslint-disable-next-line @stylistic/no-extra-parens -- Babel 8 (Stryker's instrumenter) cannot parse a typed async arrow directly inside a ternary branch; the parens make it parse
+        // eslint-disable-next-line @stylistic/no-extra-parens -- Babel 8 needs this disambiguation in Stryker's ternary parser.
         ? (async (action: 'create' | 'update', details: ContactChangeRequest): Promise<void> => {
             const uuid = crypto.randomUUID();
             contactApprovalHandler.storePendingRequest(uuid, details);
             const { embed, actionRow } = buildContactApprovalEmbed(details, uuid);
-            // Stryker disable BlockStatement,StringLiteral,ObjectLiteral: integration-only callback body
             await discordCapability.sendToChannel(
                 emailConfig.adminDiscordChannelId,
                 { embeds: [embed], components: [actionRow] },
@@ -745,91 +832,91 @@ export async function createApp(): Promise<App> {
         : undefined;
     // Stryker restore BlockStatement
 
-    // Stryker disable ObjectLiteral,OptionalChaining: Composition root — service wiring objects and optional deps are not unit-testable
     const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService, calendarService, bskySetup?.rejectionBackend, healthRegistry);
 
-    // Construct browser adapter — macOS only (Bun.WebView requires darwin), and only when browser config is present
-    // Stryker disable all: Composition root — browser adapter wiring is not unit-testable
-    let browserAdapter: ReturnType<typeof createWebViewAdapter> | undefined;
-    let browserPolicy: BrowserHostPolicy | undefined;
-    if(process.platform === 'darwin' && config.browser) {
-        browserAdapter = createWebViewAdapter({
-            backend:             config.browser.backend,
-            viewportWidth:       config.browser.viewportWidth,
-            viewportHeight:      config.browser.viewportHeight,
-            navigationTimeoutMs: config.browser.navigationTimeoutMs,
-            actionTimeoutMs:     config.browser.actionTimeoutMs,
-            // maxScreenshotBytes and maxTextBytes are NOT adapter config — enforced at MCP layer
-            dataStorePath:       config.browser.dataStorePath,
-            chromePath:          config.browser.chromePath,
-        });
-        browserPolicy = { allowlist: config.browser.allowlist };
-    } else if(config.browser) {
-        logger.warn('Browser config present but Bun.WebView is only supported on macOS — browser tools will be unavailable');
+    function createBrowserIntegration(): { browserAdapter: ReturnType<typeof createWebViewAdapter> | undefined, browserPolicy: BrowserHostPolicy | undefined } {
+        // Construct browser adapter — macOS only (Bun.WebView requires darwin), and only when browser config is present
+        let browserAdapter: ReturnType<typeof createWebViewAdapter> | undefined;
+        let browserPolicy: BrowserHostPolicy | undefined;
+        if(process.platform === 'darwin' && config.browser) {
+            browserAdapter = createWebViewAdapter({
+                backend:             config.browser.backend,
+                viewportWidth:       config.browser.viewportWidth,
+                viewportHeight:      config.browser.viewportHeight,
+                navigationTimeoutMs: config.browser.navigationTimeoutMs,
+                actionTimeoutMs:     config.browser.actionTimeoutMs,
+                // maxScreenshotBytes and maxTextBytes are NOT adapter config — enforced at MCP layer
+                dataStorePath:       config.browser.dataStorePath,
+                chromePath:          config.browser.chromePath,
+            });
+            browserPolicy = { allowlist: config.browser.allowlist };
+        } else if(config.browser) {
+            logger.warn('Browser config present but Bun.WebView is only supported on macOS — browser tools will be unavailable');
+        }
+        // Stryker restore all
+
+        return { browserAdapter, browserPolicy };
     }
-    // Stryker restore all
+    const { browserAdapter, browserPolicy } = createBrowserIntegration();
+    registerCleanup({ name: 'browser adapter', run: () => browserAdapter?.close() });
 
     // Shared once (P9 verifier correction): built here so both the legacy agent's own
     // 'conversation'-role MCP instance set (below, unchanged from the old createMCPServers()
     // wrapper's behaviour) and createConversationConductor's own, separate instance set (built
     // further below, in conductor mode only) reuse the same singleton state (DMTracker,
     // BskyCheckpointManager) rather than constructing it twice.
-    const mcpSharedDeps = createMcpSharedDeps({
-        memoryBackend:             storage.memoryBackend,
-        messageSearchService:      discordInfra.messageSearchService,
-        discordClient:             discordInfra.discordClient,
-        questionRegistry,
-        channelRegistry:           discordInfra.channelRegistry,
-        inboxManager:              discordInfra.inboxManager,
-        timezone:                  resolveTimezone(),
-        recordAccess:              paths => contextLayer.contextBuilder.recordAccess(paths),
-        bskyClient,
-        bskyAllowlist:             bskySetup?.allowlist,
-        bskyRateLimiter:           bskySetup?.rateLimiter,
-        bskySendApprovalRequest:   bskySetup?.sendApprovalRequest,
-        bskySendDMApprovalRequest: bskySetup?.sendDMApprovalRequest,
-        bskyRejectionBackend:      bskySetup?.rejectionBackend,
-        caldavClient,
-        caldavRegistry,
-        contactBackend:            storage.contactBackend,
-        contactApprovalRequest:    sendContactApprovalRequest,
-        historyCoordinator,
-        healthRegistry,
-        discordReconnectionLoop,
-        bskyReconnectionLoop,
-        emailReconnectionLoop,
-        browserAdapter,
-        browserPolicy,
-        browserMaxScreenshotBytes: config.browser?.maxScreenshotBytes,
-        browserMaxTextBytes:       config.browser?.maxTextBytes,
-        vectorIndex:               storage.vectorIndex,
-        embedder,
-        discordAllowlist:          personAllowlist,
-    });
-    // Stryker restore ObjectLiteral,OptionalChaining
+    function buildMcpSharedDeps(): ReturnType<typeof createMcpSharedDeps> {
+        return createMcpSharedDeps({
+            memoryBackend:             storage.memoryBackend,
+            messageSearchService:      discordInfra.messageSearchService,
+            discordClient:             discordInfra.discordClient,
+            questionRegistry,
+            channelRegistry:           discordInfra.channelRegistry,
+            inboxManager:              discordInfra.inboxManager,
+            timezone:                  resolveTimezone(),
+            recordAccess:              paths => contextLayer.contextBuilder.recordAccess(paths),
+            bskyClient,
+            bskyAllowlist:             bskySetup?.allowlist,
+            bskyRateLimiter:           bskySetup?.rateLimiter,
+            bskySendApprovalRequest:   bskySetup?.sendApprovalRequest,
+            bskySendDMApprovalRequest: bskySetup?.sendDMApprovalRequest,
+            bskyRejectionBackend:      bskySetup?.rejectionBackend,
+            caldavClient,
+            caldavRegistry,
+            contactBackend:            storage.contactBackend,
+            contactApprovalRequest:    sendContactApprovalRequest,
+            historyCoordinator,
+            healthRegistry,
+            discordReconnectionLoop,
+            bskyReconnectionLoop,
+            emailReconnectionLoop,
+            browserAdapter,
+            browserPolicy,
+            browserMaxScreenshotBytes: config.browser?.maxScreenshotBytes,
+            browserMaxTextBytes:       config.browser?.maxTextBytes,
+            vectorIndex:               storage.vectorIndex,
+            embedder,
+            discordAllowlist:          personAllowlist,
+        });
+    }
+    const mcpSharedDeps = buildMcpSharedDeps();
 
     // Load plugins for the conductor build below (P13b: the one-shot agent that used to consume
     // this — and the createMCPServers()/createMcpServerInstances() per-session set it built — is
     // gone; the conductor builds its own MCP instance set from mcpSharedDeps).
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Loading plugins...');
-    // Stryker disable next-line StringLiteral: Filesystem path is configuration
     const plugins = await loadPlugins(path.join(path.resolve(import.meta.dir, '..'), 'agents-skills-plugins', 'plugins'));
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Plugins loaded');
 
     // Load identity
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Loading identity context...');
     const identityContext = await loadIdentityContext(config.agent.oauthToken, contextLayer.contextBuilder);
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Identity context loaded');
 
     // Create identity cache with the loaded identity context as warm seed.
     // Wire contextBuilder as the loader for future invalidate/reload cycles.
     // `identityCacheSlot.cache` is assigned here; the onIdentityWrite callback
     // captures the slot by reference so backend hooks land on this instance.
-    // Stryker disable all: Composition root — identity cache wiring is not unit-testable
     identityCacheSlot.cache = new IdentityCache(() => contextLayer.contextBuilder.loadCoreIdentity());
     if(identityContext !== undefined) {
         identityCacheSlot.cache.set(identityContext);
@@ -840,7 +927,6 @@ export async function createApp(): Promise<App> {
     // (top of this function) and mcpSharedDeps (above), and before createDiscordBot so the bot
     // can open it itself once the guild cache and channel registry exist (P9/P10). P13b: the
     // conductor is the only path now — the one-shot legacy agent it used to sit beside is gone.
-    // Stryker disable all: Composition root — conductor wiring is not unit-testable here (see tests/unit/app/sessions.test.ts for the conductor's own behaviour)
     let conversationConductor: Conductor | undefined;
     let conversationLedgerStore: LedgerStore | undefined;
     let conversationContextPolicy: ContextPolicy | undefined;
@@ -851,10 +937,8 @@ export async function createApp(): Promise<App> {
     // ConversationConductorResult.setWakeTurnDelivery's own doc.
     let conversationSetWakeTurnDelivery: ConversationConductorResult['setWakeTurnDelivery'] | undefined;
     {
-        // eslint-disable-next-line prefer-const -- assigned once, immediately after createConversationConductor resolves; the taskListReader closure below must reference the finished conductor, which cannot exist before this call returns
-        let conductorForTaskReader: Conductor | undefined;
         const conversationTaskListReader = createTaskListReader({
-            getCurrentSessionId: () => conductorForTaskReader?.status().sessionId,
+            getCurrentSessionId: getConversationSessionId,
             logger,
         });
         conversationJournal = storage.createJournal('conversation', systemClock);
@@ -896,7 +980,9 @@ export async function createApp(): Promise<App> {
             ambience,
             crossProviderRoutes: gateway.enabled,
         });
-        conductorForTaskReader = builtConductor.conductor;
+        function getConversationSessionId(): string | undefined {
+            return builtConductor.conductor.status().sessionId;
+        }
         conversationConductor = builtConductor.conductor;
         notificationBridge.attachConductor(builtConductor.conductor);
         conversationLedgerStore = builtConductor.ledgerStore;
@@ -910,7 +996,6 @@ export async function createApp(): Promise<App> {
     // only when perch is actually configured/enabled — an unused conductor would still spend a
     // whole CLI child session for nothing. bot.ts's clientReady opens it (after the conversation
     // conductor); a rejected or omitted open() just leaves perch disabled, without a restart.
-    // Stryker disable all: Composition root — conductor wiring is not unit-testable here (see tests/unit/app/sessions.test.ts for the conductor's own behaviour)
     let perchConductor: Conductor | undefined;
     let perchLedgerStore: LedgerStore | undefined;
     let perchJournal: SessionJournal | undefined;
@@ -920,10 +1005,8 @@ export async function createApp(): Promise<App> {
     // (see createPerchConductor), this only hands the driver its boundary callbacks.
     let perchSlotHooks: PerchConductorResult['slotHooks'] | undefined;
     if(config.perch?.enabled) {
-        // eslint-disable-next-line prefer-const -- assigned once, immediately after createPerchConductor resolves; the taskListReader closure below must reference the finished conductor, which cannot exist before this call returns
-        let perchConductorForTaskReader: Conductor | undefined;
         const perchTaskListReader = createTaskListReader({
-            getCurrentSessionId: () => perchConductorForTaskReader?.status().sessionId,
+            getCurrentSessionId: getPerchSessionId,
             logger,
         });
         perchJournal = storage.createJournal('perch', systemClock);
@@ -949,7 +1032,9 @@ export async function createApp(): Promise<App> {
             ambience,
             crossProviderRoutes: gateway.enabled,
         });
-        perchConductorForTaskReader = builtPerchConductor.conductor;
+        function getPerchSessionId(): string | undefined {
+            return builtPerchConductor.conductor.status().sessionId;
+        }
         perchConductor = builtPerchConductor.conductor;
         perchLedgerStore = builtPerchConductor.ledgerStore;
         perchSetWakeTurnDelivery = builtPerchConductor.setWakeTurnDelivery;
@@ -994,7 +1079,6 @@ export async function createApp(): Promise<App> {
     perchLedgerStore?.subscribe(ledger => quotaNotes.record(ledger));
 
     // Construct allowlist command handler using the unified PersonAllowlist
-    // Stryker disable next-line ObjectLiteral: Composition root — AllowlistCommandHandler is integration wiring
     const allowlistHandler = new AllowlistCommandHandler(
         personAllowlist,
         storage.contactBackend,
@@ -1005,7 +1089,6 @@ export async function createApp(): Promise<App> {
     const contactCommandHandler = new ContactCommandHandler(storage.contactBackend, config.adminDiscordUserId, contactApprovalHandler, personAllowlist);
 
     // Create Discord bot
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Creating Discord bot...');
     const bot: DiscordBot = createDiscordBot({
         config:                   config.discord,
@@ -1074,29 +1157,27 @@ export async function createApp(): Promise<App> {
         perchTimeHeader,
         perchSlotHooks,
     });
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    botForConstructionCleanup.bot = bot;
     logger.info('Discord bot created');
 
     // Collect slash command builders for bulk registration at startup
-    // Stryker disable BlockStatement,ArrayDeclaration: Composition root — command builder list construction is not unit-testable
     const commandBuilders: (() => SlashCommandBuilder)[] = [buildCalendarCommand, buildContactCommand, buildAllowlistCommand];
 
     // Wire Discord client into the capability facade now (client may not be logged in yet,
     // but the facade checks isReady() before sending, so this is safe to set eagerly).
     discordCapability.setClient(discordInfra.discordClient);
 
-    // Subscribe to health changes: drain outbox when any service comes online
-    // Registered once at createApp() time so it survives across start()/stop() cycles
-    // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator: Composition root — health subscription callback is not unit-testable
+    // Subscribe to health changes: drain outbox when any service comes online.
+    // Each lifecycle owns and releases its own subscription.
     const unsubscribeOutboxDrain = healthRegistry.subscribe((change) => {
         if(change.newState === 'online') {
             void outboxDrainer.drain(change.service);
         }
     });
+    registerCleanup({ name: 'outbox subscription', run: unsubscribeOutboxDrain });
     // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator
 
     // Subscribe to health changes: reset failed sagas when a service comes back online
-    // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,ObjectLiteral: Composition root — health subscription callback is not unit-testable
     const unsubscribeSagaRetry = healthRegistry.subscribe((change) => {
         if(change.newState !== 'online') {
             return;
@@ -1116,9 +1197,12 @@ export async function createApp(): Promise<App> {
         void (async () => {
             try {
                 const failed = await approvalSagaBackend.listByState('failed');
+                const retryableTypes = new Set(sagaTypes);
                 for(const saga of failed) {
-                    if(new Set(sagaTypes).has(saga.type)) {
-                        // eslint-disable-next-line no-await-in-loop -- sequential: saga state updates must be ordered
+                    if(retryableTypes.has(saga.type)) {
+                        // Keep approved writes in the backend's listed order. If one
+                        // write fails, later sagas must remain failed for the next retry.
+                        // eslint-disable-next-line no-await-in-loop -- ordered durable saga state transitions
                         await approvalSagaBackend.updateState(saga.id, 'approved');
                     }
                 }
@@ -1127,6 +1211,7 @@ export async function createApp(): Promise<App> {
             }
         })();
     });
+    registerCleanup({ name: 'saga subscription', run: unsubscribeSagaRetry });
     // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,ObjectLiteral
 
     // Q6 / plan amendments B1-B2: health-outage notification source. Same unconditional
@@ -1134,11 +1219,13 @@ export async function createApp(): Promise<App> {
     // never branches on session mode, and notificationBridge.notify is a safe no-op until the
     // real conductor has attached (see notification-bridge.ts's doc comment).
     const healthOutageCoalescer = createHealthOutageCoalescer({ clock: systemClock, notify: notificationBridge.notify });
+    registerCleanup({ name: 'health outage coalescer', run: () => healthOutageCoalescer.stop() });
     const unsubscribeHealthNotifications = healthRegistry.subscribe(createHealthNotificationListener({
         shouldNotifyHealthChange,
         coalescer: healthOutageCoalescer,
         notify:    notificationBridge.notify,
     }));
+    registerCleanup({ name: 'health notification subscription', run: unsubscribeHealthNotifications });
 
     // Subscribe to health changes: run recovery phase when Discord reconnects.
     // Registered inside app.start() AFTER bot.start() so it only fires on reconnects.
@@ -1146,42 +1233,32 @@ export async function createApp(): Promise<App> {
     let unsubscribeDiscordRecovery: (() => void) | undefined;
 
     // Wire discordReconnectFn now that bot is available.
-    // Stryker disable next-line BlockStatement: Composition root wiring — async function body is not unit-testable
     discordReconnectFn = async () => {
         await bot.start();
     };
 
-    let isStopping = false;
+    let isStopped = false;
+    let stopPromise: Promise<void> | null = null;
 
     return {
-        // Stryker disable BlockStatement: Composition root — startup/shutdown branching is not unit-testable
         // eslint-disable-next-line sonarjs/cognitive-complexity -- composition root start(); complexity from optional service conditionals
         start: async () => {
-            isStopping = false;
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Starting Isambard application...');
 
             // Mark Discord as starting
-            // Stryker disable next-line StringLiteral: health event string is composition root configuration
             healthRegistry.sendEvent('discord', 'CONFIGURE');
 
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Connecting to Discord...');
-            // Stryker disable BlockStatement,ObjectLiteral: try-catch wraps Discord startup — error handling; logger context objects not unit-testable
             try {
                 await bot.start();
-                // Stryker disable next-line StringLiteral: health event string is composition root configuration
                 healthRegistry.sendEvent('discord', 'CONNECT_SUCCESS');
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Discord connected');
             } catch (err) {
-                // Stryker disable next-line StringLiteral,ObjectLiteral: health event strings and context are composition root configuration
                 healthRegistry.sendEvent('discord', 'CONNECT_FAIL', {
                     error: err instanceof Error ? err.message : String(err),
                 });
                 logger.warn({
                     error: err instanceof Error ? err.message : String(err),
-                    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                     msg:   'Discord unavailable at startup, starting reconnection loop',
                 });
                 discordReconnectionLoop.start();
@@ -1201,7 +1278,6 @@ export async function createApp(): Promise<App> {
             }));
 
             // Start email listener (independent of Discord — email works even if Discord is offline)
-            // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: try-catch wraps email listener start - composition root error handling; logger context objects not unit-testable
             if(emailSetup) {
                 try {
                     await emailSetup.listener.start();
@@ -1216,7 +1292,6 @@ export async function createApp(): Promise<App> {
             // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
             // Register slash commands (non-fatal — Discord may be connected but commands fail)
-            // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: Composition root — not unit-testable; logger context objects not unit-testable
             try {
                 await registerAllCommands(discordInfra.discordClient, commandBuilders);
             } catch (err) {
@@ -1228,17 +1303,13 @@ export async function createApp(): Promise<App> {
             // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
             // These start regardless of Discord availability
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
             if(storage.reconciliationScheduler) {
                 storage.reconciliationScheduler.start();
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Tag index reconciliation scheduler started');
             }
 
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
             if(storage.contactReconciliationScheduler) {
                 storage.contactReconciliationScheduler.start();
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Contact reconciliation scheduler started');
             }
 
@@ -1250,160 +1321,174 @@ export async function createApp(): Promise<App> {
             ambience.quotaPoller.start();
 
             // Q8: start the Bluesky DM poller once safety rails are in place
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
             if(bskySetup) {
                 bskySetup.dmPoller.start();
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Bluesky DM poller started');
             }
 
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Isambard application started successfully');
         },
         // Stryker restore BlockStatement
 
-        // Stryker disable BlockStatement: Composition root — startup/shutdown branching is not unit-testable
-        // eslint-disable-next-line sonarjs/cognitive-complexity, complexity -- stop() is a composition-root shutdown handler; complexity is inherent from cleaning up multiple optional services including vector index lifecycle
-        stop: async () => {
-            if(isStopping) {
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-                logger.debug('Application already stopped, skipping duplicate call');
-                return;
+        stop: () => {
+            if(stopPromise !== null) {
+                if(isStopped) {
+                    logger.debug('Application already stopped, skipping duplicate call');
+                }
+                return stopPromise;
             }
-            isStopping = true;
 
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Stopping Isambard application...');
-
-            // Stop reconnection loops if running
-            dynamoDBReconnectionLoop.stop();
-            discordReconnectionLoop.stop();
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
-            if(emailReconnectionLoop) {
-                emailReconnectionLoop.stop();
-            }
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
-            if(bskyReconnectionLoop) {
-                bskyReconnectionLoop.stop();
-            }
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
-            if(bskySetup) {
-                bskySetup.dmPoller.stop();
-            }
-
-            // Stop outbox drainer and saga executor
-            outboxDrainer.stop();
-            sagaExecutor.stop();
-
-            // Cancels the pending usage poll so its timer can never fire into a torn-down
-            // process (same reasoning as healthOutageCoalescer.stop() below).
-            ambience.quotaPoller.stop();
-
-            // Unsubscribe health listeners
-            unsubscribeOutboxDrain();
-            unsubscribeSagaRetry();
-            unsubscribeHealthNotifications();
-            // Cancels any still-pending flush timer so a batch can never fire (and try to
-            // deliver) after the notification bridge is detached below (Q6 review finding).
-            healthOutageCoalescer.stop();
-
-            // Q5 / B1: detach the notification bridge from the conductor — subsequent notify()
-            // calls (there should be none once shutdown starts, but any straggler) revert to the
-            // safe unattached no-op.
-            notificationBridge.detach();
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional unsubscribe — only registered after first successful start()
-            unsubscribeDiscordRecovery?.();
-            unsubscribeDynamoDBReconnect();
-            unsubscribeDiscordReconnect();
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional unsubscribe - equivalent mutant
-            unsubscribeEmailReconnect?.();
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional unsubscribe - equivalent mutant
-            unsubscribeBskyReconnect?.();
-
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
-            if(storage.reconciliationScheduler) {
-                storage.reconciliationScheduler.stop();
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-                logger.info('Tag index reconciliation scheduler stopped');
-            }
-
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
-            if(storage.contactReconciliationScheduler) {
-                storage.contactReconciliationScheduler.stop();
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-                logger.info('Contact reconciliation scheduler stopped');
-            }
-
-            // Close browser adapter if running
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
-            if(browserAdapter) {
-                browserAdapter.close();
-            }
-
-            // Stop email listener and WildDuck client before bot.stop()
-            // (email lifecycle moved here since listener now starts in app.start())
-            // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: try-catch isolates email stop from Discord cleanup; logger context objects not unit-testable
-            if(emailSetup) {
-                try {
-                    await emailSetup.listener.stop();
-                } catch (err) {
-                    logger.error({
-                        error: err instanceof Error ? err.message : String(err),
-                        msg:   'Email listener stop failed during shutdown',
-                    });
-                }
-                // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
-                // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: try-catch isolates WildDuck shutdown from Discord cleanup; logger context objects not unit-testable
-                try {
-                    await emailSetup.wildDuckClient.shutdown();
-                } catch (err) {
-                    logger.error({
-                        error: err instanceof Error ? err.message : String(err),
-                        msg:   'WildDuck client shutdown failed during email teardown',
-                    });
-                }
-            }
-            // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
-
-            await bot.stop();
-
-            // Drain and close the async indexer before closing the vector index.
-            // asyncIndexer.close() waits for all pending embedding jobs to complete,
-            // then closes the embedder — the indexer must be drained before the index
-            // is closed so in-flight upserts can still write to SQLite.
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
-            if(storage.asyncIndexer) {
-                await storage.asyncIndexer.close();
-            }
-            // Close the vector index (SQLite database) after the indexer is fully drained.
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
-            if(storage.vectorIndex) {
-                storage.vectorIndex.close();
-            }
-
-            // Clear periodic DynamoDB probe interval.
-            clearInterval(dynamoDBProbeInterval);
-
-            // Clear health notifier so withDynamoTimeout no longer fires after shutdown.
-            setDynamoHealthNotifier(undefined);
-
-            // Destroy the DynamoDB client holder — cancels any pending grace timer and
-            // synchronously destroys both the current and any in-grace previous client.
-            storage.holder.destroy();
-
-            // Stop health registry after bot.stop() so health subscribers can still
-            // react to service state changes during graceful shutdown.
-            healthRegistry.stop();
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Isambard application stopped');
+            emailStopping = true;
+            const steps: ShutdownStep[] = [
+                { name: 'DynamoDB reconnection loop', run: () => dynamoDBReconnectionLoop.stop() },
+                { name: 'Discord reconnection loop', run: () => discordReconnectionLoop.stop() },
+                { name: 'email reconnection loop', run: () => emailReconnectionLoop?.stop() },
+                { name: 'Bluesky reconnection loop', run: () => bskyReconnectionLoop?.stop() },
+                { name: 'Bluesky DM poller', run: () => bskySetup?.dmPoller.stop() },
+                { name: 'outbox drainer', run: () => outboxDrainer.stop() },
+                { name: 'saga executor', run: () => sagaExecutor.stop() },
+                // Stop usage polling and health notifications before detaching the bridge.
+                { name: 'quota poller', run: () => ambience.quotaPoller.stop() },
+                { name: 'outbox subscription', run: unsubscribeOutboxDrain },
+                { name: 'saga subscription', run: unsubscribeSagaRetry },
+                { name: 'health notification subscription', run: unsubscribeHealthNotifications },
+                { name: 'health outage coalescer', run: () => healthOutageCoalescer.stop() },
+                { name: 'notification bridge', run: () => notificationBridge.detach() },
+                { name: 'Discord recovery subscription', run: () => unsubscribeDiscordRecovery?.() },
+                { name: 'DynamoDB reconnect subscription', run: unsubscribeDynamoDBReconnect },
+                { name: 'Discord reconnect subscription', run: unsubscribeDiscordReconnect },
+                { name: 'email reconnect subscription', run: () => unsubscribeEmailReconnect?.() },
+                { name: 'Bluesky reconnect subscription', run: () => unsubscribeBskyReconnect?.() },
+                { name: 'tag reconciliation scheduler',     run:  () => {
+                    if(storage.reconciliationScheduler) {
+                        storage.reconciliationScheduler.stop();
+                        logger.info('Tag index reconciliation scheduler stopped');
+                    }
+                } },
+                { name: 'contact reconciliation scheduler', run:  () => {
+                    if(storage.contactReconciliationScheduler) {
+                        storage.contactReconciliationScheduler.stop();
+                        logger.info('Contact reconciliation scheduler stopped');
+                    }
+                } },
+                { name: 'browser adapter', run: () => browserAdapter?.close() },
+                { name: 'email listener', run: () => emailSetup?.listener.stop(), bestEffortMessage: 'Email listener stop failed during shutdown' },
+                { name: 'WildDuck client', run: shutdownEmailClient, bestEffortMessage: 'WildDuck client shutdown failed during email teardown' },
+                { name: 'Discord bot', run: () => bot.stop() },
+                // Each step settles before the next starts, including after a rejection.
+                // This keeps indexer writes ahead of vector-index closure.
+                { name: 'async indexer', run: () => storage.asyncIndexer?.close() },
+                { name: 'vector index', run: () => storage.vectorIndex?.close() },
+                { name: 'DynamoDB probe', run: () => clearInterval(dynamoDBProbeInterval) },
+                { name: 'DynamoDB health notifier', run: () => setDynamoHealthNotifier(undefined) },
+                { name: 'DynamoDB client holder', run: () => storage.holder.destroy() },
+                { name: 'health registry', run: () => healthRegistry.stop() },
+            ];
+            stopPromise = runShutdownSteps(steps).then(() => {
+                isStopped = true;
+                logger.info('Isambard application stopped');
+                return undefined;
+            });
+            return stopPromise;
         },
         // Stryker restore BlockStatement
         config,
     };
 }
 
+/** Rebuild closed owners on a new start while keeping each lifecycle's stop one-shot. */
+export async function createApp(): Promise<App> {
+    let current = await createAppLifecycle();
+    let tail: Promise<void> = Promise.resolve();
+    let lastStop: Promise<void> | null = null;
+    let pendingStart: Promise<void> | null = null;
+    let pendingStop: Promise<void> | null = null;
+    let latestOperation: 'start' | 'stop' | null = null;
+    let stopped = false;
+
+    const enqueue = (action: () => Promise<void>): Promise<void> => {
+        const outcome = tail.then(action);
+        // Keep the queue usable after a failed transition; callers still receive outcome.
+        tail = Promise.allSettled([outcome]).then(() => undefined);
+        return outcome;
+    };
+
+    return {
+        get config() { return current.config; },
+        start: () => {
+            if(latestOperation === 'start' && pendingStart !== null) {
+                return pendingStart;
+            }
+            const previousStop = lastStop;
+            const outcome = enqueue(async () => {
+                if(previousStop !== null) {
+                    await previousStop;
+                    current = await createAppLifecycle();
+                    stopped = false;
+                    if(lastStop === previousStop) {
+                        lastStop = null;
+                    }
+                    if(pendingStop === previousStop) {
+                        pendingStop = null;
+                    }
+                }
+                await current.start();
+            });
+            pendingStart = outcome;
+            latestOperation = 'start';
+            const releaseStart = (): undefined => {
+                if(pendingStart === outcome) {
+                    pendingStart = null;
+                }
+                return undefined;
+            };
+            void outcome.then(releaseStart).catch(releaseStart);
+            return outcome;
+        },
+        stop: () => {
+            if(latestOperation === 'stop' && pendingStop !== null) {
+                if(stopped) {
+                    logger.debug('Application already stopped, skipping duplicate call');
+                }
+                return pendingStop;
+            }
+            if(pendingStart === null && lastStop !== null) {
+                if(stopped) {
+                    logger.debug('Application already stopped, skipping duplicate call');
+                }
+                return lastStop;
+            }
+            const previousStop = lastStop;
+            const previousStart = pendingStart;
+            const previousLifecycle = current;
+            const outcome = enqueue(async () => {
+                if(previousStop !== null) {
+                    await previousStop;
+                }
+                if(previousStart !== null) {
+                    try {
+                        await previousStart;
+                    } catch (error) {
+                        // A failed start can still leave a new lifecycle to tear down.
+                        // A failed rebuild has no new owner and must keep its error.
+                        if(previousStop !== null && current === previousLifecycle) {
+                            throw error;
+                        }
+                    }
+                }
+                await current.stop();
+                stopped = true;
+            });
+            lastStop = outcome;
+            pendingStop = outcome;
+            latestOperation = 'stop';
+            return outcome;
+        },
+    };
+}
+
 // Application entry point - only run if this is the main module
-// Stryker disable all: Entry point code - not unit testable
 
 /**
  * Resolve the real repository root, following git worktree links.
@@ -1466,6 +1551,7 @@ if(import.meta.main) {
     // (import.meta.hot is undefined under Bun 1.4.2's --hot; see src/app/hot-reload-guard.ts), so
     // the previous evaluation's bot would otherwise keep running beside this one. globalThis
     // survives the reload: stop whatever the last evaluation parked there before building anything.
+    // boundary cast: globalThis is the runtime-persistent host; the guard reads and writes one validated string-keyed slot
     const hotReloadHost = globalThis as unknown as Record<string, unknown>;
     await stopPreviousHotReloadInstance(hotReloadHost, logger);
 
@@ -1524,9 +1610,10 @@ if(import.meta.main) {
 
     // Kept for a Bun that does define import.meta.hot under --hot: then dispose fires first and
     // the globalThis handle above becomes a harmless second stop (app.stop() is idempotent).
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: import.meta.hot is only available when running with bun --hot
-    if(import.meta.hot) {
-        import.meta.hot.dispose(async () => {
+    // Bun's ambient ImportMeta types require hot, but the runtime omits it without --hot.
+    const runtimeMeta = import.meta as Omit<ImportMeta, 'hot'> & { hot?: ImportMeta['hot'] };
+    if(runtimeMeta.hot) {
+        runtimeMeta.hot.dispose(async () => {
             logger.info('Hot reload detected, cleaning up...');
             // Remove error boundary handlers to prevent duplicate handlers on next hot reload
             errorBoundaryRegistration.unregister();

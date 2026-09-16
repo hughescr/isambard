@@ -7,7 +7,6 @@ import type { PlatformType } from '@/storage';
  * - 'outbound': sent to the person
  * - 'mutual':   mutual interaction (e.g. a reaction, or a shared thread)
  */
-// Stryker disable all: Enum values are static definitions
 const directionSchema = z.enum(['inbound', 'outbound', 'mutual']);
 
 /**
@@ -15,7 +14,6 @@ const directionSchema = z.enum(['inbound', 'outbound', 'mutual']);
  * cause a compile error in formatHistoryEntries until the switch is updated.
  */
 const knownPlatformSchema = z.enum(['discord', 'email', 'bsky']);
-// Stryker restore all
 
 /** Literal union of all known history platform identifiers. */
 export type KnownPlatform = z.infer<typeof knownPlatformSchema>;
@@ -23,14 +21,12 @@ export type KnownPlatform = z.infer<typeof knownPlatformSchema>;
 /**
  * A single history interaction entry across any platform.
  */
-// Stryker disable MethodExpression: .min(1) constraints are schema configuration, not logic under test
 export const historyEntrySchema = z.object({
     platform:  knownPlatformSchema,
     timestamp: z.iso.datetime(),
     summary:   z.string().min(1),
     direction: directionSchema,
 });
-// Stryker restore MethodExpression
 
 export type HistoryEntry = z.infer<typeof historyEntrySchema>;
 

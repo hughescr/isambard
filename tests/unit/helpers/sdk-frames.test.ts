@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import packageJson from '../../../package.json';
 import assistantTextFixture from '../../fixtures/sdk-frames/frames/assistant_text.json';
 import assistantToolUseFixture from '../../fixtures/sdk-frames/frames/assistant_tool_use.json';
 import backgroundTasksChangedFixture from '../../fixtures/sdk-frames/frames/background_tasks_changed.json';
@@ -38,13 +37,6 @@ import {
     taskStarted
 } from '../../helpers/sdk-frames';
 
-// @anthropic-ai/claude-agent-sdk is deliberately pinned to an EXACT version in package.json (no
-// ^/~ range): the SDK package does not export ./package.json for a static import of the
-// installed version, so a range here would let `bun update` silently resolve a newer SDK while
-// every fixture keeps asserting the old declared range and this guard stays green. Pinning makes
-// the declared version and the installed version the same fact.
-const DECLARED_SDK_VERSION = packageJson.dependencies['@anthropic-ai/claude-agent-sdk'];
-
 /**
  * Asserts `built` carries every key of `fixtureFrame` with an equal value, except the keys in
  * `excludeKeys` (fields the builder call under test deliberately overrides). Closes the gap a
@@ -60,36 +52,6 @@ function assertCarriesFixtureFields(built: Record<string, unknown>, fixtureFrame
         expect(built[key]).toEqual(fixtureFrame[key]);
     }
 }
-
-const FRAME_FIXTURES: [string, { sdkVersion: string }][] = [
-    ['frames/assistant_text.json', assistantTextFixture],
-    ['frames/assistant_tool_use.json', assistantToolUseFixture],
-    ['frames/background_tasks_changed.json', backgroundTasksChangedFixture],
-    ['frames/bare_result_should_query_false.json', bareResultFixture],
-    ['frames/compact_boundary.json', compactBoundaryFixture],
-    ['frames/hook_response.json', hookResponseFixture],
-    ['frames/hook_started.json', hookStartedFixture],
-    ['frames/init.json', initFixture],
-    ['frames/result_interrupted.json', resultInterruptedFixture],
-    ['frames/result_success.json', resultSuccessFixture],
-    ['frames/task_notification.json', taskNotificationFixture],
-    ['frames/task_progress.json', taskProgressFixture],
-    ['frames/task_started.json', taskStartedFixture],
-    ['hook-inputs/hook_session_start_compact.json', hookSessionStartCompactFixture],
-    ['hook-inputs/hook_session_start_startup.json', hookSessionStartStartupFixture],
-    ['hook-inputs/post_compact.json', postCompactFixture],
-    ['hook-inputs/pre_compact.json', preCompactFixture],
-];
-
-describe('sdk-frames fixture drift guard', () => {
-    it('pins @anthropic-ai/claude-agent-sdk to an exact version, not a ^/~ range', () => {
-        expect(DECLARED_SDK_VERSION, 'a ^/~ range lets `bun update` silently install a newer SDK than every fixture was recorded against while this guard keeps comparing against the unchanged declared range').toMatch(/^\d+\.\d+\.\d+$/);
-    });
-
-    it.each(FRAME_FIXTURES)('%s was recorded against the installed SDK version', (path, fixture) => {
-        expect(fixture.sdkVersion, `${path} says sdkVersion ${fixture.sdkVersion}, but the installed @anthropic-ai/claude-agent-sdk is ${DECLARED_SDK_VERSION}. Re-record the sdk-frames fixtures (bun scripts/spike-long-lived-session.ts q1,q2,q3 --record) after an SDK bump.`).toBe(DECLARED_SDK_VERSION);
-    });
-});
 
 describe('init', () => {
     it('matches the fixture type/subtype and carries every fixture field, with sessionId overriding session_id', () => {

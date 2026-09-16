@@ -27,7 +27,6 @@ interface ContactLookupKeys {
     GSI2SK: string
 }
 
-// Stryker disable StringLiteral: PK/SK key constants are configuration values
 const PREFIX_CONTACT         = 'CONTACT';
 const PREFIX_CONTACT_LOOKUP  = 'CONTACT_LOOKUP';
 const SK_PROFILE             = 'PROFILE';
@@ -53,9 +52,7 @@ export const ContactKeyGenerator = {
      */
     createProfileKeys(personId: ContactId): ContactProfileKeys {
         return {
-            // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
             PK: createPrefixedKey(PREFIX_CONTACT, personId),
-            // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
             SK: SK_PROFILE,
         };
     },
@@ -83,13 +80,9 @@ export const ContactKeyGenerator = {
     createLookupKeys(platform: PlatformType, value: string, personId: ContactId): ContactLookupKeys {
         const normalizedValue = value.toLowerCase().trim();
         return {
-            // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
             PK:     createPrefixedKey(PREFIX_CONTACT_LOOKUP, platform, normalizedValue),
-            // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
             SK:     createPrefixedKey(PREFIX_CONTACT, personId),
-            // Stryker disable next-line StringLiteral: GSI2PK key constant is a configuration value
             GSI2PK: GSI2PK_CONTACT_LOOKUPS,
-            // Stryker disable next-line StringLiteral: GSI2SK key constant is a configuration value
             GSI2SK: createPrefixedKey(PREFIX_CONTACT, personId, platform, normalizedValue),
         };
     },
@@ -109,9 +102,7 @@ export const ContactKeyGenerator = {
      */
     createCollectionKeys(personId: ContactId): { GSI2PK: string, GSI2SK: string } {
         return {
-            // Stryker disable next-line StringLiteral: GSI2PK key constant is a configuration value
             GSI2PK: GSI2PK_CONTACTS,
-            // Stryker disable next-line StringLiteral: GSI2SK key constant is a configuration value
             GSI2SK: createPrefixedKey(PREFIX_CONTACT, personId),
         };
     },
@@ -131,7 +122,6 @@ export const ContactKeyGenerator = {
      */
     parsePersonIdFromPK(pk: string): ContactId {
         if(!pk.startsWith('CONTACT#')) {
-            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
             throw new InvariantViolationError('ContactKeyGenerator.parsePersonIdFromPK', `Invalid PK format: expected CONTACT#..., got ${pk}`);
         }
         return createContactId(parsePrefixedKey(PREFIX_CONTACT, pk));
@@ -151,16 +141,13 @@ export const ContactKeyGenerator = {
      * ```
      */
     parseLookupPK(pk: string): { platform: PlatformType, value: string } {
-        // Stryker disable next-line StringLiteral: PK prefix is a configuration constant
         const PREFIX = 'CONTACT_LOOKUP#';
         if(!pk.startsWith(PREFIX)) {
-            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
             throw new InvariantViolationError('ContactKeyGenerator.parseLookupPK', `Invalid lookup PK format: expected CONTACT_LOOKUP#..., got ${pk}`);
         }
         const rest = pk.slice(PREFIX.length);
         const hashIndex = rest.indexOf('#');
         if(hashIndex === -1) {
-            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
             throw new InvariantViolationError('ContactKeyGenerator.parseLookupPK', `Invalid lookup PK format: missing platform separator in ${pk}`);
         }
         const platform = platformTypeSchema.parse(rest.slice(0, hashIndex));
@@ -183,7 +170,6 @@ export const ContactKeyGenerator = {
      */
     parsePersonIdFromLookupSK(sk: string): ContactId {
         if(!sk.startsWith('CONTACT#')) {
-            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
             throw new InvariantViolationError('ContactKeyGenerator.parsePersonIdFromLookupSK', `Invalid lookup SK format: expected CONTACT#..., got ${sk}`);
         }
         return createContactId(parsePrefixedKey(PREFIX_CONTACT, sk));

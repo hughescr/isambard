@@ -9,6 +9,13 @@ import path from 'node:path';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 import { syncAgentsAndSkills } from '@/agent/skill-agent-loader';
 
+function waitForEventLoopCheckpoint(): Promise<void> {
+    return new Promise((resolve) => {
+        // eslint-disable-next-line no-restricted-syntax -- gates remain closed; this checks ordering after runnable async work without elapsed-time policy.
+        setImmediate(resolve);
+    });
+}
+
 describe('syncAgentsAndSkills', () => {
     const tempSourceRoot = '/test-source';
     const tempTargetRoot = '/test-target';
@@ -57,6 +64,11 @@ describe('syncAgentsAndSkills', () => {
 
         expect(agent1Content).toBe('# Agent 1');
         expect(agent2Content).toBe('# Agent 2');
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            source: path.join(tempSourceRoot, 'agents'),
+            target: path.join(tempTargetRoot, 'agents'),
+            msg:    'Synced agents directory',
+        });
     });
 
     test('should copy skills from source to target', async () => {
@@ -74,6 +86,11 @@ describe('syncAgentsAndSkills', () => {
 
         expect(skill1Content).toBe('# Skill 1');
         expect(skill2Content).toBe('# Skill 2');
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            source: path.join(tempSourceRoot, 'skills'),
+            target: path.join(tempTargetRoot, 'skills'),
+            msg:    'Synced skills directory',
+        });
     });
 
     test('should clear existing target directory contents before copying', async () => {
@@ -111,6 +128,8 @@ describe('syncAgentsAndSkills', () => {
         await mockFsPromises.writeFile(path.join(tempSourceRoot, 'skills', 'skill1.md'), '# Skill 1');
 
         await syncAgentsAndSkills(tempSourceRoot, tempTargetRoot);
+
+        expect(mockFsPromises.mkdir).toHaveBeenCalledWith(path.join(tempTargetRoot, 'agents'), { recursive: true });
 
         // Verify warning was logged for missing agents
         expect(mockLogger.warn).toHaveBeenCalledWith(
@@ -204,6 +223,65 @@ describe('syncAgentsAndSkills', () => {
         expect(configContent).toBe('{"enabled": true}');
     });
 
+    test('creates a nested target directory before reading its source contents', async () => {
+        const sourceNested = path.join(tempSourceRoot, 'agents', 'nested');
+        const targetNested = path.join(tempTargetRoot, 'agents', 'nested');
+        await mockFsPromises.mkdir(sourceNested, { recursive: true });
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'skills'), { recursive: true });
+        await mockFsPromises.writeFile(path.join(sourceNested, 'agent.md'), '# Agent');
+
+        const mkdirImpl = mockFsPromises.mkdir.getMockImplementation()!;
+        const readdirImpl = mockFsPromises.readdir.getMockImplementation()!;
+        const mkdirStarted = Promise.withResolvers<void>();
+        const releaseMkdir = Promise.withResolvers<void>();
+        let nestedReadStarted = false;
+        mockFsPromises.mkdir.mockImplementation(async (directory, options) => {
+            if(directory === targetNested) {
+                mkdirStarted.resolve();
+                await releaseMkdir.promise;
+            }
+            return mkdirImpl(directory, options);
+        });
+        mockFsPromises.readdir.mockImplementation(async (directory, options) => {
+            if(directory === sourceNested) {
+                nestedReadStarted = true;
+            }
+            return readdirImpl(directory, options);
+        });
+
+        const operation = syncAgentsAndSkills(tempSourceRoot, tempTargetRoot);
+        try {
+            await mkdirStarted.promise;
+            await waitForEventLoopCheckpoint();
+            expect(nestedReadStarted).toBe(false);
+        } finally {
+            releaseMkdir.resolve();
+            await operation;
+        }
+        expect(await mockFsPromises.readFile(path.join(targetNested, 'agent.md'), 'utf8')).toBe('# Agent');
+    });
+
+    test('propagates fallback write failures through synchronization', async () => {
+        const sourceFile = path.join(tempSourceRoot, 'agents', 'agent.md');
+        const targetFile = path.join(tempTargetRoot, 'agents', 'agent.md');
+        await mockFsPromises.mkdir(path.dirname(sourceFile), { recursive: true });
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'skills'), { recursive: true });
+        await mockFsPromises.writeFile(sourceFile, '# Agent');
+
+        const writeFileImpl = mockFsPromises.writeFile.getMockImplementation()!;
+        const writeFailure = new Error('target became read-only');
+        mockFsPromises.writeFile.mockImplementation((destination, content) => {
+            if(destination === targetFile) {
+                const rejectedWrite = Promise.reject(writeFailure);
+                void rejectedWrite.catch(() => undefined);
+                return rejectedWrite;
+            }
+            return writeFileImpl(destination, content);
+        });
+
+        await expect(syncAgentsAndSkills(tempSourceRoot, tempTargetRoot)).rejects.toBe(writeFailure);
+    });
+
     test('should use COPYFILE_FICLONE flag when copying', async () => {
         // This test verifies the behavior - the flag is used internally
         // Setup: Create source with content
@@ -216,5 +294,255 @@ describe('syncAgentsAndSkills', () => {
         // Verify the copy worked (flag was used correctly)
         const agentContent = await mockFsPromises.readFile(path.join(tempTargetRoot, 'agents', 'agent.md'), 'utf8');
         expect(agentContent).toBe('# Agent');
+    });
+
+    test('waits for admitted copies to settle and propagates a missing child as an error', async () => {
+        const agents = path.join(tempSourceRoot, 'agents');
+        const skills = path.join(tempSourceRoot, 'skills');
+        await mockFsPromises.mkdir(agents, { recursive: true });
+        await mockFsPromises.mkdir(skills, { recursive: true });
+        await mockFsPromises.writeFile(path.join(agents, 'held.md'), '# Held');
+        await mockFsPromises.writeFile(path.join(agents, 'missing.md'), '# Missing');
+
+        const heldStarted = Promise.withResolvers<void>();
+        const releaseHeld = Promise.withResolvers<void>();
+        const failedRead = Promise.withResolvers<void>();
+        mockFsPromises.readFile.mockImplementation(async (source) => {
+            if(source.endsWith('held.md')) {
+                heldStarted.resolve();
+                await releaseHeld.promise;
+                return '# Held';
+            }
+            if(source.endsWith('missing.md')) {
+                await heldStarted.promise;
+                failedRead.resolve();
+                const error = new Error('child disappeared') as NodeJS.ErrnoException;
+                error.code = 'ENOENT';
+                throw error;
+            }
+            throw new Error(`Unexpected read: ${source}`);
+        });
+
+        let settled = false;
+        const outcome = syncAgentsAndSkills(tempSourceRoot, tempTargetRoot)
+            .then(() => null)
+            .catch((error: unknown) => error)
+            .finally(() => { settled = true; });
+        await failedRead.promise;
+        await Bun.sleep(1);
+        expect(settled).toBe(false);
+
+        releaseHeld.resolve();
+        const error = await outcome;
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe('child disappeared');
+        expect(mockLogger.warn).not.toHaveBeenCalledWith(expect.objectContaining({
+            msg: expect.stringContaining('Source directory does not exist'),
+        }));
+    });
+
+    test('bounds file I/O across recursive directories without serializing all copies', async () => {
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'skills'), { recursive: true });
+        await Promise.all(Array.from({ length: 12 }, async (_, index) => {
+            const child = path.join(tempSourceRoot, 'agents', `nested-${index}`);
+            await mockFsPromises.mkdir(child, { recursive: true });
+            await mockFsPromises.writeFile(path.join(child, 'AGENT.md'), '# Agent');
+        }));
+        let active = 0;
+        let peak = 0;
+        mockFsPromises.readFile.mockImplementation(async () => {
+            active++;
+            peak = Math.max(peak, active);
+            await Bun.sleep(1);
+            active--;
+            return '# Agent';
+        });
+
+        await syncAgentsAndSkills(tempSourceRoot, tempTargetRoot);
+
+        expect(peak).toBeGreaterThan(1);
+        expect(peak).toBeLessThanOrEqual(8);
+        const listings = await Promise.all(Array.from({ length: 12 }, (_, index) =>
+            mockFsPromises.readdir(path.join(tempTargetRoot, 'agents', `nested-${index}`))));
+        expect(listings.every(names => names.includes('AGENT.md'))).toBe(true);
+    });
+
+    test('uses recursive operations to replace existing nested target content', async () => {
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'agents', 'nested'), { recursive: true });
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'skills'), { recursive: true });
+        await mockFsPromises.writeFile(path.join(tempSourceRoot, 'agents', 'nested', 'agent.md'), 'current');
+        await mockFsPromises.mkdir(path.join(tempTargetRoot, 'agents', 'old'), { recursive: true });
+        await mockFsPromises.writeFile(path.join(tempTargetRoot, 'agents', 'old', 'stale.md'), 'stale');
+        mockFsPromises.rm.mockClear();
+        mockFsPromises.mkdir.mockClear();
+
+        await syncAgentsAndSkills(tempSourceRoot, tempTargetRoot);
+
+        expect(mockFsPromises.rm).toHaveBeenCalledWith(path.join(tempTargetRoot, 'agents'), { recursive: true, force: true });
+        expect(mockFsPromises.mkdir).toHaveBeenCalledWith(path.join(tempTargetRoot, 'agents'), { recursive: true });
+        expect(mockFsPromises.mkdir).toHaveBeenCalledWith(path.join(tempTargetRoot, 'agents', 'nested'), { recursive: true });
+        await expect(mockFsPromises.readdir(path.join(tempTargetRoot, 'agents', 'old'))).rejects.toThrow();
+        expect(await mockFsPromises.readFile(path.join(tempTargetRoot, 'agents', 'nested', 'agent.md'), 'utf8')).toBe('current');
+    });
+
+    test('recreates a cleared target before copying source entries', async () => {
+        const sourceAgents = path.join(tempSourceRoot, 'agents');
+        const targetAgents = path.join(tempTargetRoot, 'agents');
+        await mockFsPromises.mkdir(sourceAgents, { recursive: true });
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'skills'), { recursive: true });
+        await mockFsPromises.mkdir(targetAgents, { recursive: true });
+        await mockFsPromises.writeFile(path.join(sourceAgents, 'agent.md'), '# Agent');
+
+        const mkdirImpl = mockFsPromises.mkdir.getMockImplementation()!;
+        const readdirImpl = mockFsPromises.readdir.getMockImplementation()!;
+        const mkdirStarted = Promise.withResolvers<void>();
+        const releaseMkdir = Promise.withResolvers<void>();
+        let sourceReadStarted = false;
+        mockFsPromises.mkdir.mockImplementation(async (directory, options) => {
+            if(directory === targetAgents) {
+                mkdirStarted.resolve();
+                await releaseMkdir.promise;
+            }
+            return mkdirImpl(directory, options);
+        });
+        mockFsPromises.readdir.mockImplementation(async (directory, options) => {
+            if(directory === sourceAgents) {
+                sourceReadStarted = true;
+            }
+            return readdirImpl(directory, options);
+        });
+
+        const operation = syncAgentsAndSkills(tempSourceRoot, tempTargetRoot);
+        try {
+            await mkdirStarted.promise;
+            await waitForEventLoopCheckpoint();
+            expect(sourceReadStarted).toBe(false);
+        } finally {
+            releaseMkdir.resolve();
+            await operation;
+        }
+        expect(await mockFsPromises.readFile(path.join(targetAgents, 'agent.md'), 'utf8')).toBe('# Agent');
+    });
+
+    test('ignores symbolic links in a source directory', async () => {
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'agents'), { recursive: true });
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'skills'), { recursive: true });
+        await mockFsPromises.symlink('/outside/secret', path.join(tempSourceRoot, 'agents', 'link'));
+        await expect(syncAgentsAndSkills(tempSourceRoot, tempTargetRoot)).resolves.toBeUndefined();
+        expect(await mockFsPromises.readdir(path.join(tempTargetRoot, 'agents'))).toEqual([]);
+    });
+
+    test('does not clear a target when its source is a file', async () => {
+        await mockFsPromises.mkdir(tempSourceRoot, { recursive: true });
+        await mockFsPromises.writeFile(path.join(tempSourceRoot, 'agents'), 'not a directory');
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'skills'), { recursive: true });
+        await mockFsPromises.mkdir(path.join(tempTargetRoot, 'agents'), { recursive: true });
+        await mockFsPromises.writeFile(path.join(tempTargetRoot, 'agents', 'existing.md'), 'keep');
+        await expect(syncAgentsAndSkills(tempSourceRoot, tempTargetRoot)).resolves.toBeUndefined();
+        expect(await mockFsPromises.readFile(path.join(tempTargetRoot, 'agents', 'existing.md'), 'utf8')).toBe('keep');
+    });
+
+    test('propagates source stat failures other than missing source', async () => {
+        const denied = new Error('permission denied') as NodeJS.ErrnoException;
+        denied.code = 'EACCES';
+        mockFsPromises.stat.mockRejectedValueOnce(denied);
+        await expect(syncAgentsAndSkills(tempSourceRoot, tempTargetRoot)).rejects.toBe(denied);
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+    });
+
+    test('recreates the target when removal races with another remover', async () => {
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'agents'), { recursive: true });
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'skills'), { recursive: true });
+        const missing = new Error('already removed') as NodeJS.ErrnoException;
+        missing.code = 'ENOENT';
+        mockFsPromises.rm.mockRejectedValueOnce(missing);
+        mockFsPromises.mkdir.mockClear();
+        await expect(syncAgentsAndSkills(tempSourceRoot, tempTargetRoot)).resolves.toBeUndefined();
+        expect(mockFsPromises.mkdir).toHaveBeenCalledWith(path.join(tempTargetRoot, 'agents'), { recursive: true });
+    });
+
+    test('finishes ENOENT recovery before copying source entries', async () => {
+        const sourceAgents = path.join(tempSourceRoot, 'agents');
+        const targetAgents = path.join(tempTargetRoot, 'agents');
+        await mockFsPromises.mkdir(sourceAgents, { recursive: true });
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'skills'), { recursive: true });
+        await mockFsPromises.writeFile(path.join(sourceAgents, 'agent.md'), '# Agent');
+
+        const rmImpl = mockFsPromises.rm.getMockImplementation()!;
+        const mkdirImpl = mockFsPromises.mkdir.getMockImplementation()!;
+        const readdirImpl = mockFsPromises.readdir.getMockImplementation()!;
+        const missing = new Error('already removed') as NodeJS.ErrnoException;
+        missing.code = 'ENOENT';
+        const mkdirStarted = Promise.withResolvers<void>();
+        const releaseMkdir = Promise.withResolvers<void>();
+        let sourceReadStarted = false;
+        mockFsPromises.rm.mockImplementation(async (directory, options) => {
+            if(directory === targetAgents) {
+                throw missing;
+            }
+            return rmImpl(directory, options);
+        });
+        mockFsPromises.mkdir.mockImplementation(async (directory, options) => {
+            if(directory === targetAgents) {
+                mkdirStarted.resolve();
+                await releaseMkdir.promise;
+            }
+            return mkdirImpl(directory, options);
+        });
+        mockFsPromises.readdir.mockImplementation(async (directory, options) => {
+            if(directory === sourceAgents) {
+                sourceReadStarted = true;
+            }
+            return readdirImpl(directory, options);
+        });
+
+        const operation = syncAgentsAndSkills(tempSourceRoot, tempTargetRoot);
+        try {
+            await mkdirStarted.promise;
+            await waitForEventLoopCheckpoint();
+            expect(sourceReadStarted).toBe(false);
+        } finally {
+            releaseMkdir.resolve();
+            await operation;
+        }
+        expect(await mockFsPromises.readFile(path.join(targetAgents, 'agent.md'), 'utf8')).toBe('# Agent');
+    });
+
+    test('creates an empty target for a missing source before synchronization completes', async () => {
+        const targetAgents = path.join(tempTargetRoot, 'agents');
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'skills'), { recursive: true });
+
+        const mkdirImpl = mockFsPromises.mkdir.getMockImplementation()!;
+        const mkdirStarted = Promise.withResolvers<void>();
+        const releaseMkdir = Promise.withResolvers<void>();
+        mockFsPromises.mkdir.mockImplementation(async (directory, options) => {
+            if(directory === targetAgents) {
+                mkdirStarted.resolve();
+                await releaseMkdir.promise;
+            }
+            return mkdirImpl(directory, options);
+        });
+
+        let completed = false;
+        const operation = syncAgentsAndSkills(tempSourceRoot, tempTargetRoot)
+            .finally(() => { completed = true; });
+        try {
+            await mkdirStarted.promise;
+            await waitForEventLoopCheckpoint();
+            expect(completed).toBe(false);
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        } finally {
+            releaseMkdir.resolve();
+            await operation;
+        }
+        expect(await mockFsPromises.readdir(targetAgents)).toEqual([]);
+    });
+
+    test('propagates target removal failures other than an already removed directory', async () => {
+        await mockFsPromises.mkdir(path.join(tempSourceRoot, 'agents'), { recursive: true });
+        const denied = new Error('permission denied') as NodeJS.ErrnoException;
+        denied.code = 'EACCES';
+        mockFsPromises.rm.mockRejectedValueOnce(denied);
+        await expect(syncAgentsAndSkills(tempSourceRoot, tempTargetRoot)).rejects.toBe(denied);
     });
 });

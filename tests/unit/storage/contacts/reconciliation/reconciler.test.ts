@@ -15,6 +15,7 @@ import {
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { mockLogger } from '../../../../setup';
 import { runContactReconciliation, type ContactReconcilerDeps, type ContactReconcilerOptions } from '@/storage/contacts/reconciliation/reconciler';
 
 const ALICE_PROFILE_ITEM = {
@@ -84,6 +85,9 @@ describe('runContactReconciliation', () => {
 
     beforeEach(() => {
         ddbMock = mockClient(DynamoDBDocumentClient);
+        mockLogger.info.mockClear();
+        mockLogger.debug.mockClear();
+        mockLogger.warn.mockClear();
 
         mockSleep = mock(async (_ms: number): Promise<void> => undefined);
         deps = {
@@ -104,6 +108,49 @@ describe('runContactReconciliation', () => {
     // Phase A: Orphan lookup detection and cleanup
     // ======================================================================
     describe('Phase A: orphan lookup cleanup', () => {
+        test.each([
+            ['orphan', undefined],
+            ['stray', ALICE_PROFILE_ITEM],
+        ])('deletes a %s lookup at the exact age threshold', async (_kind, profile) => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2026-05-01T12:00:00.000Z'));
+            const lookup = { ...BOB_EMAIL_LOOKUP, createdAt: '2026-05-01T11:59:59.000Z' };
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [lookup] }).resolvesOnce({ Items: [] });
+            ddbMock.on(GetCommand).resolves({ Item: profile });
+            ddbMock.on(DeleteCommand).resolves({});
+            const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, strayLookupAgeThresholdMs: 1000 });
+            expect(result.phaseA.orphanLookupsDeleted).toBe(1);
+            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(1);
+        });
+
+        test('keeps a malformed profile conservatively without counting a processing error', async () => {
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [ALICE_EMAIL_LOOKUP] }).resolvesOnce({ Items: [] });
+            ddbMock.on(GetCommand).resolves({ Item: { ...ALICE_PROFILE_ITEM, identifiers: 'unreadable' } });
+            const result = await runContactReconciliation(deps, FAST_OPTIONS);
+            expect(result.phaseA.orphanLookupsDeleted).toBe(0);
+            expect(result.phaseA.errors).toBe(0);
+            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
+        });
+
+        test('keeps platform identity when checking a profile claim', async () => {
+            const lookup = { ...ALICE_EMAIL_LOOKUP, PK: 'CONTACT_LOOKUP#email#alice@example.com' };
+            const profile = { ...ALICE_PROFILE_ITEM, identifiers: [{ platform: 'discord', value: 'alice@example.com' }] };
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [lookup] }).resolvesOnce({ Items: [] });
+            ddbMock.on(GetCommand).resolves({ Item: profile });
+            ddbMock.on(DeleteCommand).resolves({});
+            const result = await runContactReconciliation(deps, FAST_OPTIONS);
+            expect(result.phaseA.orphanLookupsDeleted).toBe(1);
+            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(1);
+        });
+
+        test('retains a lookup whose value differs from the profile only by outer whitespace', async () => {
+            const lookup = { ...ALICE_EMAIL_LOOKUP, PK: 'CONTACT_LOOKUP#email# alice@example.com ' };
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [lookup] }).resolvesOnce({ Items: [] });
+            ddbMock.on(GetCommand).resolves({ Item: ALICE_PROFILE_ITEM });
+            const result = await runContactReconciliation(deps, FAST_OPTIONS);
+            expect(result.phaseA.orphanLookupsDeleted).toBe(0);
+            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
+        });
         test('returns success:true with zero errors when no contacts exist', async () => {
             // Phase A: GSI2 query returns no CONTACT_LOOKUPS items
             ddbMock.on(QueryCommand).resolves({ Items: [] });
@@ -123,8 +170,7 @@ describe('runContactReconciliation', () => {
 
             const queryCalls = ddbMock.commandCalls(QueryCommand);
             // First call is Phase A (CONTACT_LOOKUPS), second is Phase B (CONTACTS)
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess
-            const phaseAInput = queryCalls[0]!.args[0].input;
+            const phaseAInput = queryCalls[0].args[0].input;
             expect(phaseAInput).toMatchObject({
                 IndexName:                 'GSI2',
                 ExpressionAttributeValues: { ':gsi2pk': 'CONTACT_LOOKUPS' },
@@ -139,8 +185,7 @@ describe('runContactReconciliation', () => {
 
             const queryCalls = ddbMock.commandCalls(QueryCommand);
             // Second call is Phase B (CONTACTS)
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess
-            const phaseBInput = queryCalls[1]!.args[0].input;
+            const phaseBInput = queryCalls[1].args[0].input;
             expect(phaseBInput).toMatchObject({
                 IndexName:                 'GSI2',
                 ExpressionAttributeValues: { ':gsi2pk': 'CONTACTS' },
@@ -378,6 +423,9 @@ describe('runContactReconciliation', () => {
 
             expect(result.phaseA.errors).toBeGreaterThan(0);
             expect(result.success).toBe(false);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'ContactReconciler Phase A: error processing lookup item',
+            }));
         });
 
         test('paginates through multiple pages of lookup rows', async () => {
@@ -457,8 +505,7 @@ describe('runContactReconciliation', () => {
             expect(bwCalls.length).toBeGreaterThanOrEqual(1);
 
             // Verify write payload has correct lookup item structure (PK/SK, GSI2 keys, and personId)
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; bwCalls.length asserted >=1 above
-            const firstArgs = bwCalls[0]!.args[0].input;
+            const firstArgs = bwCalls[0].args[0].input;
             const firstItems = firstArgs.RequestItems?.TestTable;
             expect(Array.isArray(firstItems)).toBe(true);
             expect(firstItems?.length).toBeGreaterThanOrEqual(1);
@@ -469,6 +516,9 @@ describe('runContactReconciliation', () => {
             // New lookup items must include GSI2 keys for future Phase A queries
             expect(firstItem?.GSI2PK).toBe('CONTACT_LOOKUPS');
             expect(typeof firstItem?.GSI2SK).toBe('string');
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'ContactReconciler Phase B: created missing lookup',
+            }));
         });
 
         test('creates only missing lookups, skips existing ones', async () => {
@@ -508,6 +558,9 @@ describe('runContactReconciliation', () => {
 
             expect(result.phaseB.errors).toBeGreaterThan(0);
             expect(result.success).toBe(false);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'ContactReconciler Phase B: error processing identifier',
+            }));
         });
 
         test('paginates through multiple pages of profiles in phase B', async () => {
@@ -548,6 +601,12 @@ describe('runContactReconciliation', () => {
     // Combined result
     // ======================================================================
     describe('result structure', () => {
+        test('reports distinct phase markers in the completion logs', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+            await runContactReconciliation(deps, FAST_OPTIONS);
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ phase: 'A', msg: 'Contact reconciliation Phase A complete' }));
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ phase: 'B', msg: 'Contact reconciliation Phase B complete' }));
+        });
         test('returns complete ReconciliationResult shape', async () => {
             // resolves (not resolvesOnce) — always returns empty for both phases
             ddbMock.on(QueryCommand).resolves({ Items: [] });
@@ -565,6 +624,13 @@ describe('runContactReconciliation', () => {
             expect(typeof result.phaseB.errors).toBe('number');
             expect(typeof result.phaseB.missingLookupsCreated).toBe('number');
             expect(typeof result.phaseB.itemsScanned).toBe('number');
+            const infoMessages = mockLogger.info.mock.calls.map(([entry]) => (entry as { msg?: string }).msg);
+            expect(infoMessages).toEqual([
+                'Starting contact reconciliation',
+                'Contact reconciliation Phase A complete',
+                'Contact reconciliation Phase B complete',
+                'Contact reconciliation complete',
+            ]);
         });
 
         test('success is false when any phase has errors', async () => {
@@ -697,9 +763,12 @@ describe('runContactReconciliation', () => {
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
             // The bad item should have caused an error
-            expect(result.phaseB.errors).toBeGreaterThanOrEqual(1);
+            expect(result.phaseB.errors).toBe(1);
             // But the valid profile should still have been scanned
             expect(result.phaseB.itemsScanned).toBeGreaterThanOrEqual(2);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'ContactReconciler Phase B: error processing profile',
+            }));
         });
     });
 
@@ -732,6 +801,9 @@ describe('runContactReconciliation', () => {
 
             expect(result.phaseA.errors).toBeGreaterThanOrEqual(1);
             expect(result.success).toBe(false);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'ContactReconciler Phase A: failed to query lookup rows',
+            }));
         });
     });
 
@@ -747,6 +819,9 @@ describe('runContactReconciliation', () => {
 
             expect(result.phaseB.errors).toBeGreaterThanOrEqual(1);
             expect(result.success).toBe(false);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'ContactReconciler Phase B: failed to scan profiles',
+            }));
         });
     });
 
@@ -754,6 +829,77 @@ describe('runContactReconciliation', () => {
     // Fix 4: AbortSignal — stop() aborts in-flight run
     // ======================================================================
     describe('AbortSignal cancellation', () => {
+        test('skips Phase B profile work when the query completes after abort', async () => {
+            const controller = new AbortController();
+            const profile = { ...ALICE_PROFILE_ITEM, personId: 'INVALID ID' };
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({ Items: [] })
+                .callsFake(() => {
+                    controller.abort();
+                    return Promise.resolve({ Items: [profile] });
+                });
+            const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, signal: controller.signal });
+            expect(result.aborted).toBe(true);
+            expect(result.phaseB.itemsScanned).toBe(1);
+            expect(result.phaseB.missingLookupsCreated).toBe(0);
+            expect(result.phaseB.errors).toBe(0);
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+        });
+
+        test('stops both identifier and profile loops after a graceful sleep abort', async () => {
+            const first = { ...ALICE_PROFILE_ITEM, identifiers: [ALICE_PROFILE_ITEM.identifiers[0], ALICE_PROFILE_ITEM.identifiers[1]] };
+            const second = BOB_PROFILE_ITEM;
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [] }).resolvesOnce({ Items: [first, second] });
+            ddbMock.on(GetCommand).resolves({ Item: ALICE_EMAIL_LOOKUP });
+            const abort = new Error('cancelled');
+            abort.name = 'AbortError';
+            const sleep = mock(async () => {
+                throw abort;
+            });
+            const result = await runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50 });
+            expect(result.success).toBe(true);
+            expect(result.phaseB.errors).toBe(0);
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+            expect(sleep).toHaveBeenCalledTimes(2);
+        });
+
+        test('does not create a lookup if its consistent read completes after abort', async () => {
+            const controller = new AbortController();
+            const profile = { ...ALICE_PROFILE_ITEM, identifiers: [ALICE_PROFILE_ITEM.identifiers[0]] };
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [] }).resolvesOnce({ Items: [profile] });
+            ddbMock.on(GetCommand).callsFake(() => {
+                controller.abort();
+                return Promise.resolve({});
+            });
+            const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, signal: controller.signal });
+            expect(result.aborted).toBe(true);
+            expect(result.phaseB.missingLookupsCreated).toBe(0);
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(0);
+        });
+        test('passes one signal through queries, reads, deletes, and batch writes', async () => {
+            const controller = new AbortController();
+            const profile = { ...ALICE_PROFILE_ITEM, identifiers: [ALICE_PROFILE_ITEM.identifiers[0]] };
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [BOB_EMAIL_LOOKUP] }).resolvesOnce({ Items: [profile] });
+            ddbMock.on(GetCommand).resolves({});
+            ddbMock.on(DeleteCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({});
+
+            const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, signal: controller.signal });
+            expect(result.phaseA.orphanLookupsDeleted).toBe(1);
+            expect(result.phaseB.missingLookupsCreated).toBe(1);
+            const expectedSignal = { abortSignal: controller.signal };
+            const queries = ddbMock.commandCalls(QueryCommand);
+            expect(queries.map(call => (call.args as unknown as unknown[])[1])).toEqual([expectedSignal, expectedSignal]);
+            expect(queries.map(call => call.args[0].input.KeyConditionExpression)).toEqual([
+                'GSI2PK = :gsi2pk', 'GSI2PK = :gsi2pk',
+            ]);
+            const gets = ddbMock.commandCalls(GetCommand);
+            expect(gets.map(call => (call.args as unknown as unknown[])[1])).toEqual([expectedSignal, expectedSignal]);
+            expect(gets.map(call => call.args[0].input.ConsistentRead)).toEqual([true, true]);
+            expect(gets[1]?.args[0].input.Key).toEqual({ PK: ALICE_EMAIL_LOOKUP.PK, SK: ALICE_EMAIL_LOOKUP.SK });
+            expect((ddbMock.commandCalls(DeleteCommand)[0]?.args as unknown as unknown[])[1]).toEqual(expectedSignal);
+            expect((ddbMock.commandCalls(BatchWriteCommand)[0]?.args as unknown as unknown[])[1]).toEqual(expectedSignal);
+        });
         test('passes signal to sleep when signal is provided', async () => {
             const controller = new AbortController();
             const orphanLookup = {
@@ -796,6 +942,8 @@ describe('runContactReconciliation', () => {
 
             // Should complete without error (abort is graceful exit)
             expect(typeof result.success).toBe('boolean');
+            expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
+            expect(result.aborted).toBe(true);
         });
 
         test('Fix 4: sleepAndCheckAbort returns true immediately when signal is pre-aborted', async () => {
@@ -863,7 +1011,7 @@ describe('runContactReconciliation', () => {
             // Phase A page 2 must NOT have been queried (abort was checked after page 1)
             // queryCallCount should be 2: 1 for Phase A page 1, 1 for Phase B (not a second Phase A page)
             // Phase B query happens but with pre-aborted signal it breaks immediately
-            expect(queryCallCount).toBeLessThanOrEqual(2);
+            expect(queryCallCount).toBe(1);
             expect(typeof result.success).toBe('boolean');
         });
 
@@ -904,6 +1052,7 @@ describe('runContactReconciliation', () => {
             expect(getCallCount).toBeGreaterThanOrEqual(1);
             // But DeleteCommand must NOT have been called (write was blocked by abort)
             expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
+            expect(result.phaseA.orphanLookupsDeleted).toBe(0);
             // Result is still graceful
             expect(typeof result.success).toBe('boolean');
         });
@@ -971,6 +1120,9 @@ describe('runContactReconciliation', () => {
             // Should be deleted (old enough)
             expect(result.phaseA.orphanLookupsDeleted).toBe(1);
             expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(1);
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'ContactReconciler Phase A: deleted orphan/stray lookup',
+            }));
         });
 
         test('deletes stray lookup when createdAt is absent (no timestamp = treat as old enough)', async () => {
@@ -1079,6 +1231,46 @@ describe('runContactReconciliation', () => {
     // Fix 3: repairIdentifierLookup uses batchWriteWithRetry (UnprocessedItems)
     // ======================================================================
     describe('Fix 3: batchWriteWithRetry in Phase B (UnprocessedItems retry)', () => {
+        test('retries only pending rows with exponential delays and forwards the abort signal', async () => {
+            const controller = new AbortController();
+            const profile = { ...ALICE_PROFILE_ITEM, identifiers: [ALICE_PROFILE_ITEM.identifiers[0]] };
+            const pending = [{ PutRequest: { Item: { PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#alice-smith' } } }];
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [] }).resolvesOnce({ Items: [profile] });
+            ddbMock.on(GetCommand).resolves({});
+            ddbMock.on(BatchWriteCommand)
+                .resolvesOnce({ UnprocessedItems: { TestTable: pending } })
+                .resolvesOnce({ UnprocessedItems: { TestTable: pending } })
+                .resolvesOnce({ UnprocessedItems: {} });
+
+            const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, signal: controller.signal });
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(result.phaseB.missingLookupsCreated).toBe(1);
+            expect(calls).toHaveLength(3);
+            expect(calls[1]?.args[0].input.RequestItems).toEqual({ TestTable: pending });
+            expect(calls[2]?.args[0].input.RequestItems).toEqual({ TestTable: pending });
+            expect(calls.map(call => (call.args as unknown as unknown[])[1])).toEqual([
+                { abortSignal: controller.signal }, { abortSignal: controller.signal }, { abortSignal: controller.signal },
+            ]);
+            expect(mockSleep.mock.calls.map(([delay]) => delay)).toEqual([100, 200]);
+        });
+
+        test('reports the exact remaining count after the final retry', async () => {
+            const profile = { ...ALICE_PROFILE_ITEM, identifiers: [ALICE_PROFILE_ITEM.identifiers[0]] };
+            const pending = [{ PutRequest: { Item: { PK: 'one', SK: 'one' } } }, { PutRequest: { Item: { PK: 'two', SK: 'two' } } }];
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [] }).resolvesOnce({ Items: [profile] });
+            ddbMock.on(GetCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: { TestTable: pending } });
+
+            const result = await runContactReconciliation(deps, FAST_OPTIONS);
+            expect(result.phaseB.errors).toBe(1);
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(3);
+            expect(mockSleep.mock.calls.map(([delay]) => delay)).toEqual([100, 200]);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                error: expect.objectContaining({ context: {
+                    operation: 'ContactReconciler.batchWriteWithRetry', remainingCount: 2, maxRetries: 3,
+                } }),
+            }));
+        });
         test('retries when BatchWriteCommand returns UnprocessedItems', async () => {
             ddbMock.on(QueryCommand)
                 // Phase A: no lookup rows
@@ -1207,6 +1399,74 @@ describe('runContactReconciliation', () => {
     // Fix 2: AbortError is not counted as an error
     // ======================================================================
     describe('Fix 2: AbortError during sleep is not counted as an error', () => {
+        test('continues through both lookups after ordinary delayed sleeps', async () => {
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [ALICE_EMAIL_LOOKUP, ALICE_DISCORD_LOOKUP] }).resolvesOnce({ Items: [] });
+            ddbMock.on(GetCommand).resolves({ Item: ALICE_PROFILE_ITEM });
+            const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, operationDelayMs: 50 });
+            expect(result.phaseA.itemsScanned).toBe(2);
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(2);
+            expect(mockSleep).toHaveBeenCalledTimes(2);
+        });
+
+        test('does not start another lookup after an in-flight profile read aborts', async () => {
+            const controller = new AbortController();
+            ddbMock.on(QueryCommand).resolves({ Items: [ALICE_EMAIL_LOOKUP, ALICE_DISCORD_LOOKUP] });
+            ddbMock.on(GetCommand).callsFake(() => {
+                controller.abort();
+                return Promise.resolve({ Item: ALICE_PROFILE_ITEM });
+            });
+            const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, operationDelayMs: 50, signal: controller.signal });
+            expect(result.aborted).toBe(true);
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+            expect(mockSleep).not.toHaveBeenCalled();
+        });
+        test('treats a named Error as a graceful stop even without an aborted signal', async () => {
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [ALICE_EMAIL_LOOKUP, ALICE_DISCORD_LOOKUP] }).resolvesOnce({ Items: [] });
+            ddbMock.on(GetCommand).resolves({ Item: ALICE_PROFILE_ITEM });
+            const abort = new Error('timer cancelled');
+            abort.name = 'AbortError';
+            const sleep = mock(async () => {
+                throw abort;
+            });
+            const result = await runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50 });
+            expect(result.success).toBe(true);
+            expect(result.aborted).toBeUndefined();
+            expect(result.phaseA.errors).toBe(0);
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+        });
+
+        test('treats DOMException AbortError as graceful without an aborted signal', async () => {
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [ALICE_EMAIL_LOOKUP, ALICE_DISCORD_LOOKUP] }).resolvesOnce({ Items: [] });
+            ddbMock.on(GetCommand).resolves({ Item: ALICE_PROFILE_ITEM });
+            const sleep = mock(async () => {
+                throw new DOMException('cancelled', 'AbortError');
+            });
+            const result = await runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50 });
+            expect(result.success).toBe(true);
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+        });
+
+        test('propagates an unrelated sleep failure', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [ALICE_EMAIL_LOOKUP] });
+            ddbMock.on(GetCommand).resolves({ Item: ALICE_PROFILE_ITEM });
+            const sleep = mock(async () => {
+                throw new Error('timer unavailable');
+            });
+            expect(runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50 })).rejects.toThrow('timer unavailable');
+        });
+
+        test('stops the page when the signal becomes aborted during sleep', async () => {
+            const controller = new AbortController();
+            ddbMock.on(QueryCommand).resolves({ Items: [ALICE_EMAIL_LOOKUP, ALICE_DISCORD_LOOKUP] });
+            ddbMock.on(GetCommand).resolves({ Item: ALICE_PROFILE_ITEM });
+            const sleep = mock(async () => {
+                controller.abort();
+            });
+            const result = await runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50, signal: controller.signal });
+            expect(result.aborted).toBe(true);
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+            expect(sleep).toHaveBeenCalledTimes(1);
+        });
         test('aborted result has success:true, aborted:true, and errors:0', async () => {
             const controller = new AbortController();
 

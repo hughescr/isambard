@@ -15,7 +15,6 @@ export async function classifyWithHaiku(
         const response = await generateText(prompt);
         return parseClassificationResponse(response);
     } catch (err) {
-        // Stryker disable next-line StringLiteral: log message is informational only
         logger.warn({ err, channelId: message.channelId, msg: 'Haiku classification failed; defaulting to interruption' });
         return 'interruption';
     }
@@ -23,7 +22,6 @@ export async function classifyWithHaiku(
 
 function buildClassificationPrompt(question: PendingQuestion, message: MessageToClassify): string {
     const askedAt = new Date(question.createdAt).toISOString();
-    // Stryker disable all: LLM prompt context strings
     const threadContext = question.threadId ? `\n- Question is in thread: ${question.threadId}` : '';
     const referenceContext = message.referencedMessageId
         ? `\n- Message is a reply/reference to: ${message.referencedMessageId}`
@@ -43,9 +41,7 @@ function buildClassificationPrompt(question: PendingQuestion, message: MessageTo
 - "answer" if the message directly responds to the question
 - "interruption" if the message is clearly addressed to the bot (new topic/question)
 - "unrelated" if the message doesn't seem to be addressed to the bot at all`;
-    // Stryker restore all
 
-    // Stryker disable next-line StringLiteral: LLM prompt template
     return `Classify whether the following message is an answer to the question, an interruption (new topic), or unrelated.
 
 Question context:
@@ -58,11 +54,9 @@ Message to classify:
 - Content: "${message.content}"
 - From user: ${message.authorId}
 - In channel: ${message.channelId}${
-    // Stryker disable all: LLM prompt content
     message.threadId
         ? `\n- In thread: ${message.threadId}`
         : ''
-    // Stryker restore all
 }${referenceContext}${mentionContext}
 
 ${classificationOptions}

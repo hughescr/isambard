@@ -22,8 +22,7 @@ describe('registerErrorBoundaries', () => {
         spies.push(processRemoveListenerSpy);
 
         // Spy on process.exit to prevent actual exit
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- process.exit spy requires casting
-        processExitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as any);
+        processExitSpy = spyOn(process, 'exit').mockImplementation((() => undefined) as unknown as typeof process.exit);
         spies.push(processExitSpy);
     });
 
@@ -121,15 +120,14 @@ describe('registerErrorBoundaries', () => {
         const handler = exceptionCall![1];
 
         const callOrder: string[] = [];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock implementation return type mismatch is acceptable in test context
-        (mockLogger.error as any).mockImplementation(() => {
+        mockLogger.error.mockImplementation((..._args: unknown[]) => {
             callOrder.push('log');
+            return mockLogger;
         });
-        const exitMockImpl = () => {
+        const exitMockImpl = (): void => {
             callOrder.push('exit');
         };
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- process.exit returns never; mock implementation doesn't need to
-        processExitSpy.mockImplementation(exitMockImpl as any);
+        processExitSpy.mockImplementation(exitMockImpl);
 
         handler(new Error('fatal'));
 

@@ -81,5 +81,6 @@ describe.concurrent('MediaProcessingError', () => {
     test('should not set cause when not provided', () => {
         const error = new MediaProcessingError('failed', 'ffprobe', 'detail');
         expect(error.cause).toBeUndefined();
+        expect(Object.hasOwn(error, 'cause')).toBe(false);
     });
 });

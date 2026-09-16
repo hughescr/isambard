@@ -26,6 +26,7 @@ describe('ActiveStatusGenerator', () => {
             { phase: { type: 'responding', startedAt: new Date() }, expected: 'Responding...', desc: 'responding fallback' },
             { phase: { type: 'thinking', startedAt: new Date(), generatedStatus: 'Deep thought...' }, expected: 'Deep thought...', desc: 'thinking override' },
             { phase: { type: 'responding', startedAt: new Date(), generatedStatus: 'Composing...' }, expected: 'Composing...', desc: 'responding override' },
+            { phase: { type: 'compacting', startedAt: new Date() }, expected: 'Compacting context...', desc: 'compacting' },
             { phase: { type: 'idle', since: new Date() }, expected: 'Idle', desc: 'idle' },
         ] as const)('$desc -> "$expected"', ({ phase, expected }) => {
             const generator = createActiveStatusGenerator({
@@ -118,6 +119,26 @@ describe('ActiveStatusGenerator', () => {
             const result = generator.generate(phase, 'perching');
             expect(result.name).toBe('🦉 Thinking...');
             expect(result.name).toStartWith('🦉 ');
+        });
+
+        test('an unrecognised mode falls back to no prefix', () => {
+            const generator = createActiveStatusGenerator({
+                logger:       createMockLogger(),
+                activityType: ActivityType.Custom,
+            });
+            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
+
+            expect(generator.generate(phase, 'unrecognised' as never).name).toBe('Thinking...');
+        });
+
+        test('formatStatus preserves text while applying the selected prefix', () => {
+            const generator = createActiveStatusGenerator({
+                logger:       createMockLogger(),
+                activityType: ActivityType.Custom,
+            });
+
+            expect(generator.formatStatus('Checking messages', 'perching')).toEqual({ name: '🦉 Checking messages', type: ActivityType.Custom });
+            expect(generator.formatStatus('Checking messages', 'none')).toEqual({ name: 'Checking messages', type: ActivityType.Custom });
         });
     });
 

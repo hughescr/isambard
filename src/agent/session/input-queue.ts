@@ -15,8 +15,8 @@ import { InvariantViolationError } from '@/errors';
 
 /** A host-owned FIFO of {@link SDKUserMessage}, consumed by the Agent SDK as its prompt iterable. */
 export class InputQueue {
-    private readonly queue:   SDKUserMessage[] = [];
-    private readonly waiters: (() => void)[] = [];
+    private readonly queue: SDKUserMessage[] = [];
+    private waiters = new Set<() => void>();
     private closed = false;
 
     /**
@@ -29,9 +29,7 @@ export class InputQueue {
             throw new InvariantViolationError('InputQueue.push', 'push called after close()');
         }
         this.queue.push(message);
-        for(const waiter of this.waiters.splice(0)) {
-            waiter();
-        }
+        this.wakeIterator();
     }
 
     /**
@@ -40,9 +38,7 @@ export class InputQueue {
      */
     close(): void {
         this.closed = true;
-        for(const waiter of this.waiters.splice(0)) {
-            waiter();
-        }
+        this.wakeIterator();
     }
 
     /** Number of messages currently queued but not yet drained. */
@@ -78,8 +74,16 @@ export class InputQueue {
             }
             // eslint-disable-next-line no-await-in-loop -- this loop IS the host's wait-for-next-input mechanism; there's nothing to parallelize
             await new Promise<void>((resolve) => {
-                this.waiters.push(resolve);
+                this.waiters.add(resolve);
             });
+        }
+    }
+
+    private wakeIterator(): void {
+        const waiters = this.waiters;
+        this.waiters = new Set();
+        for(const waiter of waiters) {
+            waiter();
         }
     }
 }

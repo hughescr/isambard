@@ -10,7 +10,6 @@ import { afterEach, jest, mock, type Mock } from 'bun:test';
 // It can only be called once — this is the single correct place to do it (preloaded first).
 // On non-macOS, this is a no-op (system SQLite supports extensions by default).
 /* istanbul ignore next -- platform-specific macOS setup */
-// Stryker disable all -- platform macOS setup; cannot be unit-tested in Bun
 if(process.platform === 'darwin') {
     let sqlitePath: string | null = process.env.SQLITE_VEC_LIB_PATH ?? null;
     // eslint-disable-next-line n/no-sync -- sync probe required before any Database is opened; no async alternative at this point in preload execution
@@ -77,8 +76,7 @@ export function resetMockSstResource(): void {
     // mockSstResource.BoxClientId = { value: 'test-box-client-id' };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
-mock.module('sst', () => ({
+void mock.module('sst', () => ({
     Resource: mockSstResource,
 }));
 
@@ -130,14 +128,12 @@ Object.assign(MockDynamoDBDocumentClient.prototype.send, {
     restore:      undefined,
 });
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
-mock.module('@aws-sdk/client-dynamodb', () => ({
+void mock.module('@aws-sdk/client-dynamodb', () => ({
     DynamoDBClient:       MockDynamoDBClient,
     DescribeTableCommand: class DescribeTableCommand { constructor(public input: unknown) {} },
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
-mock.module('@aws-sdk/lib-dynamodb', () => ({
+void mock.module('@aws-sdk/lib-dynamodb', () => ({
     DynamoDBDocumentClient: MockDynamoDBDocumentClient,
     GetCommand:             class GetCommand { constructor(public input: unknown) {} },
     PutCommand:             class PutCommand { constructor(public input: unknown) {} },
@@ -171,8 +167,7 @@ class MockAnthropic {
     };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
-mock.module('@anthropic-ai/sdk', () => ({
+void mock.module('@anthropic-ai/sdk', () => ({
     'default': MockAnthropic,
     Anthropic: MockAnthropic,
 }));
@@ -193,8 +188,8 @@ export const mockQuery = mock(defaultMockQueryImpl);
 // Import real SDK functions to re-export them alongside our mocks
 // This must be done BEFORE mock.module() to get the real implementations
 import * as realAgentSdk from '@anthropic-ai/claude-agent-sdk';
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
-mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+
+void mock.module('@anthropic-ai/claude-agent-sdk', () => ({
     // Pass through real SDK functions and constants that aren't mocked
     createSdkMcpServer:             realAgentSdk.createSdkMcpServer,
     tool:                           realAgentSdk.tool,
@@ -251,13 +246,11 @@ mockLogger.warn = mock((..._args: unknown[]) => mockLogger);
 mockLogger.error = mock((..._args: unknown[]) => mockLogger);
 mockLogger.child = mock(() => mockLogger);
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
-mock.module('@hughescr/logger', () => ({
+void mock.module('@hughescr/logger', () => ({
     logger: mockLogger,
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
-mock.module('@/agent/text-generator', () => ({
+void mock.module('@/agent/text-generator', () => ({
     generateText:                 mockGenerateText,
     generateTextWithSystemPrompt: mockGenerateTextWithSystemPrompt,
 }));
@@ -284,8 +277,7 @@ export const mockWithDiscordRetry = mock(async <T>(
     return operation();
 });
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
-mock.module('@/integrations/discord/retry', () => ({
+void mock.module('@/integrations/discord/retry', () => ({
     withDiscordRetry:     mockWithDiscordRetry,
     classifyDiscordError: originalClassifyDiscordError,
 }));
@@ -308,8 +300,7 @@ export function resetHeicConvertImpl(): void {
     mockHeicConvert.mockClear();
 }
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
-mock.module('heic-convert', () => ({
+void mock.module('heic-convert', () => ({
     'default': mockHeicConvert,
 }));
 
@@ -557,8 +548,7 @@ export function resetMockFsPrefix(prefix: string): void {
 // Note: Tests should call resetMockFs() or resetMockFsPrefix() in their own afterEach hooks
 // to prevent memory accumulation. We don't do automatic cleanup here since this is module-level code.
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
-mock.module('node:fs/promises', () => mockFsPromises);
+void mock.module('node:fs/promises', () => mockFsPromises);
 
 // Mock Intl.DateTimeFormat to avoid timezone API cold-start cost
 // Returns predictable fake data without calling real ICU APIs
@@ -583,14 +573,17 @@ const TIMEZONE_ABBRS: Record<string, string> = {
     'Pacific/Auckland':    'NZDT',
 };
 
-// @ts-expect-error -- Mocking global
-Intl.DateTimeFormat = class MockDateTimeFormat {
+function isLocaleList(locales: Intl.LocalesArgument): locales is readonly (string | Intl.Locale)[] {
+    return Array.isArray(locales);
+}
+
+class MockDateTimeFormat implements Intl.DateTimeFormat {
     private options:  Intl.DateTimeFormatOptions;
     private locale:   string;
     private tzOffset: number;
 
-    constructor(locale?: string, options?: Intl.DateTimeFormatOptions) {
-        this.locale = locale ?? 'en-US';
+    constructor(locales?: Intl.LocalesArgument, options?: Intl.DateTimeFormatOptions) {
+        this.locale = (isLocaleList(locales) ? locales[0] : locales)?.toString() ?? 'en-US';
         this.options = options ?? {};
 
         // Throw for invalid timezones (like real API)
@@ -619,7 +612,7 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
         return d.toISOString().replace('Z', '');
     }
 
-    formatToParts(date?: Date | number): Intl.DateTimeFormatPart[] {
+    private formatToPartsImpl(date?: Date | number): Intl.DateTimeFormatPart[] {
         const d = this.applyOffset(date);
 
         // Handle weekday formatting
@@ -662,6 +655,32 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
         ];
     }
 
+    formatToParts(date?: Date | number): Intl.DateTimeFormatPart[] {
+        return Intl.DateTimeFormat.prototype.formatToParts.call(this, date);
+    }
+
+    formatRange(startDate: Date | number, endDate: Date | number): string {
+        return this.formatRangeToParts(startDate, endDate).map(part => part.value).join('');
+    }
+
+    formatRangeToParts(startDate: Date | number, endDate: Date | number): Intl.DateTimeRangeFormatPart[] {
+        if(this.applyOffset(startDate).getTime() > this.applyOffset(endDate).getTime()) {
+            throw new RangeError('Start date must be before or equal to end date');
+        }
+
+        const startParts = this.formatToParts(startDate);
+        const endParts = this.formatToParts(endDate);
+        if(startParts.map(part => part.value).join('') === endParts.map(part => part.value).join('')) {
+            return startParts.map(part => ({ ...part, source: 'shared' }));
+        }
+
+        return [
+            ...startParts.map((part): Intl.DateTimeRangeFormatPart => ({ ...part, source: 'startRange' })),
+            { type: 'literal', value: ' – ', source: 'shared' },
+            ...endParts.map((part): Intl.DateTimeRangeFormatPart => ({ ...part, source: 'endRange' })),
+        ];
+    }
+
     private applyOffset(date?: Date | number): Date {
         const d = date instanceof Date ? new Date(date) : new Date(date ?? Date.now());
         d.setUTCHours(d.getUTCHours() + this.tzOffset);
@@ -677,10 +696,55 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
         };
     }
 
-    static supportedLocalesOf(locales: string | string[]): string[] {
-        return Array.isArray(locales) ? locales : [locales];
+    static installFormatToParts(): void {
+        // Keep the native method on a typed holder so retained native instances still work.
+        const nativeFormatToParts = {
+            formatToParts(this: Intl.DateTimeFormat, _date?: Date | number): Intl.DateTimeFormatPart[] {
+                throw new TypeError('Native formatToParts was not installed');
+            },
+        };
+        const nativeDescriptor = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, 'formatToParts');
+        if(!nativeDescriptor || typeof nativeDescriptor.value !== 'function') {
+            throw new TypeError('Native formatToParts is unavailable');
+        }
+        Object.defineProperty(nativeFormatToParts, 'formatToParts', nativeDescriptor);
+        // Existing tests spy on the global prototype, so every mock instance delegates here.
+        Intl.DateTimeFormat.prototype.formatToParts = function(this: Intl.DateTimeFormat, date?: Date | number) {
+            if(!(this instanceof MockDateTimeFormat)) {
+                return nativeFormatToParts.formatToParts.call(this, date);
+            }
+            return this.formatToPartsImpl(date);
+        };
     }
-};
+
+    static supportedLocalesOf(locales?: Intl.LocalesArgument): string[] {
+        if(locales === undefined) {
+            return [];
+        }
+        return isLocaleList(locales)
+            ? locales.map(locale => locale.toString())
+            : [locales.toString()];
+    }
+}
+
+// DateTimeFormat can be called with or without `new`; the proxy preserves both signatures.
+Object.setPrototypeOf(MockDateTimeFormat.prototype, Intl.DateTimeFormat.prototype);
+MockDateTimeFormat.installFormatToParts();
+Intl.DateTimeFormat = new Proxy(Intl.DateTimeFormat, {
+    apply(_target, _thisArg, [locales, options]: Parameters<Intl.DateTimeFormatConstructor>) {
+        return new MockDateTimeFormat(locales, options);
+    },
+    construct(_target, [locales, options]: ConstructorParameters<Intl.DateTimeFormatConstructor>) {
+        return new MockDateTimeFormat(locales, options);
+    },
+    get(target, property, receiver) {
+        if(property === 'supportedLocalesOf') {
+            return (locales?: Intl.LocalesArgument) => MockDateTimeFormat.supportedLocalesOf(locales);
+        }
+        const value: unknown = Reflect.get(target, property, receiver);
+        return value;
+    },
+});
 
 // Phase 4 runtime safety net: reset fake timers after every test to prevent
 // timer-mode leakage between tests (fake timers from test A bleeding into test B).
@@ -741,8 +805,7 @@ export function resetNodeLlamaCppMocks(): void {
     mockGetLlama.mockImplementation(async (_opts?: unknown) => mockLlamaInstance);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
-mock.module('node-llama-cpp', () => ({
+void mock.module('node-llama-cpp', () => ({
     getLlama:      mockGetLlama,
     // Minimal LlamaLogLevel enum — only 'warn' is used in production code
     LlamaLogLevel: {
@@ -754,4 +817,30 @@ mock.module('node-llama-cpp', () => ({
         log:      'log',
         debug:    'debug',
     },
+}));
+
+// The backfill CLI runs from tools/backfill-vectors.ts in production. Its
+// runtime factory is the sole module mocked here: a mutant of the CLI entry
+// guard can then execute only these in-memory owners during test imports.
+export const mockBackfillRuntime = { writes: [] as string[], opens: 0, closes: 0 };
+
+void mock.module('../tools/backfill-vectors-runtime', () => ({
+    createDefaultBackfillDependencies: () => ({
+        openStorage: () => {
+            mockBackfillRuntime.opens++;
+            return {
+                backend: {
+                    list:        async () => ({ items: [], nextCursor: undefined }),
+                    listByLayer: async () => ({ items: [], nextCursor: undefined }),
+                },
+                destroy: () => { mockBackfillRuntime.closes++; },
+            };
+        },
+        openVectorIndex: async () => ({ getHash: () => undefined, upsert: () => undefined, close: () => undefined }),
+        loadModel:       async () => ({ encode: async () => ({ data: new Uint8Array() }), close: async () => undefined }),
+        now:             () => 0,
+        sleep:           async () => undefined,
+        write:           (message: string) => { mockBackfillRuntime.writes.push(message); },
+        info:            () => undefined,
+    }),
 }));

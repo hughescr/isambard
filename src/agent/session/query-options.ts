@@ -306,7 +306,6 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
         permissionMode:  'acceptEdits' as const,
         // Only the MCP servers passed above: ignore .mcp.json, user settings, plugin and claude.ai-connector MCP.
         strictMcpConfig: true,
-        // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration: Sandbox configuration values - mutations don't change behavior
         sandbox:         {
             enabled:                  true,
             autoAllowBashIfSandboxed: true,
@@ -316,14 +315,12 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
         disallowedTools:        DISALLOWED_CRON_TOOLS,
         perTaskStopAffordance:  true,
         allowedTools:           buildAllowedTools(mcpServers),
-        // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Thinking/effort configuration - mutations don't change behavior
         thinking:               { type: 'adaptive' as const },
         effort:                 'high' as const,
         // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
         // 'project' is what discovers Izzy's agents and skills in scratch/.claude. It would also pull in CLAUDE.md files;
         // see CLAUDE_CODE_DISABLE_CLAUDE_MDS in env below.
         settingSources:         ['project'] as SettingSource[],
-        // Stryker disable next-line BooleanLiteral: Configuration flag
         agentProgressSummaries: true,
         hooks,
         ...(resume && { resume }),
@@ -334,7 +331,6 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
             // only knob that does, so unlike the rest of this block it is behaviour, not config,
             // and is deliberately left outside the Stryker-disabled region below.
             CLAUDE_CODE_SESSION_NAME:        SESSION_PEER_NAMES[role],
-            // Stryker disable StringLiteral,ObjectLiteral: Environment config - value doesn't affect test behavior
             // Defer rarely-used tool schemas behind ToolSearch once the tool set is large enough (SDK default threshold).
             ENABLE_TOOL_SEARCH:              'auto',
             // settingSources ['project'] is needed for Izzy's own agents/skills under scratch/.claude, but it also loads
@@ -345,7 +341,6 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
             CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
         },
         // Stryker restore StringLiteral,ObjectLiteral
-        // Stryker disable StringLiteral,ObjectLiteral: Observability - message text/field names don't affect behavior; the branches themselves are covered by query-options.test.ts's stderr-classifier suite
         stderr: (data: string) => {
             // Every branch stamps `role` so two concurrent sessions' interleaved SDK stderr can
             // be told apart in logs.

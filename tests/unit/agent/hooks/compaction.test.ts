@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import type { HookCallback, PostCompactHookInput, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { createCompactionHooks, type CompactionSink } from '../../../../src/agent/hooks/compaction';
+import { mockLogger } from '../../../setup';
 
 const makeSignal = (): AbortSignal => new AbortController().signal;
 
@@ -32,6 +33,7 @@ describe('createCompactionHooks', () => {
     let sink: ReturnType<typeof makeMockSink>;
 
     beforeEach(() => {
+        mockLogger.info.mockClear();
         sink = makeMockSink();
     });
 
@@ -77,6 +79,12 @@ describe('createCompactionHooks', () => {
             await fn(input, undefined, { signal: makeSignal() });
             expect(sink.onCompactionStart).toHaveBeenCalledTimes(1);
             expect(sink.onCompactionStart).toHaveBeenCalledWith('auto');
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                session_id:      'sess-compact-1',
+                hook_event_name: 'PreCompact',
+                trigger:         'auto',
+                msg:             'Context compaction starting',
+            });
         });
 
         test('passes manual trigger through', async () => {
@@ -135,6 +143,13 @@ describe('createCompactionHooks', () => {
             await fn(input, undefined, { signal: makeSignal() });
             expect(sink.onCompactionEnd).toHaveBeenCalledTimes(1);
             expect(sink.onCompactionEnd).toHaveBeenCalledWith('Summary');
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                session_id:      'sess-compact-1',
+                hook_event_name: 'PostCompact',
+                trigger:         'auto',
+                summaryLength:   7,
+                msg:             'Context compaction completed',
+            });
         });
 
         test('does not throw if onCompactionEnd throws', async () => {

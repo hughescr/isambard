@@ -52,6 +52,29 @@ describe('buildCatchupText', () => {
         expect(text).toContain('Not all messages need responses');
     });
 
+    test('renders the complete operational instructions without dropping any list item', () => {
+        expect(buildCatchupText({ unreadCount: 2, channelCount: 1 })).toBe([
+            'You have 2 unread messages across 1 channel.',
+            [
+                'Your inbox tools:',
+                '- getUnreadOverview: see which channels have unread messages',
+                '- getChannelSummary: get a quick summary of one channel',
+                '- fetchMessages: fetch the full text of messages in a channel',
+                '- markAsRead / markChannelRead: mark messages as read',
+            ].join('\n'),
+            [
+                'Recommended workflow:',
+                '1. Call getUnreadOverview to see what is waiting.',
+                '2. Call getChannelSummary for each channel with unread messages.',
+                '3. Call fetchMessages only when you need the full text.',
+                '4. Record anything worth remembering to memory before replying.',
+                '5. Reply where a reply is warranted.',
+                '6. Mark as read LAST, after you have replied.',
+            ].join('\n'),
+            'Not all messages need responses — use your judgment about what warrants a reply.',
+        ].join('\n\n'));
+    });
+
     test('contains no time header, ephemeral-session language, or unavailable-tools language', () => {
         const text = buildCatchupText({ unreadCount: 2, channelCount: 1 });
 

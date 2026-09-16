@@ -31,6 +31,7 @@ const ffprobeOutputSchema = z.object({
 });
 
 function parseFrameRate(rateStr: string | undefined): number {
+    // Stryker disable next-line llm: ffprobe schema accepts only strings or undefined, so null cannot reach this guard.
     if(rateStr === undefined) {
         return 0;
     }
@@ -51,11 +52,9 @@ export function parseFfprobeOutput(stdout: string): z.infer<typeof ffprobeOutput
     try {
         rawParsed = JSON.parse(stdout);
     } catch (err) {
-        // Stryker disable next-line ObjectLiteral: Logger warn object for observability
         logger.warn({
             err,
             stdout,
-            // Stryker disable next-line StringLiteral: log message is informational only
             msg: 'Failed to parse ffprobe output',
         });
         throw new MediaProcessingError(
@@ -68,10 +67,8 @@ export function parseFfprobeOutput(stdout: string): z.infer<typeof ffprobeOutput
 
     const schemaResult = ffprobeOutputSchema.safeParse(rawParsed);
     if(!schemaResult.success) {
-        // Stryker disable next-line ObjectLiteral: Logger warn object for observability
         logger.warn({
             issues: schemaResult.error.issues,
-            // Stryker disable next-line StringLiteral: log message is informational only
             msg:    'Invalid ffprobe output schema',
         });
         throw new MediaProcessingError(
@@ -84,7 +81,6 @@ export function parseFfprobeOutput(stdout: string): z.infer<typeof ffprobeOutput
 }
 
 export async function extractMetadata(videoPath: string, run: SpawnRunner): Promise<VideoMetadata> {
-    // Stryker disable StringLiteral: ffprobe command arguments are configuration
     const result = await run([
         'ffprobe',
         '-v', 'quiet',
@@ -134,17 +130,14 @@ export async function extractMetadata(videoPath: string, run: SpawnRunner): Prom
         duration,
         width:      videoStream.width ?? 0,
         height:     videoStream.height ?? 0,
-        // Stryker disable next-line StringLiteral: fallback codec name is informational — tests always provide codec_name
         videoCodec: videoStream.codec_name ?? 'unknown',
         frameRate,
-        // Stryker disable next-line ConditionalExpression,ObjectLiteral: conditional spread — falsy branch produces no videoBitrate property
         ...(videoBitRaw === undefined ? {} : { videoBitrate: Number(videoBitRaw) }),
         ...(audioStream === undefined
             ? {}
             : {
                 audioCodec:    audioStream.codec_name,
                 audioChannels: audioStream.channels,
-                // Stryker disable next-line ConditionalExpression,ObjectLiteral: conditional spread — falsy branch produces no audioSampleRate property
                 ...(audioStream.sample_rate === undefined
                     ? {}
                     : { audioSampleRate: Number(audioStream.sample_rate) }),

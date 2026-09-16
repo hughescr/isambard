@@ -8,6 +8,7 @@ import type { SDKMessage, SDKRateLimitInfo } from '@anthropic-ai/claude-agent-sd
 import {
     type Ledger,
     type QuotaWindows,
+    fileQuotaWindow,
     initialLedger,
     reduceLedger,
     toQuotaWindow
@@ -93,6 +94,20 @@ describe('toQuotaWindow', () => {
     });
 });
 
+describe('fileQuotaWindow', () => {
+    it('adds a five-hour reading without discarding the seven-day and per-model readings already collected from the frame', () => {
+        const sevenDay = { utilization: 53, resetsAt: SEVEN_DAY_RESET };
+        const opus = { utilization: 40, resetsAt: SEVEN_DAY_RESET };
+        const windows: QuotaWindows = { sevenDay, perModel: { seven_day_opus: opus } };
+
+        expect(fileQuotaWindow(windows, 'five_hour', { utilization: 2, resetsAt: FIVE_HOUR_RESET })).toEqual({
+            fiveHour: { utilization: 2, resetsAt: FIVE_HOUR_RESET },
+            sevenDay,
+            perModel: { seven_day_opus: opus },
+        });
+    });
+});
+
 describe('reduceLedger sdk_frame rate_limit_event', () => {
     it('folds both unifiedWindows into quota with source headers and the event stamp', () => {
         const frame = rateLimitEvent({
@@ -136,6 +151,11 @@ describe('reduceLedger sdk_frame rate_limit_event', () => {
             seven_day_opus:   { utilization: 40, resetsAt: SEVEN_DAY_RESET },
             seven_day_sonnet: { utilization: 10 },
         });
+    });
+
+    it('does not file an accepted unknown type containing seven_day_ only in its interior', () => {
+        const frame = rateLimitEvent({ unifiedWindows: { custom_seven_day_opus: { utilization: 0.4 } } });
+        expect(fold(initialLedger('conversation'), frame).quota?.perModel).toBeUndefined();
     });
 
     it('folds the top-level window alone when the frame carries no unifiedWindows', () => {

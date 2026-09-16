@@ -104,4 +104,12 @@ describe('VectorIndexUnavailableError', () => {
         const err = new VectorIndexUnavailableError('some reason');
         expect(err.message.length).toBeGreaterThan(0);
     });
+
+    it('preserves an optional cause and leaves it absent when unspecified', () => {
+        const cause = new Error('database failed');
+        const withCause = new VectorIndexUnavailableError('open failed', cause);
+        expect(withCause.cause).toBe(cause);
+        const withoutCause = new VectorIndexUnavailableError('open failed');
+        expect(withoutCause).not.toHaveProperty('cause');
+    });
 });

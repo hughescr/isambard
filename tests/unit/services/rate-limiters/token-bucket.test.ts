@@ -134,6 +134,54 @@ describe('TokenBucketRateLimiter', () => {
     });
 
     describe('token refill', () => {
+        test('refills only after each complete hour has elapsed', () => {
+            let now = 0;
+            const limiter = new TokenBucketRateLimiter({ capacity: 3, refillRatePerHour: 1, now: () => now });
+            limiter.increment();
+            limiter.increment();
+            limiter.increment();
+
+            now = 3_600_000 - 1;
+            expect(limiter.tokensRemaining()).toBe(0);
+
+            now = 3_600_000;
+            expect(limiter.tokensRemaining()).toBe(1);
+
+            now = 7_200_000 - 1;
+            expect(limiter.tokensRemaining()).toBe(1);
+        });
+
+        test('zero refill rate leaves the bucket empty over time', () => {
+            let now = 0;
+            const limiter = new TokenBucketRateLimiter({ capacity: 1, refillRatePerHour: 0, now: () => now });
+            limiter.increment();
+            now = 86_400_000;
+            expect(limiter.tokensRemaining()).toBe(0);
+        });
+
+        test('does not lose tokens when the clock moves backwards', () => {
+            let now = 3_600_000;
+            const limiter = new TokenBucketRateLimiter({ capacity: 3, refillRatePerHour: 1, now: () => now });
+            limiter.increment();
+            now = 0;
+            expect(limiter.tokensRemaining()).toBe(2);
+            now = 7_200_000;
+            expect(limiter.tokensRemaining()).toBe(3);
+        });
+
+        test('preserves fractional refill time across reads', () => {
+            let now = 0;
+            const limiter = new TokenBucketRateLimiter({ capacity: 3, refillRatePerHour: 2, now: () => now });
+            limiter.increment();
+            limiter.increment();
+            now = 30 * 60 * 1000;
+            expect(limiter.tokensRemaining()).toBe(2);
+            now = 45 * 60 * 1000;
+            expect(limiter.tokensRemaining()).toBe(2);
+            now = 60 * 60 * 1000;
+            expect(limiter.tokensRemaining()).toBe(3);
+        });
+
         test('should refill 1 token per hour with default rate', () => {
             const limiter = new TokenBucketRateLimiter({ capacity: 24, refillRatePerHour: 1 });
             // Drain it

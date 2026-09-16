@@ -22,6 +22,18 @@ function makeFailRunner(): BinarySpawnRunner {
 }
 
 describe('generateSpectrogram', () => {
+    it('passes the complete ffmpeg image-pipe command and rejects a failing process with output', async () => {
+        const calls: string[][] = [];
+        const runner: BinarySpawnRunner = async (cmd) => {
+            calls.push(cmd);
+            return { stdout: FAKE_PNG, stderr: 'decoder failed', exitCode: 2 };
+        };
+        expect(generateSpectrogram('/tmp/input with spaces.mp4', runner)).rejects.toThrow('decoder failed');
+        expect(calls).toEqual([[
+            'ffmpeg', '-i', '/tmp/input with spaces.mp4', '-lavfi', 'showspectrumpic=s=1024x512',
+            '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1',
+        ]]);
+    });
     it('returns FetchedImage with png mediaType', async () => {
         const result = await generateSpectrogram('/test/video.mp4', makeSuccessRunner());
         expect(result.mediaType).toBe('image/png');

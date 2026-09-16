@@ -199,7 +199,6 @@ export class DiscordRateLimiter {
         // Chain the new operation after the existing queue
         // Use .catch(() => {}) to keep queue alive even if previous send failed
         const nextQueue = existingQueue
-            // Stryker disable all: Observational logging for queue resilience
             .catch(() => {
                 // Swallow errors from previous sends to keep queue alive
                 this.logger?.debug({

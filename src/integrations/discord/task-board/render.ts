@@ -246,10 +246,12 @@ function renderTaskEmoji(task: TaskBoardTask): string {
 
 /** Kind emoji while running, ✅/❌ once settled, then the label and the capped description. */
 function renderName(task: TaskBoardTask): string {
+    // Stryker disable next-line llm: renderTaskEmoji always returns a non-empty mapped/status emoji, so the empty-string fallback is unreachable.
     const emoji = renderTaskEmoji(task);
     const description = clip(task.description, DESCRIPTION_MAX);
     const segments: string[] = [];
     if(task.label !== undefined) {
+        // Stryker disable next-line llm: this guard narrows label to string, and every string satisfies s || '' === s.
         segments.push(task.label);
     }
     if(description.length > 0) {

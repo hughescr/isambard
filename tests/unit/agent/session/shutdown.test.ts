@@ -17,12 +17,14 @@ async function flush(): Promise<void> {
 }
 
 /** A deferred promise, for scripting a fake session's `shutdown()` resolution from the test body. */
-function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void } {
+function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void, reject: (reason: unknown) => void } {
     let resolveFn!: (value: T) => void;
-    const promise = new Promise<T>((resolve) => {
+    let rejectFn!: (reason: unknown) => void;
+    const promise = new Promise<T>((resolve, reject) => {
         resolveFn = resolve;
+        rejectFn = reject;
     });
-    return { promise, resolve: resolveFn };
+    return { promise, resolve: resolveFn, reject: rejectFn };
 }
 
 describe('createShutdown', () => {
@@ -60,13 +62,14 @@ describe('createShutdown', () => {
         const perchDeferred = deferred<void>();
         const conversationShutdown = mock(() => conversationDeferred.promise);
         const perchShutdown = mock(() => perchDeferred.promise);
+        const logger = makeLogger();
         const sessions: ShutdownSession[] = [
             { name: 'conversation', shutdown: conversationShutdown },
             { name: 'perch', shutdown: perchShutdown },
         ];
 
         const shutdown = createShutdown({
-            sessions, journal, stopIngress: () => undefined, clock, turnWaitMs: 1000, deadlineMs: 5000, logger: makeLogger(),
+            sessions, journal, stopIngress: () => undefined, clock, turnWaitMs: 1000, deadlineMs: 5000, logger,
         });
 
         const runPromise = shutdown.run();
@@ -82,6 +85,8 @@ describe('createShutdown', () => {
         const result = await runPromise;
 
         expect(result).toEqual({ forced: false });
+        expect(clock.pending()).toBe(0);
+        expect(logger.info).toHaveBeenCalledWith({ forced: false, sessionCount: 2, msg: 'Shutdown sequence complete' });
     });
 
     it('flushes the journal after every session has settled', async () => {
@@ -106,6 +111,30 @@ describe('createShutdown', () => {
         await shutdown.run();
 
         expect(callLog).toEqual(['session:shutdown', 'journal:flush']);
+    });
+
+    it('waits for the remaining sessions and flushes the journal when one session shutdown rejects', async () => {
+        const clock = new FakeClock();
+        const journal = new FakeJournal();
+        const rejected = deferred<void>();
+        const pending = deferred<void>();
+        const sessions: ShutdownSession[] = [
+            { name: 'conversation', shutdown: () => rejected.promise },
+            { name: 'perch', shutdown: () => pending.promise },
+        ];
+        const shutdown = createShutdown({
+            sessions, journal, stopIngress: () => undefined, clock, turnWaitMs: 1000, deadlineMs: 5000, logger: makeLogger(),
+        });
+
+        const runPromise = shutdown.run();
+        await flush();
+        rejected.reject(new Error('conversation shutdown failed'));
+        await flush();
+
+        expect(journal.flushCount).toBe(0);
+        pending.resolve();
+        await expect(runPromise).resolves.toEqual({ forced: false });
+        expect(journal.flushCount).toBe(1);
     });
 
     it('a rejecting journal.flush() is caught and logged, and run() still resolves with forced:false', async () => {

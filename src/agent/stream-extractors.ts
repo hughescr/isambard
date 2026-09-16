@@ -1,5 +1,4 @@
 import { chain, isPlainObject } from 'lodash-es';
-import { InvariantViolationError } from '@/errors';
 
 export function extractAssistantText(message: { type: string, message?: { content?: unknown } }): string {
     if(message.type !== 'assistant') {
@@ -22,7 +21,6 @@ export function extractAssistantText(message: { type: string, message?: { conten
  * @returns Extracted thinking text or empty string
  */
 export function extractThinkingContent(message: { type: string, message?: { content?: unknown } }): string {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - non-assistant with no content returns '' via either path (filter returns [] → '' either way)
     if(message.type !== 'assistant') {
         return '';
     }
@@ -68,21 +66,11 @@ export function parseToolName(toolName: string | undefined): ParsedToolName {
     if(toolName === undefined) {
         return { module: 'claude', tool: 'unknown' };
     }
-    // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: Equivalent mutant - '' falls through to regular tool path returning { module: 'claude', tool: '' } either way
-    if(toolName === '') {
-        return { module: 'claude', tool: '' };
-    }
-
     // MCP tools have format: mcp__module__tool (e.g., mcp__DevTools__find_symbol)
     if(toolName.startsWith('mcp__')) {
         const parts = toolName.slice(5).split('__');
         if(parts.length >= 2) {
-            const module = parts[0];
-            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — parts.length >= 2 guarantees parts[0] exists; unreachable in practice
-            if(module === undefined) {
-                // Stryker disable next-line StringLiteral,CallExpression: unreachable invariant branch — message and throw are debug context only
-                throw new InvariantViolationError('parseMcpToolName', 'parts[0] undefined despite parts.length >= 2');
-            }
+            const module = parts[0]!; // length >= 2 above
             const tool = parts.slice(1).join('__');
             return { module, tool };
         }
@@ -127,12 +115,6 @@ function isSensitiveKey(key: string): boolean {
  * @returns A new value with sensitive keys redacted
  */
 export function redactSensitiveArgs(input: unknown): unknown {
-    // Handle null/undefined
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: Equivalent mutant - null/undefined pass through isArray/isPlainObject checks unchanged, returning as-is
-    if(input === null || input === undefined) {
-        return input;
-    }
-
     // Handle arrays - map over elements
     if(Array.isArray(input)) {
         return input.map(item => redactSensitiveArgs(item));
@@ -152,7 +134,6 @@ export function redactSensitiveArgs(input: unknown): unknown {
 }
 
 export function extractToolUses(message: { type: string, message?: { content?: unknown } }): ToolUseBlock[] {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent - filter on non-assistant messages returns [] same as early return
     if(message.type !== 'assistant') {
         return [];
     }

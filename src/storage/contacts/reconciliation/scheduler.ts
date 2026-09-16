@@ -69,40 +69,72 @@ export function createContactReconciliationScheduler(deps: ContactReconciliation
     const { config, runReconciliation, reconcilerDeps } = deps;
 
     let isRunning = false;
-    // Stryker disable next-line BooleanLiteral: initial isStopped=false vs true is irrelevant — start() always resets isStopped to false before scheduling
-    let isStopped = false;
     let schedulerTimeout: ReturnType<typeof setTimeout> | null = null;
     let abortController: AbortController | null = null;
+    // Opaque identity changes on every start/stop transition; its numeric value is irrelevant.
+    let generation: object = {};
+    // stop() clears public state immediately; this remains held until aborted work actually settles.
+    let activeWork: Promise<void> | null = null;
 
-    function buildOptions(): ContactReconcilerOptions {
+    function buildOptions(controller: AbortController): ContactReconcilerOptions {
         return {
             operationDelayMs:          config.operationDelayMs,
             scanPageSize:              config.scanPageSize,
             strayLookupAgeThresholdMs: config.strayLookupAgeThresholdMs,
-            signal:                    abortController?.signal,
+            signal:                    controller.signal,
         };
+    }
+
+    function finishRun(): void {
+        // activeWork serializes runs, so no newer controller can exist until this one settles.
+        isRunning = false;
+        abortController = null;
+    }
+
+    function releaseActiveWork(release: () => void): void {
+        // The next run waits for this work to settle before replacing activeWork.
+        activeWork = null;
+        release();
     }
 
     async function doRun(): Promise<ContactReconciliationResult | undefined> {
         if(isRunning) {
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.debug({ msg: 'Contact reconciliation already running - skipping trigger' });
             return undefined;
         }
 
+        if(activeWork !== null) {
+            const requestedGeneration = generation;
+            await activeWork;
+            if(requestedGeneration !== generation) {
+                return undefined;
+            }
+            return doRun();
+        }
+
+        let releaseWork!: () => void;
+        const work = new Promise<void>((resolve) => {
+            releaseWork = resolve;
+        });
+        activeWork = work;
+        try {
+            return await executeRun();
+        } finally {
+            releaseActiveWork(releaseWork);
+        }
+    }
+
+    async function executeRun(): Promise<ContactReconciliationResult | undefined> {
         isRunning = true;
-        abortController = new AbortController();
+        const controller = new AbortController();
+        abortController = controller;
 
         try {
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({ msg: 'Starting contact reconciliation' });
-            const result = await runReconciliation(reconcilerDeps, buildOptions());
+            const result = await runReconciliation(reconcilerDeps, buildOptions(controller));
 
-            // eslint-disable-next-line require-atomic-updates -- single-threaded: interval callback with single async writer
-            isRunning = false;
-            abortController = null;
+            finishRun();
 
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({
                 success:         result.success,
                 totalDurationMs: result.totalDurationMs,
@@ -112,48 +144,44 @@ export function createContactReconciliationScheduler(deps: ContactReconciliation
 
             return result;
         } catch (error) {
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.error({ error, msg: 'Contact reconciliation failed' });
-            isRunning = false;
-            abortController = null;
+            finishRun();
             return undefined;
         }
     }
 
-    async function onScheduledTrigger(): Promise<void> {
+    async function onScheduledTrigger(runGeneration: object): Promise<void> {
+        // A stopped pending timeout is cancelled; this callback has no await before
+        // clearing its own timer, so stop cannot interleave before this point.
         schedulerTimeout = null;
 
         await doRun();
 
-        // Stryker disable next-line ConditionalExpression,BooleanLiteral,BlockStatement: Rescheduling guard — stop() sets isStopped=true; BooleanLiteral disabled because the mutant inverts the guard to re-enable scheduling after stop
-        if(isStopped === false) {
+        if(runGeneration === generation) {
             scheduleNextTrigger();
         }
     }
 
     function scheduleNextTrigger(): void {
-        // Stryker disable next-line BlockStatement: Cleanup guard
         if(schedulerTimeout) {
             clearTimeout(schedulerTimeout);
         }
+        const runGeneration = generation;
         schedulerTimeout = setTimeout(() => {
-            void onScheduledTrigger();
+            void onScheduledTrigger(runGeneration);
         }, config.intervalMs);
     }
 
     return {
         start(): void {
-            /* Stryker disable next-line ConditionalExpression,BlockStatement: Disabled guard */
             if(!config.enabled) {
-                /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
                 logger.info({ msg: 'Contact reconciliation scheduler disabled' });
                 return;
             }
 
-            isStopped = false;
+            generation = {};
             scheduleNextTrigger();
 
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({
                 intervalMs: config.intervalMs,
                 msg:        'Contact reconciliation scheduler started',
@@ -162,28 +190,19 @@ export function createContactReconciliationScheduler(deps: ContactReconciliation
         },
 
         stop(): void {
-            // Stryker disable next-line BooleanLiteral: isStopped=false mutation is equivalent here because stop() clears the timeout, preventing further scheduling regardless of isStopped value
-            isStopped = true; // prevent rescheduling after in-progress doRun() completes
+            generation = {}; // prevent a stopped run from scheduling after it completes
 
-            /* Stryker disable BlockStatement: Cleanup */
             if(schedulerTimeout) {
                 clearTimeout(schedulerTimeout);
                 schedulerTimeout = null;
             }
-            /* Stryker restore BlockStatement */
-
             // Fix 4: abort any in-flight reconciliation run so it exits promptly
-            /* Stryker disable BlockStatement: abort block — covered by 'Fix 4: stop() aborts in-flight run via AbortController' test */
             if(abortController) {
                 abortController.abort();
                 abortController = null;
             }
-            /* Stryker restore BlockStatement */
-
-            // Stryker disable next-line BooleanLiteral: static mutant (Bun perTest coverage limitation) — stop() mid-run test verifies isRunning=false immediately after stop()
             isRunning = false; // reset: stop() always clears isRunning for getState()
 
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({ msg: 'Contact reconciliation scheduler stopped' });
         },
 

@@ -130,7 +130,6 @@ export class DiscordCapabilityImpl implements DiscordCapability {
                 const message = await withDiscordRetry(() => channel.send(content as Parameters<TextChannel['send']>[0]));
                 return { status: 'sent', message };
             } catch (err) {
-                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                 this.deps.logger.warn(
                     { error: err instanceof Error ? err.message : String(err), channelId },
                     'Discord send failed, attempting outbox queue'
@@ -159,7 +158,6 @@ export class DiscordCapabilityImpl implements DiscordCapability {
             }
             return channel;
         } catch (err) {
-            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
             this.deps.logger.warn(
                 { error: err instanceof Error ? err.message : String(err), channelId },
                 'Discord fetchChannel failed, returning null'

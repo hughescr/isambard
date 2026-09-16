@@ -38,13 +38,15 @@ import type { DynamoDBClientHolder, MemoryToolBackend } from '@/storage';
  */
 interface DiscordInfrastructureOptions {
     /** Discord configuration (bot token, home guild, etc.) */
-    discordConfig: DiscordConfig
+    discordConfig:    DiscordConfig
     /** DynamoDB document client or holder for channel registry backend */
-    docClient:     DynamoDBDocumentClient | DynamoDBClientHolder
+    docClient:        DynamoDBDocumentClient | DynamoDBClientHolder
     /** DynamoDB table name for channel registry */
-    tableName:     string
+    tableName:        string
     /** Memory tool backend for checkpoint manager */
-    memoryBackend: MemoryToolBackend
+    memoryBackend:    MemoryToolBackend
+    /** Optional construction owner; called as soon as the client is acquired. */
+    onClientCreated?: (client: Client) => void
 }
 
 /**
@@ -91,51 +93,62 @@ interface DiscordInfrastructure {
  * ```
  */
 export function createDiscordInfrastructure(options: DiscordInfrastructureOptions): DiscordInfrastructure {
-    const { discordConfig, docClient, tableName, memoryBackend } = options;
+    const { discordConfig, docClient, tableName, memoryBackend, onClientCreated } = options;
 
     // Create Discord client early (shared with bot and channel registry)
     const discordClient = createDiscordClient(discordConfig);
+    let ownershipRegistered = false;
+    try {
+        onClientCreated?.(discordClient);
+        ownershipRegistered = onClientCreated !== undefined;
+        // Create channel registry (REQUIRED - bot cannot start without it)
+        // Must be created after Discord client since it fetches channel info from Discord API
+        const channelRegistryBackend = new ChannelRegistryBackend(docClient, tableName);
+        const channelRegistry = new ChannelRegistryManager({
+            backend:     channelRegistryBackend,
+            homeGuildId: discordConfig.homeGuildId,
+            client:      discordClient,
+        });
 
-    // Create channel registry (REQUIRED - bot cannot start without it)
-    // Must be created after Discord client since it fetches channel info from Discord API
-    const channelRegistryBackend = new ChannelRegistryBackend(docClient, tableName);
-    const channelRegistry = new ChannelRegistryManager({
-        backend:     channelRegistryBackend,
-        homeGuildId: discordConfig.homeGuildId,
-        client:      discordClient,
-    });
+        // Create message history components
+        const messageFetcher: MessageFetcher = createMessageFetcher(discordClient);
+        const messageSummarizer: MessageSummarizer = createMessageSummarizer({});
 
-    // Create message history components
-    const messageFetcher: MessageFetcher = createMessageFetcher(discordClient);
-    const messageSummarizer: MessageSummarizer = createMessageSummarizer({});
+        // Create message search service
+        const messageSearchService: MessageSearchService = createMessageSearchService({
+            fetcher:    messageFetcher,
+            summarizer: messageSummarizer,
+        });
 
-    // Create message search service
-    const messageSearchService: MessageSearchService = createMessageSearchService({
-        fetcher:    messageFetcher,
-        summarizer: messageSummarizer,
-    });
+        logger.info('Discord message history enabled');
 
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Discord message history enabled');
+        // Create checkpoint manager for inbox
+        const checkpointManager = new CheckpointManager({ backend: memoryBackend });
 
-    // Create checkpoint manager for inbox
-    const checkpointManager = new CheckpointManager({ backend: memoryBackend });
+        // Create inbox manager with channel registry
+        const inboxManager: InboxManagerType = new InboxManager({
+            checkpointManager,
+            messageSearchService,
+            channelRegistry,
+            config: discordConfig.inbox,  // Optional inbox config from Discord config
+        });
 
-    // Create inbox manager with channel registry
-    const inboxManager: InboxManagerType = new InboxManager({
-        checkpointManager,
-        messageSearchService,
-        channelRegistry,
-        config: discordConfig.inbox,  // Optional inbox config from Discord config
-    });
+        logger.info('Inbox system initialized');
 
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Inbox system initialized');
-
-    return {
-        discordClient,
-        channelRegistry,
-        messageSearchService,
-        inboxManager,
-    };
+        return {
+            discordClient,
+            channelRegistry,
+            messageSearchService,
+            inboxManager,
+        };
+    } catch (error) {
+        // Ownership has not reached the caller. Do not mask the constructor error
+        // if discord.js also fails while releasing the partially built client.
+        if(!ownershipRegistered) {
+            void Promise.resolve().then(() => discordClient.destroy()).catch(() => {
+                /* Preserve the constructor error, including synchronous destroy failures. */
+            });
+        }
+        throw error;
+    }
 }

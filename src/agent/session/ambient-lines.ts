@@ -146,6 +146,7 @@ function taskClauses(tasks: readonly LedgerTask[]): string[] {
     const others = tasks.length - workflows;
     const clauses: string[] = [];
     if(workflows > 0) {
+        // Stryker disable next-line ArrayMethodSwap: clauses is newly allocated, so this first insertion has the same order.
         clauses.push(`${plural(workflows, 'workflow')} running`);
     }
     if(others > 0) {

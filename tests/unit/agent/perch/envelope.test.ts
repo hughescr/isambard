@@ -56,6 +56,14 @@ describe('buildPerchSlotEnvelope', () => {
         expect(light.text).toContain('Suggestion level: 1 of 3.');
     });
 
+    test('renders the moderate Wikipedia slot at suggestion level 2', () => {
+        const envelope = buildPerchSlotEnvelope({
+            slot: 'wikipedia', now, timezone, endsAt: computeSlotEndsAt(now, 45), timeHeader, perchContext: 'context',
+        });
+
+        expect(envelope.text).toContain('Suggestion level: 2 of 3.');
+    });
+
     test('appends a background summary to the suggestion line when given', () => {
         const endsAt = computeSlotEndsAt(now, 45);
         const envelope = buildPerchSlotEnvelope({
@@ -82,6 +90,7 @@ describe('buildPerchSlotEnvelope', () => {
 
         expect(envelope.text).toContain('Suggestion level: 0 of 3.');
         expect(envelope.text).toContain('[PERCH · Unscheduled slot ·');
+        expect(envelope.synopsisSeed).toBeUndefined();
     });
 
     test('Q12 perch decision: renders the supplied perchContext verbatim, with no [Calendar]/[State changed]/[Service health] delta sections — perch has no ContextPolicy to source a delta from', () => {

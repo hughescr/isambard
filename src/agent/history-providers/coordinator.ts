@@ -80,7 +80,6 @@ function platformLabel(platform: KnownPlatform): string {
         case 'discord': { return 'discord'; }
         case 'email':   { return 'email'; }
         case 'bsky':    { return 'bsky'; }
-        // Stryker disable next-line BlockStatement: unreachable — compile-time exhaustiveness guard
         default:        { return assertNever(platform, `Unexpected platform: ${String(platform)}`); }
     }
 }
@@ -94,20 +93,16 @@ function formatHistoryEntries(displayName: string, entries: HistoryEntry[]): str
         const ts = new Date(entry.timestamp);
         // Format as HH:MM if today, else as date
         const now = new Date();
-        // Stryker disable ConditionalExpression: each individual flag mutated to true is equivalent — the other flags still gate the full isToday result
         const sameYear  = ts.getUTCFullYear() === now.getUTCFullYear();
         const sameMonth = ts.getUTCMonth() === now.getUTCMonth();
         const sameDay   = ts.getUTCDate() === now.getUTCDate();
         // Stryker restore ConditionalExpression
-        // Stryker disable next-line LogicalOperator,ConditionalExpression: operator variants and partial-expression substitutions produce equivalent results for boolean guard
         const isToday   = sameYear && sameMonth && sameDay;
         const timeStr = isToday
             ? `${String(ts.getUTCHours()).padStart(2, '0')}:${String(ts.getUTCMinutes()).padStart(2, '0')}`
             : ts.toISOString().slice(0, 10);
-        // Stryker disable next-line StringLiteral: formatting template — cosmetic punctuation
         return `[${platformLabel(entry.platform)}] [${timeStr}] ${entry.summary}`;
     });
-    // Stryker disable next-line StringLiteral: header/footer strings are cosmetic output formatting
     return `--- Recent interactions with ${displayName} ---\n${lines.join('\n')}\n--- End of recent history ---`;
 }
 
@@ -128,7 +123,6 @@ export class PersonHistoryCoordinator {
     private async resolveContact(identifier: string, platformHint: PlatformType | undefined): Promise<Contact[]> {
         if(platformHint) {
             const direct = await this.options.contactBackend.resolveIdentifier(platformHint, identifier);
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: optimization guard — empty direct produces same fallback result
             if(direct.length > 0) {
                 return direct;
             }
@@ -151,7 +145,6 @@ export class PersonHistoryCoordinator {
         if(platform === 'bsky' && internalData?.bskyDid) {
             metadata.bskyDid = internalData.bskyDid;
         }
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: optimization guard — spreading empty {} vs omitting metadata is equivalent; providers check specific keys
         return Object.keys(metadata).length > 0 ? metadata : undefined;
     }
 
@@ -169,11 +162,6 @@ export class PersonHistoryCoordinator {
             .filter(id => id.platform === provider.platform)
             .map(id => id.value);
 
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: optimization guard — empty matchingIds produces same result via empty for-loop
-        if(matchingIds.length === 0) {
-            return [];
-        }
-
         const metadata = this.buildProviderMetadata(provider.platform, contact._internal);
         const perIdResults = await Promise.all(matchingIds.map((id) => {
             const params: HistoryFetchParams = {
@@ -181,7 +169,6 @@ export class PersonHistoryCoordinator {
                 maxMessages,
                 startTime,
                 endTime,
-                // Stryker disable next-line ConditionalExpression: Spreading { metadata: undefined } is functionally equivalent to omitting the key
                 ...(metadata !== undefined && { metadata }),
             };
             return provider.fetchHistory(params);
@@ -206,9 +193,8 @@ export class PersonHistoryCoordinator {
             if(result.status === 'fulfilled') {
                 allEntries.push(...result.value);
             } else {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: log call structure and message text are informational only
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- PromiseRejectedResult.reason is typed as any by the Promise API
-                logger.warn({ err: result.reason }, 'PersonHistoryCoordinator: provider query failed');
+                const reason: unknown = result.reason;
+                logger.warn({ err: reason }, 'PersonHistoryCoordinator: provider query failed');
             }
         }
         return allEntries;
@@ -226,9 +212,7 @@ export class PersonHistoryCoordinator {
             return { history: undefined, person: undefined };
         }
         const contact = contacts[0];
-        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — contacts.length === 0 check above ensures non-empty; unreachable in practice
         if(contact === undefined) {
-            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
             throw new InvariantViolationError('getPersonHistory', 'contacts[0] undefined after contacts.length === 0 guard');
         }
 
@@ -249,7 +233,6 @@ export class PersonHistoryCoordinator {
         }
 
         // Sort descending (most recent first)
-        // Stryker disable next-line StringLiteral: sort comparison direction is cosmetic and equivalent for equal timestamps
         allEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
         // Cap at maxTotalEntries then format
@@ -257,8 +240,7 @@ export class PersonHistoryCoordinator {
         let formatted = formatHistoryEntries(contact.displayName, capped);
 
         // Cap at maxCharacters
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: true mutant always truncates but short strings are unchanged; >= is equivalent since slice(0,N) on length=N string returns same string
-        if(formatted.length > maxChars) {
+        if(!Number.isNaN(maxChars)) {
             formatted = formatted.slice(0, maxChars);
         }
 
@@ -282,11 +264,9 @@ export class PersonHistoryCoordinator {
         const maxChars    = options?.maxCharacters          ?? DEFAULT_MAX_CHARACTERS;
 
         const result = await this.options.messageSearchService.getRecentMessages(channelId, maxMessages);
-        let messages: RawDiscordMessage[] = result.messages as RawDiscordMessage[];
+        let messages: RawDiscordMessage[] = result.messages;
 
-        // Stryker disable next-line ConditionalExpression: true mutant runs filter with excludeMessageId=undefined which passes all messages (m.id !== undefined is true for all valid messages) — equivalent
         if(excludeMessageId) {
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: filter uses identity — excluding the trigger message is a passthrough when nothing matches
             messages = messages.filter(m => m.id !== excludeMessageId);
         }
 
@@ -296,27 +276,24 @@ export class PersonHistoryCoordinator {
 
         // Convert to HistoryEntry[] for uniform formatting
         const entries: HistoryEntry[] = messages.map((m): HistoryEntry => {
+            // Stryker disable next-line NumberLiteralValue: MCPMessageSearchService requires timestamp and the production fetcher constructs it with createdAt.toISOString().
             const ts      = m.timestamp ?? new Date(0).toISOString();
             const author  = m.author;
             const content = m.content ?? '';
             const name    = author?.displayName ?? author?.username ?? 'unknown';
             return {
                 platform:  'discord',
-                // Stryker disable next-line StringLiteral: fallback value for missing timestamp — informational only
                 timestamp: ts,
-                // Stryker disable next-line StringLiteral: fallback for missing author/content — informational only
                 summary:   `${name}: ${content}`,
                 direction: 'inbound' as const,
             };
         });
 
         // Sort descending
-        // Stryker disable next-line StringLiteral: sort comparison direction is cosmetic and equivalent for equal timestamps
         entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
         let formatted = formatHistoryEntries('channel', entries);
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: true mutant always truncates but short strings are unchanged; >= is equivalent since slice(0,N) on length=N string returns same string
-        if(formatted.length > maxChars) {
+        if(!Number.isNaN(maxChars)) {
             formatted = formatted.slice(0, maxChars);
         }
 

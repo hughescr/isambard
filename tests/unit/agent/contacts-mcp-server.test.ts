@@ -329,6 +329,25 @@ describe.concurrent('createContactsMCPServer', () => {
             expect(callArgs[1].notes).toBe('Updated notes only');
         });
 
+        test('should omit empty identifier change lists from approval request', async () => {
+            const approvalCallback = mock(async (): Promise<void> => { /* intentionally empty */ });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: approvalCallback });
+            const handler = getToolHandler(server, 'requestContactUpdate');
+
+            await handler({
+                personId:          'alice-wonderland',
+                addIdentifiers:    [],
+                removeIdentifiers: [],
+                notes:             'Updated notes only',
+            });
+
+            expect(approvalCallback).toHaveBeenCalledTimes(1);
+            const callArgs = approvalCallback.mock.calls[0] as unknown as [string, ContactChangeRequest];
+            expect(callArgs[1].addIdentifiers).toBeUndefined();
+            expect(callArgs[1].removeIdentifiers).toBeUndefined();
+            expect(callArgs[1].notes).toBe('Updated notes only');
+        });
+
         test('should return text message when contact not found', async () => {
             mockBackend.getContact.mockImplementation(async () => undefined);
             const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });

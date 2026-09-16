@@ -175,6 +175,16 @@ describe.concurrent('PerchSlotConfigSchema', () => {
         expect(result.success).toBe(false);
     });
 
+    test('should accept a one-character hint', () => {
+        expect(PerchSlotConfigSchema.safeParse({
+            slot:      'pre-dawn',
+            startHour: 5,
+            endHour:   7,
+            level:     'strongly_suggestive',
+            hint:      'x',
+        }).success).toBe(true);
+    });
+
     test('should reject config with startHour < 0', () => {
         const invalidConfig = {
             slot:      'pre-dawn',

@@ -9,42 +9,45 @@ import { constants } from 'node:fs';
 import { readdir, rm, mkdir, copyFile, stat, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '@hughescr/logger';
+import pLimit from 'p-limit';
 /**
  * Recursively copies all files from source to destination using COPYFILE_FICLONE.
  *
  * @param sourceDir - Source directory path
  * @param destDir - Destination directory path
  */
-async function copyDirectory(sourceDir: string, destDir: string): Promise<void> {
-    const entries = await readdir(sourceDir, { withFileTypes: true });
+async function copyDirectory(sourceDir: string, destDir: string, limit: ReturnType<typeof pLimit>): Promise<void> {
+    const entries = await limit(() => readdir(sourceDir, { withFileTypes: true }));
 
-    for(const entry of entries) {
+    const results = await Promise.allSettled(entries.map(async (entry) => {
         const sourcePath = path.join(sourceDir, entry.name);
         const destPath = path.join(destDir, entry.name);
 
-        // Stryker disable ConditionalExpression: isFile() guard only matters for non-regular files (symlinks, etc.)
         if(entry.isDirectory()) {
             // Create directory and recurse
-            // Stryker disable next-line ObjectLiteral,BooleanLiteral: mkdir recursive flag is a safety option
-            await mkdir(destPath, { recursive: true }); // eslint-disable-line no-await-in-loop -- sequential: mkdir then recurse in directory order
-            await copyDirectory(sourcePath, destPath); // eslint-disable-line no-await-in-loop -- sequential: recursive copy must follow mkdir
+            await limit(() => mkdir(destPath, { recursive: true }));
+            await copyDirectory(sourcePath, destPath, limit);
         } else if(entry.isFile()) {
             // Copy file with FICLONE flag
             // For test compatibility, we read and write when copyFile with FICLONE fails
-            // Stryker disable BlockStatement — FICLONE copy with read/write fallback for test environments
-            try {
-                await copyFile(sourcePath, destPath, constants.COPYFILE_FICLONE); // eslint-disable-line no-await-in-loop -- sequential: per-file copy
-            } catch{
-                // Silent: COPYFILE_FICLONE (reflink/CoW copy) is unsupported on HFS+, Linux
-                // without btrfs, and in Bun's test sandbox. Falling back to read+write
-                // produces the same result (data copied correctly); FICLONE is only a hint
-                // for performance. The fallback error is not actionable by the operator.
-                const content = await readFile(sourcePath); // eslint-disable-line no-await-in-loop -- sequential: read then write fallback
-                await writeFile(destPath, content); // eslint-disable-line no-await-in-loop -- sequential: write depends on prior read result
-            }
+            await limit(async () => {
+                try {
+                    await copyFile(sourcePath, destPath, constants.COPYFILE_FICLONE);
+                } catch{
+                    // COPYFILE_FICLONE is only a performance hint; copy bytes if unavailable.
+                    const content = await readFile(sourcePath);
+                    await writeFile(destPath, content);
+                }
+            });
             // Stryker restore BlockStatement
         }
         // Stryker restore ConditionalExpression
+    }));
+    // A rejected child must not let the caller tear down or reuse the target while
+    // other admitted copies (including recursive children) are still writing.
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if(failure) {
+        throw failure.reason;
     }
 }
 
@@ -54,7 +57,6 @@ async function copyDirectory(sourceDir: string, destDir: string): Promise<void> 
  * @param dirPath - Directory to clear
  */
 async function clearDirectory(dirPath: string): Promise<void> {
-    // Stryker disable BlockStatement,ObjectLiteral,BooleanLiteral,ConditionalExpression,EqualityOperator,StringLiteral — filesystem I/O error handling with ENOENT graceful fallback
     try {
         // Remove entire directory and recreate it
         await rm(dirPath, { recursive: true, force: true });
@@ -84,74 +86,34 @@ export async function syncAgentsAndSkills(
     sourceRoot: string,
     targetRoot: string
 ): Promise<void> {
+    const limit = pLimit(8);
     const agentsSourcePath = path.join(sourceRoot, 'agents');
     const skillsSourcePath = path.join(sourceRoot, 'skills');
     const agentsTargetPath = path.join(targetRoot, 'agents');
     const skillsTargetPath = path.join(targetRoot, 'skills');
 
-    // Process agents directory
-    // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral — filesystem I/O with ENOENT graceful degradation when source agents directory is absent
-    try {
-        const agentsStats = await stat(agentsSourcePath);
-        if(agentsStats.isDirectory()) {
-            // Clear and recreate target directory before copying
-            await clearDirectory(agentsTargetPath);
-            // Copy all contents
-            await copyDirectory(agentsSourcePath, agentsTargetPath);
-            // Stryker disable next-line ObjectLiteral: Log message for observability
-            logger.info({
-                source: agentsSourcePath,
-                target: agentsTargetPath,
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-                msg:    'Synced agents directory',
-            });
+    async function syncOne(sourcePath: string, targetPath: string, name: 'agents' | 'skills'): Promise<void> {
+        let sourceStats: Awaited<ReturnType<typeof stat>>;
+        try {
+            sourceStats = await stat(sourcePath);
+        } catch (error) {
+            // Only a missing source root is optional. A missing child after the
+            // root was observed is a copy failure and must propagate.
+            if((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+                throw error;
+            }
+            await mkdir(targetPath, { recursive: true });
+            logger.warn({ source: sourcePath, msg: `Source directory does not exist, skipping ${name} sync` });
+            return;
         }
-    } catch (error) {
-        if((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            // Source doesn't exist, just ensure target exists
-            await mkdir(agentsTargetPath, { recursive: true });
-            // Stryker disable next-line ObjectLiteral: Log message for observability
-            logger.warn({
-                source: agentsSourcePath,
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-                msg:    'Source directory does not exist, skipping agents sync',
-            });
-        } else {
-            throw error;
+        if(!sourceStats.isDirectory()) {
+            return;
         }
+        await clearDirectory(targetPath);
+        await copyDirectory(sourcePath, targetPath, limit);
+        logger.info({ source: sourcePath, target: targetPath, msg: `Synced ${name} directory` });
     }
-    // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral
 
-    // Process skills directory
-    // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral — filesystem I/O with ENOENT graceful degradation when source skills directory is absent
-    try {
-        const skillsStats = await stat(skillsSourcePath);
-        if(skillsStats.isDirectory()) {
-            // Clear and recreate target directory before copying
-            await clearDirectory(skillsTargetPath);
-            // Copy all contents
-            await copyDirectory(skillsSourcePath, skillsTargetPath);
-            // Stryker disable next-line ObjectLiteral: Log message for observability
-            logger.info({
-                source: skillsSourcePath,
-                target: skillsTargetPath,
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-                msg:    'Synced skills directory',
-            });
-        }
-    } catch (error) {
-        if((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            // Source doesn't exist, just ensure target exists
-            await mkdir(skillsTargetPath, { recursive: true });
-            // Stryker disable next-line ObjectLiteral: Log message for observability
-            logger.warn({
-                source: skillsSourcePath,
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-                msg:    'Source directory does not exist, skipping skills sync',
-            });
-        } else {
-            throw error;
-        }
-    }
-    // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral
+    await syncOne(agentsSourcePath, agentsTargetPath, 'agents');
+    await syncOne(skillsSourcePath, skillsTargetPath, 'skills');
 }

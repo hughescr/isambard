@@ -22,16 +22,13 @@ export class QuestionRegistry {
 
         // Cancel any existing question for this location
         const existing = this.questionsByLocation.get(locationKey);
-        // Stryker disable next-line BlockStatement: Guard clause - tested via behavior
         if(existing) {
-            // Stryker disable all: Logger warn object
             logger.warn({
                 oldQuestionId: existing.question.questionId,
                 newQuestionId: question.questionId,
                 channelId:     question.channelId,
                 msg:           'Replacing existing pending question',
             });
-            // Stryker restore all
 
             this.cleanupQuestion(existing.question.questionId);
             existing.resolve({
@@ -43,7 +40,6 @@ export class QuestionRegistry {
             });
         }
 
-        // Stryker disable BlockStatement: BlockStatement mutations break Promise executor flow causing test timeouts
         return new Promise<QuestionResult>((resolve) => {
             const pendingQuestion: PendingQuestion = {
                 ...question,
@@ -74,7 +70,6 @@ export class QuestionRegistry {
             this.questionsById.set(question.questionId, stored);
             this.questionsByLocation.set(locationKey, stored);
 
-            // Stryker disable all: Logger debug object
             logger.debug({
                 questionId: question.questionId,
                 channelId:  question.channelId,
@@ -82,7 +77,6 @@ export class QuestionRegistry {
                 expiresIn:  question.expiresAt - question.createdAt,
                 msg:        'Question registered',
             });
-            // Stryker restore all
         });
         // Stryker restore BlockStatement
     }
@@ -101,7 +95,6 @@ export class QuestionRegistry {
         }
 
         const now = Date.now();
-        // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: Expiration validation
         if(stored.question.state !== 'waiting' || stored.question.expiresAt < now) {
             return null;
         }
@@ -165,7 +158,6 @@ export class QuestionRegistry {
     stop(): void {
         // Cancel all pending questions
         for(const stored of this.questionsById.values()) {
-            // Stryker disable next-line ConditionalExpression: State check in cleanup loop
             if(stored.question.state === 'waiting') {
                 stored.question.state = 'cancelled';
                 clearTimeout(stored.timer);
@@ -184,7 +176,6 @@ export class QuestionRegistry {
     }
 
     private makeLocationKey(channelId: ChannelId, threadId?: string): string {
-        // Stryker disable next-line LogicalOperator,StringLiteral: ?? provides default value
         return `${channelId}:${threadId ?? 'main'}`;
     }
 

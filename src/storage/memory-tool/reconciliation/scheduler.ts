@@ -77,17 +77,39 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
     let driftPending = false;
     /** Whether start() has been called (used by notifyDrift to know if scheduler is active) */
     let started = false;
+    let generation: object = {};
+    // stop() clears public state immediately; this remains held until aborted work actually settles.
+    let activeWork: Promise<void> | null = null;
 
     /**
      * Build reconciler options from config
      */
-    function buildReconcilerOptions(): ReconcilerOptions {
+    function buildReconcilerOptions(controller: AbortController): ReconcilerOptions {
         return {
             operationDelayMs: config.operationDelayMs,
             scanPageSize:     config.scanPageSize,
             backoff:          config.backoff,
-            signal:           abortController?.signal,
+            signal:           controller.signal,
         };
+    }
+
+    function finishRun(controller: AbortController, completed: boolean): void {
+        if(abortController !== controller) {
+            return;
+        }
+        state = {
+            isRunning:       false,
+            currentPhase:    null,
+            lastCompletedAt: completed ? new Date() : state.lastCompletedAt,
+        };
+        driftPending = false;
+        abortController = null;
+    }
+
+    function releaseActiveWork(release: () => void): void {
+        // Waiters cannot replace activeWork until this promise is released.
+        activeWork = null;
+        release();
     }
 
     /**
@@ -95,14 +117,33 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
      */
     async function doTrigger(): Promise<ReconciliationResult | undefined> {
         // Check if already running
-        // Stryker disable ConditionalExpression,BlockStatement: running guard — mutating causes test timeout (parallel reconciliations start)
         if(state.isRunning) {
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.debug({ msg: 'Reconciliation already running - skipping trigger' });
             return undefined;
         }
-        // Stryker restore ConditionalExpression,BlockStatement
 
+        if(activeWork !== null) {
+            const requestedGeneration = generation;
+            await activeWork;
+            if(requestedGeneration !== generation) {
+                return undefined;
+            }
+            return doTrigger();
+        }
+
+        let releaseWork!: () => void;
+        const work = new Promise<void>((resolve) => {
+            releaseWork = resolve;
+        });
+        activeWork = work;
+        try {
+            return await executeTrigger();
+        } finally {
+            releaseActiveWork(releaseWork);
+        }
+    }
+
+    async function executeTrigger(): Promise<ReconciliationResult | undefined> {
         // Set state to running
         state = {
             isRunning:    true,
@@ -111,29 +152,19 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
         };
 
         // Create AbortController for this run
-        abortController = new AbortController();
+        const controller = new AbortController();
+        abortController = controller;
 
         try {
             // Build options
-            const options = buildReconcilerOptions();
+            const options = buildReconcilerOptions(controller);
 
             // Run reconciliation
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({ msg: 'Starting scheduled reconciliation' });
             const result = await runReconciliation(reconcilerDeps, options);
 
-            // Update state
-            // eslint-disable-next-line require-atomic-updates -- single-threaded: interval callback with single async writer, no concurrent writers
-            state = {
-                isRunning:       false,
-                currentPhase:    null,
-                lastCompletedAt: new Date(),
-            };
+            finishRun(controller, true);
 
-            // Reset drift flag now that a cycle has completed
-            driftPending = false;
-
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({
                 success:         result.success,
                 totalDurationMs: result.totalDurationMs,
@@ -141,29 +172,12 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
             });
             /* Stryker restore StringLiteral,ObjectLiteral */
 
-            // Clean up AbortController
-            abortController = null;
-
             return result;
         } catch (error) {
             // Handle errors gracefully
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.error({ error, msg: 'Reconciliation failed' });
 
-            // Reset state
-            state = {
-                isRunning:       false,
-                currentPhase:    null,
-                lastCompletedAt: state.lastCompletedAt, // Preserve last success
-            };
-
-            // Reset drift flag now that a cycle has completed (even if errored).
-            // Resetting allows subsequent notifyDrift() calls to accelerate the next cycle.
-            // Stryker disable next-line BooleanLiteral: resetting to false is tested in the error-path drift-reset test; setting true would prevent re-acceleration after errors
-            driftPending = false;
-
-            // Clean up AbortController
-            abortController = null;
+            finishRun(controller, false);
 
             return undefined;
         }
@@ -172,14 +186,14 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
     /**
      * Handle scheduled trigger (called at intervalMs).
      */
-    // Stryker disable next-line BlockStatement: scheduler trigger body — mutating causes test timeout (reconciliation never runs)
-    async function onScheduledTrigger(): Promise<void> {
+    async function onScheduledTrigger(runGeneration: object): Promise<void> {
+        if(!started || runGeneration !== generation) {
+            return;
+        }
         schedulerTimeout = null;
 
-        /* Stryker disable next-line ConditionalExpression,BlockStatement: Belt-and-suspenders check; start() already guards */
         // Check if enabled
         if(!config.enabled) {
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.debug({ msg: 'Reconciliation disabled - skipping trigger' });
             // Reschedule even if disabled to allow enabling later
             scheduleNextTrigger();
@@ -190,7 +204,8 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
         await doTrigger();
 
         // Reschedule next run (unless runOnce)
-        if(!config.testMode?.runOnce) {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stop() can change started during the awaited run
+        if(started && runGeneration === generation && !config.testMode?.runOnce) {
             scheduleNextTrigger();
         }
     }
@@ -198,48 +213,47 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
     /**
      * Schedule the next trigger.
      */
-    // Stryker disable next-line BlockStatement: scheduler body — mutating causes test timeout (no next trigger scheduled)
     function scheduleNextTrigger(): void {
         // Clear any existing timeout
-        // Stryker disable next-line BlockStatement: Internal timeout cleanup
         if(schedulerTimeout) {
             clearTimeout(schedulerTimeout);
             schedulerTimeout = null;
         }
 
         // Schedule next trigger
+        const runGeneration = generation;
         schedulerTimeout = setTimeout(() => {
             // Use void to explicitly ignore promise
-            void onScheduledTrigger();
+            void onScheduledTrigger(runGeneration);
         }, config.intervalMs);
 
-        /* Stryker disable StringLiteral,ObjectLiteral,ArithmeticOperator,BooleanLiteral: Logging is observational */
         logger.debug({
             delayMs:     config.intervalMs,
             nextTrigger: DateTime.now().plus({ milliseconds: config.intervalMs }).toISO({ suppressMilliseconds: true }),
             msg:         'Next reconciliation scheduled',
         });
-        /* Stryker restore StringLiteral,ObjectLiteral,ArithmeticOperator */
     }
 
     return {
         start(): void {
-            /* Stryker disable next-line ConditionalExpression,BlockStatement: Enabled guard tested via integration */
             if(!config.enabled) {
-                /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
                 logger.info({ msg: 'Reconciliation scheduler disabled' });
                 return;
             }
 
+            generation = {};
             started = true;
 
             // Check for test mode
             if(config.testMode?.triggerOnStartup) {
-                /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
                 logger.info({ msg: 'Reconciliation scheduler in test mode - triggering on startup' });
                 // Small delay to ensure initialization
-                setTimeout(() => {
-                    void doTrigger();
+                const runGeneration = generation;
+                schedulerTimeout = setTimeout(() => {
+                    if(started && runGeneration === generation) {
+                        schedulerTimeout = null;
+                        void doTrigger();
+                    }
                 }, 10);
                 return;
             }
@@ -247,7 +261,6 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
             // Schedule first trigger
             scheduleNextTrigger();
 
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({
                 intervalMs: config.intervalMs,
                 msg:        'Reconciliation scheduler started',
@@ -256,13 +269,13 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
         },
 
         stop(): void {
-            /* Stryker disable BlockStatement: Cleanup is observational - verified by test tear-down */
+            generation = {};
+            started = false;
             // Clear scheduler timeout
             if(schedulerTimeout) {
                 clearTimeout(schedulerTimeout);
                 schedulerTimeout = null;
             }
-            /* Stryker restore BlockStatement */
 
             // Abort running reconciliation
             if(abortController) {
@@ -276,10 +289,8 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
                 currentPhase: null,
             };
 
-            started = false;
             driftPending = false;
 
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({ msg: 'Reconciliation scheduler stopped' });
         },
 
@@ -292,31 +303,28 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
         },
 
         notifyDrift(): void {
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Guard — only accelerate if scheduler is active and enabled
             if(!started || !config.enabled) {
                 return;
             }
 
-            // Stryker disable next-line ConditionalExpression,BlockStatement,LogicalOperator: Guard — already drifting or running; coalesce redundant hints. LogicalOperator (|| → &&): isRunning branch is redundant because doTrigger() already guards against double-running; both forms correctly coalesce due to clearTimeout pattern
             if(driftPending || state.isRunning) {
                 return;
             }
 
             driftPending = true;
 
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({ msg: 'Tag index drift detected — accelerating next reconciliation cycle' });
 
             // Clear current scheduled timeout and reschedule immediately
-            // Stryker disable next-line BlockStatement: Cleanup before rescheduling
             if(schedulerTimeout) {
                 clearTimeout(schedulerTimeout);
                 schedulerTimeout = null;
             }
 
             // Trigger as soon as the current call stack unwinds (delay=0)
+            const runGeneration = generation;
             schedulerTimeout = setTimeout(() => {
-                void onScheduledTrigger();
+                void onScheduledTrigger(runGeneration);
             }, 0);
         },
     };

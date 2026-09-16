@@ -43,6 +43,64 @@ describe('createReconnectionLoop', () => {
         jest.useRealTimers();
     });
 
+    test('accepts an event-only registry sink through failure and recovery', async () => {
+        const sendEvent = mock(() => undefined);
+        let attempts = 0;
+        const connectFn = mock(async () => {
+            attempts++;
+            if(attempts === 1) {
+                throw new Error('offline');
+            }
+        });
+        const loop = createReconnectionLoop({
+            service:  SERVICE,
+            registry: { sendEvent },
+            connectFn,
+            policy:   DETERMINISTIC_POLICY,
+        });
+
+        expect(await loop.triggerNow()).toBe(false);
+        expect(sendEvent).toHaveBeenCalledWith(SERVICE, 'CONNECT_FAIL', expect.objectContaining({ error: 'offline' }));
+        loop.start();
+        await Promise.resolve();
+        expect(sendEvent).toHaveBeenCalledWith(SERVICE, 'CONNECT_SUCCESS');
+        loop.stop();
+    });
+
+    test('default backoff permits delays above the generic retry cap', async () => {
+        const connectFn = mock(async () => {
+            throw new Error('offline');
+        });
+        const loop = createReconnectionLoop({
+            service: SERVICE, registry, connectFn, policy: { jitterFraction: 0 }, deps: { now: () => 0 },
+        });
+
+        loop.start();
+        await Promise.resolve();
+        for(let attempt = 2; attempt <= 7; attempt++) {
+            // eslint-disable-next-line no-await-in-loop -- attempts must advance sequentially to measure backoff
+            expect(await loop.triggerNow()).toBe(false);
+        }
+
+        const failures = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls
+            .filter(call => call[1] === 'CONNECT_FAIL');
+        expect(failures).toHaveLength(7);
+        expect(failures[6]?.[2]?.nextRetryAt).toEqual(new Date(64_000));
+        loop.stop();
+    });
+
+    test('failure after stop does not leave a retry timer', async () => {
+        const deferred = Promise.withResolvers<void>();
+        const connectFn = mock(() => deferred.promise);
+        const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn, policy: DETERMINISTIC_POLICY });
+        loop.start();
+        loop.stop();
+        deferred.reject(new Error('offline'));
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
     // -------------------------------------------------------------------------
     // Basic lifecycle
     // -------------------------------------------------------------------------
@@ -187,10 +245,8 @@ describe('createReconnectionLoop', () => {
             const calls = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls;
             const failCall = calls.find(c => c[1] === 'CONNECT_FAIL');
             expect(failCall).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/dot-notation -- bracket notation required for unknown Record type
-            expect(failCall![2]?.['error']).toBe('connection refused');
-            // eslint-disable-next-line @typescript-eslint/dot-notation -- bracket notation required for unknown Record type
-            expect(failCall![2]?.['nextRetryAt']).toBeInstanceOf(Date);
+            expect(failCall![2]?.error).toBe('connection refused');
+            expect(failCall![2]?.nextRetryAt).toBeInstanceOf(Date);
 
             loop.stop();
         });
@@ -208,8 +264,7 @@ describe('createReconnectionLoop', () => {
             const calls = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls;
             const failCall = calls.find(c => c[1] === 'CONNECT_FAIL');
             expect(failCall).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/dot-notation -- bracket notation required for unknown Record type
-            expect(failCall![2]?.['error']).toBe('plain string error');
+            expect(failCall![2]?.error).toBe('plain string error');
 
             loop.stop();
         });
@@ -232,8 +287,7 @@ describe('createReconnectionLoop', () => {
             const calls = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls;
             const failCall = calls.find(c => c[1] === 'CONNECT_FAIL');
             expect(failCall).toBeDefined();
-            // eslint-disable-next-line @typescript-eslint/dot-notation -- bracket notation required for unknown Record type
-            expect(failCall![2]?.['error']).toBe('CustomError: oops');
+            expect(failCall![2]?.error).toBe('CustomError: oops');
 
             loop.stop();
         });
@@ -376,8 +430,7 @@ describe('createReconnectionLoop', () => {
 
             // Get delay from first failure's nextRetryAt
             const fail1Call = sendEventMock.mock.calls.find(c => c[1] === 'CONNECT_FAIL');
-            // eslint-disable-next-line @typescript-eslint/dot-notation -- bracket notation required for unknown Record type
-            const delay1 = (fail1Call![2]!['nextRetryAt'] as Date).getTime() - baseNow;
+            const delay1 = (fail1Call![2]!.nextRetryAt as Date).getTime() - baseNow;
 
             // Trigger second attempt
             jest.advanceTimersByTime(delay1);
@@ -386,8 +439,7 @@ describe('createReconnectionLoop', () => {
 
             const fail2Call = sendEventMock.mock.calls.filter(c => c[1] === 'CONNECT_FAIL')[1];
             const fail2Payload = fail2Call[2] ?? {};
-            // eslint-disable-next-line @typescript-eslint/dot-notation -- bracket notation required for unknown Record type
-            const delay2 = (fail2Payload['nextRetryAt'] as Date).getTime() - baseNow;
+            const delay2 = (fail2Payload.nextRetryAt as Date).getTime() - baseNow;
 
             expect(delay2).toBeGreaterThan(delay1);
         });
@@ -490,6 +542,26 @@ describe('createReconnectionLoop', () => {
 
             expect(result).toBe(true);
             expect(connectFn).toHaveBeenCalledTimes(1);
+        });
+
+        test('a first manual failure uses the first configured backoff step', async () => {
+            const connectFn = mock(async () => {
+                throw new Error('offline');
+            });
+            const loop = createReconnectionLoop({
+                service: SERVICE,
+                registry,
+                connectFn,
+                policy:  DETERMINISTIC_POLICY,
+                deps:    { now: () => 1000 },
+            });
+
+            expect(await loop.triggerNow()).toBe(false);
+
+            expect(registry.sendEvent).toHaveBeenCalledWith(SERVICE, 'CONNECT_FAIL', {
+                error:       'offline',
+                nextRetryAt: new Date(1100),
+            });
         });
     });
 
@@ -794,8 +866,7 @@ describe('createReconnectionLoop', () => {
 
             const sendEventMock = registry.sendEvent as Mock<typeof registry.sendEvent>;
             const failCall = sendEventMock.mock.calls.find(c => c[1] === 'CONNECT_FAIL');
-            // eslint-disable-next-line @typescript-eslint/dot-notation -- bracket notation required for unknown Record type
-            expect(failCall![2]!['nextRetryAt']).toEqual(expectedRetryAt);
+            expect(failCall![2]!.nextRetryAt).toEqual(expectedRetryAt);
 
             loop.stop();
         });
@@ -838,8 +909,19 @@ describe('createReconnectionLoop', () => {
             await Promise.resolve();
 
             loop.start();
+            await Promise.resolve();
+            await Promise.resolve();
 
             expect(connectFn).toHaveBeenCalledTimes(2);
+            (registry.sendEvent as Mock<typeof registry.sendEvent>).mockClear();
+
+            jest.advanceTimersByTime(200);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            const retryAttempts = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls
+                .filter(call => call[1] === 'RECONNECT_ATTEMPT');
+            expect(retryAttempts).toHaveLength(1);
             loop.stop();
         });
 

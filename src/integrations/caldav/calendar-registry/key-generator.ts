@@ -11,7 +11,6 @@ export interface CalendarRegistryKeys {
     SK: string
 }
 
-// Stryker disable StringLiteral: PK/SK key constants are configuration values
 const PREFIX_CALCAL   = 'CALCAL';
 const SK_CALENDARS    = 'CALENDARS';
 const SHARED_USER_ID  = 'SHARED';
@@ -29,9 +28,7 @@ export const CalendarRegistryKeyGenerator = {
      */
     createUserKeys(userId: string): CalendarRegistryKeys {
         return {
-            // Stryker disable next-line StringLiteral: PK key constant is a configuration value
             PK: createPrefixedKey(PREFIX_CALCAL, userId),
-            // Stryker disable next-line StringLiteral: SK key constant is a configuration value
             SK: SK_CALENDARS,
         };
     },
@@ -43,9 +40,7 @@ export const CalendarRegistryKeyGenerator = {
      */
     createSharedKeys(): CalendarRegistryKeys {
         return {
-            // Stryker disable next-line StringLiteral: PK key constant is a configuration value
             PK: createPrefixedKey(PREFIX_CALCAL, SHARED_USER_ID),
-            // Stryker disable next-line StringLiteral: SK key constant is a configuration value
             SK: SK_CALENDARS,
         };
     },
@@ -59,7 +54,6 @@ export const CalendarRegistryKeyGenerator = {
      */
     parseUserId(pk: string): string {
         if(!pk.startsWith('CALCAL#')) {
-            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
             throw new InvariantViolationError('CalendarRegistryKeyGenerator.parseUserId', `Invalid PK format: expected CALCAL#..., got ${pk}`);
         }
         return parsePrefixedKey(PREFIX_CALCAL, pk);

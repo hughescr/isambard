@@ -2,6 +2,10 @@ import { describe, test, expect } from 'bun:test';
 import { createActor } from 'xstate';
 import { serviceLifecycleMachine, createServiceActor } from '@/services/lifecycle-orchestrator';
 
+type LifecycleActorEvent = Parameters<ReturnType<typeof createServiceActor>['send']>[0];
+// @ts-expect-error The lifecycle actor must not accept an event outside ServiceLifecycleEvent.
+const _invalidLifecycleActorEvent: LifecycleActorEvent = { type: 'UNKNOWN_EVENT' };
+
 // Helper to build an actor, start it, and send it to a desired state quickly
 function actorInState(targetState: 'disabled' | 'starting' | 'online' | 'offline' | 'recovering' | 'degraded') {
     const actor = createActor(serviceLifecycleMachine);
@@ -41,6 +45,10 @@ function actorInState(targetState: 'disabled' | 'starting' | 'online' | 'offline
 
 describe('serviceLifecycleMachine', () => {
     describe('initial state', () => {
+        test('has a stable machine identity for actor diagnostics', () => {
+            expect(serviceLifecycleMachine.id).toBe('serviceLifecycle');
+        });
+
         test('should start in disabled state', () => {
             const actor = createActor(serviceLifecycleMachine);
             actor.start();
@@ -643,6 +651,27 @@ describe('createServiceActor', () => {
         actor.start();
         expect(actor.getSnapshot().value).toBe('disabled');
         actor.stop();
+    });
+
+    test('explicit disabled state has the same snapshot, start notification, and first transition as the default', () => {
+        const defaultActor = createServiceActor();
+        const explicitActor = createServiceActor('disabled');
+        const defaultSnapshots: unknown[] = [];
+        const explicitSnapshots: unknown[] = [];
+        defaultActor.subscribe(snapshot => defaultSnapshots.push({ value: snapshot.value, context: snapshot.context }));
+        explicitActor.subscribe(snapshot => explicitSnapshots.push({ value: snapshot.value, context: snapshot.context }));
+
+        defaultActor.start();
+        explicitActor.start();
+        expect(explicitActor.getSnapshot()).toMatchObject(defaultActor.getSnapshot());
+        expect(explicitSnapshots).toEqual(defaultSnapshots);
+
+        defaultActor.send({ type: 'CONFIGURE' });
+        explicitActor.send({ type: 'CONFIGURE' });
+        expect(explicitActor.getSnapshot()).toMatchObject(defaultActor.getSnapshot());
+        expect(explicitSnapshots).toEqual(defaultSnapshots);
+        defaultActor.stop();
+        explicitActor.stop();
     });
 
     test('should start in online state when initialState is "online"', () => {

@@ -106,6 +106,7 @@ describe('WildDuckClient', () => {
 
     afterEach(() => {
         globalThis.fetch = originalFetch;
+        jest.restoreAllMocks();
         jest.useRealTimers();
     });
 
@@ -113,6 +114,35 @@ describe('WildDuckClient', () => {
     // init()
     // -----------------------------------------------------------------------
     describe('init()', () => {
+        test('does not finish creating missing folders until the refreshed mailbox map is loaded', async () => {
+            jest.useRealTimers();
+            const missingReview = { ...MAILBOX_RESPONSE, results: MAILBOX_RESPONSE.results.filter(entry => entry.path !== 'Review') };
+            const reloadStarted = Promise.withResolvers<void>();
+            const reloadResponse = Promise.withResolvers<Response>();
+            mockFetch
+                .mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE))
+                .mockResolvedValueOnce(makeJsonResponse(missingReview))
+                .mockResolvedValueOnce(makeJsonResponse({ success: true }))
+                .mockImplementationOnce(() => {
+                    reloadStarted.resolve();
+                    return reloadResponse.promise;
+                });
+            const client = new WildDuckClient(CLIENT_OPTIONS);
+            let completed = false;
+            const completion = client.init().finally(() => {
+                completed = true;
+            });
+            try {
+                await reloadStarted.promise;
+                await Bun.sleep(0);
+                expect(completed).toBe(false);
+            } finally {
+                reloadResponse.resolve(makeJsonResponse(MAILBOX_RESPONSE));
+                await completion;
+            }
+            expect(client.getMailboxId('Review')).toBe('mbx-review');
+        });
+
         test('calls POST /authenticate with correct credentials', async () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
@@ -154,11 +184,51 @@ describe('WildDuckClient', () => {
             expect(headers['X-Access-Token']).toBe('test-auth-token');
         });
 
+        test('reinitializing replaces both mailbox lookup directions instead of retaining removed mailboxes', async () => {
+            const firstMailboxes = {
+                ...MAILBOX_RESPONSE,
+                results: [...MAILBOX_RESPONSE.results, { id: 'mbx-legacy', path: 'Legacy' }],
+            };
+            mockFetch
+                .mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE))
+                .mockResolvedValueOnce(makeJsonResponse(firstMailboxes))
+                .mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE))
+                .mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
+
+            const client = new WildDuckClient(CLIENT_OPTIONS);
+            await client.init();
+            expect(client.getMailboxId('Legacy')).toBe('mbx-legacy');
+
+            await client.init();
+            expect(client.getMailboxId('Legacy')).toBeUndefined();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                success: true,
+                results: [{
+                    id:      1,
+                    mailbox: 'mbx-legacy',
+                    from:    { address: 'alice@example.com' },
+                    to:      [],
+                    subject: 'Legacy result',
+                    date:    '2025-01-01T10:00:00.000Z',
+                }, {
+                    id:      2,
+                    mailbox: 'mbx-clean',
+                    from:    {},
+                    to:      [],
+                    subject: 'No sender address',
+                    date:    '2025-01-01T10:00:00.000Z',
+                }],
+            }));
+            const results = await client.search({});
+            expect(results[0]?.message).toBe('mbx-legacy:1');
+        });
+
         test('throws WildDuckAuthError when no token is returned', async () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, id: 'user-abc123' }));
 
             const client = new WildDuckClient(CLIENT_OPTIONS);
-            await expect(client.init()).rejects.toThrow(WildDuckAuthError);
+            await expect(client.init()).rejects.toThrow('Authentication failed: no token returned');
         });
 
         test('throws WildDuckError on non-200 auth response', async () => {
@@ -232,7 +302,7 @@ describe('WildDuckClient', () => {
             await client.search({ query: { correspondent: 'alice@example.com' } });
 
             const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(searchUrl).toContain('https://wildduck-api.example.com/users/me/search');
+            expect(searchUrl).toBe('https://wildduck-api.example.com/users/me/search?q=alice%40example.com');
         });
 
         test('includes correspondent in query params as "q"', async () => {
@@ -311,6 +381,7 @@ describe('WildDuckClient', () => {
 
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 folderName: 'UnknownBox',
+                msg:        'WildDuck search: unknown mailbox name skipped',
             }));
         });
 
@@ -411,6 +482,43 @@ describe('WildDuckClient', () => {
             const results = await client.search({});
 
             expect(results[0]?.from).toBe('noname@example.com');
+        });
+
+        test('preserves documented empty address fallbacks in search display values', async () => {
+            const client = await makeSearchInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                success: true,
+                results: [{
+                    id:      1,
+                    mailbox: 'mbx-clean',
+                    from:    {},
+                    to:      [{}, { name: 'Recipient' }],
+                    subject: 'Test',
+                    date:    '2025-01-01T10:00:00.000Z',
+                }],
+            }));
+
+            const [result] = await client.search({});
+            expect(result.from).toBe('');
+            expect(result.to).toEqual(['', 'Recipient <>']);
+        });
+
+        test('preserves an empty sender address when WildDuck supplies only a display name', async () => {
+            const client = await makeSearchInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                success: true,
+                results: [{
+                    id:      1,
+                    mailbox: 'mbx-clean',
+                    from:    { name: 'Sender' },
+                    to:      [],
+                    subject: 'Test',
+                    date:    '2025-01-01T10:00:00.000Z',
+                }],
+            }));
+
+            const [result] = await client.search({});
+            expect(result.from).toBe('Sender <>');
         });
 
         test('maps to addresses to formatted strings', async () => {
@@ -706,13 +814,14 @@ describe('WildDuckClient', () => {
     // -----------------------------------------------------------------------
     // Shared helper for initialized client (used by new method tests)
     // -----------------------------------------------------------------------
-    // eslint-disable-next-line sonarjs/no-identical-functions -- distinct helper (no search mock setup), identical init flow intentional for independent test scoping
-    async function makeInitializedClient(): Promise<InstanceType<typeof WildDuckClient>> {
+    async function makeInitializedClient({ clearCalls = true }: { clearCalls?: boolean } = {}): Promise<InstanceType<typeof WildDuckClient>> {
         mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
         mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
         const client = new WildDuckClient(CLIENT_OPTIONS);
         await client.init();
-        mockFetch.mockClear();
+        if(clearCalls) {
+            mockFetch.mockClear();
+        }
         return client;
     }
 
@@ -720,6 +829,30 @@ describe('WildDuckClient', () => {
     // makeRequest() — fetch options
     // -----------------------------------------------------------------------
     describe('makeRequest() fetch options', () => {
+        test('allows an asynchronous response to arrive before request timeout', async () => {
+            jest.useRealTimers();
+            const client = await makeInitializedClient();
+            let responseTimer: ReturnType<typeof setTimeout> | undefined;
+            mockFetch.mockImplementationOnce((_url, options) => new Promise<Response>((resolve, reject) => {
+                const signal = options?.signal;
+                const onAbort = (): void => reject(signal?.reason);
+                signal?.addEventListener('abort', onAbort, { once: true });
+                responseTimer = setTimeout(() => {
+                    signal?.removeEventListener('abort', onAbort);
+                    resolve(makeJsonResponse({ success: true, results: [] }));
+                }, 1);
+            }));
+            const completion = client.search({});
+            try {
+                await expect(completion).resolves.toEqual([]);
+            } finally {
+                if(responseTimer) {
+                    clearTimeout(responseTimer);
+                }
+                await Promise.allSettled([completion]);
+            }
+        });
+
         test('passes an AbortSignal to fetch for timeout enforcement', async () => {
             const client = await makeInitializedClient();
 
@@ -898,8 +1031,11 @@ describe('WildDuckClient', () => {
             });
 
             const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-            const body = JSON.parse(options.body as string) as { replacePrevious: { mailbox: string, id: number } };
+            const body = JSON.parse(options.body as string) as typeof BASE_PAYLOAD & { replacePrevious: { mailbox: string, id: number } };
             expect(body.replacePrevious).toEqual({ mailbox: 'mbx-drafts', id: 42 });
+            expect(body.from).toEqual(BASE_PAYLOAD.from);
+            expect(body.subject).toBe(BASE_PAYLOAD.subject);
+            expect(body.text).toBe(BASE_PAYLOAD.text);
         });
 
         test('omits replacePrevious from JSON body when not set', async () => {
@@ -1258,6 +1394,113 @@ describe('WildDuckClient', () => {
             expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('refreshed-token');
         });
 
+        test('coalesces concurrent expired-token requests into one authentication', async () => {
+            const client = await makeInitializedClient();
+            jest.useRealTimers();
+            const authResponse = Promise.withResolvers<Response>();
+            const allExpiredRequests = Promise.withResolvers<void>();
+            let expiredRequests = 0;
+            let authCalls = 0;
+            mockFetch.mockImplementation(async (url, options) => {
+                if(url.endsWith('/authenticate')) {
+                    authCalls++;
+                    return authResponse.promise;
+                }
+                const token = (options?.headers as Record<string, string>)['X-Access-Token'];
+                if(token === 'test-auth-token') {
+                    expiredRequests++;
+                    if(expiredRequests === 8) {
+                        allExpiredRequests.resolve();
+                    }
+                    return makeJsonResponse({ error: 'expired' }, 401);
+                }
+                expect(token).toBe('refreshed-token');
+                return makeJsonResponse(MESSAGE_RESPONSE);
+            });
+
+            const requests = Array.from({ length: 8 }, (_, index) => client.getMessage('Sent Mail', index + 1));
+            await allExpiredRequests.promise;
+            await Bun.sleep(1);
+            expect(authCalls).toBe(1);
+            authResponse.resolve(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            const messages = await Promise.all(requests);
+            expect(messages).toHaveLength(8);
+            expect(messages.every(message => message?.id === 42)).toBe(true);
+            expect(authCalls).toBe(1);
+            expect(mockFetch).toHaveBeenCalledTimes(17);
+        });
+
+        test('uses an already refreshed token when an older 401 arrives late', async () => {
+            const client = await makeInitializedClient();
+            const lateRequestStarted = Promise.withResolvers<void>();
+            const late401 = Promise.withResolvers<Response>();
+            let authCalls = 0;
+            mockFetch.mockImplementation(async (url, options) => {
+                if(url.endsWith('/authenticate')) {
+                    authCalls++;
+                    return makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' });
+                }
+                const token = (options?.headers as Record<string, string>)['X-Access-Token'];
+                if(token === 'test-auth-token' && url.endsWith('/2')) {
+                    lateRequestStarted.resolve();
+                    return late401.promise;
+                }
+                if(token === 'test-auth-token') {
+                    return makeJsonResponse({ error: 'expired' }, 401);
+                }
+                expect(token).toBe('refreshed-token');
+                return makeJsonResponse(MESSAGE_RESPONSE);
+            });
+
+            const early = client.getMessage('Sent Mail', 1);
+            const late = client.getMessage('Sent Mail', 2);
+            await lateRequestStarted.promise;
+            await early;
+            late401.resolve(makeJsonResponse({ error: 'expired' }, 401));
+            await late;
+            expect(authCalls).toBe(1);
+        });
+
+        test('shares refresh failure, then clears the slot for the next retry', async () => {
+            const client = await makeInitializedClient();
+            jest.useRealTimers();
+            const firstAuthResponse = Promise.withResolvers<Response>();
+            const allExpiredRequests = Promise.withResolvers<void>();
+            let expiredRequests = 0;
+            let authCalls = 0;
+            mockFetch.mockImplementation(async (url, options) => {
+                if(url.endsWith('/authenticate')) {
+                    authCalls++;
+                    return authCalls === 1
+                        ? firstAuthResponse.promise
+                        : makeJsonResponse({ ...AUTH_RESPONSE, token: 'retry-token' });
+                }
+                const token = (options?.headers as Record<string, string>)['X-Access-Token'];
+                if(token === 'test-auth-token') {
+                    expiredRequests++;
+                    if(expiredRequests === 8) {
+                        allExpiredRequests.resolve();
+                    }
+                    return makeJsonResponse({ error: 'expired' }, 401);
+                }
+                expect(token).toBe('retry-token');
+                return makeJsonResponse(MESSAGE_RESPONSE);
+            });
+
+            const requests = Array.from({ length: 8 }, (_, index) => client.getMessage('Sent Mail', index + 1));
+            await allExpiredRequests.promise;
+            await Bun.sleep(1);
+            expect(authCalls).toBe(1);
+            firstAuthResponse.resolve(makeJsonResponse({ success: true }));
+            const results = await Promise.allSettled(requests);
+            expect(results.every(result => result.status === 'rejected' && result.reason instanceof WildDuckAuthError)).toBe(true);
+            expect(authCalls).toBe(1);
+
+            const next = await client.getMessage('Sent Mail', 99);
+            expect(next?.id).toBe(42);
+            expect(authCalls).toBe(2);
+        });
+
         test('throws WildDuckError on non-2xx non-401 non-404 error', async () => {
             const client = await makeInitializedClient();
 
@@ -1280,27 +1523,18 @@ describe('WildDuckClient', () => {
     // getMailboxId()
     // -----------------------------------------------------------------------
     describe('getMailboxId()', () => {
-        async function makeMailboxInitializedClient(): Promise<WildDuckClient> {
-            mockFetch
-                .mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE))
-                .mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
-            const client = new WildDuckClient(CLIENT_OPTIONS);
-            await client.init();
-            return client;
-        }
-
         test('should return mailbox ID for known path', async () => {
-            const client = await makeMailboxInitializedClient();
+            const client = await makeInitializedClient({ clearCalls: false });
             expect(client.getMailboxId('CleanInbox')).toBe('mbx-clean');
         });
 
         test('should return mailbox ID for Drafts path', async () => {
-            const client = await makeMailboxInitializedClient();
+            const client = await makeInitializedClient({ clearCalls: false });
             expect(client.getMailboxId('Drafts')).toBe('mbx-drafts');
         });
 
         test('should return undefined for unknown path', async () => {
-            const client = await makeMailboxInitializedClient();
+            const client = await makeInitializedClient({ clearCalls: false });
             expect(client.getMailboxId('NonExistent')).toBeUndefined();
         });
 
@@ -1352,6 +1586,20 @@ describe('WildDuckClient', () => {
 
         test(String.raw`resolves INBOX via \Inbox specialUse flag`, async () => {
             const client = await makeClientWithNonstandardPaths();
+            expect(client.getMailboxId('INBOX')).toBe('mbx-inbox');
+        });
+
+        test(String.raw`maps the logical INBOX name from a nonstandard \Inbox path`, async () => {
+            mockFetch
+                .mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE))
+                .mockResolvedValueOnce(makeJsonResponse({
+                    ...NONSTANDARD_MAILBOX_RESPONSE,
+                    results: NONSTANDARD_MAILBOX_RESPONSE.results.map(mailbox => (mailbox.id === 'mbx-inbox'
+                        ? { ...mailbox, path: '[Provider]/Primary' }
+                        : mailbox)),
+                }));
+            const client = new WildDuckClient(CLIENT_OPTIONS);
+            await client.init();
             expect(client.getMailboxId('INBOX')).toBe('mbx-inbox');
         });
 
@@ -1579,7 +1827,15 @@ describe('WildDuckClient', () => {
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.updateMessageFlags('NonExistentFolder', 42, { addFlags: ['TestFlag'] })).rejects.toThrow(WildDuckError);
+            await expect(client.updateMessageFlags('NonExistentFolder', 42, { addFlags: ['TestFlag'] })).rejects.toThrow('WildDuck: unknown mailbox path: NonExistentFolder');
+        });
+
+        test('does not issue a request when neither flag operation has values', async () => {
+            const client = await makeInitializedClient();
+
+            await client.updateMessageFlags('Drafts', 42, {});
+
+            expect(mockFetch).not.toHaveBeenCalled();
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -1639,8 +1895,9 @@ describe('WildDuckClient', () => {
             await client.getMailboxCounts('CleanInbox');
 
             expect(mockFetch).toHaveBeenCalledTimes(1);
-            const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
+            const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect(url).toBe('https://wildduck-api.example.com/users/me/mailboxes/mbx-clean');
+            expect(options.method).toBe('GET');
         });
 
         test('sends auth token header', async () => {
@@ -1831,6 +2088,56 @@ describe('WildDuckClient', () => {
             // 'mbx-unknown:7' → lastIndexOf(':') finds the colon → UID = 7
             expect(uids).toEqual([7]);
         });
+
+        test('rejects a malformed result without its folder-to-UID separator', async () => {
+            const client = new WildDuckClient(CLIENT_OPTIONS);
+            client.search = mock(async () => [{
+                message: '42',
+                from:    'sender@example.com',
+                to:      [],
+                subject: 'Malformed upstream result',
+                date:    '2025-01-01T10:00:00.000Z',
+            }]);
+
+            await expect(client.searchByKeyword('CleanInbox', 'TestFlag')).resolves.toEqual([]);
+        });
+
+        test('excludes the non-positive UID zero from keyword results', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                success: true,
+                results: [{
+                    id:      0,
+                    mailbox: 'mbx-clean',
+                    from:    { address: 'sender@example.com' },
+                    to:      [],
+                    subject: 'Zero UID',
+                    date:    '2025-01-01T10:00:00.000Z',
+                }],
+            }));
+
+            await expect(client.searchByKeyword('CleanInbox', 'TestFlag')).resolves.toEqual([]);
+        });
+
+        test('includes UID one as the first valid positive message identifier', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                success: true,
+                results: [{ id: 1, mailbox: 'mbx-clean', from: {}, to: [], subject: 'First', date: '2025-01-01T10:00:00.000Z' }],
+            }));
+
+            await expect(client.searchByKeyword('CleanInbox', 'TestFlag')).resolves.toEqual([1]);
+        });
+
+        test('does not reinterpret a hexadecimal-looking server ID as a decimal UID', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                success: true,
+                results: [{ id: '0x10', mailbox: 'mbx-clean', from: {}, to: [], subject: 'Malformed', date: '2025-01-01T10:00:00.000Z' }],
+            }));
+
+            await expect(client.searchByKeyword('CleanInbox', 'TestFlag')).resolves.toEqual([]);
+        });
     });
 
     // -----------------------------------------------------------------------
@@ -1856,6 +2163,24 @@ describe('WildDuckClient', () => {
             const result = await client.getFullMessage('CleanInbox', 42);
 
             expect(result?.bodyText).toBe('');
+        });
+    });
+
+    describe('getFullMessage() — HTML body', () => {
+        test('keeps a long unbroken HTML text line intact instead of applying display wrapping', async () => {
+            const client = await makeInitializedClient();
+            const body = 'a long plain-text sentence that contains ordinary spaces and exceeds the default display wrapping width by a useful margin';
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                success: true,
+                id:      42,
+                date:    '2025-01-15T10:00:00.000Z',
+                html:    `<p>${body}</p>`,
+            }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.bodyText).toBe(body);
+            expect(result?.bodyText).not.toContain('\n');
         });
     });
 
@@ -1885,6 +2210,7 @@ describe('WildDuckClient', () => {
             expect(caughtError).toBeInstanceOf(WildDuckError);
             expect((caughtError as WildDuckError).message).not.toContain(':Bad Request:');
             expect((caughtError as WildDuckError).message).toMatch(/400 Bad Request$/);
+            expect((caughtError as WildDuckError).message).toBe('WildDuck API error: 400 Bad Request');
         });
 
         test('makeRequestNullable includes response body in WildDuckError message when body is non-empty', async () => {
@@ -1909,6 +2235,55 @@ describe('WildDuckClient', () => {
             expect(caughtError).toBeInstanceOf(WildDuckError);
             expect((caughtError as WildDuckError).message).not.toContain(':Bad Request:');
             expect((caughtError as WildDuckError).message).toMatch(/400 Bad Request$/);
+            expect((caughtError as WildDuckError).message).toBe('WildDuck API error: 400 Bad Request');
+        });
+
+        test('makeRequestBuffer preserves the authentication and response details in errors', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('attachment unavailable', 400));
+            await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow('WildDuck API error: 400 Bad Request: attachment unavailable');
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+            await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow('Authentication failed: no token returned');
+        });
+
+        test('makeRequestBuffer omits an error-body suffix when the attachment response body is empty', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('', 400));
+
+            let caughtError: unknown;
+            try {
+                await client.getAttachment('CleanInbox', 42, 'att-1');
+            } catch (err) {
+                caughtError = err;
+            }
+            expect(caughtError).toBeInstanceOf(WildDuckError);
+            expect((caughtError as WildDuckError).message).toBe('WildDuck API error: 400 Bad Request');
+        });
+
+        test('preserves the final 401 diagnostic after a retry for every request shape', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch
+                .mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401))
+                .mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'retry-search' }))
+                .mockResolvedValueOnce(makeJsonResponse({ error: 'expired again' }, 401));
+            await expect(client.search({})).rejects.toThrow('WildDuck authentication failed (401)');
+
+            mockFetch
+                .mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401))
+                .mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'retry-message' }))
+                .mockResolvedValueOnce(makeJsonResponse({ error: 'expired again' }, 401));
+            await expect(client.getMessage('CleanInbox', 42)).rejects.toThrow('WildDuck authentication failed (401)');
+
+            mockFetch
+                .mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401))
+                .mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'retry-attachment' }))
+                .mockResolvedValueOnce(makeJsonResponse({ error: 'expired again' }, 401));
+            await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow('WildDuck authentication failed (401)');
         });
     });
 
@@ -1975,6 +2350,7 @@ describe('WildDuckClient', () => {
             const calls = mockFetch.mock.calls as [string, RequestInit][];
             const postCall = calls.find(([url, opts]) => url === 'https://wildduck-api.example.com/users/me/mailboxes' && opts.method === 'POST');
             expect(postCall).toBeDefined();
+            expect((postCall![1].headers as Record<string, string>)['Content-Type']).toBe('application/json');
             const body = JSON.parse(postCall![1].body as string) as { path: string };
             expect(body.path).toBe('Review');
         });
@@ -2000,6 +2376,109 @@ describe('WildDuckClient', () => {
             const postCalls = calls.filter(([url, opts]) => url === 'https://wildduck-api.example.com/users/me/mailboxes' && opts.method === 'POST');
             expect(postCalls).toHaveLength(2);
         });
+
+        for(const status of [403, 429]) {
+            test(`stops queued folder creation and waits for the admitted sibling after ${status}`, async () => {
+                jest.useRealTimers();
+                const secondStarted = Promise.withResolvers<void>();
+                const secondGate = Promise.withResolvers<Response>();
+                const firstFailed = Promise.withResolvers<void>();
+                const missingMany = {
+                    success: true,
+                    results: MAILBOX_RESPONSE.results.filter(m => !['Review', 'Quarantine', 'Drafts'].includes(m.path)),
+                };
+                let postCount = 0;
+                let mailboxReads = 0;
+                mockFetch.mockImplementation(async (url, options) => {
+                    if(url.endsWith('/authenticate')) {
+                        return makeJsonResponse(AUTH_RESPONSE);
+                    }
+                    if(options?.method === 'GET') {
+                        mailboxReads++;
+                        return makeJsonResponse(missingMany);
+                    }
+                    postCount++;
+                    if(postCount === 1) {
+                        await secondStarted.promise;
+                        firstFailed.resolve();
+                        return makeErrorResponseWithBody('folder creation denied', status);
+                    }
+                    if(postCount === 2) {
+                        secondStarted.resolve();
+                        return secondGate.promise;
+                    }
+                    throw new Error('queued folder must not start');
+                });
+                const client = new WildDuckClient(CLIENT_OPTIONS);
+                const pending = client.init();
+                let settled = false;
+                void pending.finally(() => {
+                    settled = true;
+                }).catch(() => undefined);
+
+                await firstFailed.promise;
+                await Bun.sleep(0);
+                expect(settled).toBe(false);
+                expect(postCount).toBe(2);
+                secondGate.resolve(makeJsonResponse({ success: true }));
+                await expect(pending).rejects.toThrow(String(status));
+                expect(postCount).toBe(2);
+                expect(mailboxReads).toBe(1);
+            });
+        }
+
+        for(const firstReason of [null, undefined]) {
+            test(`preserves a ${String(firstReason)} fetch rejection after the admitted sibling settles`, async () => {
+                jest.useRealTimers();
+                const firstGate = Promise.withResolvers<Response>();
+                const secondGate = Promise.withResolvers<Response>();
+                const secondStarted = Promise.withResolvers<void>();
+                const missingMany = {
+                    success: true,
+                    results: MAILBOX_RESPONSE.results.filter(m => !['Review', 'Quarantine', 'Drafts'].includes(m.path)),
+                };
+                let postCount = 0;
+                mockFetch.mockImplementation(async (url, options) => {
+                    if(url.endsWith('/authenticate')) {
+                        return makeJsonResponse(AUTH_RESPONSE);
+                    }
+                    if(options?.method === 'GET') {
+                        return makeJsonResponse(missingMany);
+                    }
+                    postCount++;
+                    if(postCount === 1) {
+                        return firstGate.promise;
+                    }
+                    if(postCount === 2) {
+                        secondStarted.resolve();
+                        return secondGate.promise;
+                    }
+                    throw new Error('queued folder must not start');
+                });
+                const client = new WildDuckClient(CLIENT_OPTIONS);
+                const pending = client.init();
+                let settled = false;
+                void pending.finally(() => {
+                    settled = true;
+                }).catch(() => undefined);
+
+                await secondStarted.promise;
+                firstGate.reject(firstReason);
+                await Bun.sleep(0);
+                expect(settled).toBe(false);
+                expect(postCount).toBe(2);
+                secondGate.reject(new Error('later sibling failure'));
+                let caught = false;
+                try {
+                    await pending;
+                } catch (error) {
+                    caught = true;
+                    expect(error).toBe(firstReason);
+                }
+                expect(caught).toBe(true);
+                expect(postCount).toBe(2);
+            });
+        }
 
         test('does not call POST when all required folders are present', async () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
@@ -2478,6 +2957,19 @@ describe('WildDuckClient', () => {
             expect(result?.headers.xRspamdScore).toBe('1.5');
         });
 
+        test('preserves every line of the X-Rspamd report header', async () => {
+            const client = await makeInitializedClient();
+            const report = 'R_SPF_ALLOW(-0.20)\nDKIM_SIGNED(0.00)\nDMARC_POLICY_ALLOW(-0.50)';
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                ...FULL_MESSAGE_RESPONSE,
+                headers: { ...FULL_MESSAGE_RESPONSE.headers, 'x-rspamd-report': report },
+            }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.headers.xRspamdReport).toBe(report);
+        });
+
         test('sets hasAttachments=true when attachments present', async () => {
             const client = await makeInitializedClient();
 
@@ -2522,6 +3014,15 @@ describe('WildDuckClient', () => {
             const result = await client.getFullMessage('CleanInbox', 42);
 
             expect(result?.bodyText.length).toBeLessThanOrEqual(10);
+        });
+
+        test('uses the documented 50,000-byte default body limit', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...FULL_MESSAGE_RESPONSE, text: 'A'.repeat(50_001) }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.bodyText).toHaveLength(50_000);
         });
 
         test('truncates at valid UTF-8 boundary when cutting inside a multi-byte character', async () => {

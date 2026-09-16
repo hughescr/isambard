@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-// Stryker disable all: Schema values are static definitions
-
 const allowlistSagaStateSchema = z.enum([
     'pending_name',      // waiting for admin to provide a display name
     'pending_review',    // showing a fuzzy match, waiting for admin decision

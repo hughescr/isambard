@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { formatSlotName } from '@/agent/perch/prompts';
 import type { PerchSlot } from '@/agent/perch/types';
+import { InvariantViolationError } from '@/errors';
 
 describe.concurrent('formatSlotName', () => {
     test('is exported and covers every slot', () => {
@@ -21,5 +22,12 @@ describe.concurrent('formatSlotName', () => {
     test('throws on an unknown slot', () => {
         const invalidSlot = 'bogus-slot' as PerchSlot;
         expect(() => formatSlotName(invalidSlot)).toThrow('Unknown slot: bogus-slot');
+        try {
+            formatSlotName(invalidSlot);
+            throw new Error('Expected an invariant violation');
+        } catch (error) {
+            expect(error).toBeInstanceOf(InvariantViolationError);
+            expect((error as InvariantViolationError).context.location).toBe('getSlotDescription');
+        }
     });
 });

@@ -126,6 +126,18 @@ describe('loadRetryConfig', () => {
         expect(config).toEqual(DEFAULT_RETRY_CONFIG);
     });
 
+    test('should return independent default category objects across loader calls', () => {
+        delete process.env.CLAUDE_RETRY_MAX_ATTEMPTS;
+        delete process.env.DISCORD_RETRY_MAX_ATTEMPTS;
+        delete process.env.DYNAMODB_TIMEOUT_MS;
+
+        const first = loadRetryConfig();
+        const second = loadRetryConfig();
+        first.claude.maxAttempts = 5;
+
+        expect(second.claude.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.claude.maxAttempts);
+    });
+
     test('should override Claude maxAttempts from env var', () => {
         process.env.CLAUDE_RETRY_MAX_ATTEMPTS = '4';
 

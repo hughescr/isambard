@@ -92,10 +92,12 @@ describe('createAgentNamingHooks', () => {
             expect(updated).toEqual({ name: 'Izzy-reviewer', subagent_type: 'sonnet-high', prompt: 'go' });
         });
 
-        it('leaves a name that already starts with Izzy- alone, rewriting nothing', async () => {
+        it('distinguishes an Izzy- prefix from the same text in a name interior', async () => {
             const h = build();
 
             expect(await run(h, preToolUseInput({ tool_input: { name: 'Izzy-reviewer', subagent_type: 'high' } }))).toBeUndefined();
+            const updated = await run(h, preToolUseInput({ tool_input: { name: 'reviewer-Izzy-helper', subagent_type: 'high' } }));
+            expect(updated).toMatchObject({ name: 'Izzy-reviewer-Izzy-helper' });
         });
 
         it('routes a launch with no subagent_type to the `high` tier, so it runs under Izzy\'s own sub-agent prompt', async () => {
@@ -293,6 +295,14 @@ describe('createAgentNamingHooks', () => {
             const h = build();
 
             expect(await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { name: 'triage', script: 'no meta here' } }))).toBeUndefined();
+        });
+    });
+
+    describe('prefix boundaries', () => {
+        it('prefixes a workflow name that contains Izzy- only in its interior', async () => {
+            const h = build();
+            const updated = await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script: "export const meta = { name: 'nightly-Izzy-copy' }" } }));
+            expect(updated?.script).toBe("export const meta = { name: 'Izzy-workflow-nightly-Izzy-copy' }");
         });
     });
 

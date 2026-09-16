@@ -43,6 +43,37 @@ describe('findLatestMarketplaceVersion', () => {
         expect(result).toBeUndefined();
     });
 
+    test('does not accept a manifest that access denies even when stat can see its directory', async () => {
+        const pluginDir = path.join(tempDir, 'access-denied');
+        const versionDir = path.join(pluginDir, '1.0.0');
+        const manifestDir = path.join(versionDir, '.claude-plugin');
+        await createMockPluginDir(versionDir);
+        mockFsPromises.access.mockImplementation(async (checkedPath) => {
+            if(checkedPath === manifestDir) {
+                throw new Error('EACCES');
+            }
+        });
+        expect(await findLatestMarketplaceVersion(tempDir, 'access-denied')).toBeUndefined();
+    });
+
+    test('does not accept a manifest when stat fails after access succeeds', async () => {
+        const pluginDir = path.join(tempDir, 'stat-failed');
+        const versionDir = path.join(pluginDir, '1.0.0');
+        await createMockPluginDir(versionDir);
+        mockFsPromises.stat.mockRejectedValueOnce(new Error('stat failed'));
+        expect(await findLatestMarketplaceVersion(tempDir, 'stat-failed')).toBeUndefined();
+    });
+
+    test('ignores a semver-named symbolic link even when its target has a plugin manifest', async () => {
+        const pluginDir = path.join(tempDir, 'linked-plugin');
+        const validVersion = path.join(pluginDir, '1.0.0');
+        const linkedVersion = path.join(pluginDir, '9.0.0');
+        await createMockPluginDir(validVersion);
+        await mockFsPromises.symlink('/outside/plugin', linkedVersion);
+        await mockFsPromises.mkdir(path.join(linkedVersion, '.claude-plugin'), { recursive: true });
+        expect(await findLatestMarketplaceVersion(tempDir, 'linked-plugin')).toBe(validVersion);
+    });
+
     test.each([
         ['single version', ['1.0.0'], '1.0.0'],
         ['multiple versions', ['1.0.0', '2.0.0', '1.5.0'], '2.0.0'],
@@ -51,10 +82,7 @@ describe('findLatestMarketplaceVersion', () => {
     ])('should return latest from %s', async (_desc, versions, expected) => {
         const pluginDir = path.join(tempDir, 'test-plugin');
 
-        for(const version of versions) {
-            // eslint-disable-next-line no-await-in-loop -- sequential: create plugin dirs in order for test setup
-            await createMockPluginDir(path.join(pluginDir, version));
-        }
+        await Promise.all(versions.map(version => createMockPluginDir(path.join(pluginDir, version))));
 
         const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
         expect(result).toBe(path.join(pluginDir, expected));
@@ -151,6 +179,12 @@ describe('loadPlugins', () => {
     });
 
     describe('in-repo plugin discovery', () => {
+        test('ignores regular files and reports no invalid-plugin warning for them', async () => {
+            await mockFsPromises.writeFile(path.join(pluginsDir, 'README.md'), '# plugins');
+            expect(await loadPlugins(pluginsDir, marketplaceDir)).toEqual([]);
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
         test('should discover in-repo plugins with .claude-plugin directory', async () => {
             const inRepoPlugin = path.join(pluginsDir, 'my-custom-plugin');
             await createMockPluginDir(inRepoPlugin);
@@ -317,6 +351,12 @@ describe('loadPlugins', () => {
 
             expect(result).toHaveLength(1);
             expect(result[0]).toEqual({ type: 'local', path: inRepoPlugin });
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                name: 'shared-plugin',
+                path: externalPlugin,
+                msg:  'Skipping external plugin (already loaded from higher priority source)',
+            });
+            expect(mockFsPromises.access.mock.calls.some(([checkedPath]) => checkedPath === externalPlugin)).toBe(false);
         });
 
         test('should prioritize in-repo over marketplace with same name', async () => {
@@ -335,6 +375,10 @@ describe('loadPlugins', () => {
 
             expect(result).toHaveLength(1);
             expect(result[0]).toEqual({ type: 'local', path: inRepoPlugin });
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                name: 'shared-plugin',
+                msg:  'Skipping marketplace plugin (already loaded from higher priority source)',
+            });
         });
 
         test('should prioritize external over marketplace with same name', async () => {
@@ -356,6 +400,27 @@ describe('loadPlugins', () => {
 
             expect(result).toHaveLength(1);
             expect(result[0]).toEqual({ type: 'local', path: externalPlugin });
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                name: 'shared-plugin',
+                msg:  'Skipping marketplace plugin (already loaded from higher priority source)',
+            });
+        });
+
+        test('should load a marketplace plugin only once when configured twice', async () => {
+            const marketplacePlugin = path.join(marketplaceDir, 'repeated-plugin', '1.0.0');
+            await createMockPluginDir(marketplacePlugin);
+            await mockFsPromises.writeFile(
+                path.join(pluginsDir, 'plugins.json'),
+                JSON.stringify({ externalPaths: [], marketplace: ['repeated-plugin', 'repeated-plugin'] })
+            );
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            expect(result).toEqual([{ type: 'local', path: marketplacePlugin }]);
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                name: 'repeated-plugin',
+                msg:  'Skipping marketplace plugin (already loaded from higher priority source)',
+            });
         });
 
         test('should load plugins from all sources when no duplicates', async () => {
@@ -382,6 +447,54 @@ describe('loadPlugins', () => {
             expect(paths).toContain(inRepoPlugin);
             expect(paths).toContain(externalPlugin);
             expect(paths).toContain(marketplacePlugin);
+        });
+
+        test('preserves configuration and source-priority order while retaining the highest-priority duplicate', async () => {
+            const inRepoFirst = path.join(pluginsDir, 'in-repo-first');
+            const inRepoShared = path.join(pluginsDir, 'shared-plugin');
+            const externalFirst = path.join(tempDir, 'external-first');
+            const externalShared = path.join(tempDir, 'shared-plugin');
+            const externalSecond = path.join(tempDir, 'external-second');
+            const marketplaceFirst = path.join(marketplaceDir, 'marketplace-first', '1.0.0');
+            const marketplaceShared = path.join(marketplaceDir, 'shared-plugin', '1.0.0');
+            const marketplaceSecond = path.join(marketplaceDir, 'marketplace-second', '1.0.0');
+
+            await Promise.all([
+                inRepoFirst,
+                inRepoShared,
+                externalFirst,
+                externalShared,
+                externalSecond,
+                marketplaceFirst,
+                marketplaceShared,
+                marketplaceSecond,
+            ].map(pluginPath => createMockPluginDir(pluginPath)));
+
+            await mockFsPromises.writeFile(path.join(pluginsDir, 'plugins.json'), JSON.stringify({
+                externalPaths: [externalFirst, externalShared, externalSecond],
+                marketplace:   ['marketplace-first', 'shared-plugin', 'marketplace-second'],
+            }));
+
+            const plugins = await loadPlugins(pluginsDir, marketplaceDir);
+            expect(plugins.slice(0, 2)).toEqual(expect.arrayContaining([
+                { type: 'local', path: inRepoFirst },
+                { type: 'local', path: inRepoShared },
+            ]));
+            expect(plugins.slice(2)).toEqual([
+                { type: 'local', path: externalFirst },
+                { type: 'local', path: externalSecond },
+                { type: 'local', path: marketplaceFirst },
+                { type: 'local', path: marketplaceSecond },
+            ]);
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                name: 'shared-plugin',
+                path: externalShared,
+                msg:  'Skipping external plugin (already loaded from higher priority source)',
+            });
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                name: 'shared-plugin',
+                msg:  'Skipping marketplace plugin (already loaded from higher priority source)',
+            });
         });
     });
 
@@ -455,7 +568,46 @@ describe('loadPlugins', () => {
                         msg: expect.stringContaining(expectedWarning),
                     })
                 );
+                expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            } else {
+                expect(mockLogger.warn).not.toHaveBeenCalled();
             }
+        });
+
+        test('uses the default marketplace directory when no path is supplied', async () => {
+            const defaultMarketplace = path.join(homedir(), '.claude', 'plugins');
+            const pluginPath = path.join(defaultMarketplace, 'default-plugin', '1.0.0');
+            try {
+                await createMockPluginDir(pluginPath);
+                await mockFsPromises.writeFile(
+                    path.join(pluginsDir, 'plugins.json'),
+                    JSON.stringify({ marketplace: ['default-plugin'] })
+                );
+                expect(await loadPlugins(pluginsDir)).toEqual([{ type: 'local', path: pluginPath }]);
+            } finally {
+                await mockFsPromises.rm(defaultMarketplace, { recursive: true, force: true });
+            }
+        });
+
+        test('logs the exact accepted plugin names and counts by source', async () => {
+            const inRepoPlugin = path.join(pluginsDir, 'internal');
+            const externalPlugin = path.join(tempDir, 'external');
+            const marketplacePlugin = path.join(marketplaceDir, 'catalog', '1.0.0');
+            await Promise.all([
+                createMockPluginDir(inRepoPlugin),
+                createMockPluginDir(externalPlugin),
+                createMockPluginDir(marketplacePlugin),
+            ]);
+            await mockFsPromises.writeFile(path.join(pluginsDir, 'plugins.json'), JSON.stringify({
+                externalPaths: [externalPlugin], marketplace: ['catalog'],
+            }));
+
+            expect(await loadPlugins(pluginsDir, marketplaceDir)).toHaveLength(3);
+            expect(mockLogger.info.mock.calls.map(call => call[0])).toEqual([
+                { count: 1, plugins: ['internal'], msg: 'Discovered in-repo plugins' },
+                { count: 1, plugins: ['external'], msg: 'Loaded external plugins' },
+                { count: 1, plugins: ['catalog'], msg: 'Loaded marketplace plugins' },
+            ]);
         });
 
         test('should handle missing plugins directory gracefully', async () => {
@@ -464,6 +616,7 @@ describe('loadPlugins', () => {
             const result = await loadPlugins(pluginsDir, marketplaceDir);
 
             expect(result).toHaveLength(0);
+            expect(mockLogger.info).not.toHaveBeenCalled();
         });
 
         test('should handle missing marketplace directory gracefully', async () => {

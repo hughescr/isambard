@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import type { AllowlistSagaBackend } from '@/services/allowlist-saga/backend';
 import { AllowlistSagaExecutor } from '@/services/allowlist-saga/executor';
-import type { AllowlistSaga } from '@/services/allowlist-saga/types';
+import { allowlistSagaSchema, type AllowlistSaga } from '@/services/allowlist-saga/types';
 import type { ContactBackend } from '@/storage/contacts/backend';
 import type { Contact, ContactId } from '@/storage/contacts/types';
 import type { PersonAllowlist } from '@/storage/person-allowlist';
@@ -30,6 +30,12 @@ function makeSaga(overrides: Partial<AllowlistSaga> = {}): AllowlistSaga {
         updatedAt:       '2026-01-01T00:00:00.000Z',
         ...overrides,
     };
+}
+
+function controlledPromise(): { promise: Promise<void>, start: () => void, started: Promise<void>, resolve: () => void } {
+    const gate = Promise.withResolvers<void>();
+    const signal = Promise.withResolvers<void>();
+    return { promise: gate.promise, start: () => signal.resolve(), started: signal.promise, resolve: () => gate.resolve() };
 }
 
 describe('AllowlistSagaExecutor', () => {
@@ -114,6 +120,9 @@ describe('AllowlistSagaExecutor', () => {
                     addedBy:         'outbound-approval',
                 })
             );
+            const created = (allowlistSagaBackend.create as ReturnType<typeof jest.fn>).mock.calls[0]?.[0] as AllowlistSaga;
+            expect(created.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+            expect(created.updatedAt).toBe(created.createdAt);
         });
 
         test('returns need_name with sagaId and hint when no contact found', async () => {
@@ -126,6 +135,19 @@ describe('AllowlistSagaExecutor', () => {
                 expect(result.hint).toBe('Alice');
                 expect(result.sagaId).toMatch(/^[0-9a-f-]{36}$/);
             }
+        });
+
+        test('rejects a sparse identifier match array with the persisted-data invariant', async () => {
+            const sparseMatches: Contact[] = [];
+            sparseMatches.length = 1;
+            jest.spyOn(contactBackend, 'resolveIdentifier').mockResolvedValue(sparseMatches);
+
+            await expect(executor.start('email', 'alice@example.com')).rejects.toMatchObject({
+                context: {
+                    location:  'start',
+                    invariant: 'matches[0] undefined despite matches.length > 0',
+                },
+            });
         });
     });
 
@@ -191,6 +213,20 @@ describe('AllowlistSagaExecutor', () => {
                 matchPersonId: 'bob-jones' as ContactId,
             });
         });
+
+        test('rejects a sparse fuzzy-match result array with the persisted-data invariant', async () => {
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga());
+            const sparseMatches: Contact[] = [];
+            sparseMatches.length = 1;
+            jest.spyOn(contactBackend, 'fuzzyLookup').mockResolvedValue(sparseMatches);
+
+            await expect(executor.submitName(SAGA_UUID, 'Bob')).rejects.toMatchObject({
+                context: {
+                    location:  'submitName',
+                    invariant: 'fuzzyMatches[0] undefined despite matches.length > 0',
+                },
+            });
+        });
     });
 
     describe('confirmMatch()', () => {
@@ -254,6 +290,21 @@ describe('AllowlistSagaExecutor', () => {
 
             expect(result).toEqual({ action: 'cancelled' });
         });
+
+        test('rejects a persisted out-of-range matchIndex with the persisted-data invariant', async () => {
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga({
+                state:        'pending_review',
+                fuzzyMatches: ['bob-jones'],
+                matchIndex:   4,
+            }));
+
+            await expect(executor.confirmMatch(SAGA_UUID)).rejects.toMatchObject({
+                context: {
+                    location:  'confirmMatch',
+                    invariant: 'fuzzyMatches[matchIndex] undefined despite valid saga state',
+                },
+            });
+        });
     });
 
     describe('skipMatch()', () => {
@@ -291,12 +342,53 @@ describe('AllowlistSagaExecutor', () => {
             expect(result.action).toBe('completed');
         });
 
+        test.each([
+            ['display-name hint', { displayNameHint: 'Alice Hint' }, 'Alice Hint'],
+            ['identifier value', {}, 'alice@example.com'],
+        ] as const)('uses the %s for an accepted review row without an admin display name', async (_label, optionalNames, expectedName) => {
+            const persisted = allowlistSagaSchema.parse(makeSaga({
+                state:        'pending_review',
+                fuzzyMatches: ['alice-a'],
+                matchIndex:   0,
+                ...optionalNames,
+            }));
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(persisted);
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
+
+            const result = await executor.skipMatch(SAGA_UUID);
+
+            expect(contactBackend.putContact).toHaveBeenCalledWith(expect.objectContaining({
+                personId:    expect.any(String),
+                displayName: expectedName,
+            }));
+            expect(result).toEqual(expect.objectContaining({ action: 'completed', displayName: expectedName }));
+            expect(allowlistSagaBackend.update).toHaveBeenCalledWith(SAGA_UUID, expect.objectContaining({
+                state:          'completed',
+                resultPersonId: expect.any(String),
+            }));
+        });
+
         test('returns cancelled for invalid state', async () => {
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'pending_name' }));
 
             const result = await executor.skipMatch(SAGA_UUID);
 
             expect(result).toEqual({ action: 'cancelled' });
+        });
+
+        test('rejects a sparse persisted fuzzyMatches array with the persisted-data invariant', async () => {
+            const fuzzyMatches = ['alice-a'] as string[];
+            fuzzyMatches.length = 2;
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga({
+                state: 'pending_review', fuzzyMatches, matchIndex: 0,
+            }));
+
+            await expect(executor.skipMatch(SAGA_UUID)).rejects.toMatchObject({
+                context: {
+                    location:  'skipMatch',
+                    invariant: 'fuzzyMatches[nextIndex] undefined despite nextIndex < fuzzyMatches.length',
+                },
+            });
         });
     });
 
@@ -388,6 +480,116 @@ describe('AllowlistSagaExecutor', () => {
             const result = await executor.cancel(SAGA_UUID);
 
             expect(result).toEqual({ action: 'cancelled' });
+        });
+    });
+
+    describe('public completion boundaries', () => {
+        const cases: [string, string, string][] = [
+            ['start existing contact allowlist write', 'start-existing', 'addPerson'],
+            ['start new saga persistence', 'start-new', 'update'],
+            ['submit-name review persistence', 'submit-review', 'update'],
+            ['confirm-match identifier write', 'confirm', 'addIdentifier'],
+            ['confirm-match allowlist write', 'confirm', 'addPerson'],
+            ['confirm-match allowlist refresh', 'confirm', 'refreshPerson'],
+            ['confirm-match completion persistence', 'confirm', 'update'],
+            ['skip-match index persistence', 'skip', 'update'],
+            ['cancellation persistence', 'cancel', 'update'],
+            ['create-new allowlist write', 'create-new', 'addPerson'],
+            ['create-new completion persistence', 'create-new', 'update'],
+        ];
+
+        test.each(cases)('waits for %s', async (_name, method, target) => {
+            const localContactBackend = {
+                resolveIdentifier: jest.fn(async (): Promise<Contact[]> => []),
+                fuzzyLookup:       jest.fn(async (): Promise<Contact[]> => []),
+                addIdentifier:     jest.fn(async () => undefined),
+                getContact:        jest.fn(async (): Promise<Contact | undefined> => undefined),
+                putContact:        jest.fn(async () => undefined),
+            } as unknown as ContactBackend;
+            const localAllowlist = {
+                addPerson:     jest.fn(async () => undefined),
+                refreshPerson: jest.fn(async () => undefined),
+            } as unknown as PersonAllowlist;
+            const localSagaBackend = {
+                create: jest.fn(async () => undefined),
+                get:    jest.fn(async (): Promise<AllowlistSaga | undefined> => undefined),
+                update: jest.fn(async () => undefined),
+            } as unknown as AllowlistSagaBackend;
+            const localExecutor = new AllowlistSagaExecutor({
+                contactBackend: localContactBackend, personAllowlist: localAllowlist, allowlistSagaBackend: localSagaBackend,
+            });
+            const gate = controlledPromise();
+            let targetMock;
+            switch(target) {
+                case 'addIdentifier': {
+                    targetMock = localContactBackend.addIdentifier;
+                    break;
+                }
+                case 'addPerson': {
+                    targetMock = localAllowlist.addPerson;
+                    break;
+                }
+                case 'refreshPerson': {
+                    targetMock = localAllowlist.refreshPerson;
+                    break;
+                }
+                default: { targetMock = method === 'start-new' ? localSagaBackend.create : localSagaBackend.update;
+                }
+            }
+            (targetMock as ReturnType<typeof jest.fn>).mockImplementation(() => {
+                gate.start();
+                return gate.promise;
+            });
+
+            const bob = makeContact('bob-jones' as ContactId, 'Bob Jones');
+            let completion: Promise<unknown>;
+            switch(method) {
+                case 'start-existing': {
+                    jest.spyOn(localContactBackend, 'resolveIdentifier').mockResolvedValue([bob]);
+                    completion = localExecutor.start('email', 'bob@example.com');
+                    break;
+                }
+                case 'start-new': {
+                    completion = localExecutor.start('email', 'alice@example.com');
+                    break;
+                }
+                case 'submit-review': {
+                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(makeSaga());
+                    jest.spyOn(localContactBackend, 'fuzzyLookup').mockResolvedValue([bob]);
+                    completion = localExecutor.submitName(SAGA_UUID, 'Bob');
+                    break;
+                }
+                case 'confirm': {
+                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'pending_review', fuzzyMatches: ['bob-jones'], matchIndex: 0 }));
+                    completion = localExecutor.confirmMatch(SAGA_UUID);
+                    break;
+                }
+                case 'skip': {
+                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'pending_review', fuzzyMatches: ['alice-a', 'alice-b'], matchIndex: 0 }));
+                    completion = localExecutor.skipMatch(SAGA_UUID);
+                    break;
+                }
+                case 'cancel': {
+                    completion = localExecutor.cancel(SAGA_UUID);
+                    break;
+                }
+                default: {
+                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'pending_name', displayNameHint: 'Alice Smith' }));
+                    completion = localExecutor.createNew(SAGA_UUID);
+                }
+            }
+            let completed = false;
+            const observed = completion.finally(() => {
+                completed = true;
+            });
+            try {
+                await gate.started;
+                await Bun.sleep(0);
+                expect(completed).toBe(false);
+            } finally {
+                gate.resolve();
+                await observed;
+            }
         });
     });
 });

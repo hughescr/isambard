@@ -1,7 +1,7 @@
 /**
- * Pure argv parsing for scripts/spike-long-lived-session.ts, split into its own side-effect-free
- * module so it can be unit tested without importing (and thereby executing) the spike itself,
- * which runs against the real Agent SDK and spends real tokens.
+ * Pure argv parsing for scripts/spike-long-lived-session.ts, kept separate so argument tests
+ * need not load the spike module. Importing that module creates a temporary workdir and reads
+ * installed SDK metadata; its real SDK questions run only when executed as the CLI entry point.
  *
  * Accepts `[q1,q2,...] [--record[=dir]]` in either argument order. `--record=<dir>` (rather than
  * a bare positional after `--record`) is deliberate: a positional-after-flag design cannot tell

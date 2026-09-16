@@ -116,6 +116,12 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result[1]).toBe('CCC.');
             });
 
+            test('should prefer whole sentences over a denser word packing', () => {
+                const message = 'abc. def ghi.';
+                const result = splitMessage(message, 10);
+                expect(result).toEqual(['abc.', 'def ghi.']);
+            });
+
             test('should return empty string array for empty sentence result', () => {
                 // Tests: return chunks.length > 0 ? chunks : ['']
                 // This is hard to trigger directly - sentences would need to produce empty chunks

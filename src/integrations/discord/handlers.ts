@@ -19,6 +19,12 @@ function isTypingChannel(channel: unknown): channel is { sendTyping(): Promise<v
     return typeof channel === 'object' && channel !== null && 'sendTyping' in channel;
 }
 
+function channelDisplayName(message: Message): string {
+    return 'name' in message.channel && typeof message.channel.name === 'string'
+        ? message.channel.name
+        : message.channel.id;
+}
+
 /**
  * Helper function to extract attachment metadata from a Discord message.
  * Converts Discord.js Attachment objects to AttachmentMetadata.
@@ -27,19 +33,14 @@ function isTypingChannel(channel: unknown): channel is { sendTyping(): Promise<v
  * @returns Array of attachment metadata
  */
 export function extractAttachmentMetadata(message: Message): AttachmentMetadata[] {
-    // Stryker disable next-line ConditionalExpression: Equivalent for the message-handler tests that cover this — attachments is always a proper Map (never undefined) in those tests; empty Map → Array.from([]).values() returns [] either way
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: message.attachments typed non-nullable but checking defensively against SDK reality
-    if(!message.attachments || message.attachments.size === 0) {
+    if(message.attachments.size === 0) {
         return [];
     }
 
     return [...message.attachments.values()].map(attachment => ({
         url:         attachment.url,
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: attachment.name typed as string but may be null at runtime
-        filename:    attachment.name ?? 'unknown',
-        // Stryker disable next-line StringLiteral: Equivalent — when attachment.name is null and contentType is null, inferImageContentType('unknown', null) and inferImageContentType('', null) both return 'application/octet-stream'; when contentType is valid (e.g., 'image/png'), the filename is ignored entirely
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: attachment.name typed as string but may be null at runtime
-        contentType: inferImageContentType(attachment.name ?? 'unknown', attachment.contentType),
+        filename:    attachment.name,
+        contentType: inferImageContentType(attachment.name, attachment.contentType),
         size:        attachment.size,
         width:       attachment.width ?? undefined,
         height:      attachment.height ?? undefined,
@@ -59,15 +60,16 @@ export function extractAttachmentMetadata(message: Message): AttachmentMetadata[
  * client.on('clientReady', createReadyHandler());
  * ```
  */
+function readyHandler(client: Client): void {
+    if(client.user) {
+        logger.info(`Discord bot ready: Logged in as ${client.user.tag}`);
+    } else {
+        logger.info('Discord bot ready: Logged in (user not available)');
+    }
+}
+
 export function createReadyHandler(): (client: Client) => void {
-    // eslint-disable-next-line unicorn/consistent-function-scoping -- factory pattern: returns a handler function; keeping inner arrow for future extensibility when params are added
-    return (client: Client) => {
-        if(client.user) {
-            logger.info(`Discord bot ready: Logged in as ${client.user.tag}`);
-        } else {
-            logger.info('Discord bot ready: Logged in (user not available)');
-        }
-    };
+    return readyHandler;
 }
 
 /**
@@ -83,12 +85,12 @@ export function createReadyHandler(): (client: Client) => void {
  * client.on('error', createErrorHandler());
  * ```
  */
+function errorHandler(error: Error): void {
+    logger.error({ error, msg: `Discord client error: ${error.message}` });
+}
+
 export function createErrorHandler(): (error: Error) => void {
-    // eslint-disable-next-line unicorn/consistent-function-scoping -- factory pattern: returns a handler function; keeping inner arrow for future extensibility when params are added
-    return (error: Error) => {
-        // Use object spread to satisfy logger typing while maintaining structured logging
-        logger.error({ error, msg: `Discord client error: ${error.message}` });
-    };
+    return errorHandler;
 }
 
 /**
@@ -231,16 +233,13 @@ class PerchResponseNotSentError extends Error {}
  * Helper function to update channel metadata in inbox manager.
  * This is a synchronous operation that just updates the cache.
  */
-// Stryker disable StringLiteral,LogicalOperator,BlockStatement: Optional inbox integration - tested via inbox-manager.test.ts; BlockStatement equivalent (fire-and-forget metadata update, no observable state)
 function updateChannelMetadataInInbox(
     message: Message,
     inboxManager: InboxManager
 ): void {
-    const channel = message.channel as TextChannel;
     inboxManager.updateChannelMetadata(
         createChannelId(message.channel.id),
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: DM channels have null name despite TextChannel cast
-        channel.name ?? message.channel.id,
+        channelDisplayName(message),
         createGuildId(message.guild?.id ?? 'DM')
     );
 }
@@ -283,7 +282,6 @@ async function updateInboxCheckpoint(
  * Helper function to check if a message should be ignored.
  * Returns true if the message is from a bot or from the bot itself.
  */
-// Stryker disable ConditionalExpression,EqualityOperator,BooleanLiteral: shouldIgnoreMessage guards — flipping bot/self checks causes test feedback loops (bot processes its own messages)
 function shouldIgnoreMessage(message: Message, botUserId: UserId): boolean {
     // Ignore bot messages
     if(message.author.bot) {
@@ -314,9 +312,7 @@ async function determineResponseContext(
 
     // Check for reply to bot
     let isReplyToBot = false;
-    // Stryker disable next-line ConditionalExpression: Guard skips fetch when no reference exists; catch swallows the same failure
     if(message.reference?.messageId) {
-        // Stryker disable BlockStatement — Discord API call to fetch referenced message; catch silently ignores unavailable/deleted messages
         try {
             const referencedMessage = await message.fetchReference();
             isReplyToBot = referencedMessage.author.id === botUserId;
@@ -334,8 +330,7 @@ async function determineResponseContext(
     // For thread messages, check parent channel mute state
     // If parent is muted, threads inherit the mute unless override conditions apply
     let shouldRespond = channelRegistry.shouldProcess(channelId, isDM, isMention, isReplyToBot);
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: isThread typed as non-optional but may be absent on older discord.js versions
-    if(shouldRespond && message.channel.isThread?.() && message.channel.parentId) {
+    if(shouldRespond && message.channel.isThread() && message.channel.parentId) {
         const parentChannelId = createChannelId(message.channel.parentId);
         // Check if parent channel is muted. Override conditions (mention, reply) still apply - if someone @mentions Izzy in a thread of a muted channel, still respond.
         shouldRespond = channelRegistry.shouldProcess(parentChannelId, false, isMention, isReplyToBot);
@@ -387,7 +382,6 @@ async function handlePendingQuestion(
         targetUserId:        pendingQuestion.targetUserId,
     });
 
-    // Stryker disable all: Logger debug object
     logger.debug({
         questionId: pendingQuestion.questionId,
         channelId:  lookupChannelId,
@@ -398,14 +392,12 @@ async function handlePendingQuestion(
     // Stryker restore all
 
     if(classification === 'answer') {
-        // Stryker disable all: Logger info object
         logger.info({
             questionId:  pendingQuestion.questionId,
             responderId: message.author.id,
             messageId:   message.id,
             msg:         'Question resolved with text answer',
         });
-        // Stryker restore all
 
         // Resolve the question - don't send to coordinator
         questionRegistry.resolveWithAnswer(pendingQuestion.questionId, {
@@ -419,12 +411,10 @@ async function handlePendingQuestion(
     }
 
     if(classification === 'interruption') {
-        // Stryker disable all: Logger info object
         logger.info({
             questionId: pendingQuestion.questionId,
             msg:        'Question cancelled due to interruption',
         });
-        // Stryker restore all
 
         // Cancel pending question and continue to normal processing
         questionRegistry.cancel(pendingQuestion.questionId);
@@ -432,12 +422,10 @@ async function handlePendingQuestion(
     }
 
     // Unrelated — send polite reply and keep question pending
-    // Stryker disable all: Logger debug object
     logger.debug({
         questionId: pendingQuestion.questionId,
         msg:        'Message classified as unrelated, question still pending',
     });
-    // Stryker restore all
     await withDiscordRetry(
         async () => {
             await message.reply({
@@ -518,8 +506,7 @@ async function submitPerchChannelMessage(
         authorId:    message.author.id,
         authorName:  message.author.username,
         channelId:   message.channel.id,
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: DM channels have null name despite TextChannel cast
-        channelName: channel.name ?? message.channel.id,
+        channelName: channel.name,
         isDM:        false,
         now:         new Date(),
         timezone,

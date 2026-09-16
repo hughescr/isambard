@@ -98,11 +98,9 @@ export function createCostCeiling(params: CreateCostCeilingParams): CostCeiling 
 
     function persist(): void {
         const current: CostCeilingSnapshot = { dateKey, totalUsd, paused };
-        if(
-            lastPersisted?.dateKey === current.dateKey
-            && lastPersisted.totalUsd === current.totalUsd
-            && lastPersisted.paused === current.paused
-        ) {
+        // `paused` is derived solely from the fixed ceiling and `totalUsd`, so equal date and
+        // total values necessarily describe the same complete snapshot.
+        if(lastPersisted?.dateKey === current.dateKey && lastPersisted.totalUsd === current.totalUsd) {
             return;
         }
         lastPersisted = current;
@@ -120,7 +118,6 @@ export function createCostCeiling(params: CreateCostCeilingParams): CostCeiling 
         totalUsd = 0;
         paused = false;
         if(wasPaused) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
             logger?.info({ dateKey }, 'Daily cost ceiling cleared at local midnight');
         }
         persist();
@@ -133,7 +130,6 @@ export function createCostCeiling(params: CreateCostCeilingParams): CostCeiling 
         }
         if(totalUsd >= ceilingUsd && !paused) {
             paused = true;
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
             logger?.warn({ dateKey, totalUsd, ceilingUsd }, 'Daily cost ceiling reached; perch paused');
         }
     }

@@ -1,5 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Guild, GuildChannel } from 'discord.js';
+import { mapBounded } from '../map-bounded';
 import { createChannelId, createGuildId } from '../types';
 import type { ChannelRegistryManager } from './manager';
 import type { ChannelMetadata } from './types';
@@ -17,7 +18,6 @@ import type { ChannelMetadata } from './types';
  * not silently no-op because WeakSet entries are GC'd with the client. The risk is only
  * if a *different* Client object is reused for the same logical role — currently unsupported.
  */
-// Stryker disable next-line ObjectLiteral: WeakSet construction is a module-level singleton — no testable variation
 const registeredClients = new WeakSet<Client>();
 
 /** Type guard: check if a channel has a 'guild' property (GuildChannel-like). */
@@ -51,11 +51,9 @@ export async function discoverAllChannels(
     const guildCount = client.guilds.cache.size;
     const startMs = Date.now();
 
-    // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
     logger.info({ guildCount, msg: 'Discovering channels across guilds...' });
 
-    // Create promises for discovering channels in each guild (parallel execution)
-    const guildPromises = [...client.guilds.cache.entries()].map(async ([guildId, guild]) => {
+    const results = await mapBounded([...client.guilds.cache.entries()], 3, async ([guildId, guild]) => {
         try {
             const guildResult = await discoverGuildChannels(guild, manager);
             return {
@@ -74,26 +72,18 @@ export async function discoverAllChannels(
         }
     });
 
-    // Execute all guild discoveries in parallel
-    const results = await Promise.allSettled(guildPromises);
-
     // Aggregate results
-    for(const settledResult of results) {
-        // All promises are fulfilled because try-catch in async callback handles all errors
-        if(settledResult.status === 'fulfilled') {
-            const value = settledResult.value;
-            result.discovered += value.discovered;
-            result.updated += value.updated;
-            if(value.error) {
-                result.errors.push({
-                    guildId: value.guildId,
-                    error:   value.error,
-                });
-            }
+    for(const value of results) {
+        result.discovered += value.discovered;
+        result.updated += value.updated;
+        if(value.error) {
+            result.errors.push({
+                guildId: value.guildId,
+                error:   value.error,
+            });
         }
     }
 
-    // Stryker disable next-line ObjectLiteral,StringLiteral,ArithmeticOperator: Logging for observability
     logger.info({ discovered: result.discovered, updated: result.updated, elapsedMs: Date.now() - startMs, msg: 'Channel discovery complete' });
 
     return result;
@@ -106,24 +96,19 @@ async function discoverGuildChannels(
     guild: Guild,
     manager: ChannelRegistryManager
 ): Promise<{ discovered: number, updated: number }> {
-    let discovered = 0;
-    let updated = 0;
-
     // Fetch all channels (ensures cache is populated)
     const channels = await guild.channels.fetch();
-
-    for(const [channelId, channel] of channels) {
+    const outcomes = await mapBounded([...channels], 5, async ([channelId, channel]) => {
         if(!channel) {
-            continue;
+            return undefined;
         }
 
         // Skip categories and non-text channels
         if(!isTextBasedChannel(channel)) {
-            continue;
+            return undefined;
         }
 
         // Check if already in registry
-        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
         const existing = await manager.getChannel(createChannelId(channelId));
         if(existing) {
             // Update existing channel: merge Discord metadata while preserving user settings
@@ -135,20 +120,20 @@ async function discoverGuildChannels(
                 updatedAt:   now,                // Update modification timestamp
                 // Preserve user settings: isMuted, isWellKnown, discoveredAt
             };
-            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB write per channel
             await manager.upsertChannel(updatedMetadata);
-            updated++;
-            continue;
+            return 'updated';
         }
 
         // Create metadata and upsert
         const metadata = createChannelMetadata(channel, guild);
-        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB write per channel
         await manager.upsertChannel(metadata);
-        discovered++;
-    }
+        return 'discovered';
+    }, { drainOnError: true });
 
-    return { discovered, updated };
+    return {
+        discovered: outcomes.filter(outcome => outcome === 'discovered').length,
+        updated:    outcomes.filter(outcome => outcome === 'updated').length,
+    };
 }
 
 /**
@@ -185,7 +170,6 @@ export function setupChannelEventHandlers(
     client: Client,
     manager: ChannelRegistryManager
 ): void {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: idempotency guard — second call must not re-register handlers; tested by 'calling twice registers handlers only once'
     if(registeredClients.has(client)) {
         return;
     }
@@ -193,8 +177,7 @@ export function setupChannelEventHandlers(
 
     // Channel created
     client.on('channelCreate', (channel) => {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: channel.guild typed non-nullable but DM/unknown channels may lack guild at runtime
-        if(!hasGuild(channel) || !channel.guild) {
+        if(!hasGuild(channel)) {
             return;
         }
         if(!isTextBasedChannel(channel)) {
@@ -207,8 +190,7 @@ export function setupChannelEventHandlers(
 
     // Channel updated (name change, etc.)
     client.on('channelUpdate', (_oldChannel, newChannel) => {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: newChannel.guild typed non-nullable but DM/unknown channels may lack guild at runtime
-        if(!hasGuild(newChannel) || !newChannel.guild) {
+        if(!hasGuild(newChannel)) {
             return;
         }
         if(!isTextBasedChannel(newChannel)) {

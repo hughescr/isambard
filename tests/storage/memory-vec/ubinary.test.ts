@@ -2,6 +2,7 @@
  * Tests for ubinary.ts — sign-bit packing (1024 floats → 128 bytes)
  */
 import { describe, expect, it } from 'bun:test';
+import { InvariantViolationError } from '@/errors';
 import { packSignBits } from '@/storage/memory-vec/ubinary';
 
 describe('packSignBits', () => {
@@ -138,6 +139,21 @@ describe('packSignBits', () => {
     it('throws when dim is 0', () => {
         const input = new Float32Array(0);
         expect(() => packSignBits(input, 1, 0)).toThrow('dim must be a positive multiple of 8, got 0');
+    });
+
+    it('reports packSignBits as the failed operation for invalid dimensions', () => {
+        let caught: unknown;
+        try {
+            packSignBits(new Float32Array(1), 1, 7);
+        } catch (error) {
+            caught = error;
+        }
+        expect(caught).toBeInstanceOf(InvariantViolationError);
+        expect((caught as InvariantViolationError).context).toMatchObject({ location: 'packSignBits' });
+    });
+
+    it('pads missing trailing floats with zero bits', () => {
+        expect(packSignBits(new Float32Array([1]), 1, 8)).toEqual(new Uint8Array([0x80]));
     });
 
     it('produces identical output for identical input (deterministic)', () => {

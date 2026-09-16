@@ -94,8 +94,7 @@ export class PresenceManager {
     private presenceDisplayMode: PresenceDisplayMode = 'none'; // Track presence display mode for status prefixes
     // P11: set only by applyView(), never by the oneshot updatePhase/transitionPresenceDisplayMode paths.
     // Non-null means the idle refresh loop should render via the composed prefix, not the legacy '💤 ' default.
-    private composedPrefix:      string | null = null;
-    private composedCompacting = false;
+    private composedIdle:        { prefix: string, compacting: boolean } | null = null;
     /**
      * The last activity Discord actually accepted (name + type), used to drop an update that
      * would change nothing — the composition upstream can legitimately produce the same text
@@ -146,7 +145,6 @@ export class PresenceManager {
                     user.setActivity(activity);
                     return Promise.resolve(true);
                 },
-                // Stryker disable next-line ObjectLiteral: Retry policy already tested in retry module
                 { policy: { maxAttempts: 2 } }
             );
             // Only an apply that actually reached Discord is remembered — see lastAppliedActivity.
@@ -162,16 +160,10 @@ export class PresenceManager {
     /**
      * Generate and apply idle status.
      *
-     * Note: The guard `if(currentPhase?.type !== 'idle')` is defensive code that handles
-     * a theoretical race condition where the interval callback fires just as we're
-     * transitioning away from idle. In practice, stopIdleRefresh() clears the interval
-     * before the phase change is complete, making this guard unreachable during normal
-     * execution. Stryker mutations on this guard (if(false), optional chaining removal,
-     * empty block) are effectively equivalent mutants since the guard can only trigger
-     * in edge-case timing scenarios that are difficult to reliably reproduce in tests.
+     * The interval callback may already be queued when a phase transition clears its
+     * timer, so check the current phase before starting another idle generation.
      */
     private async refreshIdleStatus(): Promise<void> {
-        // Stryker disable next-line ConditionalExpression,OptionalChaining,BlockStatement: Defensive guard for race condition - unreachable in tests
         if(this.currentPhase?.type !== 'idle') {
             return; // No longer idle
         }
@@ -182,13 +174,15 @@ export class PresenceManager {
         // picked up by the very next periodic tick instead of lingering indefinitely.
         const recomposed = this.deps.recomposeIdlePrefix?.();
         if(recomposed) {
-            this.composedPrefix = recomposed.prefix;
-            this.composedCompacting = recomposed.compacting;
+            this.composedIdle = { prefix: recomposed.prefix, compacting: recomposed.compacting };
         }
 
         // Capture current mode/prefix at start to detect stale results
         const modeAtStart = this.presenceDisplayMode;
-        const prefixAtStart = this.composedPrefix;
+        const composedAtStart = this.composedIdle === null
+            ? null
+            : { prefix: this.composedIdle.prefix, compacting: this.composedIdle.compacting };
+        const prefixAtStart = composedAtStart?.prefix ?? null;
 
         // Coalesce concurrent refreshes for the SAME prefix: at boot both sessions go idle a few
         // hundred ms apart, and each idle view calls in here while the first Haiku generation is
@@ -198,7 +192,7 @@ export class PresenceManager {
         if(this.inFlightIdleRefresh !== null && this.inFlightIdleRefresh.prefix === prefixAtStart) {
             return this.inFlightIdleRefresh.promise;
         }
-        const promise = this.generateAndApplyIdle(modeAtStart, prefixAtStart).finally(() => {
+        const promise = this.generateAndApplyIdle(modeAtStart, composedAtStart).finally(() => {
             if(this.inFlightIdleRefresh?.promise === promise) {
                 this.inFlightIdleRefresh = null;
             }
@@ -208,12 +202,17 @@ export class PresenceManager {
     }
 
     /** The generate-then-apply half of {@link refreshIdleStatus}, split out so the in-flight coalescing above can hold its promise. */
-    private async generateAndApplyIdle(modeAtStart: PresenceDisplayMode, prefixAtStart: string | null): Promise<void> {
+    private async generateAndApplyIdle(
+        modeAtStart: PresenceDisplayMode,
+        composedAtStart: { prefix: string, compacting: boolean } | null
+    ): Promise<void> {
         // P11: once applyView() has composed a prefix, every idle refresh renders through it
         // instead of the legacy bare '💤 ' default.
-        const activity = prefixAtStart === null
+        const activity = composedAtStart === null
             ? await this.deps.idleStatusGenerator.generate()
-            : await this.deps.idleStatusGenerator.generate({ prefix: prefixAtStart, compacting: this.composedCompacting });
+            : await this.deps.idleStatusGenerator.generate({
+                prefix: composedAtStart.prefix, compacting: composedAtStart.compacting,
+            });
 
         // Either path: the session went busy while Haiku was writing an idle line (a follow-up
         // message interrupting a turn goes idle for a few hundred ms before the next turn opens) —
@@ -223,15 +222,15 @@ export class PresenceManager {
             return;
         }
 
-        if(prefixAtStart === null) {
+        if(composedAtStart === null) {
             // Legacy path: check if display mode changed while generating - if so, discard stale result
             if(this.presenceDisplayMode !== modeAtStart) {
                 this.deps.logger.debug({ modeAtStart, currentMode: this.presenceDisplayMode }, 'Discarding stale idle status (mode changed during generation)');
                 return;
             }
-        } else if(this.composedPrefix !== prefixAtStart) {
+        } else if(this.composedIdle?.prefix !== composedAtStart.prefix) {
             // P11 path: check if the composed prefix changed while generating - if so, discard stale result
-            this.deps.logger.debug({ prefixAtStart, currentPrefix: this.composedPrefix }, 'Discarding stale idle status (composed prefix changed during generation)');
+            this.deps.logger.debug({ prefixAtStart: composedAtStart.prefix, currentPrefix: this.composedIdle?.prefix }, 'Discarding stale idle status (composed prefix changed during generation)');
             return;
         }
 
@@ -254,8 +253,7 @@ export class PresenceManager {
         this.currentPhase = view.phase;
 
         if(view.phase.type === 'idle') {
-            this.composedPrefix = view.prefix;
-            this.composedCompacting = view.compacting;
+            this.composedIdle = { prefix: view.prefix, compacting: view.compacting };
             await (this.idleRefreshInterval ? this.refreshIdleStatus() : this.startIdleRefresh());
             return;
         }
@@ -271,11 +269,6 @@ export class PresenceManager {
      * Returns a promise that resolves after the first refresh completes.
      */
     private async startIdleRefresh(): Promise<void> {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: belt-and-braces guard — every caller (applyView, updatePhase, transitionPresenceDisplayMode) already branches on idleRefreshInterval before calling in, so no test can reach this with the interval set
-        if(this.idleRefreshInterval) {
-            return; // Already running
-        }
-
         // The periodic loop is registered SYNCHRONOUSLY, before the first (awaited) generation:
         // registering it only after that await let a second caller arriving mid-generation (the
         // second session going idle at boot) see a still-null interval and start a second loop —
@@ -315,11 +308,9 @@ export class PresenceManager {
      * @param mode - Presence display mode state
      */
     transitionPresenceDisplayMode(mode: PresenceDisplayMode): void {
-        // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
         this.deps.logger.debug({ mode, previousMode: this.presenceDisplayMode }, 'Setting presence display mode');
         this.presenceDisplayMode = mode;
 
-        // Stryker disable next-line ConditionalExpression: stopIdleRefresh() is idempotent — →true equivalent (adds harmless no-op when mode=none)
         if(mode !== 'none') {
             this.stopIdleRefresh();
         }
@@ -346,11 +337,9 @@ export class PresenceManager {
      * @param phase - Current activity phase
      */
     async updatePhase(phase: PresencePhase): Promise<void> {
-        // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         const logPhase = phase.type === 'idle'
             ? { ...phase, since: DateTime.fromJSDate(phase.since).toISO() }
             : phase;
-        // Stryker restore ObjectLiteral,StringLiteral
         this.deps.logger.debug({ phase: logPhase }, 'Updating presence phase');
 
         const wasIdle = this.currentPhase?.type === 'idle';
@@ -363,7 +352,6 @@ export class PresenceManager {
         if(nowIdle && !wasIdle) {
             // If presence display mode is active, don't start idle refresh yet.
             // The transitionPresenceDisplayMode('none') call will trigger idle refresh with correct mode.
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: display mode guard — mutating causes test timeout (idle refresh starts when display mode active)
             if(this.presenceDisplayMode === 'none') {
                 await this.startIdleRefresh();
             }
@@ -372,23 +360,17 @@ export class PresenceManager {
 
         // Already idle and staying idle - don't restart the refresh loop
         if(nowIdle && wasIdle) {
-            // Stryker disable next-line StringLiteral: log message — string mutation causes test timeout (presence state machine observes this log)
             this.deps.logger.debug('Already idle, skipping duplicate idle transition');
             return;
         }
 
-        // Transition FROM idle: stop the refresh loop
-        // Stryker disable next-line ConditionalExpression,LogicalOperator: Equivalent — stopIdleRefresh() is idempotent (no-op when no interval running); both →true and &&→|| only add no-op calls when !wasIdle
-        if(!nowIdle && wasIdle) {
-            this.stopIdleRefresh();
-        }
+        // Both idle cases returned above. Stopping is idempotent when this active phase did not
+        // follow idle, and clears a queued idle refresh when it did.
+        this.stopIdleRefresh();
 
         // Handle active phases (conductor-mode throttling is done upstream by presence-setup.ts)
-        // Stryker disable next-line ConditionalExpression: Equivalent — !nowIdle is always true here; both nowIdle branches above return early
-        if(!nowIdle) {
-            const activity = this.deps.activeStatusGenerator.generate(phase, this.presenceDisplayMode);
-            await this.applyPresenceUpdate(activity);
-        }
+        const activity = this.deps.activeStatusGenerator.generate(phase, this.presenceDisplayMode);
+        await this.applyPresenceUpdate(activity);
     }
 
     /**

@@ -4,7 +4,7 @@ import { ENVELOPE_KIND_TO_CHANNEL, ResponseRouter } from '../../../../../src/int
 import { NO_RESPONSE_SENTINEL } from '../../../../../src/integrations/discord/channel-registry/sentinel';
 import type { ChannelMetadata } from '../../../../../src/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
-import { InvariantViolationError, WellKnownChannelNotFoundError } from '@/errors';
+import { WellKnownChannelNotFoundError } from '@/errors';
 
 describe('ResponseRouter', () => {
     let router: ResponseRouter;
@@ -159,11 +159,21 @@ describe('ResponseRouter', () => {
         });
 
         it('throws InvariantViolationError for a discord-kind envelope with no originChannelId', async () => {
-            await expect(router.resolveEnvelopeTarget('discord', 'reply text')).rejects.toThrow(InvariantViolationError);
+            await expect(router.resolveEnvelopeTarget('discord', 'reply text')).rejects.toMatchObject({
+                context: {
+                    location:  'resolveEnvelopeTarget',
+                    invariant: 'originChannelId is required for envelope kind: discord',
+                },
+            });
         });
 
         it('throws InvariantViolationError for a notification-kind envelope with no originChannelId', async () => {
-            await expect(router.resolveEnvelopeTarget('notification', 'notice text')).rejects.toThrow(InvariantViolationError);
+            await expect(router.resolveEnvelopeTarget('notification', 'notice text')).rejects.toMatchObject({
+                context: {
+                    location:  'resolveEnvelopeTarget',
+                    invariant: 'originChannelId is required for envelope kind: notification',
+                },
+            });
         });
     });
 });

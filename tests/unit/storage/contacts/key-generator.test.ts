@@ -5,6 +5,14 @@ import type { ContactId } from '@/storage/contacts/types';
 const PERSON_ID = 'craig-hughes' as ContactId;
 
 describe.concurrent('ContactKeyGenerator', () => {
+    test.each([
+        ['profile PK', () => ContactKeyGenerator.parsePersonIdFromPK('OTHER#CONTACT#craig-hughes'), 'ContactKeyGenerator.parsePersonIdFromPK'],
+        ['lookup PK', () => ContactKeyGenerator.parseLookupPK('OTHER#CONTACT_LOOKUP#email#alice@example.com'), 'ContactKeyGenerator.parseLookupPK'],
+        ['lookup SK', () => ContactKeyGenerator.parsePersonIdFromLookupSK('OTHER#CONTACT#craig-hughes'), 'ContactKeyGenerator.parsePersonIdFromLookupSK'],
+    ])('rejects an expected prefix appearing only inside a %s', (_case, parse, location) => {
+        expect(parse).toThrow(expect.objectContaining({ context: expect.objectContaining({ location }) }));
+    });
+
     describe('createProfileKeys', () => {
         test('creates correct PK and SK', () => {
             const keys = ContactKeyGenerator.createProfileKeys(PERSON_ID);
@@ -80,6 +88,8 @@ describe.concurrent('ContactKeyGenerator', () => {
         test('throws on invalid PK format', () => {
             expect(() => ContactKeyGenerator.parsePersonIdFromPK('CONTACT_LOOKUP#email#test'))
                 .toThrow('Invalid PK format: expected CONTACT#..., got CONTACT_LOOKUP#email#test');
+            expect(() => ContactKeyGenerator.parsePersonIdFromPK('CONTACT_LOOKUP#email#test'))
+                .toThrow('Invariant violated in ContactKeyGenerator.parsePersonIdFromPK:');
         });
 
         test('throws on completely wrong PK', () => {
@@ -108,11 +118,15 @@ describe.concurrent('ContactKeyGenerator', () => {
         test('throws on invalid prefix', () => {
             expect(() => ContactKeyGenerator.parseLookupPK('CONTACT#craig-hughes'))
                 .toThrow('Invalid lookup PK format: expected CONTACT_LOOKUP#..., got CONTACT#craig-hughes');
+            expect(() => ContactKeyGenerator.parseLookupPK('CONTACT#craig-hughes'))
+                .toThrow('Invariant violated in ContactKeyGenerator.parseLookupPK:');
         });
 
         test('throws when missing platform separator', () => {
             expect(() => ContactKeyGenerator.parseLookupPK('CONTACT_LOOKUP#emailonly'))
                 .toThrow('Invalid lookup PK format: missing platform separator');
+            expect(() => ContactKeyGenerator.parseLookupPK('CONTACT_LOOKUP#emailonly'))
+                .toThrow('Invariant violated in ContactKeyGenerator.parseLookupPK:');
         });
 
         test('round-trips with createLookupKeys', () => {
@@ -165,6 +179,8 @@ describe.concurrent('ContactKeyGenerator', () => {
         test('throws on invalid SK format', () => {
             expect(() => ContactKeyGenerator.parsePersonIdFromLookupSK('PROFILE'))
                 .toThrow('Invalid lookup SK format: expected CONTACT#..., got PROFILE');
+            expect(() => ContactKeyGenerator.parsePersonIdFromLookupSK('PROFILE'))
+                .toThrow('Invariant violated in ContactKeyGenerator.parsePersonIdFromLookupSK:');
         });
 
         test('round-trips with createLookupKeys SK', () => {

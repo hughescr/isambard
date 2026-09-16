@@ -1,13 +1,22 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { mockLogger } from '../../../../setup';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import { runReconciliation, delay, retryWithBackoff, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
-import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '@/storage/memory-tool/types';
+import type { MemoryPath, MemoryToolItemData, TagIndexItem, TagIndexReadItem } from '@/storage/memory-tool/types';
+
+function namedError(name: string): Error {
+    const error = new Error(name);
+    error.name = name;
+    return error;
+}
 
 describe('delay', () => {
     beforeEach(() => {
         jest.useFakeTimers();
+        mockLogger.debug.mockReset();
+        mockLogger.warn.mockReset();
     });
 
     afterEach(() => {
@@ -25,6 +34,7 @@ describe('delay', () => {
         const controller = new AbortController();
         controller.abort();
         const rejected = delay(100, controller.signal);
+        expect(jest.getTimerCount()).toBe(0);
         await expect(rejected).rejects.toBeInstanceOf(DOMException);
         await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
     });
@@ -34,6 +44,7 @@ describe('delay', () => {
         const delayPromise = delay(100, controller.signal);
         // Advance time to fire the abort timeout (simulated as immediate abort)
         controller.abort();
+        expect(jest.getTimerCount()).toBe(0);
         await expect(delayPromise).rejects.toBeInstanceOf(DOMException);
         await expect(delayPromise).rejects.toMatchObject({ name: 'AbortError' });
     });
@@ -48,6 +59,8 @@ describe('delay', () => {
 describe('retryWithBackoff', () => {
     beforeEach(() => {
         jest.useFakeTimers();
+        mockLogger.debug.mockReset();
+        mockLogger.warn.mockReset();
     });
 
     afterEach(() => {
@@ -73,6 +86,11 @@ describe('retryWithBackoff', () => {
         const result = await resultPromise;
         expect(result).toBe('success');
         expect(op).toHaveBeenCalledTimes(2);
+        expect(mockLogger.debug).toHaveBeenCalledWith({
+            attempt: 1,
+            context: 'test',
+            msg:     'Reconciler retry 1/3',
+        });
     });
 
     test('should retry on ThrottlingException', async () => {
@@ -92,11 +110,14 @@ describe('retryWithBackoff', () => {
         // No retry delay for non-throttling errors
         await retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
         expect(op).toHaveBeenCalledTimes(1);
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+            context: 'test',
+            msg:     'Reconciler operation failed after 1 attempts',
+        }));
     });
 
     test('should return undefined after exhausting retries', async () => {
-        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
-        const op = mock(() => Promise.reject({ name: 'ThrottlingException' }));
+        const op = mock(() => Promise.reject(namedError('ThrottlingException')));
         // maxAttempts=3: attempt 1 fails→delay(1), attempt 2 fails→delay(2), attempt 3 fails→done
         // Each retry cycle: flush microtasks so retryWithBackoff registers the timer, then fire it
         const resultPromise = retryWithBackoff(op, { baseDelayMs: 1, maxAttempts: 3 }, 'test');
@@ -112,17 +133,15 @@ describe('retryWithBackoff', () => {
         const controller = new AbortController();
         const op = mock(() => {
             controller.abort();
-            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
-            return Promise.reject({ name: 'ThrottlingException' });
+            return Promise.reject(namedError('ValidationError'));
         });
         const rejected = retryWithBackoff(op, { baseDelayMs: 50, maxAttempts: 3 }, 'test', controller.signal);
         await expect(rejected).rejects.toBeInstanceOf(DOMException);
-        await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(rejected).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
     });
 
     test('should use exponential backoff (delays increase between retries)', async () => {
-        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
-        const op = mock(() => Promise.reject({ name: 'ThrottlingException' }));
+        const op = mock(() => Promise.reject(namedError('ThrottlingException')));
         // maxAttempts=3: attempts 1→delay(10), 2→delay(20), 3→done
         // We verify: 3 total calls (no early return), delays were attempted
         const resultPromise = retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
@@ -204,6 +223,9 @@ describe('runReconciliation', () => {
 
     beforeEach(() => {
         ddbMock.reset();
+        mockLogger.debug.mockReset();
+        mockLogger.info.mockReset();
+        mockLogger.warn.mockReset();
         tagIndex = new MemoryToolBackendTagIndex(
             ddbMock as unknown as DynamoDBDocumentClient,
             'TestTable'
@@ -401,6 +423,71 @@ describe('runReconciliation', () => {
                 'new content',
                 'identity'
             );
+            expect(createSpy).not.toHaveBeenCalled();
+        });
+
+        test.each([
+            ['the memory preview exists', 'new content', 'new content'],
+            ['the memory preview is also absent', undefined, ''],
+        ])('should refresh a legacy tag index item missing contentPreview when %s', async (_case, memoryPreview, writtenPreview) => {
+            const memoryItem = {
+                PK:             'DIR#/identity',
+                SK:             'FILE#core.md',
+                GSI1PK:         'LAYER#identity',
+                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
+                path:           '/identity/core.md',
+                content:        'new content',
+                contentType:    'text/markdown',
+                metadata:       {},
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['test']),
+                contentPreview: memoryPreview,
+            };
+            const legacyIndexItem: TagIndexReadItem = {
+                PK:         'TAG#test',
+                SK:         'PATH#/identity/core.md',
+                memoryPath: '/identity/core.md',
+                layer:      'identity',
+                updatedAt:  '2024-01-01T00:00:00.000Z',
+                tags:       new Set(['test']),
+            };
+            const repairedIndexItem: TagIndexReadItem = {
+                ...legacyIndexItem,
+                contentPreview: writtenPreview,
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND SK = :sk',
+            })
+                .resolvesOnce({ Items: [legacyIndexItem] })
+                .resolvesOnce({ Items: [repairedIndexItem] });
+            mockEmptyPhaseB();
+
+            const refreshSpy = mock(() => Promise.resolve());
+            const createSpy = mock(() => Promise.resolve());
+            tagIndex.refreshTagIndexItems = refreshSpy;
+            tagIndex.createTagIndexItems = createSpy;
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseA.indexItemsRefreshed).toBe(1);
+            expect(result.phaseA.indexItemsCreated).toBe(0);
+            expect(refreshSpy).toHaveBeenCalledWith(
+                '/identity/core.md', new Set(['test']), '2024-01-01T00:00:00.000Z', writtenPreview, 'identity'
+            );
+            expect(createSpy).not.toHaveBeenCalled();
+
+            const secondResult = await runReconciliation(deps, options);
+
+            expect(secondResult.phaseA.indexItemsRefreshed).toBe(0);
+            expect(secondResult.phaseA.indexItemsCreated).toBe(0);
+            expect(secondResult.phaseC.countsCorrected).toBe(0);
+            expect(secondResult.phaseC.countsDeleted).toBe(0);
+            expect(refreshSpy).toHaveBeenCalledTimes(1);
             expect(createSpy).not.toHaveBeenCalled();
         });
 
@@ -705,6 +792,29 @@ describe('runReconciliation', () => {
             expect(refreshSpy).not.toHaveBeenCalled();
         });
 
+        test('keeps a legacy raw row without metadata during reconciliation', async () => {
+            const legacyRow = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#legacy.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/identity/legacy.md',
+                content:     'legacy content',
+                contentType: 'text/markdown',
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+                tags:        new Set<string>(),
+            };
+            mockLayerQuery('identity', [legacyRow]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            const result = await runReconciliation(deps, options);
+            expect(result.phaseA.itemsScanned).toBe(1);
+            expect(result.phaseA.metadataCleaned).toBe(0);
+            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+        });
+
         test('should clean previouslyKnownAs metadata when old path indices are gone', async () => {
             const memoryItem = {
                 PK:          'DIR#/identity',
@@ -759,6 +869,9 @@ describe('runReconciliation', () => {
 
             expect(result.phaseA.metadataCleaned).toBe(1);
             expect(updateMemoryMetadata).toHaveBeenCalled();
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Cleaned previouslyKnownAs metadata',
+            }));
         });
 
         test('should NOT clean previouslyKnownAs when old path indices still exist', async () => {
@@ -909,6 +1022,8 @@ describe('runReconciliation', () => {
             const result = await runReconciliation(deps, options);
 
             expect(result.phaseA.itemsScanned).toBeGreaterThanOrEqual(2);
+            const layerCalls = ddbMock.commandCalls(QueryCommand).filter(call => call.args[0].input.IndexName === 'GSI1');
+            expect(layerCalls[1]?.args[0].input.ExclusiveStartKey).toEqual({ PK: 'test', SK: 'test' });
         });
 
         test('should respect abort signal before Phase A starts', async () => {
@@ -947,22 +1062,21 @@ describe('runReconciliation', () => {
         test('should respect abort signal in scanLayer pagination loop', async () => {
             const controller = new AbortController();
 
-            // First page succeeds, second page aborts
+            // Abort after a page with a cursor so the next pagination guard observes it.
             ddbMock.on(QueryCommand, {
                 IndexName: 'GSI1',
             })
-                .resolvesOnce({
-                    Items:            [{ PK: 'test', SK: 'test', GSI1PK: 'LAYER#identity', path: '/identity/test.md' }],
-                    LastEvaluatedKey: { PK: 'test', SK: 'test' },
-                })
                 .callsFake(() => {
                     controller.abort();
-                    return Promise.resolve({ Items: [] });
+                    return Promise.resolve({
+                        Items:            [],
+                        LastEvaluatedKey: { PK: 'test', SK: 'test' },
+                    });
                 });
 
             const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
             await expect(rejected).rejects.toBeInstanceOf(DOMException);
-            await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
+            await expect(rejected).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
         });
 
         test('should count progress correctly (itemsScanned, indexItemsCreated, indexItemsRefreshed, metadataCleaned)', async () => {
@@ -1152,6 +1266,9 @@ describe('runReconciliation', () => {
 
             expect(result.phaseA.errors).toBeGreaterThan(0);
             expect(createSpy).toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to process tag index',
+            }));
         });
 
         test('should catch errors from updateMemoryMetadata in cleanPreviouslyKnownAs', async () => {
@@ -1206,6 +1323,9 @@ describe('runReconciliation', () => {
 
             expect(result.phaseA.errors).toBeGreaterThan(0);
             expect(updateMemoryMetadata).toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to clean previouslyKnownAs',
+            }));
         });
 
         test('should NOT clean previouslyKnownAs when old path index still exists (new previouslyKnownAsTags format)', async () => {
@@ -1612,10 +1732,16 @@ describe('runReconciliation', () => {
             mockPhaseBWithItems([orphanedIndexItem]);
 
             getMemory.mockResolvedValue(undefined); // Memory doesn't exist
+            const deleteSpy = mock(async () => {});
+            tagIndex.deleteTagIndexItems = deleteSpy;
 
             const result = await runReconciliation(deps, options);
 
             expect(result.phaseB.indexItemsDeleted).toBe(1);
+            expect(deleteSpy).toHaveBeenCalledWith('/identity/deleted.md', new Set(['orphan']));
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Deleted orphaned tag index',
+            }));
         });
 
         test('should delete stale index items (memory exists but no longer has the tag)', async () => {
@@ -1648,10 +1774,16 @@ describe('runReconciliation', () => {
             mockPhaseBWithItems([staleIndexItem]);
 
             getMemory.mockResolvedValue(updatedMemory);
+            const deleteSpy = mock(async () => {});
+            tagIndex.deleteTagIndexItems = deleteSpy;
 
             const result = await runReconciliation(deps, options);
 
             expect(result.phaseB.indexItemsDeleted).toBe(1);
+            expect(deleteSpy).toHaveBeenCalledWith('/identity/updated.md', new Set(['removed']));
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Deleted stale tag index',
+            }));
         });
 
         test('should keep valid index items', async () => {
@@ -1783,6 +1915,28 @@ describe('runReconciliation', () => {
             await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
 
+        test('should respect abort signal between tag-index pages', async () => {
+            const controller = new AbortController();
+            mockEmptyLayers();
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            }).resolves({
+                Items: [{ PK: 'TAG#test', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test', count: 1 }],
+            });
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+                ExpressionAttributeValues: { ':pk': 'TAG#test', ':skPrefix': 'PATH#' },
+            }).callsFake(() => {
+                controller.abort();
+                return Promise.resolve({ Items: [], LastEvaluatedKey: { PK: 'TAG#test', SK: 'PATH#next' } });
+            });
+
+            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            await expect(rejected).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
+        });
+
         test('should count progress correctly (itemsScanned, indexItemsDeleted)', async () => {
             const orphanedItem: TagIndexItem = {
                 PK:             'TAG#orphan',
@@ -1852,6 +2006,9 @@ describe('runReconciliation', () => {
             const result = await runReconciliation(deps, options);
 
             expect(result.phaseB.errors).toBeGreaterThan(0);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to process tag index item',
+            }));
         });
 
         test('should only process PATH# items (META_COUNT excluded by begins_with SK query)', async () => {
@@ -1921,6 +2078,9 @@ describe('runReconciliation', () => {
 
             // scanTagItems should increment errors and break out of its loop
             expect(result.phaseB.errors).toBeGreaterThanOrEqual(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to query tag index items',
+            }));
         });
 
         test('should increment errors and return early when getAllTagNames fails in Phase B', async () => {
@@ -1940,6 +2100,7 @@ describe('runReconciliation', () => {
             // runPhaseB should increment errors and return early (no tags processed)
             expect(result.phaseB.errors).toBeGreaterThanOrEqual(1);
             expect(result.phaseB.itemsScanned).toBe(0);
+            expect(mockLogger.warn).toHaveBeenCalledWith({ msg: 'Failed to enumerate tags for Phase B' });
         });
     });
 
@@ -2011,6 +2172,9 @@ describe('runReconciliation', () => {
 
             expect(result.phaseC.countsVerified).toBe(1);
             expect(result.phaseC.countsCorrected).toBe(1);
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Corrected META_COUNT mismatch',
+            }));
 
             // Verify UpdateCommand was called with correct parameters
             const updateCalls = ddbMock.commandCalls(UpdateCommand);
@@ -2057,6 +2221,9 @@ describe('runReconciliation', () => {
 
             expect(result.phaseC.countsVerified).toBe(1);
             expect(result.phaseC.countsDeleted).toBe(1);
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Deleted META_COUNT with zero actual count',
+            }));
 
             // Verify DeleteCommand was called with correct key
             const deleteCalls = ddbMock.commandCalls(DeleteCommand);
@@ -2088,7 +2255,20 @@ describe('runReconciliation', () => {
 
             const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
             await expect(rejected).rejects.toBeInstanceOf(DOMException);
-            await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
+            await expect(rejected).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
+        });
+
+        test('should stop before querying a Phase C tag when listing aborts the signal', async () => {
+            const controller = new AbortController();
+            mockEmptyLayers();
+            mockEmptyPhaseB();
+            deps.tagIndex.listTagCounts = mock(async () => {
+                controller.abort();
+                return [{ tag: 'tag1', count: 1 }];
+            });
+
+            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            await expect(rejected).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
         });
 
         test('abort during rate-limit delay is treated as cancellation, not an operational error', async () => {
@@ -2197,6 +2377,340 @@ describe('runReconciliation', () => {
             expect(result.phaseC.errors).toBe(1);
             // Verify error count is positive (errors++, not errors--)
             expect(result.phaseC.errors).toBeGreaterThan(0);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to get actual tag count',
+            }));
+        });
+
+        test('logs an unexpected per-count processing failure', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+            mockEmptyPhaseB();
+            deps.tagIndex.listTagCounts = mock(async () => [{ tag: 'changed', count: 1 }]);
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
+            }).resolves({ Count: 2 });
+            ddbMock.on(UpdateCommand).resolves({});
+            mockLogger.debug.mockImplementation((...args: unknown[]) => {
+                const [entry] = args as [Record<string, unknown>];
+                if(entry.msg === 'Corrected META_COUNT mismatch') {
+                    throw new Error('logger transport failed');
+                }
+                return mockLogger;
+            });
+
+            const result = await runReconciliation(deps, options);
+
+            expect(result.phaseC.errors).toBe(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to process META_COUNT item',
+            }));
+        });
+    });
+
+    describe('legacy rows and paginated tag enumeration', () => {
+        test('reads every tag-count page and ignores rows without the TAG# key prefix', async () => {
+            mockEmptyLayers();
+            deps.tagIndex.listTagCounts = mock(async () => []);
+            ddbMock.on(QueryCommand, { IndexName: 'GSI2' })
+                .resolvesOnce({
+                    Items:            [{ GSI2SK: 'OTHER#ignored' }],
+                    LastEvaluatedKey: { PK: 'cursor', SK: 'first' },
+                })
+                .resolves({ Items: [{ GSI2SK: 'TAG#kept' }] });
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
+            }).resolves({ Items: [] });
+
+            await runReconciliation(deps, options);
+
+            const queries = ddbMock.commandCalls(QueryCommand).map(call => call.args[0].input);
+            const tagPages = queries.filter(input => input.IndexName === 'GSI2');
+            expect(tagPages).toHaveLength(2);
+            expect(tagPages[1]?.ExclusiveStartKey).toEqual({ PK: 'cursor', SK: 'first' });
+            expect(queries.filter(input => input.KeyConditionExpression === 'PK = :pk AND begins_with(SK, :skPrefix)')
+                .map(input => input.ExpressionAttributeValues?.[':pk'])).toEqual(['TAG#kept']);
+        });
+
+        test('keeps an unrecognized legacy path visible in tag-index repair', async () => {
+            mockLayerQuery('identity', [{
+                path:           '/legacy/core.md',
+                tags:           new Set(['legacy']),
+                metadata:       {},
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                contentPreview: 'legacy content',
+            }]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND SK = :sk' }).resolves({ Items: [] });
+            mockEmptyPhaseB();
+            deps.tagIndex.listTagCounts = mock(async () => []);
+            const createSpy = mock(async () => {});
+            deps.tagIndex.createTagIndexItems = createSpy;
+
+            const result = await runReconciliation(deps, options);
+            expect(result.phaseA.indexItemsCreated).toBe(1);
+            expect(createSpy).toHaveBeenCalledWith('/legacy/core.md', new Set(['legacy']),
+                '2024-01-01T00:00:00.000Z', 'legacy content', 'unknown');
+        });
+
+        test('does not dereference null metadata from a legacy row', async () => {
+            mockLayerQuery('identity', [{ path: '/identity/legacy.md', tags: [], metadata: null }]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            mockEmptyPhaseB();
+            deps.tagIndex.listTagCounts = mock(async () => []);
+
+            const result = await runReconciliation(deps, options);
+            expect(result.phaseA.itemsScanned).toBe(1);
+            expect(result.phaseA.errors).toBe(0);
+            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+        });
+
+        test('falls back to tag enumeration for a partially invalid previous-tag list', async () => {
+            mockLayerQuery('identity', [{
+                path:     '/identity/current.md',
+                tags:     [],
+                metadata: {
+                    previouslyKnownAs:     '/identity/old.md',
+                    previouslyKnownAsTags: ['known', 17],
+                },
+            }]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            ddbMock.on(QueryCommand, { IndexName: 'GSI2' })
+                .resolvesOnce({ Items: [{ GSI2SK: 'TAG#fallback' }] })
+                .resolves({ Items: [] });
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#fallback', SK: 'PATH#/identity/old.md' },
+            }).resolves({ Item: { PK: 'TAG#fallback', SK: 'PATH#/identity/old.md' } });
+            deps.tagIndex.listTagCounts = mock(async () => []);
+
+            const result = await runReconciliation(deps, options);
+            expect(result.phaseA.metadataCleaned).toBe(0);
+            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(GetCommand).map(call => call.args[0].input.Key?.PK)).toEqual(['TAG#fallback']);
+        });
+    });
+
+    describe('operation diagnostics', () => {
+        const legacyItem = (metadata: Record<string, unknown>) => ({
+            path: '/identity/current.md', tags: [], metadata,
+        });
+
+        beforeEach(() => {
+            options.backoff.maxAttempts = 1;
+            deps.tagIndex.listTagCounts = mock(async () => []);
+        });
+
+        test('identifies failed index lookup by tag and path', async () => {
+            mockLayerQuery('identity', [{
+                path: '/identity/current.md', tags: new Set(['known']), metadata: {},
+            }]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND SK = :sk' })
+                .rejects(new Error('lookup failed'));
+            mockEmptyPhaseB();
+
+            await runReconciliation(deps, options);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                context: 'checkTagIndexExists:known:/identity/current.md',
+            }));
+        });
+
+        test('propagates an abort thrown while creating a tag index', async () => {
+            mockLayerQuery('identity', [{
+                path: '/identity/current.md', tags: new Set(['known']), metadata: {},
+            }]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND SK = :sk' }).resolves({ Items: [] });
+            deps.tagIndex.createTagIndexItems = mock(async () => {
+                throw new DOMException('Aborted', 'AbortError');
+            });
+            mockEmptyPhaseB();
+
+            await expect(runReconciliation(deps, options)).rejects.toMatchObject({
+                name: 'AbortError', message: 'Aborted',
+            });
+        });
+
+        test('identifies failed layer scans by layer', async () => {
+            ddbMock.on(QueryCommand, { IndexName: 'GSI1' }).rejects(new Error('scan failed'));
+            mockEmptyPhaseB();
+
+            await runReconciliation(deps, options);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'scanLayer:identity' }));
+        });
+
+        test('identifies failed tag enumeration', async () => {
+            mockEmptyLayers();
+            ddbMock.on(QueryCommand, { IndexName: 'GSI2' }).rejects(new Error('enumeration failed'));
+
+            await runReconciliation(deps, options);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'getAllTagNames' }));
+        });
+
+        test('identifies failed tag-index page by tag', async () => {
+            mockEmptyLayers();
+            ddbMock.on(QueryCommand, { IndexName: 'GSI2' }).resolves({ Items: [{ GSI2SK: 'TAG#known' }] });
+            ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)' })
+                .rejects(new Error('tag scan failed'));
+
+            await runReconciliation(deps, options);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'scanTagItems:known' }));
+        });
+
+        test('propagates an abort thrown while reading a tag-index memory', async () => {
+            mockEmptyLayers();
+            ddbMock.on(QueryCommand, { IndexName: 'GSI2' }).resolves({ Items: [{ GSI2SK: 'TAG#known' }] });
+            ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)' })
+                .resolves({ Items: [{ PK: 'TAG#known', SK: 'PATH#/identity/current.md' }] });
+            getMemory.mockRejectedValue(new DOMException('Aborted', 'AbortError'));
+
+            await expect(runReconciliation(deps, options)).rejects.toMatchObject({
+                name: 'AbortError', message: 'Aborted',
+            });
+        });
+
+        test('identifies failed old-path probes using a validated tag list', async () => {
+            mockLayerQuery('identity', [legacyItem({
+                previouslyKnownAs: '/identity/old.md', previouslyKnownAsTags: ['known'],
+            })]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            ddbMock.on(GetCommand).rejects(new Error('old path probe failed'));
+            mockEmptyPhaseB();
+
+            const result = await runReconciliation(deps, options);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                context: 'checkOldPathIndicesClean:known:/identity/old.md',
+            }));
+            expect(result.phaseA.metadataCleaned).toBe(0);
+            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+        });
+
+        test('propagates an abort thrown by alias metadata cleanup', async () => {
+            mockLayerQuery('identity', [legacyItem({
+                previouslyKnownAs: '/identity/old.md', previouslyKnownAsTags: [],
+            })]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            updateMemoryMetadata.mockRejectedValue(new DOMException('Aborted', 'AbortError'));
+            mockEmptyPhaseB();
+
+            await expect(runReconciliation(deps, options)).rejects.toMatchObject({
+                name: 'AbortError', message: 'Aborted',
+            });
+        });
+
+        test('keeps alias metadata when only one of two old-tag indices remains', async () => {
+            mockLayerQuery('identity', [legacyItem({
+                previouslyKnownAs: '/identity/old.md', previouslyKnownAsTags: ['removed', 'still-present'],
+            })]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#removed', SK: 'PATH#/identity/old.md' },
+            }).resolves({});
+            ddbMock.on(GetCommand, {
+                Key: { PK: 'TAG#still-present', SK: 'PATH#/identity/old.md' },
+            }).resolves({ Item: { PK: 'TAG#still-present', SK: 'PATH#/identity/old.md' } });
+            mockEmptyPhaseB();
+
+            const result = await runReconciliation(deps, options);
+            expect(result.phaseA.metadataCleaned).toBe(0);
+            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(2);
+        });
+
+        test('identifies failed old-path probes after legacy tag enumeration', async () => {
+            mockLayerQuery('identity', [legacyItem({ previouslyKnownAs: '/identity/old.md' })]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            ddbMock.on(QueryCommand, { IndexName: 'GSI2' })
+                .resolvesOnce({ Items: [{ GSI2SK: 'TAG#fallback' }] })
+                .resolves({ Items: [] });
+            ddbMock.on(GetCommand).rejects(new Error('old path probe failed'));
+
+            const result = await runReconciliation(deps, options);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                context: 'checkOldPathIndicesClean:fallback:/identity/old.md',
+            }));
+            expect(result.phaseA.metadataCleaned).toBe(0);
+            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+        });
+
+        test('identifies count query failures by tag', async () => {
+            mockEmptyLayers();
+            mockEmptyPhaseB();
+            deps.tagIndex.listTagCounts = mock(async () => [{ tag: 'known', count: 1 }]);
+            ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)' })
+                .rejects(new Error('count failed'));
+
+            await runReconciliation(deps, options);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'getActualTagCount:known' }));
+        });
+
+        test('stops count pagination after cancellation of the first page', async () => {
+            const controller = new AbortController();
+            mockEmptyLayers();
+            mockEmptyPhaseB();
+            deps.tagIndex.listTagCounts = mock(async () => [{ tag: 'known', count: 1 }]);
+            let countQueries = 0;
+            ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)' })
+                .callsFake(() => {
+                    countQueries++;
+                    if(countQueries === 1) {
+                        controller.abort();
+                        return Promise.resolve({ Count: 2, LastEvaluatedKey: { PK: 'TAG#known', SK: 'PATH#first' } });
+                    }
+                    return Promise.resolve({ Count: 9 });
+                });
+
+            const result = await runReconciliation(deps, { ...options, signal: controller.signal });
+            expect(countQueries).toBe(1);
+            expect(result.phaseC.errors).toBe(1);
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+        });
+
+        test('propagates an abort while rate-limiting a verified count', async () => {
+            const controller = new AbortController();
+            mockEmptyLayers();
+            mockEmptyPhaseB();
+            deps.tagIndex.listTagCounts = mock(async () => [{ tag: 'known', count: 1 }]);
+            ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)' })
+                .callsFake(() => {
+                    controller.abort();
+                    return Promise.resolve({ Count: 1 });
+                });
+
+            await expect(runReconciliation(deps, { ...options, operationDelayMs: 1, signal: controller.signal }))
+                .rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
+        });
+
+        test('identifies count correction failures by tag', async () => {
+            mockEmptyLayers();
+            mockEmptyPhaseB();
+            deps.tagIndex.listTagCounts = mock(async () => [{ tag: 'known', count: 1 }]);
+            ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)' })
+                .resolves({ Count: 2 });
+            ddbMock.on(UpdateCommand).rejects(new Error('update failed'));
+
+            await runReconciliation(deps, options);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'updateMetaCount:known' }));
+        });
+
+        test('identifies count deletion failures by tag', async () => {
+            mockEmptyLayers();
+            mockEmptyPhaseB();
+            deps.tagIndex.listTagCounts = mock(async () => [{ tag: 'known', count: 1 }]);
+            ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)' })
+                .resolves({ Count: 0 });
+            ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
+
+            await runReconciliation(deps, options);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'deleteMetaCount:known' }));
         });
     });
 
@@ -2212,6 +2726,18 @@ describe('runReconciliation', () => {
             expect(result).toHaveProperty('totalDurationMs');
             expect(result.phaseA.phase).toBe('phaseA');
             expect(result.phaseB.phase).toBe('phaseB');
+            for(const msg of [
+                'Starting tag index reconciliation',
+                'Phase A complete',
+                'Phase B complete',
+                'Phase C complete',
+                'Tag index reconciliation complete',
+            ]) {
+                expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ msg }));
+            }
+            for(const [phase, msg] of [['A', 'Phase A complete'], ['B', 'Phase B complete'], ['C', 'Phase C complete']]) {
+                expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ phase, msg }));
+            }
         });
 
         test('should report success when no errors', async () => {
@@ -2229,6 +2755,9 @@ describe('runReconciliation', () => {
 
             expect(result.success).toBe(false);
             expect(result.phaseA.errors).toBeGreaterThan(0);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to scan layer',
+            }));
         });
 
         test('should report failure when only Phase A has errors (phaseB and phaseC clean)', async () => {
@@ -2296,6 +2825,9 @@ describe('runReconciliation', () => {
             expect(result.phaseA.errors).toBe(0);
             expect(result.phaseB.errors).toBe(0);
             expect(result.phaseC.errors).toBeGreaterThan(0);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to list tag counts',
+            }));
         });
 
         test('should measure total duration', async () => {

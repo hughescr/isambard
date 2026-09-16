@@ -1,6 +1,7 @@
 import { describe, test, expect, mock } from 'bun:test';
 import type { HookCallback, HookCallbackMatcher, HookEvent, StopFailureHookInput, StopHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { createSessionLifecycleHooks } from '../../../../src/agent/hooks/lifecycle';
+import { mockLogger } from '../../../setup';
 
 const makeSignal = (): AbortSignal => new AbortController().signal;
 
@@ -38,6 +39,13 @@ describe('createSessionLifecycleHooks', () => {
 
         expect(result).toEqual({ 'continue': true });
         expect(onStop).toHaveBeenCalledWith(input);
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            session_id:             'sess-lifecycle-1',
+            hook_event_name:        'Stop',
+            stop_hook_active:       false,
+            last_assistant_message: undefined,
+            msg:                    'Agent session stopped normally',
+        });
     });
 
     test('Stop hook works with no onStop callback given', async () => {
@@ -50,6 +58,21 @@ describe('createSessionLifecycleHooks', () => {
         };
 
         await expect(fn(input, undefined, { signal: makeSignal() })).resolves.toEqual({ 'continue': true });
+    });
+
+    test('Stop hook logs only the first 100 characters of the last assistant message', async () => {
+        const fn = getHook(createSessionLifecycleHooks({}), 'Stop');
+        const message = `${'x'.repeat(100)}private trailing text`;
+        const input: StopHookInput = {
+            ...BASE_HOOK_FIELDS,
+            hook_event_name:        'Stop',
+            stop_hook_active:       false,
+            last_assistant_message: message,
+        };
+        await fn(input, undefined, { signal: makeSignal() });
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+            last_assistant_message: 'x'.repeat(100),
+        }));
     });
 
     test('StopFailure hook returns { continue: true } and invokes onStopFailure', async () => {
@@ -66,5 +89,12 @@ describe('createSessionLifecycleHooks', () => {
 
         expect(result).toEqual({ 'continue': true });
         expect(onStopFailure).toHaveBeenCalledWith(input);
+        expect(mockLogger.error).toHaveBeenCalledWith({
+            session_id:      'sess-lifecycle-1',
+            hook_event_name: 'StopFailure',
+            error:           'server_error',
+            error_details:   undefined,
+            msg:             'Agent session stopped with failure',
+        });
     });
 });

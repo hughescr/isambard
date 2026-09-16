@@ -48,6 +48,12 @@ describe('calendarEntrySchema', () => {
     });
 });
 
+describe('createCalendarServerId', () => {
+    test('reports the UUID validation contract for an invalid server ID', () => {
+        expect(() => createCalendarServerId('not-a-uuid')).toThrow('Calendar server ID must be a valid UUID');
+    });
+});
+
 describe('calendarServerEntrySchema', () => {
     test('should parse valid CalendarServerEntry', () => {
         const entry = calendarServerEntrySchema.parse({

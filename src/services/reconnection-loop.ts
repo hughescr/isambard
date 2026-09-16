@@ -4,7 +4,7 @@ import { setupRetryContext, calculateDelay, type RetryDeps, type RetryPolicy } f
 
 interface ReconnectionLoopOptions {
     service:   ServiceName
-    registry:  ServiceHealthRegistry
+    registry:  Pick<ServiceHealthRegistry, 'sendEvent'>
     connectFn: () => Promise<void>
     policy?:   Partial<RetryPolicy>
     deps?:     Partial<RetryDeps>
@@ -18,7 +18,6 @@ export interface ReconnectionLoop {
     isRunning():     boolean
 }
 
-// Stryker disable next-line ObjectLiteral: DEFAULT_POLICY is a configuration constant
 const DEFAULT_POLICY: Partial<RetryPolicy> = {
     maxAttempts:       10,
     baseDelayMs:       1000,
@@ -35,10 +34,7 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
     );
 
     let running = false;
-    // Stryker disable next-line BooleanLiteral: stopped starts true to represent "never started"; cleared by start()
     let stopped = true;
-    // Stryker disable next-line BooleanLiteral: connecting is only checked conjunctively with currentAttemptPromise !== undefined; initial value is unobservable
-    let connecting = false;
     let pendingTimer: ReturnType<typeof setTimeout> | undefined;
     let attemptCount = 0;
     let currentAttemptPromise: Promise<boolean> | undefined;
@@ -48,14 +44,11 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
             return currentAttemptPromise;
         }
 
-        connecting = true;
         currentAttemptPromise = (async (): Promise<boolean> => {
             try {
                 await connectFn();
                 registry.sendEvent(service, 'CONNECT_SUCCESS');
                 running = false;
-                // Stryker disable next-line BooleanLiteral: connecting is only checked conjunctively with currentAttemptPromise; cleared along with currentAttemptPromise = undefined
-                connecting = false;
                 currentAttemptPromise = undefined;
                 return true;
             } catch (err: unknown) {
@@ -67,17 +60,12 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
 
                 registry.sendEvent(service, 'CONNECT_FAIL', { error: errorMessage, nextRetryAt });
 
-                // Stryker disable next-line BooleanLiteral: connecting is only checked conjunctively with currentAttemptPromise; cleared along with currentAttemptPromise = undefined
-                connecting = false;
                 currentAttemptPromise = undefined;
 
                 if(running) {
                     pendingTimer = setTimeout(() => {
-                        // Stryker disable next-line ConditionalExpression: clearTimeout in stop() prevents this timer from firing when running=false; inner guard is unreachable
-                        if(running) {
-                            registry.sendEvent(service, 'RECONNECT_ATTEMPT');
-                            void attemptConnect();
-                        }
+                        registry.sendEvent(service, 'RECONNECT_ATTEMPT');
+                        void attemptConnect();
                     }, delayMs);
                 }
 
@@ -90,11 +78,8 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
 
     return {
         start(): void {
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: clearTimeout(undefined) is a no-op so all mutations are equivalent
-            if(pendingTimer !== undefined) {
-                clearTimeout(pendingTimer);
-                pendingTimer = undefined;
-            }
+            clearTimeout(pendingTimer);
+            pendingTimer = undefined;
             stopped = false;
             running = true;
             attemptCount = 0;
@@ -108,17 +93,13 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
             // The `stopped` flag distinguishes "explicitly stopped / never started" from
             // "auto-stopped after a successful connect" — the latter is the primary use case
             // for restart(): SSE connection resolved then dropped.
-            // Stryker disable next-line ConditionalExpression,LogicalOperator: `connecting` and `currentAttemptPromise` are always set/cleared atomically; mutations that swap the inner operand alone produce equivalent behaviour
-            if(stopped || (connecting && currentAttemptPromise !== undefined)) {
+            if(stopped || currentAttemptPromise !== undefined) {
                 return;
             }
             // Re-engage the loop, preserving attemptCount so backoff continues to grow.
             running = true;
-            // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op so →true mutation is equivalent
-            if(pendingTimer !== undefined) {
-                clearTimeout(pendingTimer);
-                pendingTimer = undefined;
-            }
+            clearTimeout(pendingTimer);
+            pendingTimer = undefined;
             registry.sendEvent(service, 'RECONNECT_ATTEMPT');
             void attemptConnect();
         },
@@ -126,23 +107,17 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
         stop(): void {
             stopped = true;
             running = false;
-            // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op so →true mutation is equivalent
-            if(pendingTimer !== undefined) {
-                clearTimeout(pendingTimer);
-                pendingTimer = undefined;
-            }
+            clearTimeout(pendingTimer);
+            pendingTimer = undefined;
         },
 
         async triggerNow(): Promise<boolean> {
-            if(connecting && currentAttemptPromise !== undefined) {
+            if(currentAttemptPromise !== undefined) {
                 return currentAttemptPromise;
             }
 
-            // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op so →true mutation is equivalent
-            if(pendingTimer !== undefined) {
-                clearTimeout(pendingTimer);
-                pendingTimer = undefined;
-            }
+            clearTimeout(pendingTimer);
+            pendingTimer = undefined;
 
             registry.sendEvent(service, 'RECONNECT_ATTEMPT');
             return attemptConnect();

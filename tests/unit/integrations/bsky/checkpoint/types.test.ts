@@ -59,6 +59,14 @@ describe('bskyFeedCheckpointSchema', () => {
         expect(result.success).toBe(false);
     });
 
+    test('accepts a one-character feedName', () => {
+        const result = bskyFeedCheckpointSchema.safeParse({
+            ...VALID_FEED_CHECKPOINT,
+            feedName: 'x',
+        });
+        expect(result.success).toBe(true);
+    });
+
     test('rejects invalid datetime for updatedAt', () => {
         const result = bskyFeedCheckpointSchema.safeParse({
             ...VALID_FEED_CHECKPOINT,

@@ -39,7 +39,9 @@ function makeThrottle(): PresenceThrottle {
     return { shouldUpdate: mock(() => true), record: mock(() => undefined) };
 }
 
-function harness(overrides: { buildThinkingSynopsis?: (...args: never[]) => Promise<string | undefined>, beforeAttach?: (store: LedgerStore) => void } = {}) {
+type BuildThinkingSynopsis = NonNullable<Parameters<typeof attachTurnSynopsis>[0]['buildThinkingSynopsis']>;
+
+function harness(overrides: { buildThinkingSynopsis?: BuildThinkingSynopsis, beforeAttach?: (store: LedgerStore) => void } = {}) {
     const ledgerStore: LedgerStore = createLedgerStore('conversation', { logger: { error: jest.fn() } });
     overrides.beforeAttach?.(ledgerStore);
     let frameHandler: ((turnId: string, frame: SDKMessage) => void) | undefined;
@@ -67,10 +69,9 @@ function harness(overrides: { buildThinkingSynopsis?: (...args: never[]) => Prom
         conductor,
         ledgerStore,
         throttle,
-        logger:                { error: mock(() => undefined) },
+        logger: { error: mock(() => undefined) },
         createHandler,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- injected test double for the real buildLedgerThinkingSynopsis signature
-        buildThinkingSynopsis: buildThinkingSynopsis as any,
+        buildThinkingSynopsis,
     });
 
     return {

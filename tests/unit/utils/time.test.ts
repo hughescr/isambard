@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use typeof guards on string results for defensive checking; always truthy but clarifies intent */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn, jest } from 'bun:test';
 import { mockLogger } from '../../setup';
 import {
     timeContextSchema,
@@ -10,9 +9,70 @@ import {
     getCurrentTimeContext,
     formatTimeSince,
     formatTimeHeader,
+    formatEnvelopeStamp,
     resolveTimezone,
     type TimeContext
 } from '@/utils/time';
+
+describe('formatEnvelopeStamp', () => {
+    const NOW = new Date('2026-01-15T20:07:00.000Z');
+
+    test('folds a US timezone abbreviation and selects the timezone-name part', () => {
+        expect(formatEnvelopeStamp(NOW, 'America/Los_Angeles')).toBe('2026-01-15 12:07 PT');
+    });
+
+    test('constructs the zone formatter with the stable en-US locale', () => {
+        const OriginalDateTimeFormat = Intl.DateTimeFormat;
+        const constructorCalls: [string | string[] | undefined, Intl.DateTimeFormatOptions | undefined][] = [];
+        class TrackingDateTimeFormat extends OriginalDateTimeFormat {
+            constructor(locales?: string | string[], options?: Intl.DateTimeFormatOptions) {
+                constructorCalls.push([locales, options]);
+                super(locales, options);
+            }
+        }
+        Intl.DateTimeFormat = TrackingDateTimeFormat as typeof Intl.DateTimeFormat;
+
+        try {
+            formatEnvelopeStamp(NOW, 'America/Los_Angeles');
+            expect(constructorCalls).toContainEqual([
+                'en-US',
+                { timeZone: 'America/Los_Angeles', timeZoneName: 'short' },
+            ]);
+        } finally {
+            Intl.DateTimeFormat = OriginalDateTimeFormat;
+        }
+    });
+
+    test('selects the timezone-name part when it is not first', () => {
+        const original = Intl.DateTimeFormat.prototype.formatToParts;
+        const partsSpy = spyOn(Intl.DateTimeFormat.prototype, 'formatToParts').mockImplementation(function(this: Intl.DateTimeFormat, date?: Date | number) {
+            const parts = original.call(this, date);
+            if(parts.some(part => part.type === 'timeZoneName')) {
+                return [{ type: 'month', value: 'wrong' }, ...parts];
+            }
+            return parts;
+        });
+
+        try {
+            expect(formatEnvelopeStamp(NOW, 'UTC')).toBe('2026-01-15 20:07 UTC');
+        } finally {
+            partsSpy.mockRestore();
+        }
+    });
+
+    test('falls back to the IANA timezone when Intl omits its timezone-name part', () => {
+        const original = Intl.DateTimeFormat.prototype.formatToParts;
+        const partsSpy = spyOn(Intl.DateTimeFormat.prototype, 'formatToParts').mockImplementation(function(this: Intl.DateTimeFormat, date?: Date | number) {
+            return original.call(this, date).filter(part => part.type !== 'timeZoneName');
+        });
+
+        try {
+            expect(formatEnvelopeStamp(NOW, 'UTC')).toBe('2026-01-15 20:07 UTC');
+        } finally {
+            partsSpy.mockRestore();
+        }
+    });
+});
 
 describe.concurrent('timeOfDaySchema', () => {
     test.each(['morning', 'afternoon', 'evening', 'night'])('should accept valid time of day "%s"', (timeOfDay) => {
@@ -85,13 +145,18 @@ describe('relative time formatting boundary conditions', () => {
             expectedShort: '4w ago'
         },
         {
+            desc:          'exactly one calendar month as months even though it is only four weeks',
+            now:           new Date('2024-02-01T12:00:00Z'),
+            date:          new Date('2024-01-01T12:00:00Z'),
+            expectedLong:  '1 month ago',
+            expectedShort: '1mo ago'
+        },
+        {
             desc:          '364 days as months (days < 365)',
             now:           new Date('2024-12-30T12:00:00Z'),
             date:          new Date('2024-01-01T12:00:00Z'),
-            // eslint-disable-next-line sonarjs/super-linear-regex, regexp/no-super-linear-move -- simple digit match in test data, not production code
-            expectedLong:  /\d+ months ago/,
-            // eslint-disable-next-line sonarjs/super-linear-regex, regexp/no-super-linear-move -- simple digit match in test data, not production code
-            expectedShort: /\d+mo ago/
+            expectedLong:  /^\d+ months ago$/,
+            expectedShort: /^\d+mo ago$/
         },
         {
             desc:          'exactly 365 days as years (days >= 365)',
@@ -123,7 +188,20 @@ describe('getCurrentTimeContext', () => {
     });
 
     afterEach(() => {
+        jest.useRealTimers();
         globalThis.Date = RealDate;
+    });
+
+    test('UTC time of day uses UTC even when user time is in another period', () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new RealDate('2025-01-01T15:30:45Z'));
+        try {
+            const context = getCurrentTimeContext('America/Los_Angeles');
+            expect(context.utcTimeOfDay).toBe('afternoon');
+            expect(context.timeOfDay).toBe('morning');
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     test('should format userLocalTime in 24-hour format', () => {
@@ -134,6 +212,7 @@ describe('getCurrentTimeContext', () => {
         // Mock Date constructor to return our fixed time
         // eslint-disable-next-line sonarjs/function-return-type -- DateMock intentionally mirrors Date constructor signature
         const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- DateMock must support both constructor and function calls like Date
             if(new.target) {
                 // Called with 'new'
                 if(args.length === 0) {
@@ -157,7 +236,6 @@ describe('getCurrentTimeContext', () => {
         const context = getCurrentTimeContext('America/Los_Angeles');
 
         // Should use 24-hour format (14:30:45), not 12-hour format (02:30:45 PM)
-        // The mutant (hour12: true) would produce "T02:30:45" instead of "T14:30:45"
         expect(context.userLocalTime).toBe('2025-01-01T14:30:45');
     });
 });
@@ -204,6 +282,7 @@ describe('formatTimeSince', () => {
         // Mock Date constructor to return fixed 'now'
         // eslint-disable-next-line sonarjs/function-return-type -- DateMock intentionally mirrors Date constructor signature
         const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- DateMock must support both constructor and function calls like Date
             if(new.target) {
                 if(args.length === 0) {
                     return now;
@@ -282,6 +361,7 @@ describe('formatTimeHeader', () => {
         // Mock Date constructor to return fixed time
         // eslint-disable-next-line sonarjs/function-return-type -- DateMock intentionally mirrors Date constructor signature
         const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- DateMock must support both constructor and function calls like Date
             if(new.target) {
                 if(args.length === 0) {
                     return FIXED_TIME;

@@ -55,7 +55,6 @@ export function setDynamoHealthNotifier(fn: ((error: unknown) => void) | undefin
  *    to exceed the outer timeout — also a network-level symptom.
  */
 function isNetworkError(error: unknown): boolean {
-    // Stryker disable next-line ConditionalExpression: DynamoTimeoutError instanceof check is paired with classifyNetworkError — both branches needed for full coverage
     if(error instanceof DynamoTimeoutError) {
         return true;
     }
@@ -98,9 +97,7 @@ export async function withDynamoTimeout<T>(
     const { timeoutMs, operation: operationName, logger } = options;
 
     // Create timeout promise
-    // Stryker disable BlockStatement: timeout promise — mutating causes test timeout (timeout never rejects, race hangs)
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
-        // Stryker disable next-line BlockStatement: setTimeout callback — mutating causes test timeout (reject never called)
         setTimeout(() => {
             const error = new DynamoTimeoutError(operationName, timeoutMs);
 
@@ -120,7 +117,6 @@ export async function withDynamoTimeout<T>(
 
     // Race between operation and timeout
     try {
-        // Stryker disable next-line ArrayDeclaration: race array — mutating to empty causes test timeout (operation never races with timeout)
         return await Promise.race([
             operation(),
             timeoutPromise,

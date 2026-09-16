@@ -27,6 +27,10 @@ async function flush(): Promise<void> {
     }
 }
 
+function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void, reject: (error: unknown) => void } {
+    return Promise.withResolvers<T>();
+}
+
 let idCounter = 0;
 
 function discordEnvelope(overrides: Partial<Envelope> = {}): Envelope {
@@ -194,10 +198,11 @@ describe('createConductor', () => {
         it('resume attempt failing immediately falls back to a fresh open with fallback:true', async () => {
             const h = build();
             await h.resumeStore.save('conversation', 'sess-old');
+            const resumeError = new Error('resume rejected by CLI');
 
             const openPromise = h.conductor.open();
             await flush();
-            h.instances[0].fail(new Error('resume rejected by CLI'));
+            h.instances[0].fail(resumeError);
             await flush();
             h.instances[1].emit(frames.init('sess-new'));
             const result = await openPromise;
@@ -207,7 +212,10 @@ describe('createConductor', () => {
             expect(h.journal.byKind('session_opened')).toEqual([
                 { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-new', resumed: false, fallback: true },
             ]);
-            expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.any(String));
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                { error: resumeError },
+                'Resuming the stored session failed; opening a fresh session'
+            );
         });
 
         it('a resume that opens a live handle but whose finishOpen rejects discards that handle before falling back to a fresh session — no leaked concurrent session', async () => {
@@ -439,6 +447,23 @@ describe('createConductor', () => {
             ]);
         });
 
+        it('an idle channel-less submit omits channelId from the journal entry', async () => {
+            const h = build();
+            await openWith(h);
+            const envelope = catchupEnvelope();
+
+            const resultPromise = h.conductor.submit(envelope, { priority: 'other' });
+            await flush();
+
+            expect(h.journal.byKind('envelope_submitted')).toEqual([
+                { type: 'envelope_submitted', at: expect.any(Date), envelopeId: envelope.id, kind: 'catchup' },
+            ]);
+            expect(h.journal.byKind('envelope_submitted')[0]).not.toHaveProperty('channelId');
+
+            h.instances[0].emit(frames.resultSuccess());
+            await resultPromise;
+        });
+
         it('turn_completed carries a response exactly at the 200_000-char cap in full, with no truncated flag', async () => {
             const h = build();
             await openWith(h);
@@ -557,11 +582,18 @@ describe('createConductor', () => {
             await openWith(h);
             const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
             await flush();
+            expect(h.journal.byKind('envelope_submitted')[0]).toEqual({
+                type: 'envelope_submitted', at: expect.any(Date), envelopeId: expect.any(String), kind: 'discord', channelId: 'chan-1',
+            });
 
             const secondPromise = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(h.instances[0].interruptCalls).toBe(1);
+            expect(h.logger.debug).toHaveBeenCalledWith(
+                { reason: 'human envelope for the running channel' },
+                'Conductor requesting interrupt'
+            );
 
             // A second same-channel human arrival must not call interrupt() again.
             const thirdPromise = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
@@ -578,6 +610,84 @@ describe('createConductor', () => {
             await secondPromise;
             h.instances[0].emit(frames.resultSuccess());
             await thirdPromise;
+        });
+
+        it('does not pre-empt a discord turn for other priority or for a human without a requesting channel', async () => {
+            const h = build();
+            await openWith(h);
+            const first = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            const other = h.conductor.submit(catchupEnvelope(), { priority: 'other', requestingChannelId: 'chan-1' });
+            const unscopedHuman = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human' });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(0);
+            h.instances[0].emit(frames.resultSuccess());
+            await first;
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await unscopedHuman;
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await other;
+        });
+
+        it('does not pre-empt a channel-tagged non-discord turn when a same-channel human arrives', async () => {
+            const h = build();
+            await openWith(h);
+            const first = h.conductor.submit(catchupEnvelope({ channelId: 'chan-1' }), { priority: 'other' });
+            await flush();
+
+            const second = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(0);
+            h.instances[0].emit(frames.resultSuccess());
+            await first;
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('discord');
+            h.instances[0].emit(frames.resultSuccess());
+            await second;
+        });
+
+        it('does not pre-empt an unscoped discord turn for an unscoped human arrival', async () => {
+            const h = build();
+            await openWith(h);
+            const first = h.conductor.submit(discordEnvelope({ channelId: undefined }), { priority: 'human' });
+            await flush();
+
+            const second = h.conductor.submit(discordEnvelope({ channelId: undefined }), { priority: 'human' });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(0);
+            h.instances[0].emit(frames.resultSuccess());
+            await first;
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await second;
+        });
+
+        it('keeps FIFO order between two other-priority envelopes', async () => {
+            const h = build();
+            await openWith(h);
+            const first = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const otherA = catchupEnvelope({ text: 'other A' });
+            const otherB = catchupEnvelope({ text: 'other B' });
+            const resultA = h.conductor.submit(otherA, { priority: 'other' });
+            const resultB = h.conductor.submit(otherB, { priority: 'other' });
+
+            h.instances[0].emit(frames.resultSuccess());
+            await first;
+            await flush();
+            expect(h.conductor.status().turn?.envelopeId).toBe(otherA.id);
+            h.instances[0].emit(frames.resultSuccess());
+            await resultA;
+            await flush();
+            expect(h.conductor.status().turn?.envelopeId).toBe(otherB.id);
+            h.instances[0].emit(frames.resultSuccess());
+            await resultB;
         });
 
         it('interrupting never calls stopTask', async () => {
@@ -643,7 +753,7 @@ describe('createConductor', () => {
 
             expect(() => {
                 h.conductor.appendWithoutTurn(catchupEnvelope());
-            }).toThrow('shouldQuery');
+            }).toThrow('Invariant violated in conductor.appendWithoutTurn: called with a shouldQuery:true envelope — this seam is accumulate-only; use submit() for shouldQuery:true envelopes');
         });
 
         it('throws the shouldQuery:true InvariantViolationError even before open() has assigned a live queue', () => {
@@ -651,7 +761,7 @@ describe('createConductor', () => {
 
             expect(() => {
                 h.conductor.appendWithoutTurn(catchupEnvelope());
-            }).toThrow('shouldQuery');
+            }).toThrow('Invariant violated in conductor.appendWithoutTurn: called with a shouldQuery:true envelope — this seam is accumulate-only; use submit() for shouldQuery:true envelopes');
         });
     });
 
@@ -662,7 +772,7 @@ describe('createConductor', () => {
 
             expect(() => {
                 void h.conductor.submit(notificationEnvelope(), { priority: 'other' });
-            }).toThrow('shouldQuery');
+            }).toThrow('Invariant violated in conductor.submit: called with a shouldQuery:false envelope — submit() always opens a turn; use appendWithoutTurn() for shouldQuery:false envelopes');
         });
     });
 
@@ -679,6 +789,21 @@ describe('createConductor', () => {
             expect(h.journal.byKind('task_started')).toEqual([
                 { type: 'task_started', at: expect.any(Date), taskId: 'task-1', description: 'run a thing' },
             ]);
+            expect(h.journal.byKind('task_completed')).toEqual([]);
+            expect(h.journal.byKind('task_lost')).toEqual([]);
+
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'run a thing' }));
+            await flush();
+            expect(h.journal.byKind('task_started')).toHaveLength(1);
+
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-2', description: 'run another thing' }));
+            await flush();
+            expect(h.journal.byKind('task_started')).toEqual([
+                { type: 'task_started', at: expect.any(Date), taskId: 'task-1', description: 'run a thing' },
+                { type: 'task_started', at: expect.any(Date), taskId: 'task-2', description: 'run another thing' },
+            ]);
+            expect(h.journal.byKind('task_completed')).toEqual([]);
+            expect(h.journal.byKind('task_lost')).toEqual([]);
 
             h.instances[0].emit(frames.taskNotification('completed', { task_id: 'task-1' }));
             await flush();
@@ -691,6 +816,22 @@ describe('createConductor', () => {
                 { type: 'task_completed', at: expect.any(Date), taskId: 'task-1', description: 'run a thing' },
             ]);
             expect(h.journal.byKind('task_lost')).toEqual([]);
+        });
+
+        it('an explicit task_lost ledger event journals the named task as lost', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'lost by supervisor' }));
+            await flush();
+
+            h.ledgerStore.dispatch({ type: 'task_lost', taskId: 'task-1', at: new Date(1) });
+
+            expect(h.journal.byKind('task_lost')).toEqual([
+                { type: 'task_lost', at: expect.any(Date), taskId: 'task-1', description: 'lost by supervisor' },
+            ]);
+            expect(h.journal.byKind('task_completed')).toEqual([]);
         });
 
         it('tasks still in flight when a mid-life reopen wipes the ledger\'s task list are journaled task_lost, not task_completed', async () => {
@@ -728,12 +869,19 @@ describe('createConductor', () => {
 
             const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
             await flush();
+            const secondHumanPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-2' });
+            await flush();
+            expect(h.clock.pending()).toBe(1);
 
             h.clock.advance(9999);
             expect(h.instances[0].interruptCalls).toBe(0);
 
             h.clock.advance(1);
             expect(h.instances[0].interruptCalls).toBe(1);
+            expect(h.logger.debug).toHaveBeenCalledWith(
+                { reason: 'human wait target elapsed' },
+                'Conductor requesting interrupt'
+            );
 
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
@@ -742,6 +890,8 @@ describe('createConductor', () => {
             await flush();
             h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
             await humanPromise;
+            h.instances[0].emit(frames.resultSuccess());
+            await secondHumanPromise;
         });
 
         it('extends to the 30s ceiling while a tool_use is unresolved: no interrupt at 29999ms, interrupt at 30000ms, exactly once', async () => {
@@ -761,6 +911,10 @@ describe('createConductor', () => {
 
             h.clock.advance(1);
             expect(h.instances[0].interruptCalls).toBe(1);
+            expect(h.logger.debug).toHaveBeenCalledWith(
+                { reason: 'human wait ceiling elapsed' },
+                'Conductor requesting interrupt'
+            );
 
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
@@ -841,6 +995,26 @@ describe('createConductor', () => {
     });
 
     describe('the compaction guard integration', () => {
+        it('does not start /compact at threshold while another envelope is queued', async () => {
+            const h = build();
+            await openWith(h);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            const first = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const queued = h.conductor.submit(catchupEnvelope(), { priority: 'other' });
+            await flush();
+
+            h.instances[0].emit(frames.resultSuccess());
+            await first;
+            await flush();
+
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'catchup' });
+            expect(h.journal.byKind('compaction_started')).toEqual([]);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 10 }));
+            h.instances[0].emit(frames.resultSuccess());
+            await queued;
+        });
+
         it('submits /compact as a tracked turn at threshold with an empty queue, releases on compact_boundary, and drains a held envelope afterwards', async () => {
             const h = build();
             await openWith(h);
@@ -873,6 +1047,35 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.resultSuccess());
             const result = await heldResult;
             expect(result.envelopeId).toBe(heldEnvelope.id);
+        });
+
+        it('a timeout failure only interrupts the /compact turn that timed out, never an unrelated discord turn', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.ledgerStore.dispatch({ type: 'compaction_started', trigger: 'manual', at: new Date(h.clock.now()) });
+            h.ledgerStore.dispatch({ type: 'compaction_failed', reason: 'timeout', at: new Date(h.clock.now()) });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(0);
+        });
+
+        it('a non-timeout compaction failure releases a running /compact turn without interrupting it', async () => {
+            const h = build();
+            await openWith(h);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'compact' });
+
+            h.ledgerStore.dispatch({ type: 'compaction_failed', reason: 'notification', at: new Date(h.clock.now()) });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(0);
         });
 
         it('the /compact turn\'s own result with no boundary seen releases and journals compaction_failed', async () => {
@@ -978,6 +1181,10 @@ describe('createConductor', () => {
             // Releasing the guard's own bookkeeping is not enough — the stuck turn itself must be
             // interrupted, or processQueue() stays blocked on currentTurn !== null forever.
             expect(h.instances[0].interruptCalls).toBe(1);
+            expect(h.logger.debug).toHaveBeenCalledWith(
+                { reason: 'compaction ceiling exceeded' },
+                'Conductor requesting interrupt'
+            );
 
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
@@ -1172,6 +1379,32 @@ describe('createConductor', () => {
     });
 
     describe('is_error retry via retryPolicy', () => {
+        it('uses exponential backoff for the third attempt when no retryAfterMs override is supplied', async () => {
+            const retryPolicy: RetryPolicy = { ...FAST_RETRY_POLICY, maxAttempts: 3 };
+            const h = build({ retryPolicy });
+            await openWith(h);
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'first overload', api_error_status: 529 }));
+            await flush();
+            h.clock.advance(100);
+            await flush();
+            expect(turnPrompts(h.instances[0])).toHaveLength(2);
+
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'second overload', api_error_status: 529 }));
+            await flush();
+            h.clock.advance(199);
+            await flush();
+            expect(turnPrompts(h.instances[0])).toHaveLength(2);
+            h.clock.advance(1);
+            await flush();
+            expect(turnPrompts(h.instances[0])).toHaveLength(3);
+
+            h.instances[0].emit(frames.resultSuccess());
+            await expect(resultPromise).resolves.toMatchObject({ isError: false });
+        });
+
         it('a transient error is resubmitted, and exhausting retryPolicy.maxAttempts journals turn_failed', async () => {
             const h = build();
             await openWith(h);
@@ -1190,7 +1423,7 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'still overloaded', api_error_status: 529 }));
             const result = await resultPromise;
 
-            expect(result.isError).toBe(true);
+            expect(result).toMatchObject({ isError: true, wasInterrupted: false });
             expect(h.journal.byKind('turn_failed')).toEqual([
                 { type: 'turn_failed', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord', error: 'still overloaded' },
             ]);
@@ -1406,6 +1639,8 @@ describe('createConductor', () => {
 
             h.instances[0].fail(new Error('worker crashed'));
             await flush();
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'buffered first' }))).toBe(true);
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'buffered second' }))).toBe(true);
             h.instances[1].fail(new Error('resume also failed'));
             await flush();
             h.instances[2].fail(new Error('fresh open also failed'));
@@ -1415,7 +1650,7 @@ describe('createConductor', () => {
             await expect(queued).rejects.toThrow();
             expect(h.logger.error).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.stringContaining('giving up'));
             expect(h.logger.warn).toHaveBeenCalledWith(
-                { dropped: expect.any(Number) },
+                { dropped: 2 },
                 'Giving up on a reopen; dropping input the dead session never delivered'
             );
             // rejectAllQueued/the in-flight-item rejection path both clear their AbortSignal
@@ -1425,6 +1660,60 @@ describe('createConductor', () => {
 
             // The conductor must not silently accept further work once it has given up.
             await expect(h.conductor.submit(discordEnvelope(), { priority: 'human' })).rejects.toThrow('not open');
+        });
+
+        it('normalises a non-Error final reopen failure and can be opened and used again after giving up', async () => {
+            let saveCalls = 0;
+            const resumeStore = {
+                load: () => Promise.resolve(undefined),
+                save: () => {
+                    saveCalls += 1;
+                    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- exercises toError's deliberate non-Error fallback branch
+                    return saveCalls === 2 || saveCalls === 3 ? Promise.reject(undefined) : Promise.resolve();
+                },
+            };
+            const h = build({ resumeStore });
+            await openWith(h, 'sess-1');
+            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            h.instances[2].emit(frames.init('sess-fresh'));
+            await expect(inFlight).rejects.toThrow('Conductor failed to reopen the session');
+            expect(h.logger.error).toHaveBeenCalledWith(
+                { error: expect.objectContaining({ message: 'Conductor failed to reopen the session' }) },
+                'Conductor could not reopen the session after it closed unexpectedly; giving up'
+            );
+
+            const reopened = h.conductor.open();
+            await flush();
+            h.instances[3].emit(frames.init('sess-recovered'));
+            await expect(reopened).resolves.toEqual({ sessionId: 'sess-recovered', resumed: false });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[3].emit(frames.resultSuccess());
+            await expect(resultPromise).resolves.toMatchObject({ isError: false, sessionId: 'sess-recovered' });
+        });
+
+        it('closes a fresh fallback handle when its own finishOpen fails before giving up', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            h.resumeStore.scriptSaveRejection(new Error('resume store unavailable'));
+            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            expect(h.instances[1].closeCalls).toBe(1);
+            h.instances[2].emit(frames.init('sess-fresh'));
+            await expect(inFlight).rejects.toThrow('resume store unavailable');
+
+            expect(h.instances[2].closeCalls).toBe(1);
         });
 
         it('a resume that opens successfully but whose finishOpen rejects discards that handle before falling back to a fresh session — no leaked concurrent session', async () => {
@@ -1450,6 +1739,46 @@ describe('createConductor', () => {
             await flush();
 
             expect(h.journal.byKind('session_opened').at(-1)).toMatchObject({ sessionId: 'sess-2', fallback: true });
+        });
+
+        it('discarding an older handle never clears a newer concurrently-opened handle', async () => {
+            let saveCalls = 0;
+            let rejectOlderSave!: (error: Error) => void;
+            const resumeStore = {
+                load: () => Promise.resolve(undefined),
+                save: () => {
+                    saveCalls += 1;
+                    if(saveCalls === 2) {
+                        return new Promise<void>((_resolve, reject) => {
+                            rejectOlderSave = reject;
+                        });
+                    }
+                    return Promise.resolve();
+                },
+            };
+            const h = build({ resumeStore });
+            await openWith(h, 'sess-1');
+
+            h.instances[0].fail(new Error('first handle crashed'));
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+
+            // The resumed handle closes while its finishOpen save is still pending. That begins a
+            // newer reopen, whose handle becomes current before the older save rejects.
+            h.instances[1].fail(new Error('resumed handle crashed during save'));
+            await flush();
+            h.instances[2].emit(frames.init('sess-newer'));
+            await flush();
+            rejectOlderSave(new Error('older resume-store save failed'));
+            await flush();
+            expect(h.instances).toHaveLength(4); // the older reopen also starts its fresh fallback
+
+            // Closing the newer handle must still be recognized as a mid-life close. An older
+            // discard that unconditionally cleared currentHandleRef would suppress this reopen.
+            h.instances[2].fail(new Error('newer current handle crashed'));
+            await flush();
+            expect(h.instances).toHaveLength(5);
         });
     });
 
@@ -1520,14 +1849,22 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             const controller = new AbortController();
+            const addSpy = jest.spyOn(controller.signal, 'addEventListener');
+            const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
             const envelope = discordEnvelope({ channelId: 'chan-1' });
             const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
             await flush();
             expect(h.instances[0].interruptCalls).toBe(0);
+            expect(addSpy).toHaveBeenCalledWith('abort', expect.any(Function), { once: true });
 
             controller.abort();
             await flush();
             expect(h.instances[0].interruptCalls).toBe(1);
+            expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+            expect(h.logger.debug).toHaveBeenCalledWith(
+                { reason: 'submit() signal aborted' },
+                'Conductor requesting interrupt'
+            );
 
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
@@ -1557,11 +1894,13 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             const controller = new AbortController();
+            const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
             const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             const result = await resultPromise;
             expect(result.outcome).toBeUndefined();
+            expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
 
             expect(() => {
                 controller.abort();
@@ -1615,7 +1954,38 @@ describe('createConductor', () => {
             await h.conductor.interruptCurrent({ requestingChannelId: 'chan-other' });
 
             expect(h.instances[0].interruptCalls).toBe(0);
-            expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ requestingChannelId: 'chan-other' }), expect.any(String));
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                { requestingChannelId: 'chan-other', turnChannelId: 'chan-1' },
+                'interruptCurrent ignored: requesting channel does not own the running turn'
+            );
+        });
+
+        it('allows an unscoped interrupt of a channel-owned turn', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            const interruptPromise = h.conductor.interruptCurrent({ reason: 'operator requested' });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(1);
+            h.instances[0].resolveInterrupt();
+            await interruptPromise;
+        });
+
+        it('allows a channel-scoped interrupt when the running turn itself has no channel', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(catchupEnvelope(), { priority: 'other' });
+            await flush();
+
+            const interruptPromise = h.conductor.interruptCurrent({ requestingChannelId: 'chan-1' });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(1);
+            h.instances[0].resolveInterrupt();
+            await interruptPromise;
         });
 
         it('interrupts the running turn when the channel matches', async () => {
@@ -1641,11 +2011,15 @@ describe('createConductor', () => {
             const interruptPromise = h.conductor.interruptCurrent({ requestingChannelId: 'chan-1' });
             await flush();
 
-            h.instances[0].rejectInterrupt(new Error('SDK refused the interrupt'));
+            const interruptError = new Error('SDK refused the interrupt');
+            h.instances[0].rejectInterrupt(interruptError);
 
             await interruptPromise; // must resolve, not reject, even though the underlying call failed
 
-            expect(h.logger.error).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.any(String));
+            expect(h.logger.error).toHaveBeenCalledWith(
+                { error: interruptError },
+                'Conductor interrupt failed'
+            );
         });
     });
 
@@ -1674,6 +2048,7 @@ describe('createConductor', () => {
 
             expect(h.journal.flushCount).toBe(1);
             expect(h.instances[0].closeCalls).toBe(1);
+            expect(h.clock.pending()).toBe(0);
         });
 
         it('with a running turn: waits turnWaitMs, then interrupts, then flushes and closes', async () => {
@@ -1691,6 +2066,10 @@ describe('createConductor', () => {
             h.clock.advance(1);
             await flush();
             expect(h.instances[0].interruptCalls).toBe(1);
+            expect(h.logger.debug).toHaveBeenCalledWith(
+                { reason: 'shutdown turn-wait elapsed' },
+                'Conductor requesting interrupt'
+            );
 
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
@@ -1698,6 +2077,45 @@ describe('createConductor', () => {
 
             expect(h.journal.flushCount).toBe(1);
             expect(h.instances[0].closeCalls).toBe(1);
+        });
+
+        it('clears both shutdown timers when the running turn ends naturally before turnWaitMs', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+            await flush();
+            expect(h.clock.pending()).toBe(2);
+
+            h.instances[0].emit(frames.resultSuccess());
+            await shutdownPromise;
+
+            expect(h.instances[0].interruptCalls).toBe(0);
+            expect(h.clock.pending()).toBe(0);
+        });
+
+        it('a naturally-ended turn reaches journal flush without an extra no-op interrupt await before the hard deadline', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 1 });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+
+            // Drain exactly the reader, waiter-race, graceful-shutdown, and flush-call turns. If
+            // shutdown awaits interruptCurrentTurnInternal after the turn is already null, the
+            // flush is delayed by one more microtask and can lose the deadline race.
+            for(let step = 0; step < 5; step += 1) {
+                // eslint-disable-next-line no-await-in-loop -- each turn is the behavior asserted
+                await Promise.resolve();
+            }
+            expect(h.journal.flushCount).toBe(1);
+            expect(h.journal.byKind('shutdown')).toHaveLength(1);
+
+            h.clock.advance(1);
+            await shutdownPromise;
         });
 
         it('rejects submit() once shutdown has begun', async () => {
@@ -1842,7 +2260,7 @@ describe('createConductor', () => {
             const h = build();
 
             await expect(h.conductor.deliver('env-1', () => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] })))
-                .rejects.toThrow('called before open()');
+                .rejects.toThrow('Invariant violated in conductor.deliver: called before open() completed its boot recovery, which initialises the delivery guard');
         });
 
         it('sends, journals response_delivered, and awaits flush() before resolving, then marks the envelope delivered', async () => {
@@ -1882,6 +2300,10 @@ describe('createConductor', () => {
             expect(send).toHaveBeenCalledTimes(1);
             expect(second).toEqual({ delivered: false });
             expect(h.journal.byKind('response_delivered')).toHaveLength(1);
+            expect(h.logger.info).toHaveBeenCalledWith(
+                { envelopeId: 'env-1' },
+                'Conductor.deliver: envelope already delivered; skipping send'
+            );
         });
     });
 
@@ -1897,13 +2319,17 @@ describe('createConductor', () => {
 
         it('a readSince() rejection is logged and degrades to an empty-seeded delivery guard rather than rejecting open()', async () => {
             const h = build();
-            h.journal.scriptReadSinceRejection(new Error('DynamoDB throttled'));
+            const recoveryError = new Error('DynamoDB throttled');
+            h.journal.scriptReadSinceRejection(recoveryError);
 
             await expect(openWith(h)).resolves.toEqual({ sessionId: 'sess-1', resumed: false });
 
-            expect(h.logger.error).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.any(String));
+            expect(h.logger.error).toHaveBeenCalledWith(
+                { error: recoveryError },
+                'Conductor boot recovery failed; opening with an empty-seeded delivery guard'
+            );
             const send = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] }));
-            const result = await h.conductor.deliver('env-unseen', send);
+            const result = await h.conductor.deliver('Stryker was here', send);
             expect(result).toEqual({ delivered: true });
         });
 
@@ -1938,8 +2364,9 @@ describe('createConductor', () => {
         });
 
         it('feeds recovery-derived lost task and undelivered-envelope descriptions to buildBootBundle', async () => {
+            const buildBootBundle = jest.fn((input: { lostTasks: string[], undelivered: string[] }) => `lost:${input.lostTasks.join(',')}|undelivered:${input.undelivered.join(',')}`);
             const h = build({
-                buildBootBundle: jest.fn(input => `lost:${input.lostTasks.join(',')}|undelivered:${input.undelivered.join(',')}`),
+                buildBootBundle,
             });
             h.journal.scriptReadSince([
                 { type: 'task_started', at: new Date(0), taskId: 'task-1', description: 'abandoned task' },
@@ -1949,6 +2376,10 @@ describe('createConductor', () => {
 
             await openWith(h);
 
+            expect(buildBootBundle).toHaveBeenCalledWith({
+                lostTasks:   ['abandoned task'],
+                undelivered: ['discord envelope env-1'],
+            });
             expect(h.instances[0].consumedPrompts).toHaveLength(1);
             expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('lost:abandoned task');
             expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('undelivered:');
@@ -3031,6 +3462,25 @@ describe('createConductor', () => {
     });
 
     describe('requestReopen()', () => {
+        it('late frames and closure from a discarded handle cannot steal or reopen the replacement session', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            h.conductor.requestReopen('rotate identity');
+            await flush();
+            h.instances[1].emit(frames.init('sess-2'));
+            await flush();
+
+            h.instances[0].emit(frames.init('stale-session-id'));
+            await flush();
+            h.instances[0].fail(new Error('discarded reader finally stopped'));
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+            expect(h.conductor.status().sessionId).toBe('sess-2');
+            await h.conductor.shutdown({ turnWaitMs: 1000, deadlineMs: 2000 });
+            expect(h.instances[1].closeCalls).toBe(1);
+        });
+
         it('closes and resumes the live session as soon as the conductor is idle', async () => {
             const h = build();
             await openWith(h, 'sess-1');
@@ -3530,6 +3980,250 @@ describe('createConductor', () => {
             await shutdownPromise;
 
             expect(turnPrompts(h.instances[1])).toHaveLength(0);
+        });
+    });
+
+    describe('mutation regression behavior contracts', () => {
+        it('tracks an empty SDK task id through completion and session-loss lifecycle events', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            h.instances[0].emit(frames.taskStarted({ task_id: '', description: 'empty id task' }));
+            await flush();
+            expect(h.journal.byKind('task_started')).toEqual([
+                { type: 'task_started', at: expect.any(Date), taskId: '', description: 'empty id task' },
+            ]);
+
+            h.instances[0].emit(frames.taskStarted({ task_id: 'other-task', description: 'another task' }));
+            await flush();
+            expect(h.journal.byKind('task_completed')).toEqual([]);
+
+            h.instances[0].emit(frames.taskNotification('completed', { task_id: '' }));
+            await flush();
+            expect(h.journal.byKind('task_completed')).toEqual([
+                { type: 'task_completed', at: expect.any(Date), taskId: '', description: 'empty id task' },
+            ]);
+
+            h.instances[0].emit(frames.taskStarted({ task_id: '', description: 'lost empty id task' }));
+            await flush();
+            h.ledgerStore.dispatch({ type: 'task_lost', taskId: '', at: new Date(h.clock.now()) });
+            expect(h.journal.byKind('task_lost')).toEqual([
+                { type: 'task_lost', at: expect.any(Date), taskId: '', description: 'lost empty id task' },
+            ]);
+
+            h.instances[0].emit(frames.taskStarted({ task_id: '', description: 'crash-lost empty id task' }));
+            await flush();
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            expect(h.journal.byKind('task_lost')).toEqual([
+                { type: 'task_lost', at: expect.any(Date), taskId: '', description: 'lost empty id task' },
+                { type: 'task_lost', at: expect.any(Date), taskId: 'other-task', description: 'another task' },
+                { type: 'task_lost', at: expect.any(Date), taskId: '', description: 'crash-lost empty id task' },
+            ]);
+        });
+
+        it('gives a compact turn exactly two attempts when maxAttempts is two', async () => {
+            const classifyError = (): ErrorClassification => ({ category: 'transient', retryAfterMs: 0, message: 'retry compact' });
+            const h = build({ classifyError });
+            await openWith(h);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            const initial = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await initial;
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('compact');
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 10 }));
+
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'compact overloaded', api_error_status: 529 }));
+            await flush();
+            expect(turnPrompts(h.instances[0])).toHaveLength(3);
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'compact still overloaded', api_error_status: 529 }));
+            await flush();
+            expect(turnPrompts(h.instances[0])).toHaveLength(3);
+        });
+
+        it('gives an injected background resume turn exactly two attempts', async () => {
+            const classifyError = (): ErrorClassification => ({ category: 'transient', retryAfterMs: 0, message: 'retry resume' });
+            const h = build({ classifyError });
+            await openWith(h);
+            h.instances[0].emit(frames.assistantText('meaningful partial work'));
+            await flush();
+            void h.conductor.interruptCurrent({ reason: 'test background interruption' });
+            await flush();
+            h.instances[0].resolveInterrupt();
+            h.instances[0].emit(frames.resultInterrupted());
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('resume');
+
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'resume overloaded', api_error_status: 529 }));
+            await flush();
+            expect(h.journal.byKind('envelope_submitted').map(entry => entry.kind)).toEqual(['resume', 'resume']);
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'resume still overloaded', api_error_status: 529 }));
+            await flush();
+            expect(h.journal.byKind('envelope_submitted').map(entry => entry.kind)).toEqual(['resume', 'resume']);
+        });
+
+        it('honors a one millisecond retryAfter delay', async () => {
+            const classifyError = (): ErrorClassification => ({ category: 'rate_limited', retryAfterMs: 1, message: 'brief limit' });
+            const h = build({ classifyError });
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'limited', api_error_status: 429 }));
+            await flush();
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
+            h.clock.advance(1);
+            await flush();
+            expect(turnPrompts(h.instances[0])).toHaveLength(2);
+        });
+
+        it('timestamps a newly adopted peer at the current clock time', async () => {
+            const h = build();
+            await openWith(h);
+            h.clock.advance(10 * 60_000);
+            const peer = peerEnvelope();
+            h.conductor.adoptPeerTurn(peer);
+            h.instances[0].emit(frames.assistantText('peer response'));
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'peer', envelopeId: peer.id });
+        });
+
+        it('preserves FIFO order for two appends buffered during reopen', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            h.conductor.requestReopen('new identity');
+            await flush();
+            h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'buffered first' }));
+            h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'buffered second' }));
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            await flush();
+            const prompts = JSON.stringify(turnPrompts(h.instances[1]));
+            expect(prompts.indexOf('buffered first')).toBeLessThan(prompts.indexOf('buffered second'));
+        });
+
+        it('rejects every queued submit when shutdown begins', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope({ channelId: 'active' }), { priority: 'human', requestingChannelId: 'active' });
+            await flush();
+            const queuedB = h.conductor.submit(discordEnvelope({ channelId: 'B' }), { priority: 'other' });
+            const queuedC = h.conductor.submit(discordEnvelope({ channelId: 'C' }), { priority: 'other' });
+            await flush();
+            void h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+            await expect(Promise.all([queuedB, queuedC])).rejects.toThrow('shutting down');
+            expect(h.conductor.status().queueLength).toBe(0);
+        });
+
+        it('requeues a crashed active turn ahead of an already queued turn', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            const active = discordEnvelope({ text: 'active A' });
+            const queued = discordEnvelope({ text: 'queued B' });
+            const activeResult = h.conductor.submit(active, { priority: 'human', requestingChannelId: 'A' });
+            await flush();
+            const queuedResult = h.conductor.submit(queued, { priority: 'other' });
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            expect(JSON.stringify(turnPrompts(h.instances[1])[0])).toContain('active A');
+            h.instances[1].emit(frames.resultSuccess());
+            await activeResult;
+            await flush();
+            expect(JSON.stringify(turnPrompts(h.instances[1])[1])).toContain('queued B');
+            h.instances[1].emit(frames.resultSuccess());
+            await queuedResult;
+        });
+
+        it('keeps open pending until the fresh session id is persisted and propagates persistence failure', async () => {
+            const saveGate = deferred<void>();
+            void saveGate.promise.catch(() => {});
+            const resumeStore = {
+                load: () => Promise.resolve(undefined),
+                save: () => saveGate.promise,
+            };
+            const h = build({ resumeStore });
+            let settled = false;
+            const opening = h.conductor.open().finally(() => {
+                settled = true;
+            });
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await flush();
+            expect(settled).toBe(false);
+            saveGate.resolve();
+            await opening;
+
+            const rejection = deferred<void>();
+            void rejection.promise.catch(() => {});
+            const failed = build({ resumeStore: { load: () => Promise.resolve(undefined), save: () => rejection.promise } });
+            const failedOpen = failed.conductor.open();
+            await flush();
+            failed.instances[0].emit(frames.init('sess-2'));
+            rejection.reject(new Error('save failed'));
+            await expect(failedOpen).rejects.toThrow('save failed');
+        });
+
+        it('withdrawing one queued submit leaves the following submit runnable', async () => {
+            const h = build();
+            await openWith(h);
+            const active = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'A' });
+            await flush();
+            const controller = new AbortController();
+            const withdrawn = h.conductor.submit(discordEnvelope({ text: 'withdraw B' }), { priority: 'other', signal: controller.signal });
+            const following = h.conductor.submit(discordEnvelope({ text: 'run C' }), { priority: 'other' });
+            controller.abort();
+            await expect(withdrawn).resolves.toMatchObject({ outcome: 'withdrawn' });
+            h.instances[0].emit(frames.resultSuccess());
+            await active;
+            await flush();
+            expect(JSON.stringify(turnPrompts(h.instances[0]).at(-1))).toContain('run C');
+            h.instances[0].emit(frames.resultSuccess());
+            await following;
+        });
+
+        it('does not resolve delivery or mark it delivered before journal flush settles', async () => {
+            const h = build();
+            await openWith(h);
+            const flushGate = deferred<void>();
+            const flushSpy = jest.spyOn(h.journal, 'flush').mockImplementation(() => flushGate.promise);
+            let settled = false;
+            const firstSend = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] }));
+            const delivery = h.conductor.deliver('deferred-env', firstSend).finally(() => {
+                settled = true;
+            });
+            await flush();
+            expect(flushSpy).toHaveBeenCalledTimes(1);
+            expect(settled).toBe(false);
+            flushGate.resolve();
+            await expect(delivery).resolves.toEqual({ delivered: true });
+            const secondSend = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-2'] }));
+            await expect(h.conductor.deliver('deferred-env', secondSend)).resolves.toEqual({ delivered: false });
+            expect(secondSend).not.toHaveBeenCalled();
+        });
+
+        it('waits for the real interrupt call after shutdown turn-wait elapses', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            let settled = false;
+            const shutdown = h.conductor.shutdown({ turnWaitMs: 1, deadlineMs: 120_000 }).finally(() => {
+                settled = true;
+            });
+            await flush();
+            h.clock.advance(1);
+            await flush();
+            expect(h.instances[0].interruptCalls).toBe(1);
+            expect(h.journal.flushCount).toBe(0);
+            expect(h.instances[0].closeCalls).toBe(0);
+            expect(settled).toBe(false);
+            h.instances[0].resolveInterrupt();
+            await shutdown;
+            expect(h.journal.flushCount).toBe(1);
         });
     });
 });

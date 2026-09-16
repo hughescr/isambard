@@ -6,6 +6,8 @@ import { createLedgerStore, initialLedger, type LedgerEvent } from '@/agent/sess
 import {
     DEFAULT_ANTHROPIC_USAGE_URL,
     DEFAULT_PROVIDER_REPORT_URL,
+    DEFAULT_QUOTA_REQUEST_TIMEOUT_MS,
+    DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
     type CreateQuotaPollerParams,
     type QuotaFetch,
     type QuotaFetchResponse,
@@ -103,6 +105,11 @@ describe('provider report parsing', () => {
         expect(DEFAULT_ANTHROPIC_USAGE_URL).toBe('https://api.anthropic.com/api/oauth/usage');
     });
 
+    it('keeps the documented result debounce and request timeout defaults exact', () => {
+        expect(DEFAULT_QUOTA_RESULT_DEBOUNCE_MS).toBe(30_000);
+        expect(DEFAULT_QUOTA_REQUEST_TIMEOUT_MS).toBe(100_000);
+    });
+
     it('preserves quota identifiers, scopes, durations, freshness and monetary balances', () => {
         const body = providerReport({
             source_freshness: { cached: true, stale: false, age_seconds: 12 },
@@ -143,6 +150,46 @@ describe('provider report parsing', () => {
             assumptions: ['base_tier', 'cache_write_5m'],
             models:      [{ model: 'claude-haiku-4-5-20251001', input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, eligible: true }],
         });
+    });
+
+    it('preserves source order across history models, block identities, blocks, and reference prices', () => {
+        const history = historyReport();
+        history.seven_days.models.push({
+            ...history.seven_days.models[0], model: 'claude-opus-5', input_tokens: 101, total_tokens: 1001,
+        });
+        history.blocks[0].mixed_provider = true;
+        history.blocks[0].models.push({ model: 'claude-opus-5', provider: 'codex' });
+        history.blocks.push({
+            ...history.blocks[0],
+            id:         'next',
+            start_time: '2026-09-11T18:00:00Z',
+            models:     [{ model: 'claude-haiku-5', provider: 'anthropic' }],
+        });
+        const prices = referencePrices();
+        prices.models.push({ ...prices.models[0], model: 'claude-opus-5', input: 2 });
+
+        const parsed = parseProviderSnapshot(providerReport({ history, reference_prices: prices }))?.providers[0];
+
+        expect(parsed?.history?.recentModels.map(model => model.model)).toEqual(['claude-sonnet-5', 'claude-opus-5']);
+        expect(parsed?.history?.blocks.map(block => block.modelNames)).toEqual([
+            ['claude-sonnet-5', 'claude-opus-5'],
+            ['claude-haiku-5'],
+        ]);
+        expect(parsed?.history?.blocks[0]?.modelProviders).toEqual(['anthropic', 'codex']);
+        expect(parsed?.prices?.models.map(model => model.model)).toEqual(['claude-haiku-4-5-20251001', 'claude-opus-5']);
+    });
+
+    it('reports zero recent tokens for empty and Spark-only Codex history', () => {
+        const empty = historyReport('codex');
+        empty.seven_days.models = [];
+        const sparkOnly = historyReport('codex');
+        sparkOnly.seven_days.models[0].model = 'gpt-5.3-codex-spark';
+        const parse = (history: ReturnType<typeof historyReport>) => parseProviderSnapshot(providerReport({
+            provider: 'codex', quota_after: { source: 'codex', collected_at: GENERATED }, history,
+        }))?.providers[0]?.history;
+
+        expect(parse(empty)?.recentTokens.totalTokens).toBe(0);
+        expect(parse(sparkOnly)?.recentTokens.totalTokens).toBe(0);
     });
 
     it('accepts zero-valued history usage and cost while preserving exact block model identities', () => {
@@ -357,7 +404,21 @@ describe('provider report parsing', () => {
         expect(parseProviderSnapshot(providerReport({ quota_after: { source: '', collected_at: GENERATED } }))?.providers[0]?.quotaAfter).toBeUndefined();
     });
 
+    it('accepts one-character required strings and requires both freshness flags', () => {
+        const oneCharacter = providerReport({
+            provider:    'p',
+            status:      'o',
+            quota_after: { source:       'p', collected_at: GENERATED, quotas:       [
+                { id: 'x', used_percent: 1, unit: 'percent_0_100' },
+            ] },
+        });
+        expect(parseProviderSnapshot(oneCharacter)?.providers[0]?.quotaAfter?.quotas[0]?.id).toBe('x');
+        expect(parseProviderSnapshot(providerReport({ source_freshness: { stale: false, age_seconds: 0 } }))).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ source_freshness: { cached: false, age_seconds: 0 } }))).toBeUndefined();
+    });
+
     it('rejects report-shaped arrays and callable values at the unknown input boundary', () => {
+        expect(parseProviderSnapshot(null)).toBeUndefined();
         expect(parseProviderSnapshot(Object.assign([], providerReport()))).toBeUndefined();
         expect(parseProviderSnapshot(Object.assign(() => undefined, providerReport()))).toBeUndefined();
     });
@@ -444,6 +505,16 @@ describe('direct Anthropic fallback parsing', () => {
         });
     });
 
+    it('ignores a kind-less limit outside the session group while retaining the documented kind-less session mapping', () => {
+        expect(parseUsageWindows({ limits: [
+            { group: 'weekly', percent: 91 },
+            { group: 'session', percent: 17 },
+        ] })).toEqual({
+            windows:  { fiveHour: { utilization: 17 } },
+            rejected: false,
+        });
+    });
+
     it('supports legacy window ids, inclusive boundaries, and epoch-second resets', () => {
         expect(parseUsageWindows({
             five_hour: { utilization: 0, resets_at: 1_800_000_000 },
@@ -459,6 +530,10 @@ describe('direct Anthropic fallback parsing', () => {
             five_hour: { utilization: -0.01 },
             seven_day: { utilization: 100.01 },
         })).toEqual({ windows: undefined, rejected: true });
+    });
+
+    it('rejects an explicit null legacy utilization', () => {
+        expect(parseUsageWindows({ five_hour: { utilization: null } })).toEqual({ windows: undefined, rejected: true });
     });
 
     it('excludes a surface-scoped limit even when its kind and group look unified', () => {
@@ -736,6 +811,41 @@ describe('provider polling', () => {
         expect(poller.getSnapshot?.()?.providers[0]?.freshness.ageSeconds).toBe(612);
     });
 
+    it('clamps stale age at zero when the clock moves behind the retained report', async () => {
+        const clock = new FakeClock(Date.parse(GENERATED));
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok(providerReport({ source_freshness: { cached: true, stale: false, age_seconds: 12 } })))
+            .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
+        const { poller } = harness({ clock, fetch });
+        poller.start();
+        await poller.poll();
+        clock.advance(-1000);
+        await poller.poll();
+
+        expect(poller.getSnapshot?.()?.providers[0]?.freshness.ageSeconds).toBe(12);
+    });
+
+    it('retains the latest successful report and its previous provenance when a later poll fails', async () => {
+        const first = providerReport({ status: 'first' });
+        const second = { ...providerReport({ status: 'second' }), generated_at: '2026-09-11T20:00:02Z' };
+        second.providers[0].last_attempt = '2026-09-11T20:00:02Z';
+        second.providers[0].quota_after.collected_at = '2026-09-11T20:00:02Z';
+        const fetch = jest.fn<QuotaFetch>()
+            .mockResolvedValueOnce(ok(first))
+            .mockResolvedValueOnce(ok(second))
+            .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
+        const { poller } = harness({ fetch });
+        poller.start();
+        await poller.poll();
+        await poller.poll();
+        await poller.poll();
+
+        const snapshot = poller.getSnapshot?.();
+        expect(snapshot?.providers[0]?.status).toBe('second');
+        expect(snapshot?.previous?.providers[0]?.status).toBe('first');
+        expect(snapshot?.previous?.generatedAt).toEqual(new Date(GENERATED));
+    });
+
     it('does not send the bearer to the direct endpoint after a local-auth rejection', async () => {
         const { fetch, logger, poller } = harness({ fetch: async () => ({ ok: false, status: 401, json: async () => ({}) }) });
         poller.start();
@@ -806,6 +916,49 @@ describe('provider polling', () => {
         await poller.poll();
         expect(fetch).toHaveBeenCalledTimes(2);
         expect(fetch).toHaveBeenLastCalledWith(DEFAULT_ANTHROPIC_USAGE_URL, expect.any(Object));
+    });
+
+    it('does not use the direct fallback for HTTP 499', async () => {
+        const { fetch, poller } = harness({ fetch: async () => ({ ok: false, status: 499, json: async () => ({}) }) });
+        poller.start();
+        await poller.poll();
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a fallback poll pending and its timeout armed until the fallback settles', async () => {
+        let releaseFallback = (_response: QuotaFetchResponse): void => {};
+        let announceFallback = (): void => {};
+        const fallbackStarted = new Promise<void>((resolve) => {
+            announceFallback = resolve;
+        });
+        const fallbackGate = new Promise<QuotaFetchResponse>((resolve) => {
+            releaseFallback = resolve;
+        });
+        const fetch = jest.fn<QuotaFetch>(async (url) => {
+            if(url === DEFAULT_PROVIDER_REPORT_URL) {
+                return { ok: false, status: 404, json: async () => ({}) };
+            }
+            announceFallback();
+            return fallbackGate;
+        });
+        const { clock, poller } = harness({ fetch });
+        poller.start();
+        const attempt = poller.poll();
+        let settled = false;
+        void attempt.then(() => {
+            settled = true;
+            return undefined;
+        });
+        await fallbackStarted;
+        await Promise.resolve();
+
+        expect(settled).toBe(false);
+        expect(clock.pending()).toBe(2); // recurrence and the request timeout remain live
+        expect(poller.poll()).toBe(attempt);
+
+        releaseFallback(ok({ five_hour: { utilization: 42 } }));
+        await attempt;
+        expect(clock.pending()).toBe(1);
     });
 
     it('warns once for invalid percentages while retaining valid fallback windows', async () => {
@@ -894,16 +1047,17 @@ describe('provider polling', () => {
         await Promise.all([first, second]);
     });
 
-    it('aborts at the injected-clock deadline', async () => {
+    it('aborts at the default injected-clock deadline', async () => {
         const { clock, logger, poller } = harness({
-            requestTimeoutMs: 1000,
-            fetch:            (_url, init) => new Promise((_resolve, reject) => {
+            fetch: (_url, init) => new Promise((_resolve, reject) => {
                 init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
             }),
         });
         poller.start();
         const attempt = poller.poll();
-        clock.advance(1000);
+        clock.advance(99_999);
+        expect(logger.debug).not.toHaveBeenCalled();
+        clock.advance(1);
         await attempt;
         expect(logger.debug).toHaveBeenCalledWith({ errorName: 'Error' }, 'Quota poll failed; keeping the last known readings');
     });
@@ -1083,7 +1237,7 @@ describe('provider polling', () => {
     });
 
     it('polls on a result only after the debounce boundary and never while stopped', async () => {
-        const { clock, fetch, poller } = harness({ resultDebounceMs: 30_000 });
+        const { clock, fetch, poller } = harness();
         poller.start();
         await poller.poll();
         clock.advance(29_999);

@@ -228,6 +228,27 @@ describe('createCompactionThresholdTuner', () => {
         expect(logger.debug).toHaveBeenCalledWith({ intervalsMs: [1200, 1700], currentPercent: 60, at: new Date(0) }, 'Compaction threshold tuner: no change');
     });
 
+    it('preserves signed telemetry deltas when a local clock correction regresses timestamps', () => {
+        // Telemetry promises retained-record order, not monotonic wall-clock readings. A host
+        // clock can be corrected between real compactions, so the tuner must preserve the signed
+        // elapsed delta rather than hide it with Math.abs. Two -1000ms intervals are shorter than
+        // the 500ms target and therefore step the threshold up.
+        const records: CompactionTelemetryRecord[] = [
+            { startedAt: new Date(2000), thresholdAtStart: 60, finishedAt: new Date(2100) },
+            { startedAt: new Date(1000), thresholdAtStart: 60, finishedAt: new Date(1100) },
+            { startedAt: new Date(0), thresholdAtStart: 60, finishedAt: new Date(100) },
+        ];
+        build({
+            telemetry: telemetryOf(records),
+            config:    { ...DEFAULT_CONFIG, compactThresholdMinPercent: 10, compactThresholdMaxPercent: 90, compactTargetIntervalMs: 500 },
+        });
+
+        emit(boundaryEvent(new Date(2100)));
+
+        expect(setThresholdPercent).toHaveBeenCalledWith(65);
+        expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ from: 60, to: 65 }), 'Compaction threshold tuner: adjusting threshold');
+    });
+
     it('tunes from only the most recent intervals, not the full retained telemetry history', () => {
         // Four old, widely-spaced intervals (90000ms each) followed by three recent, tight ones
         // (1000ms each). The full 7-interval history's median (90000ms, i.e. "longer than

@@ -3,6 +3,19 @@ import { MemoryToolKeyGenerator, generateContentPreview, normalizeTags } from '@
 import type { MemoryPath } from '@/storage/memory-tool/types';
 
 describe.concurrent('MemoryToolKeyGenerator', () => {
+    test.each([
+        { parse: () => MemoryToolKeyGenerator.parsePath('BAD#/state', 'FILE#note.md'), location: 'MemoryToolKeyGenerator.parsePath' },
+        { parse: () => MemoryToolKeyGenerator.parsePath('DIR#/state', 'BAD#note.md'), location: 'MemoryToolKeyGenerator.parsePath' },
+        { parse: () => MemoryToolKeyGenerator.parseTagFromPK('BAD#important'), location: 'MemoryToolKeyGenerator.parseTagFromPK' },
+        { parse: () => MemoryToolKeyGenerator.parsePathFromTagSK('BAD#/state/note.md'), location: 'MemoryToolKeyGenerator.parsePathFromTagSK' },
+        { parse: () => MemoryToolKeyGenerator.parsePath('BAD#DIR#/state', 'FILE#note.md'), location: 'MemoryToolKeyGenerator.parsePath' },
+        { parse: () => MemoryToolKeyGenerator.parsePath('DIR#/state', 'BAD#FILE#note.md'), location: 'MemoryToolKeyGenerator.parsePath' },
+        { parse: () => MemoryToolKeyGenerator.parseTagFromPK('BAD#TAG#important'), location: 'MemoryToolKeyGenerator.parseTagFromPK' },
+        { parse: () => MemoryToolKeyGenerator.parsePathFromTagSK('BAD#PATH#/state/note.md'), location: 'MemoryToolKeyGenerator.parsePathFromTagSK' },
+    ])('reports the validation boundary for malformed keys: $location', ({ parse, location }) => {
+        expect(parse).toThrow(expect.objectContaining({ context: expect.objectContaining({ location }) }));
+    });
+
     describe('createKeys', () => {
         test.each([
             {

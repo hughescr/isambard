@@ -176,20 +176,14 @@ describe('VectorIndex', () => {
             const results = index.query(makeVector(0xFF), 10);
             expect(results).toHaveLength(3);
             // First result must be nearest (distance 0)
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has 3 items per assertion above
-            expect(results[0]!.pk).toBe('nearest');
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has 3 items per assertion above
-            expect(results[0]!.distance).toBe(0);
+            expect(results[0].pk).toBe('nearest');
+            expect(results[0].distance).toBe(0);
             // Middle result is midpoint (distance 512)
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has 3 items per assertion above
-            expect(results[1]!.pk).toBe('midpoint');
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has 3 items per assertion above
-            expect(results[1]!.distance).toBe(512);
+            expect(results[1].pk).toBe('midpoint');
+            expect(results[1].distance).toBe(512);
             // Last result is farthest (distance 1024)
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has 3 items per assertion above
-            expect(results[2]!.pk).toBe('farthest');
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has 3 items per assertion above
-            expect(results[2]!.distance).toBe(1024);
+            expect(results[2].pk).toBe('farthest');
+            expect(results[2].distance).toBe(1024);
         });
 
         it('returns at most limit results', () => {
@@ -204,8 +198,7 @@ describe('VectorIndex', () => {
             index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
             const results = index.query(makeVector(0xFF), 10);
             expect(results).toHaveLength(1);
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has exactly 1 item per check above
-            const r = results[0]!;
+            const r = results[0];
             expect(r.pk).toBe('pk1');
             expect(r.sk).toBe('sk1');
             expect(r.layer).toBe('identity');
@@ -217,8 +210,7 @@ describe('VectorIndex', () => {
             index.upsert({ pk: 'state-item',    sk: 'sk', layer: 'state',    contentHash: 'h2', vector: makeVector(0xAA), updatedAt: 2000 });
             const results = index.query(makeVector(0xAA), 10, createLayerName('identity'));
             expect(results).toHaveLength(1);
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has exactly 1 item per check above
-            expect(results[0]!.pk).toBe('identity-item');
+            expect(results[0].pk).toBe('identity-item');
         });
 
         it('returns all layers when no layer filter specified', () => {
@@ -232,15 +224,13 @@ describe('VectorIndex', () => {
             const vec = makeVector(0xAB);
             index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h1', vector: vec, updatedAt: 1000 });
             const results = index.query(vec, 10);
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has exactly 1 item per upsert above
-            expect(results[0]!.distance).toBe(0);
+            expect(results[0].distance).toBe(0);
         });
 
         it('returns distance 1024 for fully inverted vector (all bits differ)', () => {
             index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h1', vector: makeVector(0x00), updatedAt: 1000 });
             const results = index.query(makeVector(0xFF), 10);
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has exactly 1 item per upsert above
-            expect(results[0]!.distance).toBe(1024);
+            expect(results[0].distance).toBe(1024);
         });
     });
 
@@ -248,6 +238,7 @@ describe('VectorIndex', () => {
         it('sets isClosed to true', () => {
             index.close();
             expect(index.isClosed).toBe(true);
+            expect(() => db.query('SELECT 1').get()).toThrow();
         });
 
         it('subsequent close() does not throw', () => {
@@ -303,8 +294,7 @@ describe('VectorIndex', () => {
                 expect(vi.getHash('pk1', 'sk1')).toBe('h');
                 const results = vi.query(makeVector(0xAA), 5);
                 expect(results).toHaveLength(1);
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; results has exactly 1 item per upsert above
-                expect(results[0]!.distance).toBe(0);
+                expect(results[0].distance).toBe(0);
             } finally {
                 vi.close();
                 await Bun.file(tmpPath).delete().catch(() => undefined);

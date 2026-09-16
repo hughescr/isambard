@@ -41,14 +41,12 @@ export interface MessageSummarizer {
     summarizeMessageBatch(messages: DiscordSearchResult[], batchSize?: number): Promise<BatchOverflowSummary[]>
 }
 
-// Stryker disable next-line StringLiteral: Configuration prompt template
 const SUMMARIZATION_PROMPT = `Summarize this Discord message in 1-2 sentences (~50 words max).
 Focus on: key topics, questions asked, decisions made, action items.
 
 Message:
 {content}`;
 
-// Stryker disable next-line StringLiteral: Configuration prompt template
 const BATCH_SUMMARIZATION_PROMPT = `Summarize these Discord messages in 2-3 sentences (~75 words max).
 Focus on: key topics discussed, questions asked, decisions made, action items.
 
@@ -81,7 +79,6 @@ Messages:
  * @returns The synopsis text
  */
 async function summarizeContent(content: string): Promise<string> {
-    // Stryker disable next-line StringLiteral: Template placeholder for content substitution
     const prompt = SUMMARIZATION_PROMPT.replace('{content}', content);
     return generateText(prompt);
 }
@@ -99,7 +96,6 @@ function formatMessagesForBatch(messages: DiscordSearchResult[]): string {
  */
 async function summarizeBatch(messages: DiscordSearchResult[]): Promise<BatchOverflowSummary> {
     const formatted = formatMessagesForBatch(messages);
-    // Stryker disable next-line StringLiteral: Template placeholder for content substitution
     const prompt = BATCH_SUMMARIZATION_PROMPT.replace('{messages}', formatted);
     const synopsis = await generateText(prompt);
 
@@ -118,7 +114,6 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
 
     return {
         async summarizeMessages(messages: DiscordSearchResult[]): Promise<OverflowSummary[]> {
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - [].map() returns [] so early return is redundant; prevents unnecessary pLimit setup
             if(isEmpty(messages)) {
                 return [];
             }
@@ -141,7 +136,6 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
         },
 
         async summarizeMessageBatch(messages: DiscordSearchResult[], batchSize = 10): Promise<BatchOverflowSummary[]> {
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - Array.from({length: Math.ceil([].length / n)}, (_, i) => [].slice(i * n, (i + 1) * n)) produces [] batches so early return is redundant; prevents unnecessary pLimit setup
             if(isEmpty(messages)) {
                 return [];
             }

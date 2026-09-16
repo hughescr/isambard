@@ -137,9 +137,6 @@ export function createCompactionGuard(params: CreateCompactionGuardParams): Comp
         },
 
         onFrame(frame: SDKMessage): void {
-            if(!inFlight) {
-                return;
-            }
             if(frame.type === 'system' && frame.subtype === 'compact_boundary') {
                 release('success');
                 return;

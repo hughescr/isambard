@@ -83,7 +83,6 @@ function formatDayLabel(dayDT: DateTime, todayStart: DateTime): string {
 function formatTimeRange(start: Date, end: Date, zone: string): string {
     const startDT = DateTime.fromJSDate(start, { zone });
     const endDT   = DateTime.fromJSDate(end, { zone });
-    // Stryker disable StringLiteral: format strings are cosmetic display detail
     const startTime = startDT.toFormat('HH:mm');
     const endTime   = endDT.toFormat('HH:mm');
     const abbr      = startDT.toFormat('ZZZZ');

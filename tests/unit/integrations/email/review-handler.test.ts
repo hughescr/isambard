@@ -365,6 +365,16 @@ describe('ReviewHandler.handleButton()', () => {
             expect(editReply).toHaveBeenCalledTimes(1);
             const editReplyArg = editReply.mock.calls[0]?.[0] as { content: string };
             expect(editReplyArg.content).toContain('error');
+            expect(mockLogger.error).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    uid:    42,
+                    prefix: 'email-allowlist',
+                    err:    expect.objectContaining({
+                        message: 'Message UID 42 not found in Review',
+                        context: { uid: 42, sourceFolder: 'Review' },
+                    }),
+                })
+            );
         });
 
         test('allowlist handler moves message and shows success embed (allowlist addition is a separate saga flow)', async () => {
@@ -507,6 +517,163 @@ describe('ReviewHandler.handleButton()', () => {
         });
     });
 
+    describe('public completion and ordering boundaries', () => {
+        test.each([
+            ['non-admin rejection', 'email-trash:42:Review', 'other-user-id'],
+            ['invalid-folder rejection', 'email-trash:42:InvalidFolder', CRAIG_ID],
+        ])('waits for the %s reply before completing', async (_label, customId, userId) => {
+            const replyStarted = Promise.withResolvers<void>();
+            const replyGate    = Promise.withResolvers<object>();
+            const wildDuck     = makeWildDuck();
+            const handler      = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
+            const { interaction } = makeInteraction(customId, userId);
+            interaction.reply = mock(() => {
+                replyStarted.resolve();
+                return replyGate.promise;
+            }) as typeof interaction.reply;
+            let completed = false;
+            const operation = handler.handleButton(interaction).then((): void => {
+                completed = true;
+                return undefined;
+            });
+
+            try {
+                await replyStarted.promise;
+                await Bun.sleep(0);
+                expect(completed).toBeFalse();
+            } finally {
+                replyGate.resolve({});
+                await operation;
+            }
+        });
+
+        test('acknowledges the interaction before starting the review action', async () => {
+            const deferStarted = Promise.withResolvers<void>();
+            const deferGate    = Promise.withResolvers<object>();
+            const wildDuck     = makeWildDuck();
+            const handler      = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
+            const { interaction } = makeInteraction('email-trash:42:Review');
+            interaction.deferUpdate = mock(() => {
+                deferStarted.resolve();
+                return deferGate.promise;
+            }) as typeof interaction.deferUpdate;
+            const operation = handler.handleButton(interaction);
+
+            try {
+                await deferStarted.promise;
+                expect(wildDuck.moveMessage).not.toHaveBeenCalled();
+            } finally {
+                deferGate.resolve({});
+                await operation;
+            }
+        });
+
+        test.each([
+            ['junk', 'email-junk:42:Review'],
+            ['allow', 'email-allow:42:Review'],
+        ])('waits for the %s move before completing', async (_label, customId) => {
+            const moveStarted = Promise.withResolvers<void>();
+            const moveGate    = Promise.withResolvers<void>();
+            const wildDuck    = makeWildDuck();
+            wildDuck.moveMessage.mockImplementation(() => {
+                moveStarted.resolve();
+                return moveGate.promise;
+            });
+            const handler = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
+            const { interaction, editReply } = makeInteraction(customId);
+            let completed = false;
+            const operation = handler.handleButton(interaction).then((): void => {
+                completed = true;
+                return undefined;
+            });
+
+            try {
+                await moveStarted.promise;
+                await Bun.sleep(0);
+                expect(completed).toBeFalse();
+                expect(editReply).not.toHaveBeenCalled();
+            } finally {
+                moveGate.resolve();
+                await operation;
+            }
+        });
+
+        test.each([
+            ['trash', 'email-trash:42:Review'],
+            ['junk', 'email-junk:42:Review'],
+            ['allow', 'email-allow:42:Review'],
+            ['allowlist', 'email-allowlist:42:Review'],
+        ])('waits for the %s terminal edit before completing', async (_label, customId) => {
+            const editStarted = Promise.withResolvers<void>();
+            const editGate    = Promise.withResolvers<object>();
+            const wildDuck    = makeWildDuck();
+            const handler     = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
+            const { interaction } = makeInteraction(customId);
+            interaction.editReply = mock(() => {
+                editStarted.resolve();
+                return editGate.promise;
+            }) as typeof interaction.editReply;
+            let completed = false;
+            const operation = handler.handleButton(interaction).then((): void => {
+                completed = true;
+                return undefined;
+            });
+
+            try {
+                await editStarted.promise;
+                await Bun.sleep(0);
+                expect(completed).toBeFalse();
+            } finally {
+                editGate.resolve({});
+                await operation;
+            }
+        });
+
+        test('moves an allowlist-reviewed message before starting its approval saga', async () => {
+            const moveStarted = Promise.withResolvers<void>();
+            const moveGate    = Promise.withResolvers<void>();
+            const wildDuck    = makeWildDuck();
+            wildDuck.moveMessage.mockImplementation(() => {
+                moveStarted.resolve();
+                return moveGate.promise;
+            });
+            const allowlistHandler = makeAllowlistInteractionHandler();
+            const handler = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: allowlistHandler });
+            const { interaction } = makeInteraction('email-allowlist:42:Review');
+            const operation = handler.handleButton(interaction);
+
+            try {
+                await moveStarted.promise;
+                expect(allowlistHandler.startFromApproval).not.toHaveBeenCalled();
+            } finally {
+                moveGate.resolve();
+                await operation;
+            }
+        });
+
+        test('finishes the approval saga before sending the allowlist success edit', async () => {
+            const approvalStarted = Promise.withResolvers<void>();
+            const approvalGate    = Promise.withResolvers<{ allowlistSuffix: string }>();
+            const wildDuck        = makeWildDuck();
+            const allowlistHandler = makeAllowlistInteractionHandler();
+            allowlistHandler.startFromApproval = mock(() => {
+                approvalStarted.resolve();
+                return approvalGate.promise;
+            });
+            const handler = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: allowlistHandler });
+            const { interaction, editReply } = makeInteraction('email-allowlist:42:Review');
+            const operation = handler.handleButton(interaction);
+
+            try {
+                await approvalStarted.promise;
+                expect(editReply).not.toHaveBeenCalled();
+            } finally {
+                approvalGate.resolve({ allowlistSuffix: '' });
+                await operation;
+            }
+        });
+    });
+
     // -------------------------------------------------------------------------
     // Error handling
     // -------------------------------------------------------------------------
@@ -524,7 +691,12 @@ describe('ReviewHandler.handleButton()', () => {
             await handler.handleButton(interaction);
 
             expect(deferUpdate).toHaveBeenCalledTimes(1);
-            expect(mockLogger.error).toHaveBeenCalled();
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err:    expect.objectContaining({ message: 'WildDuck failure' }),
+                uid:    42,
+                prefix: 'email-trash',
+                msg:    'Review button handler failed',
+            });
             expect(editReply).toHaveBeenCalledTimes(1);
             const editReplyArg = editReply.mock.calls[0]?.[0] as { content: string };
             expect(editReplyArg.content).toContain('error');
@@ -555,6 +727,16 @@ describe('ReviewHandler.handleButton()', () => {
             await handler.handleButton(interaction);
 
             expect(mockLogger.error).toHaveBeenCalledTimes(2);
+            expect(mockLogger.error).toHaveBeenNthCalledWith(1, {
+                err:    expect.objectContaining({ message: 'WildDuck failure' }),
+                uid:    42,
+                prefix: 'email-trash',
+                msg:    'Review button handler failed',
+            });
+            expect(mockLogger.error).toHaveBeenNthCalledWith(2, {
+                err: expect.objectContaining({ message: 'editReply failure' }),
+                msg: 'Failed to send error editReply',
+            });
         });
     });
 });

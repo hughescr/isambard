@@ -47,7 +47,6 @@ function hasLegacyEmbeddingColumn(db: Database): boolean {
  */
 export function runSchemaMigration(db: Database): void {
     // Detect legacy schema: memory_vectors with an embedding BLOB column
-    // Stryker disable next-line BlockStatement: migration guard — removing the throw body means we'd proceed with a corrupt schema
     if(hasLegacyEmbeddingColumn(db)) {
         throw new VectorIndexUnavailableError(
             'Legacy vector index schema detected (memory_vectors has an "embedding" column). '

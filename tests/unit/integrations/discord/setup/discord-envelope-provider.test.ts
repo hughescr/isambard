@@ -8,7 +8,6 @@ import type { Client } from 'discord.js';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import { createChannelMetadata } from '@/integrations/discord/channel-registry/types';
 import {
-    CHANNEL_LIST_HYDRATING_MARKER,
     channelListProvider,
     resolveNames,
     toEnvelopeInput
@@ -63,6 +62,16 @@ function makeContext(overrides: Partial<DiscordMessageContext> = {}): DiscordMes
 }
 
 describe('channelListProvider', () => {
+    it('exposes the exact hydrating marker from a fresh module evaluation', async () => {
+        const moduleSpecifier = `@/integrations/discord/setup/discord-envelope-provider?hydrating-marker-${Bun.env.__STRYKER_ACTIVE_MUTANT__ ?? 'control'}`;
+        // eslint-disable-next-line no-restricted-syntax -- Stryker activates static mutants after the ordinary module cache is populated; a query-string import re-evaluates this module under the active mutant.
+        const freshModule = await import(moduleSpecifier) as { CHANNEL_LIST_HYDRATING_MARKER: string };
+
+        expect(freshModule.CHANNEL_LIST_HYDRATING_MARKER).toBe(
+            '(channel list still hydrating — registry not ready yet)'
+        );
+    });
+
     it('formats unmuted channels only, with a guild suffix and a well-known annotation', async () => {
         const registry = makeRegistry({
             getUnmutedChannels: mock(() => Promise.resolve([
@@ -82,6 +91,8 @@ describe('channelListProvider', () => {
             'catch-up (My Guild) [well-known: catch-up]',
             'DM with Bob',
         ]);
+        expect(client.guilds.cache.get).toHaveBeenCalledTimes(2);
+        expect(client.guilds.cache.get).not.toHaveBeenCalledWith('DM');
     });
 
     it('returns a single hydrating-marker entry when the registry is not ready, without calling getUnmutedChannels', async () => {
@@ -91,7 +102,7 @@ describe('channelListProvider', () => {
 
         const list = await channelListProvider(registry, client)();
 
-        expect(list).toEqual([CHANNEL_LIST_HYDRATING_MARKER]);
+        expect(list).toEqual(['(channel list still hydrating — registry not ready yet)']);
         expect(getUnmutedChannels).not.toHaveBeenCalled();
     });
 
@@ -132,6 +143,7 @@ describe('resolveNames', () => {
         expect(names).toEqual({
             channelName: 'DM with Bob', guildName: undefined, authorName: 'craig', isDM: true,
         });
+        expect(client.guilds.cache.get).not.toHaveBeenCalled();
     });
 
     it('falls back to the raw channel id and the userId when the registry has no record and no username', async () => {
@@ -188,6 +200,8 @@ describe('toEnvelopeInput', () => {
         const names = {
             channelName: 'general', authorName: 'Craig', isDM: false,
         };
-        expect(() => toEnvelopeInput([], names, [], [])).toThrow(/non-empty/);
+        expect(() => toEnvelopeInput([], names, [], [])).toThrow(
+            'Invariant violated in toEnvelopeInput: contexts must be non-empty'
+        );
     });
 });

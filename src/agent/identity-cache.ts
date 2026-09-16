@@ -109,7 +109,6 @@ export class IdentityCache {
         if(this.cached !== undefined) {
             return this.cached;
         }
-        // Stryker disable next-line ConditionalExpression: in-flight deduplication guard — concurrent callers join the existing promise
         if(this.inflight !== undefined) {
             return this.inflight;
         }
@@ -159,7 +158,6 @@ export class IdentityCache {
     invalidate(): void {
         this.cached = undefined;
         this.inflight = undefined;
-        // Stryker disable next-line UpdateOperator: direction of generation change is irrelevant — any change invalidates the in-flight load
         this.generation++;
         this.notify();
     }
@@ -176,7 +174,6 @@ export class IdentityCache {
     set(text: string): void {
         this.cached = text;
         this.inflight = undefined;
-        // Stryker disable next-line UpdateOperator: direction of generation change is irrelevant — any change invalidates the in-flight load
         this.generation++;
         this.notify();
     }

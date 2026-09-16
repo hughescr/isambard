@@ -187,22 +187,37 @@ describe('new DiscordRateLimiter', () => {
     });
 
     test('stop() cleans up pending queues', async () => {
+        let releaseFirst!: (message: Message) => void;
+        const firstResult = new Promise<Message>((resolve) => {
+            releaseFirst = resolve;
+        });
         const mockChannel = {
             id:   'channel-1',
-            send: mock().mockResolvedValue({ id: 'msg-1' }),
+            send: mock()
+                .mockImplementationOnce(() => firstResult)
+                .mockResolvedValueOnce({ id: 'msg-2' }),
         } as unknown as TextChannel;
 
         const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
-        // Start a send
-        const promise = limiter.sendToChannel(mockChannel, 'Long message');
+        const first = limiter.sendToChannel(mockChannel, 'Long message');
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(mockChannel.send).toHaveBeenCalledTimes(1);
 
-        // Stop immediately (doesn't cancel in-flight requests)
         limiter.stop();
+        const second = limiter.sendToChannel(mockChannel, 'New message after stop');
+        await Promise.resolve();
+        await Promise.resolve();
 
-        // The promise should still complete
-        const result = await promise;
-        expect(result.id).toBe('msg-1');
+        // Clearing the per-channel queue lets a later request proceed independently
+        // while the already-started request is still allowed to finish.
+        expect(mockChannel.send).toHaveBeenCalledTimes(2);
+        const secondMessage = await second;
+        expect(secondMessage.id).toBe('msg-2');
+        releaseFirst({ id: 'msg-1' } as Message);
+        const firstMessage = await first;
+        expect(firstMessage.id).toBe('msg-1');
     });
 
     test('default globalConcurrency is 5', async () => {

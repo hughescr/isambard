@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-// Stryker disable all: Schema values are static definitions
-
 const outboxItemTypeSchema = z.enum([
     'agent_response',
     'perch_output',

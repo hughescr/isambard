@@ -176,4 +176,56 @@ describe('classifyWithHaiku', () => {
 
         expect(prompt.includes('reply') || prompt.includes('reference')).toBe(true);
     });
+
+    it('passes all present routing cues and the mentioned-user choice set to the classifier', async () => {
+        mockGenerateText.mockResolvedValue('answer');
+        await classifyWithHaiku(
+            { ...baseQuestion, threadId: 'question-thread' },
+            { ...baseMessage, threadId: 'message-thread', referencedMessageId: 'reply-id', targetUserId: 'target-user', authorId: 'responder', isBotMentioned: true }
+        );
+
+        const prompt: string = mockGenerateText.mock.calls[0][0];
+        expect(prompt).toContain('Question is in thread: question-thread');
+        expect(prompt).toContain('Question was directed at user ID: target-user');
+        expect(prompt).toContain('Responding user ID is: responder');
+        expect(prompt).toContain('In thread: message-thread');
+        expect(prompt).toContain('Message is a reply/reference to: reply-id');
+        expect(prompt).toContain('Bot was @mentioned in this message');
+        expect(prompt).not.toContain('"unrelated" if');
+        expect(prompt).toContain(`Respond with exactly one word:
+- "answer" if the message directly responds to the question
+- "interruption" if the message is clearly addressed to the bot but starts a new topic`);
+    });
+
+    it('omits absent routing cues and offers the unrelated choice when unmentioned', async () => {
+        mockGenerateText.mockResolvedValue('unrelated');
+        await classifyWithHaiku(baseQuestion, baseMessage);
+
+        const prompt: string = mockGenerateText.mock.calls[0][0];
+        expect(prompt).not.toContain('Question is in thread:');
+        expect(prompt).not.toContain('Question was directed at user ID:');
+        expect(prompt).not.toContain('In thread:');
+        expect(prompt).not.toContain('Message is a reply/reference to:');
+        expect(prompt).not.toContain('Bot was @mentioned in this message');
+        expect(prompt).toContain('"unrelated" if the message');
+        expect(prompt).toBe(`Classify whether the following message is an answer to the question, an interruption (new topic), or unrelated.
+
+Question context:
+- Question: "What is your favorite color?"
+- Asked at: 2025-01-17T12:00:00.000Z
+- Asked by user: user-123
+- In channel: channel-123
+
+Message to classify:
+- Content: "Blue, definitely blue"
+- From user: user-123
+- In channel: channel-123
+
+Respond with exactly one word:
+- "answer" if the message directly responds to the question
+- "interruption" if the message is clearly addressed to the bot (new topic/question)
+- "unrelated" if the message doesn't seem to be addressed to the bot at all
+
+Classification:`);
+    });
 });

@@ -263,6 +263,19 @@ describe('phaseFromFrame', () => {
         expect(phaseFromFrame(frame, prev, AT)).toBe(prev);
     });
 
+    it('returns prev for a content_block_delta whose delta is not text', () => {
+        const frame: SDKPartialAssistantMessage = {
+            type:               'stream_event',
+            event:              { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"path":' } },
+            parent_tool_use_id: null,
+            uuid:               'uuid-1' as SDKPartialAssistantMessage['uuid'],
+            session_id:         'sess-1',
+        };
+        const prev: ActivityPhase = { type: 'using_tool', toolName: 'Read', startedAt: AT };
+
+        expect(phaseFromFrame(frame, prev, AT)).toBe(prev);
+    });
+
     it('maps a tool_progress frame to using_tool with tool_name', () => {
         const frame: SDKToolProgressMessage = {
             type:                 'tool_progress',

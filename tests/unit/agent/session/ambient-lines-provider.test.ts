@@ -120,6 +120,8 @@ describe('provider quota JSON', () => {
         ['seven-day id', { id: 'seven_day_team' }, '1w'],
         ['unrecognized kind', { id: 'limit', kind: 'daily_custom' }, undefined],
         ['unknown id', { id: 'monthly' }, undefined],
+        ['weekly inside id', { id: 'custom_weekly_all' }, undefined],
+        ['seven-day inside id', { id: 'custom_seven_day_team' }, undefined],
     ] as const)('infers the window from the %s alone', (_case, identity, expected) => {
         const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota(identity)] }) })]));
         expect(object(array(data.quotas)[0]).window).toBe(expected);
@@ -499,6 +501,38 @@ describe('rough token estimates', () => {
         expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBe(13_000);
     });
 
+    it('includes a model whose history contains exactly one token', () => {
+        const oneToken = tokens({ inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 1 });
+        const data = providerJson(snapshot([provider({
+            history: history('codex', {
+                recentTokens: oneToken,
+                recentModels: [{ model: 'one-token', tokens: oneToken, costUsd: 1 }],
+            }),
+            prices:     prices('codex', [{ model: 'one-token', input: 1, output: 1, eligible: true }]),
+            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 50 })] }),
+        })]));
+
+        expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBe(1_000_000);
+    });
+
+    it('adds the costs and output tokens from every used model', () => {
+        const mixedTokens = tokens({ inputTokens: 1, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 2 });
+        const outputOnly = tokens({ inputTokens: 0, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 1 });
+        const data = providerJson(snapshot([provider({
+            history: history('codex', {
+                recentTokens: tokens({ inputTokens: 1, outputTokens: 2, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 3 }),
+                recentModels: [
+                    { model: 'mixed-model', tokens: mixedTokens, costUsd: 0.4 },
+                    { model: 'output-model', tokens: outputOnly, costUsd: 0.6 },
+                ],
+            }),
+            prices:     prices('codex', [{ model: 'mixed-price', input: 1, output: 2, eligible: true }]),
+            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 50 })] }),
+        })]));
+
+        expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBe(600_000);
+    });
+
     it('renders zero remaining at a full bucket and omits an estimate before there is a usable ratio', () => {
         const data = providerJson(snapshot([provider({
             history:    history('codex'), prices:     prices('codex'),
@@ -558,6 +592,23 @@ describe('rough token estimates', () => {
         });
     });
 
+    it.each([
+        ['stays below the midpoint', 0.994_999_6, 990_000],
+        ['stays above the midpoint', 0.995_000_4, 1_000_000],
+    ] as const)('%s when a quota estimate rounds near one million tokens', (_case, costUsd, expected) => {
+        const unitInput = tokens({ inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 1 });
+        const data = providerJson(snapshot([provider({
+            history: history('codex', {
+                recentTokens: unitInput,
+                recentModels: [{ model: 'boundary', tokens: unitInput, costUsd }],
+            }),
+            prices:     prices('codex', [{ model: 'boundary', input: 1, output: 1, eligible: true }]),
+            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 50 })] }),
+        })]));
+
+        expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBe(expected);
+    });
+
     it('uses Anthropic cache-write pricing while Codex treats cache creation as input', () => {
         const referenceModels = [{
             model: 'shared-model', input: 1, output: 1, cacheRead: 1, cacheWrite: 10, eligible: true,
@@ -608,6 +659,28 @@ describe('rough token estimates', () => {
 
         expect(object(array(providerJson(snapshot([usable]), 'anthropic').quotas)[0]).estimate_tokens_remaining).toBe(560);
         expect(object(array(providerJson(snapshot([missingUsedRate]), 'anthropic').quotas)[0]).estimate_tokens_remaining).toBeUndefined();
+    });
+
+    it.each([
+        // quota-poller's token parser accepts every nonnegative safe integer, including one.
+        ['codex',     tokens({ cacheCreationTokens: 0, cacheReadTokens: 1, totalTokens: 301 }), { model: 'shared-model', input: 1, output: 1, eligible: true }],
+        ['anthropic', tokens({ cacheCreationTokens: 1, cacheReadTokens: 0, totalTokens: 301 }), { model: 'shared-model', input: 1, output: 1, cacheRead: 1, eligible: true }],
+    ] as const)('requires the cache price used by a one-token %s cache sample', (providerName, tokenMix, price) => {
+        const oneTokenCacheHistory = history(providerName, {
+            recentTokens: tokenMix,
+            recentModels: [{ model: 'shared-model', tokens: tokenMix, costUsd: 0.0003 }],
+        });
+        const status = provider({
+            provider:   providerName,
+            history:    oneTokenCacheHistory,
+            prices:     prices(providerName, [price]),
+            quotaAfter: observation({
+                source: providerName,
+                quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })],
+            }),
+        });
+
+        expect(object(array(providerJson(snapshot([status]), providerName).quotas)[0]).estimate_tokens_remaining).toBeUndefined();
     });
 
     it('skips an underflowed price and uses the next finite positive candidate', () => {
@@ -712,6 +785,30 @@ describe('rough token estimates', () => {
                 basis:                     'models_dev_observed_mix',
             },
         ]);
+    });
+
+    it.each([
+        ['stays below the midpoint', 1_000_000 / 994_999.6, 990_000],
+        ['stays above the midpoint', 1_000_000 / 995_000.4, 1_000_000],
+    ] as const)('%s at the two-significant-digit million-token boundary', (_case, unitPrice, expected) => {
+        const unitInput = tokens({ inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 1 });
+        const deepseek = provider({
+            provider: 'deepseek',
+            history:  history('deepseek', {
+                recentTokens: unitInput,
+                recentModels: [{ model: 'boundary', tokens: unitInput, costUsd: unitPrice / 1_000_000 }],
+            }),
+            prices:     prices('deepseek', [{ model: 'boundary', input: unitPrice, output: unitPrice, eligible: true }]),
+            quotaAfter: observation({
+                source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '1' }],
+            }),
+        });
+
+        const remaining = array(object(providerJson(snapshot([deepseek]), 'deepseek').estimates).remaining_by_model);
+        expect(object(remaining[0])).toMatchObject({
+            estimate_tokens_remaining: expected,
+            estimate_tokens_per_usd:   expected,
+        });
     });
 
     it('selects only an available unscoped finite USD balance', () => {
@@ -999,6 +1096,16 @@ describe('balances and report state', () => {
         expect(object(data.quota_lookup).age_seconds).toBe(45);
     });
 
+    it.each([
+        ['slightly above the lower rounding boundary', 0.5005, 2],
+        ['slightly below the upper rounding boundary', 0.499, 1],
+    ] as const)('rounds fractional cached age %s using seconds', (_case, ageSeconds, expected) => {
+        const data = providerJson(snapshot([provider({ freshness: { cached: true, stale: false, ageSeconds } })], {
+            generatedAt: new Date(NOW.getTime() - 1000),
+        }));
+        expect(object(data.quota_lookup).age_seconds).toBe(expected);
+    });
+
     it('uses unknown for report expiry and emits the actual expiry time', () => {
         const expiresAt = new Date(NOW.getTime() - 1);
         const data = providerJson(snapshot([provider({ status: 'error' })], { expiresAt }));
@@ -1115,6 +1222,13 @@ describe('shared burn pace', () => {
     it('computes positive pace at the exact one-minute boundary', () => {
         const data = providerJson(paceReport(quota({ usedPercent: 35 }), quota({ usedPercent: 34 }), 60_000));
         expect(object(array(data.quotas)[0]).shared_burn_percent_per_hour).toBe(60);
+    });
+
+    it('uses an exact hour when rounding fractional burn pace', () => {
+        const data = providerJson(paceReport(
+            quota({ usedPercent: 70.050_011 }), quota({ usedPercent: 10 }), 3_600_000
+        ));
+        expect(object(array(data.quotas)[0]).shared_burn_percent_per_hour).toBeCloseTo(60.1, 10);
     });
 
     it.each([

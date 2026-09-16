@@ -6,8 +6,8 @@
 
 import { IsambardError } from './base';
 import { ErrorCode } from './codes';
-// eslint-disable-next-line boundaries/dependencies -- PathSecurityReason type defined here to avoid circular dep; errors/utils and utils/path-validator have intentional bidirectional type dependency
-import type { PathSecurityReason } from '@/utils/path-validator';
+
+export type PathSecurityReason = 'outside_cwd' | 'is_symlink' | 'not_found' | 'not_file';
 
 /**
  * Error thrown when a file path fails security validation.
@@ -35,9 +35,7 @@ export class MediaProcessingError extends IsambardError {
             ErrorCode.MEDIA_PROCESSING_ERROR,
             { operation, ...(detail === undefined ? {} : { detail }) }
         );
-        // Stryker disable next-line StringLiteral: error class name is debug-only metadata
         this.name = 'MediaProcessingError';
-        // Stryker disable next-line ConditionalExpression: setting cause=undefined vs not setting are observationally equivalent
         if(cause !== undefined) {
             this.cause = cause;
         }

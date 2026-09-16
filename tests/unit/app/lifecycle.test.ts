@@ -62,6 +62,10 @@ describe('registerSignalHandlers', () => {
 
         expect(stop).toHaveBeenCalledTimes(1);
         expect(exit).toHaveBeenCalledWith(0);
+        expect(logger.info).toHaveBeenCalledWith({
+            signal: 'SIGINT',
+            msg:    'Received shutdown signal, shutting down gracefully...',
+        });
     });
 
     test('SIGTERM calls stop once and exits 0 once stop resolves', async () => {
@@ -80,6 +84,10 @@ describe('registerSignalHandlers', () => {
 
         expect(stop).toHaveBeenCalledTimes(1);
         expect(exit).toHaveBeenCalledWith(0);
+        expect(logger.info).toHaveBeenCalledWith({
+            signal: 'SIGTERM',
+            msg:    'Received shutdown signal, shutting down gracefully...',
+        });
     });
 
     test('a second signal received while shutdown is already in progress does not call stop again', async () => {
@@ -101,6 +109,10 @@ describe('registerSignalHandlers', () => {
 
         expect(stop).toHaveBeenCalledTimes(1);
         expect(exit).not.toHaveBeenCalled();
+        expect(logger.info).toHaveBeenCalledWith({
+            signal: 'SIGTERM',
+            msg:    'Shutdown already in progress; ignoring signal',
+        });
 
         resolveStop?.();
         await Promise.resolve();
@@ -114,6 +126,8 @@ describe('registerSignalHandlers', () => {
     test('exceeding deadlineMs + 10s while stop() is still pending forces exit(1)', async () => {
         const proc = makeFakeProcess();
         const clock = new FakeClock();
+        const setTimer = mock(clock.setTimer);
+        clock.setTimer = setTimer;
         const stop = mock(() => new Promise<void>(() => {
             // Never resolves — simulates a hung shutdown.
         }));
@@ -125,6 +139,8 @@ describe('registerSignalHandlers', () => {
         proc.emit('SIGINT');
         await Promise.resolve();
 
+        expect(setTimer).toHaveBeenCalledWith(expect.any(Function), 15_000);
+
         clock.advance(14_999);
         await Promise.resolve();
         expect(exit).not.toHaveBeenCalled();
@@ -134,6 +150,11 @@ describe('registerSignalHandlers', () => {
         await Promise.resolve();
 
         expect(exit).toHaveBeenCalledWith(1);
+        expect(logger.error).toHaveBeenCalledWith({
+            signal:     'SIGINT',
+            deadlineMs: 5000,
+            msg:        'Shutdown exceeded its deadline; forcing exit',
+        });
     });
 
     test('a rejecting stop() forces exit(1)', async () => {
@@ -152,7 +173,12 @@ describe('registerSignalHandlers', () => {
         }
 
         expect(exit).toHaveBeenCalledWith(1);
-        expect(logger.error).toHaveBeenCalled();
+        expect(clock.pending()).toBe(0);
+        expect(logger.error).toHaveBeenCalledWith({
+            error:  'stop failed',
+            signal: 'SIGINT',
+            msg:    'Shutdown failed',
+        });
     });
 
     test('unregister removes both SIGINT and SIGTERM listeners', () => {
@@ -263,7 +289,10 @@ describe('createDiscordRecoveryHandler', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(logger.warn).toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith({
+            error: 'cache warm failed',
+            msg:   'Discord recovery phase failed',
+        });
         expect(submitCatchUp).not.toHaveBeenCalled();
     });
 });

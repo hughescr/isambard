@@ -15,7 +15,6 @@ import {
  * message from the original Error (if present) for diagnostic fidelity.
  * @internal
  */
-// Stryker disable all: helper used only inside the untestable sleep I/O function
 function makeAbortError(reason: unknown): DOMException {
     if(reason instanceof DOMException && reason.name === 'AbortError') {
         return reason;
@@ -70,6 +69,31 @@ export interface StorageLayer {
     asyncIndexer?:                   AsyncIndexer
 }
 
+async function releaseFailedStorage(
+    holder: DynamoDBClientHolder,
+    vectorIndex: VectorIndex | undefined,
+    asyncIndexer: AsyncIndexer | undefined,
+    reconciliationScheduler: ReconciliationScheduler | undefined,
+    contactReconciliationScheduler: ContactReconciliationScheduler | undefined
+): Promise<void> {
+    // Unwind dependencies in order and attempt every release.
+    try {
+        await asyncIndexer?.close();
+    } catch{ /* Preserve the construction error and continue cleanup. */ }
+    try {
+        vectorIndex?.close();
+    } catch{ /* Preserve the construction error. */ }
+    try {
+        contactReconciliationScheduler?.stop();
+    } catch{ /* Preserve the construction error. */ }
+    try {
+        reconciliationScheduler?.stop();
+    } catch{ /* Preserve the construction error. */ }
+    try {
+        holder.destroy();
+    } catch{ /* Preserve the construction error. */ }
+}
+
 /**
  * Creates the storage layer with DynamoDB client, memory backend, task persistence, and optional reconciliation.
  *
@@ -78,6 +102,7 @@ export interface StorageLayer {
  * @param contactReconciliationConfig - Optional contact reconciliation configuration
  * @param vectorIndexConfig - Optional vector index configuration
  * @param embedder - Optional embedder for vector indexing (required when vectorIndexConfig.enabled is true)
+ * @param onIndexerEmbedderCloseAttempt - Called just before the indexer closes its owned embedder
  * @returns Storage layer components
  * @throws Error if DynamoDB client creation or backend initialization fails
  */
@@ -87,7 +112,8 @@ export async function createStorageLayer(
     contactReconciliationConfig?: ContactReconciliationConfig,
     vectorIndexConfig?:           VectorIndexConfig,
     embedder?:                    EmbedderLike,
-    onIdentityWrite?:             () => void
+    onIdentityWrite?:             () => void,
+    onIndexerEmbedderCloseAttempt?: () => void
 ): Promise<StorageLayer> {
     // Create DynamoDB client
     const { client, docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
@@ -100,112 +126,117 @@ export async function createStorageLayer(
     // Optionally create vector index and async indexer
     let vectorIndex:  VectorIndex  | undefined;
     let asyncIndexer: AsyncIndexer | undefined;
-    // Stryker disable next-line ConditionalExpression: configuration guard — false path is valid when vector indexing is disabled
-    if(vectorIndexConfig?.enabled && embedder) {
-        vectorIndex = await VectorIndex.open(vectorIndexConfig.dbPath);
-        asyncIndexer = new AsyncIndexer({
-            vectorIndex,
-            embedder,
-            logger,
-        });
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.info(`Vector index initialized at ${vectorIndexConfig.dbPath}`);
-    }
-
-    // Declare reconciliationScheduler before memoryBackend so the drift callback closure
-    // can reference it by binding (late-binding: value is assigned below, after memoryBackend).
     let reconciliationScheduler: ReconciliationScheduler | undefined;
-
-    // Create memory backend (with optional async indexer).
-    // The drift callback is a late-binding closure that reads reconciliationScheduler at
-    // call time — the scheduler is assigned after memoryBackend is constructed.
-    const memoryBackend = new MemoryToolBackend(holder, tableName, asyncIndexer, () => {
-        reconciliationScheduler?.notifyDrift();
-    }, onIdentityWrite);
-
-    // Create contact backend
-    const contactBackend = new ContactBackend(holder, tableName);
-
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info(`Memory system initialized with DynamoDB: ${tableName}`);
-
-    // Create reconciliation scheduler if enabled
-    if(reconciliationConfig?.enabled) {
-        reconciliationScheduler = createReconciliationScheduler({
-            config:         reconciliationConfig,
-            runReconciliation,
-            reconcilerDeps: {
-                docClient:            holder,
-                tableName,
-                tagIndex:             memoryBackend.getTagIndexBackend(),
-                getMemory:            path => memoryBackend.get(path),
-                updateMemoryMetadata: (path, input) =>
-                    memoryBackend.updateMetadataOnly(path, input),
-            },
-        });
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.info('Tag index reconciliation scheduler configured');
-    }
-
-    // Create contact reconciliation scheduler if enabled
     let contactReconciliationScheduler: ContactReconciliationScheduler | undefined;
-    if(contactReconciliationConfig?.enabled) {
-        contactReconciliationScheduler = createContactReconciliationScheduler({
-            config:            contactReconciliationConfig,
-            runReconciliation: runContactReconciliation,
-            reconcilerDeps:    {
-                docClient: holder,
-                tableName,
-                // Stryker disable all: Default sleep is untestable I/O
-                sleep:     (ms: number, signal?: AbortSignal): Promise<void> => {
-                    if(signal?.aborted) {
-                        return Promise.reject(makeAbortError(signal.reason));
-                    }
-                    return new Promise((resolve, reject) => {
-                        // Fix 5: remove the abort listener in the normal-completion (resolve) path
-                        // so long-lived signals don't accumulate listeners from completed sleeps.
-                        // eslint-disable-next-line prefer-const -- timer is assigned below; let is needed for forward-reference in onAbort closure
-                        let timer: ReturnType<typeof setTimeout>;
-                        const onAbort = (): void => {
-                            clearTimeout(timer);
+    try {
+        if(vectorIndexConfig?.enabled && embedder) {
+            vectorIndex = await VectorIndex.open(vectorIndexConfig.dbPath);
+            const indexerEmbedder: EmbedderLike = onIndexerEmbedderCloseAttempt === undefined
+                ? embedder
+                : {
+                    encode: texts => embedder.encode(texts),
+                    close:  () => {
+                        onIndexerEmbedderCloseAttempt();
+                        return embedder.close();
+                    },
+                };
+            asyncIndexer = new AsyncIndexer({
+                vectorIndex,
+                embedder: indexerEmbedder,
+                logger,
+            });
+            logger.info(`Vector index initialized at ${vectorIndexConfig.dbPath}`);
+        }
 
-                            reject(makeAbortError(signal!.reason));
-                        };
+        // Declare reconciliationScheduler before memoryBackend so the drift callback closure
+        // can reference it by binding (late-binding: value is assigned below, after memoryBackend).
+        // Create memory backend (with optional async indexer).
+        // The drift callback is a late-binding closure that reads reconciliationScheduler at
+        // call time — the scheduler is assigned after memoryBackend is constructed.
+        const memoryBackend = new MemoryToolBackend(holder, tableName, asyncIndexer, () => {
+            reconciliationScheduler?.notifyDrift();
+        }, onIdentityWrite);
 
-                        timer = setTimeout(() => {
-                            signal?.removeEventListener('abort', onAbort);
-                            resolve();
-                        }, ms);
-                        signal?.addEventListener('abort', onAbort, { once: true });
-                    });
+        // Create contact backend
+        const contactBackend = new ContactBackend(holder, tableName);
+
+        logger.info(`Memory system initialized with DynamoDB: ${tableName}`);
+
+        // Create reconciliation scheduler if enabled
+        if(reconciliationConfig?.enabled) {
+            reconciliationScheduler = createReconciliationScheduler({
+                config:         reconciliationConfig,
+                runReconciliation,
+                reconcilerDeps: {
+                    docClient:            holder,
+                    tableName,
+                    tagIndex:             memoryBackend.getTagIndexBackend(),
+                    getMemory:            path => memoryBackend.get(path),
+                    updateMemoryMetadata: (path, input) =>
+                        memoryBackend.updateMetadataOnly(path, input),
                 },
-                // Stryker restore all
-            },
+            });
+            logger.info('Tag index reconciliation scheduler configured');
+        }
+
+        // Create contact reconciliation scheduler if enabled
+        if(contactReconciliationConfig?.enabled) {
+            contactReconciliationScheduler = createContactReconciliationScheduler({
+                config:            contactReconciliationConfig,
+                runReconciliation: runContactReconciliation,
+                reconcilerDeps:    {
+                    docClient: holder,
+                    tableName,
+                    sleep:     (ms: number, signal?: AbortSignal): Promise<void> => {
+                        if(signal?.aborted) {
+                            return Promise.reject(makeAbortError(signal.reason));
+                        }
+                        return new Promise((resolve, reject) => {
+                            // Fix 5: remove the abort listener in the normal-completion (resolve) path
+                            // so long-lived signals don't accumulate listeners from completed sleeps.
+                            const timer = setTimeout(() => {
+                                signal?.removeEventListener('abort', onAbort);
+                                resolve();
+                            }, ms);
+                            function onAbort(): void {
+                                clearTimeout(timer);
+                                reject(makeAbortError(signal!.reason));
+                            }
+                            signal?.addEventListener('abort', onAbort, { once: true });
+                        });
+                    },
+                    // Stryker restore all
+                },
+            });
+            logger.info('Contact reconciliation scheduler configured');
+        }
+
+        // Task session backend: role-keyed resume-store rows (SESSION journal/resume, P8/P13b).
+        const taskSessionBackend = new TaskSessionBackend(holder, tableName);
+        // P8: write-through session journal (SESSION_JOURNAL#<role> partition) and its role-bound convenience factories
+        const sessionJournalBackend = new SessionJournalBackend(holder, tableName);
+        const createJournal = (role: SessionRole, clock: Clock): SessionJournal => createSessionJournal({
+            backend: sessionJournalBackend, role, clock, logger,
         });
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-        logger.info('Contact reconciliation scheduler configured');
+        const createResumeStoreForRole = (role: SessionRole): RoleResumeStore => createResumeStore(taskSessionBackend, role);
+
+        return {
+            holder,
+            tableName,
+            memoryBackend,
+            contactBackend,
+            sessionJournalBackend,
+            createJournal,
+            createResumeStore: createResumeStoreForRole,
+            reconciliationScheduler,
+            contactReconciliationScheduler,
+            vectorIndex,
+            asyncIndexer,
+        };
+    } catch (error) {
+        // The caller has not received ownership yet. Unwind in dependency order,
+        // attempting every release while retaining the construction failure.
+        await releaseFailedStorage(holder, vectorIndex, asyncIndexer, reconciliationScheduler, contactReconciliationScheduler);
+        throw error;
     }
-
-    // Task session backend: role-keyed resume-store rows (SESSION journal/resume, P8/P13b).
-    const taskSessionBackend = new TaskSessionBackend(holder, tableName);
-    // P8: write-through session journal (SESSION_JOURNAL#<role> partition) and its role-bound convenience factories
-    const sessionJournalBackend = new SessionJournalBackend(holder, tableName);
-    const createJournal = (role: SessionRole, clock: Clock): SessionJournal => createSessionJournal({
-        backend: sessionJournalBackend, role, clock, logger,
-    });
-    const createResumeStoreForRole = (role: SessionRole): RoleResumeStore => createResumeStore(taskSessionBackend, role);
-
-    return {
-        holder,
-        tableName,
-        memoryBackend,
-        contactBackend,
-        sessionJournalBackend,
-        createJournal,
-        createResumeStore: createResumeStoreForRole,
-        reconciliationScheduler,
-        contactReconciliationScheduler,
-        vectorIndex,
-        asyncIndexer,
-    };
 }

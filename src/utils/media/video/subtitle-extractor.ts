@@ -4,48 +4,40 @@ import { MediaProcessingError } from '@/errors';
 /** Parse an HH:MM:SS.mmm timestamp string to seconds. */
 function parseTimestamp(ts: string): number {
     const parts   = ts.split(':');
-    // Stryker disable next-line LogicalOperator,StringLiteral: fallback defaults — never reached for well-formed timestamps
+    // Stryker disable next-line StringLiteral: matched timestamp components cannot use this fallback
     const hours   = Number(parts[0] ?? '0');
-    // Stryker disable next-line LogicalOperator,StringLiteral: fallback defaults — never reached for well-formed timestamps
+    // Stryker disable next-line StringLiteral: matched timestamp components cannot use this fallback
     const minutes = Number(parts[1] ?? '0');
     // Stryker disable next-line StringLiteral: fallback default — never reached for well-formed timestamps
-    const seconds = Number(parts[2] ?? '0');
+    const rawSeconds = parts[2] ?? '0';
+    const seconds = Number(rawSeconds.replace(',', '.'));
     return hours * 3600 + minutes * 60 + seconds;
 }
 
 /** Parse WhisperKit CLI output into structured TranscriptionResult. */
 function parseWhisperKitOutput(output: string): TranscriptionResult {
-    // Stryker disable Regex: regex mutations produce structurally equivalent or invalid patterns
     const segmentRe = /\[(\d{2}:\d{2}:\d{2}[.,]\d+) *--> *(\d{2}:\d{2}:\d{2}[.,]\d+)\] *(.*)/gu;
     // Stryker restore Regex
     const segments: TranscriptionSegment[] = [];
 
     let match = segmentRe.exec(output);
-    // Stryker disable BlockStatement,MethodExpression: loop body executes when regex matches — loop exit tested by empty-output test; .trim() removes leading/trailing whitespace from captured segment text
     while(match !== null) {
-        // Stryker disable next-line StringLiteral,ArrayDeclaration: destructuring defaults — never reached for valid regex matches
+        // Stryker disable next-line StringLiteral: destructuring defaults — never reached for valid regex matches
         const [, startStr = '', endStr = '', rawSegment = ''] = match;
         const rawText = rawSegment.trim();
-        // Detect speaker label: "SPEAKER_00: text" or "Speaker 1: text"
-        // Use non-backtracking pattern: word chars/spaces before colon, then non-empty text after space
-        const colonIdx   = rawText.indexOf(': ');
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,StringLiteral: colonIdx > 0 check — both logic paths produce valid text extraction
-        const speakerRaw = colonIdx > 0 ? rawText.slice(0, colonIdx) : '';
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,Regex: speaker detection heuristics — equivalent patterns produce same results
-        const hasSpeaker = colonIdx > 0 && /^[\w ]+$/u.test(speakerRaw);
-        const text = hasSpeaker ? rawText.slice(colonIdx + 2) : rawText;
+        // A nonempty word/space prefix followed by ": " is a speaker label.
+        const speakerMatch = /^([\w ]+): /u.exec(rawText);
+        const text = speakerMatch ? rawText.slice(speakerMatch[0].length) : rawText;
         segments.push({
             startTime: parseTimestamp(startStr),
             endTime:   parseTimestamp(endStr),
-            // Stryker disable next-line ArrayDeclaration,ObjectLiteral: conditional spread — falsy branch produces no speaker property
-            ...(hasSpeaker ? { speaker: speakerRaw } : {}),
+            ...(speakerMatch ? { speaker: speakerMatch[1] } : {}),
             text,
         });
         match = segmentRe.exec(output);
     }
     // Stryker restore BlockStatement,MethodExpression
 
-    // Stryker disable next-line StringLiteral,ArrayDeclaration: join separator and array initializer are structural
     const fullText = segments.map(s => s.text).join(' ');
     return { segments, fullText };
 }
@@ -56,7 +48,6 @@ export async function extractEmbeddedSubtitles(
     trackIndex: number,
     run:        SpawnRunner
 ): Promise<string> {
-    // Stryker disable StringLiteral,ArrayDeclaration: ffmpeg command arguments are configuration
     const result = await run([
         'ffmpeg',
         '-i', videoPath,
@@ -86,7 +77,6 @@ export async function transcribeWithWhisperKit(
     outputDir:  string,
     run:        SpawnRunner
 ): Promise<TranscriptionResult> {
-    // Stryker disable StringLiteral,ArrayDeclaration: whisperkit-cli command arguments are configuration
     const result = await run([
         'whisperkit-cli',
         'transcribe',
@@ -99,12 +89,9 @@ export async function transcribeWithWhisperKit(
 
     if(result.exitCode !== 0) {
         // whisperkit-cli not available or failed — return graceful error result
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,StringLiteral: empty string check for missing stderr — both produce informational message
         const reason = result.stderr === '' ? `whisperkit-cli exited with code ${result.exitCode}` : result.stderr;
         return {
-            // Stryker disable next-line ArrayDeclaration: empty segments array is the correct value
             segments: [],
-            // Stryker disable next-line StringLiteral: error prefix is informational only
             fullText: `Transcription unavailable: ${reason}`,
         };
     }

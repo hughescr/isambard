@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
+import pLimit from 'p-limit';
 import semver from 'semver';
 import { z } from 'zod';
 
@@ -10,9 +11,7 @@ import { z } from 'zod';
  * Schema for plugins.json configuration file.
  */
 const PluginsConfigSchema = z.object({
-    // Stryker disable next-line ArrayDeclaration: Default values tested via missing field tests (lines 576-612 in test file)
     externalPaths: z.array(z.string()).default([]),
-    // Stryker disable next-line ArrayDeclaration: Default values tested via missing field tests (lines 576-612 in test file)
     marketplace:   z.array(z.string()).default([]),
 });
 
@@ -61,7 +60,6 @@ async function isDirectory(dirPath: string): Promise<boolean> {
     } catch{
         // Silent: stat() throws if the path doesn't exist or is inaccessible.
         // The function contract is "returns false when the path is not a directory."
-        // Stryker disable next-line BooleanLiteral: Error path tested indirectly through callers
         return false;
     }
 }
@@ -73,8 +71,7 @@ async function isDirectory(dirPath: string): Promise<boolean> {
  */
 async function isValidPluginDirectory(dirPath: string): Promise<boolean> {
     const pluginManifestDir = path.join(dirPath, '.claude-plugin');
-    // Stryker disable next-line BooleanLiteral,ArrowFunction: Error handler for pathExists rejection
-    return pathExists(pluginManifestDir).then(exists => exists && isDirectory(pluginManifestDir)).catch(() => false);
+    return pathExists(pluginManifestDir).then(exists => exists && isDirectory(pluginManifestDir));
 }
 
 /**
@@ -94,9 +91,7 @@ export async function findLatestMarketplaceVersion(marketplacePath: string, plug
 
     // Read version directories
     const entries = await readdir(pluginDir, { withFileTypes: true });
-    // Stryker disable next-line MethodExpression: isDirectory filter is required but test fixtures contain only directory entries
     const versionDirs = entries.filter(e => e.isDirectory());
-
     // Filter to valid plugin directories with semver names
     const withVersionInfo = versionDirs.map(dir => ({
         name:    dir.name,
@@ -116,15 +111,11 @@ export async function findLatestMarketplaceVersion(marketplacePath: string, plug
 
     const validVersions = validityChecks.filter(v => v.isValid);
 
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Early return when no valid plugin versions found is defensive coding
-    if(validVersions.length === 0) {
-        return undefined;
-    }
-
     // Sort by semver ascending and return the last (latest)
     const sorted = validVersions.toSorted((a, b) => {
         const av = semver.parse(a.version);
         const bv = semver.parse(b.version);
+        // Stryker disable next-line NumberLiteralValue: versions passed semver.valid and the null-valued entries were filtered out before parsing.
         return av === null || bv === null ? 0 : semver.compare(av, bv);
     });
     const latest = sorted.at(-1);
@@ -139,12 +130,10 @@ export async function findLatestMarketplaceVersion(marketplacePath: string, plug
  */
 async function discoverInRepoPlugins(pluginsDir: string): Promise<SdkPluginConfig[]> {
     if(!await pathExists(pluginsDir)) {
-        // Stryker disable next-line ArrayDeclaration: Default empty array for missing directory, tested in line 635-640
         return [];
     }
 
     const entries = await readdir(pluginsDir, { withFileTypes: true });
-    // Stryker disable next-line MethodExpression: isDirectory filter is required but test fixtures contain only directory entries
     const directories = entries.filter(e => e.isDirectory());
 
     const withPaths = directories.map(dir => ({
@@ -184,7 +173,6 @@ async function loadPluginsConfig(pluginsDir: string): Promise<PluginsConfig> {
     const configPath = path.join(pluginsDir, 'plugins.json');
 
     if(!await pathExists(configPath)) {
-        // Stryker disable next-line ArrayDeclaration,ObjectLiteral: Default config when file missing, tested in line 497-507
         return { externalPaths: [], marketplace: [] };
     }
 
@@ -199,7 +187,6 @@ async function loadPluginsConfig(pluginsDir: string): Promise<PluginsConfig> {
                 errors: result.error.issues,
                 msg:    'Invalid plugins.json schema, using defaults',
             });
-            // Stryker disable next-line ArrayDeclaration,ObjectLiteral: Default config for invalid schema, tested in lines 528-562, 614-633
             return { externalPaths: [], marketplace: [] };
         }
 
@@ -210,7 +197,6 @@ async function loadPluginsConfig(pluginsDir: string): Promise<PluginsConfig> {
             error: error instanceof Error ? error.message : String(error),
             msg:   'Failed to parse plugins.json, using defaults',
         });
-        // Stryker disable next-line ArrayDeclaration,ObjectLiteral: Default config for parse errors, tested in lines 510-525
         return { externalPaths: [], marketplace: [] };
     }
 }
@@ -223,26 +209,31 @@ async function loadPluginsConfig(pluginsDir: string): Promise<PluginsConfig> {
  */
 async function resolveExternalPlugins(externalPaths: string[], loadedNames: Set<string>): Promise<SdkPluginConfig[]> {
     const plugins: SdkPluginConfig[] = [];
-
-    for(const rawPath of externalPaths) {
+    const limit = pLimit(8);
+    const candidates = externalPaths.map((rawPath) => {
         const resolvedPath = resolveExternalPath(rawPath);
-        const name = path.basename(resolvedPath);
+        return { name: path.basename(resolvedPath), resolvedPath };
+    });
+    const checks = await Promise.all(candidates.map(candidate => limit(async () => {
+        if(loadedNames.has(candidate.name)) {
+            return undefined;
+        }
+        const exists = await pathExists(candidate.resolvedPath);
+        return { exists, valid: exists && await isValidPluginDirectory(candidate.resolvedPath) };
+    })));
 
+    for(const [index, { name, resolvedPath }] of candidates.entries()) {
         // Skip if already loaded (deduplication)
         if(loadedNames.has(name)) {
-            // Stryker disable next-line ObjectLiteral: Logger debug object for observability
             logger.debug({
                 name,
                 path: resolvedPath,
-                // Stryker disable next-line StringLiteral: Debug log message
                 msg:  'Skipping external plugin (already loaded from higher priority source)',
             });
             continue;
         }
 
-        // Check path exists
-        // eslint-disable-next-line no-await-in-loop -- sequential: filesystem I/O checks per plugin
-        if(!await pathExists(resolvedPath)) {
+        if(!checks[index]?.exists) {
             logger.warn({
                 path: resolvedPath,
                 msg:  'External plugin path not found, skipping',
@@ -250,9 +241,7 @@ async function resolveExternalPlugins(externalPaths: string[], loadedNames: Set<
             continue;
         }
 
-        // Check for .claude-plugin directory
-        // eslint-disable-next-line no-await-in-loop -- sequential: filesystem I/O checks per plugin
-        if(!await isValidPluginDirectory(resolvedPath)) {
+        if(!checks[index].valid) {
             logger.warn({
                 path: resolvedPath,
                 msg:  'External plugin missing .claude-plugin directory, skipping',
@@ -280,21 +269,21 @@ async function resolveMarketplacePlugins(
     loadedNames: Set<string>
 ): Promise<SdkPluginConfig[]> {
     const plugins: SdkPluginConfig[] = [];
+    const limit = pLimit(8);
+    const resolved = await Promise.all(marketplaceNames.map(name => limit(async () => ({
+        name,
+        latestPath: loadedNames.has(name) ? undefined : await findLatestMarketplaceVersion(marketplacePath, name),
+    }))));
 
-    for(const name of marketplaceNames) {
+    for(const { name, latestPath } of resolved) {
         // Skip if already loaded (deduplication)
         if(loadedNames.has(name)) {
-            // Stryker disable next-line ObjectLiteral: Logger debug object for observability
             logger.debug({
                 name,
-                // Stryker disable next-line StringLiteral: Debug log message
                 msg: 'Skipping marketplace plugin (already loaded from higher priority source)',
             });
             continue;
         }
-
-        // eslint-disable-next-line no-await-in-loop -- sequential: filesystem version lookup per plugin
-        const latestPath = await findLatestMarketplaceVersion(marketplacePath, name);
 
         if(!latestPath) {
             logger.warn({
@@ -326,7 +315,6 @@ async function resolveMarketplacePlugins(
  */
 export async function loadPlugins(
     pluginsDir: string,
-    // Stryker disable next-line StringLiteral: Default marketplace path constant
     marketplacePath: string = path.join(homedir(), '.claude', 'plugins')
 ): Promise<SdkPluginConfig[]> {
     const loadedNames = new Set<string>();
@@ -340,7 +328,6 @@ export async function loadPlugins(
         allPlugins.push(plugin);
     }
 
-    // Stryker disable all: Observability - info logging doesn't affect return value
     if(inRepoPlugins.length > 0) {
         logger.info({
             count:   inRepoPlugins.length,
@@ -348,7 +335,6 @@ export async function loadPlugins(
             msg:     'Discovered in-repo plugins',
         });
     }
-    // Stryker restore all
 
     // 2. Load configuration and resolve external + marketplace plugins
     const config = await loadPluginsConfig(pluginsDir);
@@ -357,7 +343,6 @@ export async function loadPlugins(
     const externalPlugins = await resolveExternalPlugins(config.externalPaths, loadedNames);
     allPlugins.push(...externalPlugins);
 
-    // Stryker disable all: Observability - info logging doesn't affect return value
     if(externalPlugins.length > 0) {
         logger.info({
             count:   externalPlugins.length,
@@ -365,21 +350,18 @@ export async function loadPlugins(
             msg:     'Loaded external plugins',
         });
     }
-    // Stryker restore all
 
     // 4. Resolve marketplace plugins (lowest priority)
     const marketplacePlugins = await resolveMarketplacePlugins(config.marketplace, marketplacePath, loadedNames);
     allPlugins.push(...marketplacePlugins);
 
-    // Stryker disable all: Observability - info logging doesn't affect return value
     if(marketplacePlugins.length > 0) {
         logger.info({
             count:   marketplacePlugins.length,
-            plugins: marketplacePlugins.map(p => path.basename(p.path)),
+            plugins: marketplacePlugins.map(p => path.basename(path.dirname(p.path))),
             msg:     'Loaded marketplace plugins',
         });
     }
-    // Stryker restore all
 
     return allPlugins;
 }

@@ -9,6 +9,7 @@ import {
     isLayerName,
     createContentType,
     isContentType,
+    extractLayerFromPath,
     layerNameSchema,
     type MemoryPath,
     type LayerName,
@@ -66,6 +67,18 @@ describe.concurrent('memoryPathSchema', () => {
     test('should reject non-string values', () => {
         const result = memoryPathSchema.safeParse(123);
         expect(result.success).toBe(false);
+    });
+});
+
+describe.concurrent('extractLayerFromPath', () => {
+    test('accepts a layer exactly at the path start or before a slash', () => {
+        expect(extractLayerFromPath(createMemoryPath('/state'))).toBe(createLayerName('state'));
+        expect(extractLayerFromPath(createMemoryPath('/state/file.md'))).toBe(createLayerName('state'));
+    });
+
+    test('does not find an embedded layer or a layer name without a boundary', () => {
+        expect(extractLayerFromPath(createMemoryPath('/prefix/state'))).toBeNull();
+        expect(extractLayerFromPath(createMemoryPath('/stateful'))).toBeNull();
     });
 });
 

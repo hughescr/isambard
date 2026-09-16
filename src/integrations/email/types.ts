@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 // Email folder enum (WildDuck top-level folders, '/' separator)
-// Stryker disable next-line all: Enum values are configuration
 export const EmailFolder = {
     Inbox:      'INBOX',
     CleanInbox: 'CleanInbox',
@@ -17,7 +16,6 @@ export const EmailFolder = {
 export type EmailFolder = typeof EmailFolder[keyof typeof EmailFolder];
 
 // Classifier verdict
-// Stryker disable next-line all: Enum values are configuration
 export const ClassifierVerdictType = {
     Safe:      'safe',
     Spam:      'spam',
@@ -36,7 +34,6 @@ export const classifierVerdictSchema = z.object({
 export type ClassifierVerdict = z.infer<typeof classifierVerdictSchema>;
 
 // Email identity mode for From header
-// Stryker disable next-line all: Enum values are configuration
 export const EmailIdentity = {
     Formal:   'formal',
     Informal: 'informal',

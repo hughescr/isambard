@@ -10,18 +10,24 @@
 import { ErrorCode } from './codes';
 
 export class IsambardError extends Error {
+    // eslint-disable-next-line @stylistic/key-spacing -- The rule mistakes this typed class field for an object key.
+    public readonly code: ErrorCode;
+    public readonly context?: Record<string, unknown>;
+
     constructor(
         message: string,
-        public readonly code: ErrorCode,
-        public readonly context?: Record<string, unknown>
+        code: ErrorCode,
+        context?: Record<string, unknown>
     ) {
         super(message);
+        this.code = code;
+        this.context = context;
         this.name = 'IsambardError';
 
         // Maintain proper stack trace for where our error was thrown (only available on V8)
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Error.captureStackTrace is V8-specific and may not exist in all environments
-        if(Error.captureStackTrace) {
-            Error.captureStackTrace(this, this.constructor);
+        const errorWithOptionalCapture: { captureStackTrace?: typeof Error.captureStackTrace } = Error;
+        if(errorWithOptionalCapture.captureStackTrace) {
+            errorWithOptionalCapture.captureStackTrace(this, this.constructor);
         }
     }
 }
@@ -43,10 +49,8 @@ export class InvariantViolationError extends IsambardError {
         super(
             `Invariant violated in ${location}: ${invariant}`,
             ErrorCode.INVARIANT_VIOLATION,
-            // Stryker disable next-line ObjectLiteral: context bag is debug-only — mutation to {} doesn't affect throw behavior
             { location, invariant }
         );
-        // Stryker disable next-line StringLiteral: error class name is debug-only metadata
         this.name = 'InvariantViolationError';
     }
 }

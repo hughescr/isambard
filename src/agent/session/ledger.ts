@@ -1048,16 +1048,10 @@ function digestOf(phase: ActivityPhase | null): string | undefined {
     if(phase === null) {
         return undefined;
     }
-    switch(phase.type) {
-        case 'thinking':
-        case 'using_tool':
-        case 'responding': {
-            return phase.generatedStatus;
-        }
-        case 'compacting': {
-            return undefined;
-        }
+    if(phase.type === 'compacting') {
+        return undefined;
     }
+    return phase.generatedStatus;
 }
 
 function reducePhaseChanged(ledger: Ledger, phase: ActivityPhase | null): Ledger {

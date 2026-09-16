@@ -10,6 +10,8 @@
 
 import { InvariantViolationError } from '@/errors';
 
+const BIT_POSITIONS = [0, 1, 2, 3, 4, 5, 6, 7] as const;
+
 /**
  * Packs sign bits from a float32 array into a compact Uint8Array.
  *
@@ -20,35 +22,25 @@ import { InvariantViolationError } from '@/errors';
  * @throws Error if dim is not a positive multiple of 8
  */
 export function packSignBits(input: Float32Array, batchSize: number, dim: number): Uint8Array {
-    if(dim <= 0 || dim % 8 !== 0) {
-        // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+    const bytesPerVector = dim / 8;
+    if(bytesPerVector <= 0 || !Number.isInteger(bytesPerVector)) {
         throw new InvariantViolationError('packSignBits', `dim must be a positive multiple of 8, got ${dim}`);
     }
-    const bytesPerVector = dim / 8;
     const output = new Uint8Array(batchSize * bytesPerVector);
 
-    // Stryker disable next-line EqualityOperator,UpdateOperator: b <= batchSize processes an OOB iteration (no-op); b-- causes an infinite loop — neither changes output for valid inputs
-    for(let b = 0; b < batchSize; b++) {
-        // Offsets into the flat input/output arrays for this batch
-        const inputOffset = b * dim;           // start of batch b's floats in input
-        const outputOffset = bytesPerVector * b; // start of batch b's bytes in output
-
-        // Stryker disable next-line EqualityOperator,UpdateOperator: byteIdx <= bytesPerVector writes an OOB byte (no-op); byteIdx-- causes an infinite loop — neither changes output
-        for(let byteIdx = 0; byteIdx < bytesPerVector; byteIdx++) {
-            let byte = 0;
-            const bitBase = byteIdx * 8;
-            // Stryker disable next-line EqualityOperator,UpdateOperator: bit <= 8 reads a 9th bit that truncates to 0; bit-- causes an infinite loop — neither changes packed output
-            for(let bit = 0; bit < 8; bit++) {
-                // MSB-first: first value maps to bit 7, last to bit 0
-                const value = input[inputOffset + bitBase + bit];
-                // Stryker disable next-line ConditionalExpression: `value !== undefined` → true is an equivalent mutant — undefined > 0 is already false in JS (NaN comparison), so removing the undefined check produces identical behavior
-                if(value !== undefined && value > 0) {
-                    // eslint-disable-next-line no-bitwise -- sign-bit packing requires bitwise OR and left-shift; this is the canonical ubinary implementation
-                    byte |= (1 << (7 - bit));
-                }
+    // The flattened byte index already incorporates both the batch and vector offsets.
+    for(const [outputIndex] of output.entries()) {
+        let byte = 0;
+        const inputOffset = outputIndex * 8;
+        for(const bit of BIT_POSITIONS) {
+            // Missing trailing floats retain their old zero-bit behavior.
+            const value = input[inputOffset + bit];
+            if(value !== undefined && value > 0) {
+                // eslint-disable-next-line no-bitwise -- sign-bit packing requires bitwise OR and left-shift; this is the canonical ubinary implementation
+                byte |= (1 << (7 - bit));
             }
-            output[outputOffset + byteIdx] = byte;
         }
+        output[outputIndex] = byte;
     }
 
     return output;

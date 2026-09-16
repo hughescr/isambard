@@ -225,6 +225,10 @@ describe('createCostCeiling — logging visibility', () => {
         ceiling.record(store, ledgerWithCost(2), tickEvent(new Date(T0)));
 
         expect(logger.warn).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith(
+            { dateKey: '2026-09-05', totalUsd: 1, ceilingUsd: 1 },
+            'Daily cost ceiling reached; perch paused'
+        );
     });
 
     test('logs an info when a paused day clears at midnight', () => {
@@ -241,6 +245,10 @@ describe('createCostCeiling — logging visibility', () => {
         expect(ceiling.isPaused()).toBe(false);
 
         expect(logger.info).toHaveBeenCalledTimes(1);
+        expect(logger.info).toHaveBeenCalledWith(
+            { dateKey: '2026-09-06' },
+            'Daily cost ceiling cleared at local midnight'
+        );
     });
 
     test('does not log info on an uneventful midnight rollover that was never paused', () => {
@@ -398,6 +406,15 @@ describe('createCostCeiling — record() rolls over its own bucket (not only isP
 });
 
 describe('createCostCeiling — restore() re-evaluates the pause against the current ceiling (B4)', () => {
+    test('restoring a total exactly equal to the current ceiling re-arms the pause', () => {
+        const clock = new FakeClock(T0);
+        const ceiling = createCostCeiling({ clock, timezone: 'UTC', ceilingUsd: 5 });
+
+        ceiling.restore({ dateKey: '2026-09-05', totalUsd: 5, paused: false });
+
+        expect(ceiling.isPaused()).toBe(true);
+    });
+
     test('a lowered ceiling re-arms the pause immediately on restore, even though the persisted flag says paused:false', () => {
         const clock = new FakeClock(T0);
         const ceiling = createCostCeiling({ clock, timezone: 'UTC', ceilingUsd: 5 });

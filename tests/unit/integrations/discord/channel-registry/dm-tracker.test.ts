@@ -1,10 +1,10 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { Client, DMChannel } from 'discord.js';
-// eslint-disable-next-line lodash-es/suggest-native-alternatives -- noop is used as a mock function, not a no-op return value
-import { noop } from 'lodash-es';
 import { DMTracker, formatDMChannelName, isDMChannelName, type ResolvedUser, type UserResolveResult } from '../../../../../src/integrations/discord/channel-registry/dm-tracker';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
 import { createChannelId, createUserId } from '../../../../../src/integrations/discord/types';
+
+const noop = (): undefined => undefined;
 
 describe('DM Tracker Utilities', () => {
     describe('formatDMChannelName', () => {
@@ -166,6 +166,12 @@ describe('DMTracker', () => {
             expect(mockUser.createDM).toHaveBeenCalled();
             expect(mockUser.createDM).toHaveBeenCalledTimes(1);
             expect(mockManager.upsertChannel).toHaveBeenCalled();
+            expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
+
+            const cachedResult = await tracker.getOrCreateDM(userId);
+            expect(cachedResult).toBe(channelId);
+            expect(mockClient.users.fetch).toHaveBeenCalledTimes(1);
+            expect(mockUser.createDM).toHaveBeenCalledTimes(1);
             expect(mockManager.upsertChannel).toHaveBeenCalledTimes(1);
 
             // Verify upsertChannel called with correct metadata
@@ -648,6 +654,19 @@ describe('DMTracker', () => {
             const result = await tracker.resolveUserByName('anyone');
 
             expect(result.status).toBe('not_found');
+        });
+
+        test('does not query later guilds after a member-search failure', async () => {
+            const firstGuild = makeMockGuild([]);
+            firstGuild.members.fetch.mockRejectedValue(new Error('Discord unavailable'));
+            const laterGuild = makeMockGuild([]);
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [firstGuild, laterGuild]) },
+            } as unknown as typeof mockClient.guilds;
+
+            await expect(tracker.resolveUserByName('craig')).rejects.toThrow('Discord unavailable');
+            expect(firstGuild.members.fetch).toHaveBeenCalledTimes(1);
+            expect(laterGuild.members.fetch).not.toHaveBeenCalled();
         });
 
         test('should not create DM channel — resolveUserByName has no side effects', async () => {

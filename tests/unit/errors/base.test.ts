@@ -1,8 +1,8 @@
 import { describe, test, expect, spyOn } from 'bun:test';
-import { IsambardError } from '@/errors/base';
+import { IsambardError, InvariantViolationError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 
-describe.concurrent('IsambardError', () => {
+describe('IsambardError', () => {
     test('should be an instance of IsambardError and Error', () => {
         const error = new IsambardError('test error', ErrorCode.STORAGE_ERROR);
         expect(error).toBeInstanceOf(IsambardError);
@@ -30,6 +30,16 @@ describe.concurrent('IsambardError', () => {
         expect(error.context).toEqual(ctx);
     });
 
+    test('should define code and context as own fields', () => {
+        const error = new IsambardError('test', ErrorCode.STORAGE_ERROR);
+        expect(Object.getOwnPropertyDescriptor(error, 'code')).toMatchObject({
+            value: ErrorCode.STORAGE_ERROR, writable: true, enumerable: true, configurable: true,
+        });
+        expect(Object.getOwnPropertyDescriptor(error, 'context')).toMatchObject({
+            value: undefined, writable: true, enumerable: true, configurable: true,
+        });
+    });
+
     test('should have undefined context when not provided', () => {
         const error = new IsambardError('test', ErrorCode.STORAGE_ERROR);
         expect(error.context).toBeUndefined();
@@ -41,12 +51,22 @@ describe.concurrent('IsambardError', () => {
     });
 });
 
-describe.concurrent('Error.captureStackTrace handling', () => {
+test('InvariantViolationError keeps its concrete name and invariant context', () => {
+    const error = new InvariantViolationError('loadTask', 'missing task id');
+    expect(error.name).toBe('InvariantViolationError');
+    expect(error.code).toBe(ErrorCode.INVARIANT_VIOLATION);
+    expect(error.context).toEqual({ location: 'loadTask', invariant: 'missing task id' });
+});
+
+describe('Error.captureStackTrace handling', () => {
     test('should use captureStackTrace when available', () => {
         const spy = spyOn(Error, 'captureStackTrace');
-        const error = new IsambardError('test', ErrorCode.STORAGE_ERROR);
-        expect(spy).toHaveBeenCalledWith(error, IsambardError);
-        spy.mockRestore();
+        try {
+            const error = new IsambardError('test', ErrorCode.STORAGE_ERROR);
+            expect(spy).toHaveBeenCalledWith(error, IsambardError);
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     test('should handle missing captureStackTrace gracefully', () => {
@@ -61,9 +81,12 @@ describe.concurrent('Error.captureStackTrace handling', () => {
             const error = new IsambardError('test without capture', ErrorCode.STORAGE_ERROR);
             expect(error.message).toBe('test without capture');
             expect(error.name).toBe('IsambardError');
+            expect(error.stack).toBeDefined();
         } finally {
             if(descriptor) {
                 Object.defineProperty(Error, 'captureStackTrace', descriptor);
+            } else {
+                Reflect.deleteProperty(Error, 'captureStackTrace');
             }
         }
     });
@@ -81,17 +104,19 @@ describe.concurrent('Error.captureStackTrace handling', () => {
             }
         );
 
-        const error = new IsambardError('capture test', ErrorCode.STORAGE_ERROR);
+        try {
+            const error = new IsambardError('capture test', ErrorCode.STORAGE_ERROR);
 
-        expect(captureWasCalled).toBe(true);
-        expect(receivedTarget).toBe(error);
-        expect(receivedConstructor).toBe(IsambardError);
-
-        spy.mockRestore();
+            expect(captureWasCalled).toBe(true);
+            expect(receivedTarget).toBe(error);
+            expect(receivedConstructor).toBe(IsambardError);
+        } finally {
+            spy.mockRestore();
+        }
     });
 });
 
-describe.concurrent('ErrorCode', () => {
+describe('ErrorCode', () => {
     test('should have storage error codes', () => {
         expect(ErrorCode.STORAGE_ERROR as string).toBe('STORAGE_ERROR');
         expect(ErrorCode.ITEM_NOT_FOUND as string).toBe('ITEM_NOT_FOUND');

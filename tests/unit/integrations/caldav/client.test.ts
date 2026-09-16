@@ -1,16 +1,18 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
+import { DateTime } from 'luxon';
 import { mockLogger } from '../../../setup';
 import { CaldavAuthError, CaldavTimeoutError } from '@/errors';
-import type { CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
+import { createCalendarServerId, type CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
+import { CalDAVClient, type CalDAVClientDependencies } from '@/integrations/caldav/client';
 import type { CalendarEventsResult } from '@/integrations/caldav/types';
 import type { ServiceHealthRegistry } from '@/services';
 
 // ---------------------------------------------------------------------------
-// Mock tsdav
+// Per-client tsdav test double
 // ---------------------------------------------------------------------------
 
 const mockFetchCalendars        = mock(async (): Promise<Record<string, unknown>[]> => ([]));
-const mockFetchCalendarObjects  = mock(async (): Promise<Record<string, unknown>[]> => ([]));
+const mockFetchCalendarObjects  = mock(async (_params?: { calendar: { url: string } }): Promise<Record<string, unknown>[]> => ([]));
 
 const mockDAVClient = {
     fetchCalendars:       mockFetchCalendars,
@@ -19,13 +21,8 @@ const mockDAVClient = {
 
 const mockCreateDAVClient = mock(async (): Promise<typeof mockDAVClient> => mockDAVClient);
 
-// eslint-disable-next-line @hughescr/test-hygiene/no-mock-module-in-test-body, @typescript-eslint/no-floating-promises -- tsdav mock is caldav-client-specific and cannot be shared via tests/setup.ts; mock.module() is a floating promise (module mock setup)
-mock.module('tsdav', () => ({
-    createDAVClient: mockCreateDAVClient,
-}));
-
 // ---------------------------------------------------------------------------
-// Mock node-ical
+// Per-client node-ical test double
 // ---------------------------------------------------------------------------
 
 const mockParseICS = mock((_body: string): Record<string, unknown> => ({}));
@@ -42,20 +39,20 @@ interface MockEventInstance {
 
 const mockExpandRecurringEvent = mock((_event: Record<string, unknown>, _options: Record<string, unknown>): MockEventInstance[] => ([]));
 
-// eslint-disable-next-line @hughescr/test-hygiene/no-mock-module-in-test-body, @typescript-eslint/no-floating-promises -- node-ical mock is caldav-client-specific and cannot be shared via tests/setup.ts; mock.module() is a floating promise (module mock setup)
-mock.module('node-ical', () => ({
-    sync: {
-        parseICS: mockParseICS,
-    },
+const TEST_DEPENDENCY_DOUBLES = {
+    createDAVClient:      mockCreateDAVClient,
+    parseICS:             mockParseICS,
     expandRecurringEvent: mockExpandRecurringEvent,
-}));
+} satisfies Record<keyof CalDAVClientDependencies, unknown>;
+// The test doubles return fixture data instead of the libraries' full response types.
+const TEST_DEPENDENCIES = TEST_DEPENDENCY_DOUBLES as unknown as CalDAVClientDependencies;
 
-// ---------------------------------------------------------------------------
-// Import after mocks are set up
-// ---------------------------------------------------------------------------
-
-// eslint-disable-next-line no-restricted-syntax -- top-level await import is required here to ensure mock.module() is registered before the module loads; this is module-scope setup, not per-test overhead
-const { CalDAVClient } = await import('@/integrations/caldav/client');
+function createClient(optionsOrCacheTtlMs: ConstructorParameters<typeof CalDAVClient>[0] = {}, timeoutMs = 15_000): CalDAVClient {
+    if(typeof optionsOrCacheTtlMs === 'number') {
+        return new CalDAVClient(optionsOrCacheTtlMs, timeoutMs, TEST_DEPENDENCIES);
+    }
+    return new CalDAVClient({ ...optionsOrCacheTtlMs, dependencies: TEST_DEPENDENCIES }, timeoutMs);
+}
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -134,13 +131,30 @@ async function extractEvents(vevents: Record<string, unknown>[]): Promise<Calend
     }
     mockParseICS.mockImplementation((): Record<string, unknown> => parsed);
 
-    const client = new CalDAVClient();
+    const client = createClient();
     return client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 }
 
 // ---------------------------------------------------------------------------
 // discoverCalendars
 // ---------------------------------------------------------------------------
+
+function prepareDistinctCacheResults(eventStart: string): void {
+    let fetchNumber = 0;
+    mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+    mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+    mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => {
+        fetchNumber++;
+        return [makeCalendarObject(`event-${fetchNumber}`)];
+    });
+    mockParseICS.mockImplementation((body: string): Record<string, unknown> => ({
+        [body]: makeVEvent({
+            uid:   body,
+            start: new Date(eventStart),
+            end:   new Date(new Date(eventStart).getTime() + 60_000),
+        }),
+    }));
+}
 
 describe('CalDAVClient.discoverCalendars', () => {
     beforeEach(() => {
@@ -152,6 +166,10 @@ describe('CalDAVClient.discoverCalendars', () => {
         mockLogger.debug.mockClear();
         mockLogger.error.mockClear();
         mockLogger.warn.mockClear();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
     });
 
     test('returns CalendarInfo[] from server', async () => {
@@ -166,7 +184,7 @@ describe('CalDAVClient.discoverCalendars', () => {
             }),
         ]);
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const result = await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
 
         expect(result).toHaveLength(2);
@@ -190,7 +208,7 @@ describe('CalDAVClient.discoverCalendars', () => {
             { url: '/calendars/testuser/default/' },
         ]);
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const result = await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
 
         expect(result[0]?.displayName).toBe('/calendars/testuser/default/');
@@ -200,7 +218,7 @@ describe('CalDAVClient.discoverCalendars', () => {
         mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
         mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
-        const client = new CalDAVClient();
+        const client = createClient();
         await client.discoverCalendars('https://caldav.example.com', 'myuser', 'mypass');
 
         expect(mockCreateDAVClient).toHaveBeenCalledWith({
@@ -216,8 +234,8 @@ describe('CalDAVClient.discoverCalendars', () => {
             throw new Error('Connection refused');
         });
 
-        const client = new CalDAVClient();
-        expect(
+        const client = createClient();
+        await expect(
             client.discoverCalendars('https://bad.example.com', 'user', 'pass')
         ).rejects.toBeInstanceOf(CaldavAuthError);
     });
@@ -227,7 +245,7 @@ describe('CalDAVClient.discoverCalendars', () => {
             throw new Error('Connection refused');
         });
 
-        const client = new CalDAVClient();
+        const client = createClient();
         let thrown: unknown;
         try {
             await client.discoverCalendars('https://bad.example.com', 'user', 'pass');
@@ -238,6 +256,29 @@ describe('CalDAVClient.discoverCalendars', () => {
         expect(thrown).toBeInstanceOf(CaldavAuthError);
         const err = thrown as CaldavAuthError;
         expect(err.context).toMatchObject({ serverUrl: 'https://bad.example.com' });
+    });
+
+    test('labels discover-calendar timeouts as fetchCalendars', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation((): Promise<never> => new Promise(() => {}));
+
+        jest.useFakeTimers();
+        const client = createClient(300_000, 50);
+        const pending = client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
+        await drainMicrotasks();
+        jest.advanceTimersByTime(50);
+        await expect(pending)
+            .rejects.toMatchObject({ context: { operation: 'fetchCalendars' } });
+    });
+
+    test('includes the CalDAV server URL in authentication errors', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<never> => {
+            throw new Error('Connection refused');
+        });
+
+        const client = createClient();
+        await expect(client.discoverCalendars('https://bad.example.com', 'user', 'pass'))
+            .rejects.toThrow('Failed to connect to CalDAV server: https://bad.example.com');
     });
 });
 
@@ -257,10 +298,88 @@ describe('CalDAVClient.getEvents', () => {
         mockLogger.warn.mockClear();
     });
 
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     test('returns empty events and failed arrays for empty servers list', async () => {
-        const client = new CalDAVClient();
+        const client = createClient();
         const result = await client.getEvents([], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
         expect(result).toEqual({ events: [], failed: [] });
+    });
+
+    test('fetches independent calendars with at most two requests in flight', async () => {
+        const firstGate = Promise.withResolvers<void>();
+        const thirdStarted = Promise.withResolvers<void>();
+        let active = 0;
+        let maxActive = 0;
+        const paths = ['/calendars/testuser/one/', '/calendars/testuser/two/', '/calendars/testuser/three/'];
+        mockCreateDAVClient.mockImplementation(async () => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async () => paths.map(url => makeDAVCalendar({ url })));
+        mockFetchCalendarObjects.mockImplementation(async (params) => {
+            active++;
+            maxActive = Math.max(maxActive, active);
+            if(params?.calendar.url === paths[0]) {
+                await firstGate.promise;
+            }
+            if(params?.calendar.url === paths[2]) {
+                thirdStarted.resolve();
+            }
+            active--;
+            return [];
+        });
+        const server = makeServer({ calendars: paths.map((calendarPath, index) => ({ calendarPath, label: `Calendar ${index}` })) });
+        const client = createClient();
+        const pending = client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+
+        try {
+            await Promise.race([
+                thirdStarted.promise,
+                Bun.sleep(1000).then(() => { throw new Error('third calendar did not start before the first completed'); }),
+            ]);
+            expect(maxActive).toBe(2);
+        } finally {
+            firstGate.resolve();
+        }
+
+        expect(await pending).toEqual({ events: [], failed: [] });
+        expect(mockFetchCalendarObjects).toHaveBeenCalledTimes(3);
+    });
+
+    test('stops queued calendar fetches and returns after the first failure while another fetch is pending', async () => {
+        const secondStarted = Promise.withResolvers<void>();
+        const secondGate = Promise.withResolvers<Record<string, unknown>[]>();
+        const paths = ['/calendars/testuser/one/', '/calendars/testuser/two/', '/calendars/testuser/three/'];
+        mockCreateDAVClient.mockImplementation(async () => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async () => paths.map(url => makeDAVCalendar({ url })));
+        mockFetchCalendarObjects.mockImplementation(async (params) => {
+            if(params?.calendar.url === paths[0]) {
+                await secondStarted.promise;
+                throw new Error('first calendar failed');
+            }
+            if(params?.calendar.url === paths[1]) {
+                secondStarted.resolve();
+                return secondGate.promise;
+            }
+            throw new Error('queued calendar must not start');
+        });
+        const server = makeServer({ calendars: paths.map((calendarPath, index) => ({ calendarPath, label: `Calendar ${index}` })) });
+        const client = createClient();
+        const pending = client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+
+        try {
+            const result = await Promise.race([
+                pending,
+                Bun.sleep(250).then(() => { throw new Error('server result waited for another in-flight calendar'); }),
+            ]);
+            expect(result).toEqual({ events: [], failed: [] });
+            expect(mockFetchCalendarObjects).toHaveBeenCalledTimes(2);
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+        } finally {
+            secondGate.resolve([]);
+        }
+        await drainMicrotasks();
+        expect(mockFetchCalendarObjects).toHaveBeenCalledTimes(2);
     });
 
     test('fetches events from server and parses ICS data', async () => {
@@ -276,7 +395,7 @@ describe('CalDAVClient.getEvents', () => {
             'event-uid-1': makeVEvent(),
         }));
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const server = makeServer();
         const { events, failed } = await client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
@@ -309,12 +428,73 @@ describe('CalDAVClient.getEvents', () => {
                 'event-1': makeVEvent({ uid: 'event-1', start: new Date('2025-06-15T14:00:00.000Z'), end: new Date('2025-06-15T15:00:00.000Z') }),
             }));
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
         expect(events).toHaveLength(2);
         expect(events[0]?.uid).toBe('event-1');
         expect(events[1]?.uid).toBe('event-2');
+    });
+
+    test('preserves server order when events have equal start times', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeCalendarObject('ics')]);
+        mockParseICS
+            .mockImplementationOnce((): Record<string, unknown> => ({ first: makeVEvent({ uid: 'first-server' }) }))
+            .mockImplementationOnce((): Record<string, unknown> => ({ second: makeVEvent({ uid: 'second-server' }) }));
+        const secondServer = makeServer({
+            serverId:  '00000000-0000-0000-0000-000000000002' as CalendarServerEntry['serverId'],
+            serverUrl: 'https://server2.example.com',
+        });
+
+        const result = await createClient({ cacheTtlMs: 0 }).getEvents(
+            [makeServer(), secondServer], BASE_DATE, new Date('2025-06-18T12:00:00.000Z')
+        );
+
+        expect(result.events.map(event => event.uid)).toEqual(['first-server', 'second-server']);
+    });
+
+    test('preserves calendar-object order when events have equal start times', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
+            makeCalendarObject('first'), makeCalendarObject('second'),
+        ]);
+        mockParseICS.mockImplementation((body): Record<string, unknown> => ({
+            [body]: makeVEvent({ uid: body }),
+        }));
+
+        const result = await createClient().getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+
+        expect(result.events.map(event => event.uid)).toEqual(['first', 'second']);
+    });
+
+    test('preserves every calendar result when concurrent fetches complete out of order', async () => {
+        const firstFetch = Promise.withResolvers<Record<string, unknown>[]>();
+        const paths = ['/calendars/testuser/first/', '/calendars/testuser/second/'];
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => paths.map(url => makeDAVCalendar({ url })));
+        mockFetchCalendarObjects.mockImplementation(async (options) => {
+            const calendar = options?.calendar;
+            if(calendar === undefined) {
+                throw new Error('Expected calendar fetch options');
+            }
+            if(calendar.url === paths[0]) {
+                return firstFetch.promise;
+            }
+            firstFetch.resolve([makeCalendarObject('first')]);
+            return [makeCalendarObject('second')];
+        });
+        mockParseICS.mockImplementation((body): Record<string, unknown> => ({
+            [body]: makeVEvent({ uid: body }),
+        }));
+        const server = makeServer({ calendars: paths.map((calendarPath, index) => ({ calendarPath, label: `Calendar ${index}` })) });
+
+        const result = await createClient().getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+
+        expect(result.events.map(event => event.uid)).toHaveLength(2);
+        expect(result.events.map(event => event.uid)).toEqual(expect.arrayContaining(['first', 'second']));
     });
 
     test('skips calendar objects with no data', async () => {
@@ -326,7 +506,7 @@ describe('CalDAVClient.getEvents', () => {
             { url: '/calendars/testuser/default/event1.ics' }, // no data
         ]);
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
         expect(events).toHaveLength(0);
@@ -347,7 +527,7 @@ describe('CalDAVClient.getEvents', () => {
             vcal:         { type: 'VCALENDAR', version: '2.0' },
         }));
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
         // Only the VEVENT should be extracted — VTIMEZONE and VCALENDAR must be skipped
@@ -362,7 +542,7 @@ describe('CalDAVClient.getEvents', () => {
         ]);
         mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
         expect(mockFetchCalendarObjects).not.toHaveBeenCalled();
@@ -376,7 +556,7 @@ describe('CalDAVClient.getEvents', () => {
         ]);
         mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const start = new Date('2025-06-10T00:00:00.000Z');
         const end   = new Date('2025-06-20T00:00:00.000Z');
         await client.getEvents([makeServer()], start, end);
@@ -393,7 +573,7 @@ describe('CalDAVClient.getEvents', () => {
             throw new Error('Network error');
         });
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
         expect(events).toEqual([]);
         expect(mockLogger.warn).toHaveBeenCalledWith(
@@ -402,12 +582,26 @@ describe('CalDAVClient.getEvents', () => {
         );
     });
 
+    test('labels event-fetch calendar discovery timeouts as fetchCalendars', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation((): Promise<never> => new Promise(() => {}));
+
+        jest.useFakeTimers();
+        const client = createClient(300_000, 50);
+        const pending = client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        await drainMicrotasks();
+        jest.advanceTimersByTime(50);
+        await pending;
+        const loggedError = (mockLogger.warn.mock.calls[0]?.[0] as { error: CaldavTimeoutError }).error;
+        expect(loggedError.context).toMatchObject({ operation: 'fetchCalendars' });
+    });
+
     test('returns empty results on auth error (partial failure)', async () => {
         mockCreateDAVClient.mockImplementation(async (): Promise<never> => {
             throw new Error('401 Unauthorized');
         });
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
         expect(events).toEqual([]);
     });
@@ -434,7 +628,7 @@ describe('CalDAVClient.getEvents', () => {
             serverUrl: 'https://server2.example.com',
         });
 
-        const client = new CalDAVClient();
+        const client = createClient();
         const { events } = await client.getEvents([server1, server2], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
         expect(events).toHaveLength(2);
@@ -453,7 +647,7 @@ describe('CalDAVClient.getEvents', () => {
 
         // Should not crash when no health registry: getEvents swallows the
         // fetch failure, returns empty results, and emits no health events.
-        const client = new CalDAVClient();
+        const client = createClient();
         const result = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
         expect(result).toEqual({ events: [], failed: [] });
     });
@@ -465,7 +659,7 @@ describe('CalDAVClient.getEvents', () => {
         });
 
         const { registry, sendEvent } = makeHealthRegistry();
-        const client = new CalDAVClient({ healthRegistry: registry });
+        const client = createClient({ healthRegistry: registry });
         const server = makeServer();
         const end    = new Date('2025-06-18T12:00:00.000Z');
 
@@ -484,7 +678,7 @@ describe('CalDAVClient.getEvents', () => {
 
         const { registry, sendEvent } = makeHealthRegistry();
         // Use 0ms TTL so each call re-fetches (no cache hits that bypass failure tracking)
-        const client = new CalDAVClient({ healthRegistry: registry, cacheTtlMs: 0 });
+        const client = createClient({ healthRegistry: registry, cacheTtlMs: 0 });
         const server = makeServer();
         const end    = new Date('2025-06-18T12:00:00.000Z');
 
@@ -510,7 +704,7 @@ describe('CalDAVClient.getEvents', () => {
         mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
         const { registry, sendEvent } = makeHealthRegistry();
-        const client = new CalDAVClient({ healthRegistry: registry, cacheTtlMs: 0 });
+        const client = createClient({ healthRegistry: registry, cacheTtlMs: 0 });
         const server = makeServer();
         const end    = new Date('2025-06-18T12:00:00.000Z');
 
@@ -523,6 +717,34 @@ describe('CalDAVClient.getEvents', () => {
         expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECT_SUCCESS');
     });
 
+    test('a recovery resets the failure streak before counting later failures', async () => {
+        let shouldFail = true;
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => {
+            if(shouldFail) {
+                throw new Error('Network error');
+            }
+            return [];
+        });
+        const { registry, sendEvent } = makeHealthRegistry();
+        const client = createClient({ healthRegistry: registry, cacheTtlMs: 0 });
+        const server = makeServer();
+        const end = new Date('2025-06-18T12:00:00.000Z');
+
+        await client.getEvents([server], BASE_DATE, end);
+        await client.getEvents([server], BASE_DATE, end);
+        await client.getEvents([server], BASE_DATE, end);
+        shouldFail = false;
+        await client.getEvents([server], BASE_DATE, end);
+        sendEvent.mockClear();
+        shouldFail = true;
+        await client.getEvents([server], BASE_DATE, end);
+        await client.getEvents([server], BASE_DATE, end);
+        expect(sendEvent).not.toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', expect.anything());
+        await client.getEvents([server], BASE_DATE, end);
+        expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', expect.anything());
+    });
+
     test('no CONNECT_SUCCESS on success when no prior failures', async () => {
         mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
         mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
@@ -531,7 +753,7 @@ describe('CalDAVClient.getEvents', () => {
         mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
         const { registry, sendEvent } = makeHealthRegistry();
-        const client = new CalDAVClient({ healthRegistry: registry, cacheTtlMs: 0 });
+        const client = createClient({ healthRegistry: registry, cacheTtlMs: 0 });
         const server = makeServer();
 
         await client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
@@ -557,6 +779,10 @@ describe('CalDAVClient cache', () => {
         mockLogger.warn.mockClear();
     });
 
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     test('second call within TTL hits cache and does not re-fetch', async () => {
         mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
         mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
@@ -571,7 +797,7 @@ describe('CalDAVClient cache', () => {
 
         const start = new Date('2025-06-15T00:00:00.000Z');
         const end   = new Date('2025-06-18T00:00:00.000Z');
-        const client = new CalDAVClient(300_000);
+        const client = createClient(300_000);
         const server = makeServer();
 
         await client.getEvents([server], start, end);
@@ -580,6 +806,90 @@ describe('CalDAVClient cache', () => {
         // fetchCalendars should only be called once (second call uses cache)
         expect(mockFetchCalendars).toHaveBeenCalledTimes(1);
         expect(events2).toHaveLength(1);
+    });
+
+    test('default options cache expires at exactly 300000ms', async () => {
+        jest.useFakeTimers();
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+        const client = createClient({});
+        const server = makeServer();
+        const end = new Date('2025-06-18T12:00:00.000Z');
+
+        await client.getEvents([server], BASE_DATE, end);
+        jest.advanceTimersByTime(299_999);
+        await client.getEvents([server], BASE_DATE, end);
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(1);
+        jest.advanceTimersByTime(1);
+        await client.getEvents([server], BASE_DATE, end);
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+    });
+
+    test('a cache hit preserves failed recurrence expansions alongside cached events', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeCalendarObject('ics')]);
+        mockParseICS.mockImplementation((): Record<string, unknown> => ({
+            'bad-event': makeVEvent({ uid: 'bad-event', rrule: { freq: 'WEEKLY' } }),
+        }));
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw new Error('Malformed recurrence');
+        });
+
+        const start  = new Date('2025-06-15T00:00:00.000Z');
+        const end    = new Date('2025-06-18T00:00:00.000Z');
+        const client = createClient(300_000);
+        const server = makeServer();
+
+        const first  = await client.getEvents([server], start, end);
+        const second = await client.getEvents([server], start, end);
+
+        expect(first.failed).toEqual([expect.objectContaining({ uid: 'bad-event', reason: 'Malformed recurrence' })]);
+        expect(second.failed).toEqual(first.failed);
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(1);
+    });
+
+    test('a later cached server keeps its equal-time event after an earlier fresh server event', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeCalendarObject('ics')]);
+        mockParseICS
+            .mockImplementationOnce((): Record<string, unknown> => ({ cached: makeVEvent({ uid: 'cached-second' }) }))
+            .mockImplementationOnce((): Record<string, unknown> => ({ fresh: makeVEvent({ uid: 'fresh-first' }) }));
+        const cachedServer = makeServer({
+            serverId:  '00000000-0000-0000-0000-000000000002' as CalendarServerEntry['serverId'],
+            serverUrl: 'https://cached.example.com',
+        });
+        const client = createClient(300_000);
+        const end = new Date('2025-06-18T12:00:00.000Z');
+
+        await client.getEvents([cachedServer], BASE_DATE, end);
+        const result = await client.getEvents([makeServer(), cachedServer], BASE_DATE, end);
+
+        expect(result.events.map(event => event.uid)).toEqual(['fresh-first', 'cached-second']);
+    });
+
+    test('a later cached server keeps its failure after an earlier fresh server failure', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeCalendarObject('ics')]);
+        mockParseICS
+            .mockImplementationOnce((): Record<string, unknown> => ({ cached: makeVEvent({ uid: 'cached-failure', rrule: {} }) }))
+            .mockImplementationOnce((): Record<string, unknown> => ({ fresh: makeVEvent({ uid: 'fresh-failure', rrule: {} }) }));
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw new Error('bad recurrence');
+        });
+        const cachedServer = makeServer({
+            serverId:  '00000000-0000-0000-0000-000000000002' as CalendarServerEntry['serverId'],
+            serverUrl: 'https://cached.example.com',
+        });
+        const client = createClient(300_000);
+        const end = new Date('2025-06-18T12:00:00.000Z');
+
+        await client.getEvents([cachedServer], BASE_DATE, end);
+        const result = await client.getEvents([makeServer(), cachedServer], BASE_DATE, end);
+
+        expect(result.failed.map(failure => failure.uid)).toEqual(['fresh-failure', 'cached-failure']);
     });
 
     test('expired cache re-fetches', async () => {
@@ -592,7 +902,7 @@ describe('CalDAVClient cache', () => {
 
         const start = new Date('2025-06-15T00:00:00.000Z');
         const end   = new Date('2025-06-18T00:00:00.000Z');
-        const client = new CalDAVClient(0); // 0ms TTL — immediately expired
+        const client = createClient(0); // 0ms TTL — immediately expired
 
         await client.getEvents([makeServer()], start, end);
         await client.getEvents([makeServer()], start, end);
@@ -611,7 +921,7 @@ describe('CalDAVClient cache', () => {
 
         const start = new Date('2025-06-15T00:00:00.000Z');
         const end   = new Date('2025-06-18T00:00:00.000Z');
-        const client = new CalDAVClient(300_000);
+        const client = createClient(300_000);
 
         await client.getEvents([makeServer()], start, end);
         client.invalidateCache();
@@ -628,7 +938,7 @@ describe('CalDAVClient cache', () => {
         mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
         mockParseICS.mockImplementation((): Record<string, unknown> => ({}));
 
-        const client = new CalDAVClient(300_000);
+        const client = createClient(300_000);
         const server = makeServer();
 
         // Different date ranges (different hours) — each should fetch independently
@@ -663,7 +973,7 @@ describe('CalDAVClient.getContextEvents', () => {
         mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
         const now    = new Date('2025-06-15T12:00:00.000Z');
-        const client = new CalDAVClient();
+        const client = createClient();
         await client.getContextEvents([makeServer()], now);
 
         const expectedStart = new Date('2025-06-14T12:00:00.000Z');
@@ -686,7 +996,7 @@ describe('CalDAVClient.getContextEvents', () => {
         mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
         const before = Date.now();
-        const client = new CalDAVClient();
+        const client = createClient();
         await client.getContextEvents([makeServer()]);
         const after = Date.now();
 
@@ -741,6 +1051,14 @@ describe('CalDAVClient event extraction', () => {
             makeVEvent({ summary: { val: 'Parameterized Title', params: { LANGUAGE: 'de' } } }),
         ]);
         expect(events[0]?.summary).toBe('Parameterized Title');
+    });
+
+    test('preserves one-character string and ParameterValue fields', async () => {
+        const { events } = await extractEvents([
+            makeVEvent({ summary: 'S', location: { val: 'L', params: {} } }),
+        ]);
+
+        expect(events[0]).toMatchObject({ summary: 'S', location: 'L' });
     });
 
     test('extracts location field', async () => {
@@ -865,6 +1183,38 @@ describe('CalDAVClient event extraction', () => {
         expect(events[0]?.attendees).toEqual(['alice@example.com']);
     });
 
+    test('preserves a one-character attendee name', async () => {
+        const { events } = await extractEvents([makeVEvent({ attendee: 'A' })]);
+        expect(events[0]?.attendees).toEqual(['A']);
+    });
+
+    test('preserves parsed component order for equal-time one-off and recurring events', async () => {
+        const oneOff = makeVEvent({ uid: 'one-off' });
+        const recurring = makeVEvent({ uid: 'recurring', rrule: {} });
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [{
+            start:       recurring.start as Date,
+            end:         recurring.end as Date,
+            summary:     'Recurring',
+            isFullDay:   false,
+            isRecurring: true,
+            isOverride:  false,
+            event:       recurring,
+        }]);
+
+        const { events } = await extractEvents([oneOff, recurring]);
+
+        expect(events.map(event => event.uid)).toEqual(['one-off', 'recurring']);
+    });
+
+    test('preserves parsed component order for equal-time one-off events', async () => {
+        const { events } = await extractEvents([
+            makeVEvent({ uid: 'first' }),
+            makeVEvent({ uid: 'second' }),
+        ]);
+
+        expect(events.map(event => event.uid)).toEqual(['first', 'second']);
+    });
+
     test('attendees is undefined when no attendee field', async () => {
         const { events } = await extractEvents([makeVEvent({ attendee: undefined })]);
         expect(events[0]?.attendees).toBeUndefined();
@@ -883,6 +1233,14 @@ describe('CalDAVClient event extraction', () => {
             makeVEvent({ attendee: [{ val: 'mailto:alice@example.com' }] }),
         ]);
         // No CN, no params key — val extraction falls through to empty string
+        expect(events).toHaveLength(1);
+        expect(events[0]?.attendees).toBeUndefined();
+    });
+
+    test('attendee object with params but no val is filtered out', async () => {
+        const { events } = await extractEvents([
+            makeVEvent({ attendee: [{ params: {} }] }),
+        ]);
         expect(events[0]?.attendees).toBeUndefined();
     });
 
@@ -954,6 +1312,51 @@ describe('CalDAVClient cache key rounding', () => {
         mockLogger.warn.mockClear();
     });
 
+    test('Pacific fall-back repeated hours remain distinct in an isolated runtime', async () => {
+        jest.useRealTimers();
+        const parentTimeZone = process.env.TZ;
+        const parentEffectiveZone = DateTime.local().zoneName;
+        const child = Bun.spawn(['bun', 'tests/fixtures/caldav-cache-dst-probe.ts'], {
+            cwd:    process.cwd(),
+            env:    { ...process.env, TZ: 'America/Los_Angeles' },
+            stdout: 'pipe',
+            stderr: 'pipe',
+        });
+        const result = await Promise.race([
+            child.exited.then(exitCode => ({ kind: 'exit' as const, exitCode })),
+            new Promise<{ kind: 'timeout' }>((resolve) => {
+                AbortSignal.timeout(4000).addEventListener('abort', () => resolve({ kind: 'timeout' }), { once: true });
+            }),
+        ]);
+        if(result.kind === 'timeout') {
+            child.kill('SIGKILL');
+            const exitCode = await child.exited;
+            const [stdout, stderr] = await Promise.all([
+                new Response(child.stdout).text(),
+                new Response(child.stderr).text(),
+            ]);
+            throw new Error(`CalDAV DST fixture timed out and was reaped (exit ${exitCode})\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+        }
+        const [exitCode, stdout, stderr] = await Promise.all([
+            result.exitCode,
+            new Response(child.stdout).text(),
+            new Response(child.stderr).text(),
+        ]);
+
+        expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: '' });
+        expect(JSON.parse(stdout)).toEqual({ timezone: 'America/Los_Angeles', startCalls: 2, endCalls: 2 });
+        expect(process.env.TZ).toBe(parentTimeZone);
+        expect(DateTime.local().zoneName).toBe(parentEffectiveZone);
+    }, 5000);
+
+    test('invalid dates still reject while constructing the public cache key', async () => {
+        await expect(createClient(300_000).getEvents(
+            [makeServer()],
+            new Date(Number.NaN),
+            new Date('2025-06-18T10:30:00.000Z')
+        )).rejects.toThrow(RangeError);
+    });
+
     test('same hour range maps to same cache key', async () => {
         mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
         mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
@@ -962,7 +1365,7 @@ describe('CalDAVClient cache key rounding', () => {
         mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
         mockParseICS.mockImplementation((): Record<string, unknown> => ({}));
 
-        const client = new CalDAVClient(300_000);
+        const client = createClient(300_000);
         const server = makeServer();
 
         // Different minutes within the same hour — should be same cache entry
@@ -981,7 +1384,7 @@ describe('CalDAVClient cache key rounding', () => {
         mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
         mockParseICS.mockImplementation((): Record<string, unknown> => ({}));
 
-        const client = new CalDAVClient(300_000);
+        const client = createClient(300_000);
         const server = makeServer();
 
         // 10:30 and 14:30 on the same day — same minutes but different hours
@@ -992,6 +1395,208 @@ describe('CalDAVClient cache key rounding', () => {
 
         // Both should fetch independently — hour difference matters
         expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+    });
+
+    test('different start hours use different cache keys when end hour is unchanged', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+
+        const client = createClient(300_000);
+        const server = makeServer();
+        const end = new Date('2025-06-18T12:30:00.000Z');
+        await client.getEvents([server], new Date('2025-06-15T10:30:00.000Z'), end);
+        await client.getEvents([server], new Date('2025-06-15T14:30:00.000Z'), end);
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+    });
+
+    test('different end hours use different cache keys when start hour is unchanged', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+
+        const client = createClient(300_000);
+        const server = makeServer();
+        const start = new Date('2025-06-15T10:30:00.000Z');
+        await client.getEvents([server], start, new Date('2025-06-18T10:30:00.000Z'));
+        await client.getEvents([server], start, new Date('2025-06-18T14:30:00.000Z'));
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+    });
+
+    test('calendar path lists with different boundaries use different cache keys', async () => {
+        const firstPath = '/calendars/testuser/a';
+        const secondPath = '/calendars/testuser/b';
+        const combinedPath = '/calendars/testuser/a/calendars/testuser/b';
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
+            makeDAVCalendar({ url: firstPath }),
+            makeDAVCalendar({ url: secondPath }),
+            makeDAVCalendar({ url: combinedPath }),
+        ]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+
+        const client = createClient(300_000);
+        const start = new Date('2025-06-15T10:30:00.000Z');
+        const end = new Date('2025-06-18T10:30:00.000Z');
+        await client.getEvents([makeServer({ calendars: [
+            { calendarPath: firstPath, label: 'First' },
+            { calendarPath: secondPath, label: 'Second' },
+        ] })], start, end);
+        await client.getEvents([makeServer({ calendars: [
+            { calendarPath: combinedPath, label: 'Combined' },
+        ] })], start, end);
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+    });
+
+    test('calendar path order does not change the cache key', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+        const client = createClient(300_000);
+        const start = new Date('2025-06-15T10:30:00.000Z');
+        const end = new Date('2025-06-18T10:30:00.000Z');
+
+        await client.getEvents([makeServer({ calendars: [
+            { calendarPath: '/a', label: 'A' },
+            { calendarPath: '/b', label: 'B' },
+        ] })], start, end);
+        await client.getEvents([makeServer({ calendars: [
+            { calendarPath: '/b', label: 'B' },
+            { calendarPath: '/a', label: 'A' },
+        ] })], start, end);
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(1);
+    });
+
+    test('server IDs differing only in UUID casing do not share cached results', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+        const client = createClient(300_000);
+        const start = new Date('2025-06-15T10:30:00.000Z');
+        const end = new Date('2025-06-18T10:30:00.000Z');
+        const lower = createCalendarServerId('aabbccdd-1111-4222-8333-444455556666');
+        const upper = createCalendarServerId('AABBCCDD-1111-4222-8333-444455556666');
+
+        await client.getEvents([makeServer({ serverId: lower })], start, end);
+        await client.getEvents([makeServer({ serverId: upper })], start, end);
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+    });
+
+    test('fall-back repeated start hours remain distinct absolute cache buckets', async () => {
+        prepareDistinctCacheResults('2026-11-02T10:00:00.000Z');
+        const client = createClient(300_000);
+        const server = makeServer();
+        const end = new Date('2026-11-03T10:30:00.000Z');
+        const originalTimeZone = process.env.TZ;
+        const originalEffectiveZone = DateTime.local().zoneName;
+
+        // These are the two absolute instants represented by 01:30 before and after Pacific's
+        // fall-back. The cache rounds UTC instants, so changing the process-wide timezone is both
+        // unnecessary and unsafe for concurrently running tests.
+        const first = client.getEvents([server], new Date('2026-11-01T08:30:00.000Z'), end);
+        expect(process.env.TZ).toBe(originalTimeZone);
+        expect(DateTime.local().zoneName).toBe(originalEffectiveZone);
+        const firstResult = await first;
+        const second = client.getEvents([server], new Date('2026-11-01T09:30:00.000Z'), end);
+        expect(process.env.TZ).toBe(originalTimeZone);
+        expect(DateTime.local().zoneName).toBe(originalEffectiveZone);
+        const secondResult = await second;
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+        expect([firstResult.events[0]?.uid, secondResult.events[0]?.uid]).toEqual(['event-1', 'event-2']);
+    });
+
+    test('fall-back repeated end hours remain distinct absolute cache buckets', async () => {
+        prepareDistinctCacheResults('2026-10-31T10:00:00.000Z');
+        const client = createClient(300_000);
+        const server = makeServer();
+        const start = new Date('2026-10-30T10:30:00.000Z');
+        const originalTimeZone = process.env.TZ;
+        const originalEffectiveZone = DateTime.local().zoneName;
+
+        const first = client.getEvents([server], start, new Date('2026-11-01T08:30:00.000Z'));
+        expect(process.env.TZ).toBe(originalTimeZone);
+        expect(DateTime.local().zoneName).toBe(originalEffectiveZone);
+        const firstResult = await first;
+        const second = client.getEvents([server], start, new Date('2026-11-01T09:30:00.000Z'));
+        expect(process.env.TZ).toBe(originalTimeZone);
+        expect(DateTime.local().zoneName).toBe(originalEffectiveZone);
+        const secondResult = await second;
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+        expect([firstResult.events[0]?.uid, secondResult.events[0]?.uid]).toEqual(['event-1', 'event-2']);
+    });
+
+    test('comma-containing calendar paths preserve list boundaries in cache keys', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+        const client = createClient(300_000);
+        const start = new Date('2025-06-15T10:30:00.000Z');
+        const end = new Date('2025-06-18T10:30:00.000Z');
+
+        await client.getEvents([makeServer({ calendars: [
+            { calendarPath: 'a', label: 'A' },
+            { calendarPath: 'b,c', label: 'B,C' },
+        ] })], start, end);
+        await client.getEvents([makeServer({ calendars: [
+            { calendarPath: 'a,b', label: 'A,B' },
+            { calendarPath: 'c', label: 'C' },
+        ] })], start, end);
+        await client.getEvents([makeServer({ calendars: [
+            { calendarPath: 'b,c', label: 'B,C' },
+            { calendarPath: 'a', label: 'A' },
+        ] })], start, end);
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+    });
+
+    test('canonically equivalent calendar paths remain order-independent', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+        const client = createClient(300_000);
+        const start = new Date('2025-06-15T10:30:00.000Z');
+        const end = new Date('2025-06-18T10:30:00.000Z');
+        const composedPath = 'caf\u00E9';
+        const decomposedPath = 'cafe\u0301';
+
+        await client.getEvents([makeServer({ calendars: [
+            { calendarPath: composedPath, label: 'Composed' },
+            { calendarPath: decomposedPath, label: 'Decomposed' },
+        ] })], start, end);
+        await client.getEvents([makeServer({ calendars: [
+            { calendarPath: decomposedPath, label: 'Decomposed' },
+            { calendarPath: composedPath, label: 'Composed' },
+        ] })], start, end);
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(1);
+    });
+
+    test('case-sensitive server URL paths use different cache keys', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+        const client = createClient(300_000);
+        const start = new Date('2025-06-15T10:30:00.000Z');
+        const end = new Date('2025-06-18T10:30:00.000Z');
+
+        await client.getEvents([makeServer({ serverUrl: 'https://example.com/CalDAV' })], start, end);
+        await client.getEvents([makeServer({ serverUrl: 'https://example.com/caldav' })], start, end);
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+    });
+
+    test('millisecond differences within an hour share a cache key', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+        const client = createClient(300_000);
+        const server = makeServer();
+
+        await client.getEvents([server], new Date('2025-06-15T10:30:00.001Z'), new Date('2025-06-18T10:30:00.001Z'));
+        await client.getEvents([server], new Date('2025-06-15T10:30:00.999Z'), new Date('2025-06-18T10:30:00.999Z'));
+
+        expect(mockFetchCalendars).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -1017,13 +1622,37 @@ describe('CalDAVClient timeout', () => {
     });
 
     test('constructor accepts custom timeoutMs', () => {
-        const client = new CalDAVClient(300_000, 5000);
+        const client = createClient(300_000, 5000);
         expect(client).toBeDefined();
     });
 
     test('constructor uses default timeoutMs when not provided', () => {
-        const client = new CalDAVClient();
+        const client = createClient();
         expect(client).toBeDefined();
+    });
+
+    test.each([
+        ['numeric overload', (): CalDAVClient => new CalDAVClient(300_000, undefined, TEST_DEPENDENCIES)],
+        ['options overload', (): CalDAVClient => createClient({})],
+    ])('the %s default timeout fires at exactly 15000ms', async (_label, makeClient) => {
+        mockCreateDAVClient.mockImplementation((): Promise<never> => new Promise(() => {}));
+        const pending = makeClient().discoverCalendars('https://caldav.example.com', 'user', 'pass');
+        let settled = false;
+        void pending.catch(() => {
+            settled = true;
+        });
+
+        jest.advanceTimersByTime(14_999);
+        await drainMicrotasks();
+        try {
+            expect(settled).toBe(false);
+            jest.advanceTimersByTime(1);
+            await drainMicrotasks();
+            expect(settled).toBe(true);
+        } finally {
+            jest.advanceTimersByTime(1);
+        }
+        await expect(pending).rejects.toBeInstanceOf(CaldavTimeoutError);
     });
 
     test('throws CaldavTimeoutError when createDAVClient hangs', async () => {
@@ -1031,10 +1660,10 @@ describe('CalDAVClient timeout', () => {
             (): Promise<never> => new Promise(() => {}) // never resolves
         );
 
-        const client = new CalDAVClient(300_000, 50); // 50ms timeout
+        const client = createClient(300_000, 50); // 50ms timeout
         const promise = client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
         jest.advanceTimersByTime(50);
-        expect(promise).rejects.toBeInstanceOf(CaldavTimeoutError);
+        await expect(promise).rejects.toBeInstanceOf(CaldavTimeoutError);
     });
 
     test('CaldavTimeoutError has correct context for connect timeout', async () => {
@@ -1042,7 +1671,7 @@ describe('CalDAVClient timeout', () => {
             (): Promise<never> => new Promise(() => {})
         );
 
-        const client = new CalDAVClient(300_000, 50);
+        const client = createClient(300_000, 50);
         const promise = client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
         jest.advanceTimersByTime(50);
         let thrown: unknown;
@@ -1065,13 +1694,13 @@ describe('CalDAVClient timeout', () => {
             (): Promise<never> => new Promise(() => {})
         );
 
-        const client = new CalDAVClient(300_000, 50);
+        const client = createClient(300_000, 50);
         const promise = client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
         // Drain microtasks to let createDAVClient resolve and its withTimeout chain complete,
         // so that discoverCalendars reaches the fetchCalendars withTimeout and registers its timer
         await drainMicrotasks(10);
         jest.advanceTimersByTime(50);
-        expect(promise).rejects.toBeInstanceOf(CaldavTimeoutError);
+        await expect(promise).rejects.toBeInstanceOf(CaldavTimeoutError);
     });
 
     test('throws CaldavTimeoutError when fetchCalendarObjects hangs in getEvents', async () => {
@@ -1083,7 +1712,7 @@ describe('CalDAVClient timeout', () => {
             (): Promise<never> => new Promise(() => {})
         );
 
-        const client = new CalDAVClient(300_000, 50);
+        const client = createClient(300_000, 50);
         const server = makeServer();
         // getEvents catches errors per-server, so this should not throw but log warning
         const resultPromise = client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
@@ -1093,14 +1722,20 @@ describe('CalDAVClient timeout', () => {
         jest.advanceTimersByTime(50);
         const result = await resultPromise;
         expect(result).toEqual({ events: [], failed: [] });
-        expect(mockLogger.warn).toHaveBeenCalled();
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            { error: expect.any(CaldavTimeoutError), serverUrl: server.serverUrl },
+            'Failed to fetch events from CalDAV server, continuing with partial results'
+        );
+        const loggedError = (mockLogger.warn.mock.calls[0]?.[0] as { error: CaldavTimeoutError }).error;
+        expect(loggedError.context).toMatchObject({ timeoutMs: 50, operation: 'fetchCalendarObjects' });
+        expect(loggedError.message).toContain('fetchCalendarObjects');
     });
 
     test('does not timeout when operations complete quickly', async () => {
         mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
         mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
-        const client = new CalDAVClient(300_000, 5000);
+        const client = createClient(300_000, 5000);
         const result = await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
         expect(result).toEqual([]);
     });
@@ -1109,7 +1744,7 @@ describe('CalDAVClient timeout', () => {
         mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
         mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
-        const client = new CalDAVClient(300_000, 5000);
+        const client = createClient(300_000, 5000);
         // Should not leak timers: the connect + fetchCalendars withTimeout
         // wrappers both clear their timer in finally on success.
         const result = await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
@@ -1233,7 +1868,7 @@ describe('CalDAVClient recurring event expansion', () => {
         const queryStart = new Date('2025-06-10T00:00:00.000Z');
         const queryEnd   = new Date('2025-06-20T00:00:00.000Z');
 
-        const client = new CalDAVClient();
+        const client = createClient();
         await client.getEvents([makeServer()], queryStart, queryEnd);
 
         expect(mockExpandRecurringEvent).toHaveBeenCalledWith(
@@ -1464,13 +2099,42 @@ describe('CalDAVClient recurring event expansion', () => {
             serverUrl: 'https://server2.example.com',
         });
 
-        const client = new CalDAVClient({ cacheTtlMs: 0 });
+        const client = createClient({ cacheTtlMs: 0 });
         const { events, failed } = await client.getEvents([server1, server2], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
         expect(events).toHaveLength(0);
         expect(failed).toHaveLength(2);
-        expect(failed.map(f => f.uid)).toContain('fail-s1');
-        expect(failed.map(f => f.uid)).toContain('fail-s2');
+        expect(failed.map(f => f.uid)).toEqual(['fail-s1', 'fail-s2']);
+    });
+
+    test('failed entries preserve calendar-object order', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
+            makeCalendarObject('first'), makeCalendarObject('second'),
+        ]);
+        mockParseICS.mockImplementation((body): Record<string, unknown> => ({
+            [body]: makeVEvent({ uid: body, rrule: {} }),
+        }));
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw new Error('bad recurrence');
+        });
+
+        const result = await createClient().getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+
+        expect(result.failed.map(failure => failure.uid)).toEqual(['first', 'second']);
+    });
+
+    test('failed entries preserve parsed component order', async () => {
+        const first = makeVEvent({ uid: 'first', rrule: {} });
+        const second = makeVEvent({ uid: 'second', rrule: {} });
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw new Error('bad recurrence');
+        });
+
+        const result = await extractEvents([first, second]);
+
+        expect(result.failed.map(failure => failure.uid)).toEqual(['first', 'second']);
     });
 
     test('error in expandRecurringEvent is logged, event skipped gracefully (legacy test updated)', async () => {

@@ -2,14 +2,17 @@ import { describe, test, expect } from 'bun:test';
 import {
     appConfigSchema,
     agentConfigSchema,
+    agentGatewayConfigSchema,
     emailConfigSchema,
     discordConfigSchema,
     bskyConfigSchema,
     browserConfigSchema,
     dynamoDBConfigSchema,
     configSchema,
+    quotaConfigSchema,
     perchConfigSchema,
     reconciliationConfigSchema,
+    contactReconciliationConfigSchema,
     vectorIndexConfigSchema,
     idleSignalsConfigSchema,
     sessionConfigSchema,
@@ -19,7 +22,42 @@ import {
 import { createGuildId } from '@/integrations/discord/types';
 import { resolveTimezone } from '@/utils/time';
 
+describe('contactReconciliationConfigSchema', () => {
+    test('applies the scheduler and scan defaults', () => {
+        expect(contactReconciliationConfigSchema.parse({})).toEqual({
+            enabled:                   false,
+            intervalMs:                86_400_000,
+            operationDelayMs:          1000,
+            scanPageSize:              25,
+            strayLookupAgeThresholdMs: 300_000,
+        });
+    });
+
+    test('retains explicit zero delays and scan overrides', () => {
+        expect(contactReconciliationConfigSchema.parse({
+            enabled:                   true,
+            intervalMs:                60_000,
+            operationDelayMs:          0,
+            scanPageSize:              7,
+            strayLookupAgeThresholdMs: 0,
+        })).toEqual({
+            enabled:                   true,
+            intervalMs:                60_000,
+            operationDelayMs:          0,
+            scanPageSize:              7,
+            strayLookupAgeThresholdMs: 0,
+        });
+    });
+});
+
 describe.concurrent('appConfigSchema', () => {
+    test('accepts error as a log level', () => {
+        const result = appConfigSchema.safeParse({ nodeEnv: 'test', logLevel: 'error', port: 3000 });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.logLevel).toBe('error');
+        }
+    });
     test('should coerce port from string to number', () => {
         const configWithStringPort = {
             nodeEnv:  'production',
@@ -171,6 +209,16 @@ describe('agentConfigSchema', () => {
         expect(agentConfigSchema.safeParse({ oauthToken: 'test-token', quota: { pollIntervalMs: 0 } }).success).toBe(false);
     });
 
+    test('accepts the full utilization percentage at the notification and perch thresholds', () => {
+        const result = quotaConfigSchema.safeParse({ perchPauseAtPercent: 100, notifyAtPercents: [100] });
+
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.perchPauseAtPercent).toBe(100);
+            expect(result.data.notifyAtPercents).toEqual([100]);
+        }
+    });
+
     test('fills local utraque defaults when the gateway block is present', () => {
         const result = agentConfigSchema.safeParse({ oauthToken: 'test-token', gateway: {} });
         expect(result.success).toBe(true);
@@ -184,6 +232,11 @@ describe('agentConfigSchema', () => {
     test('rejects an invalid gateway URL or timeout', () => {
         expect(agentConfigSchema.safeParse({ oauthToken: 'test-token', gateway: { baseUrl: 'not a url' } }).success).toBe(false);
         expect(agentConfigSchema.safeParse({ oauthToken: 'test-token', gateway: { reportRequestTimeoutMs: 0 } }).success).toBe(false);
+    });
+
+    test('accepts one-character values where the gateway and model fields require only a non-empty string', () => {
+        expect(agentGatewayConfigSchema.safeParse({ localToken: 'x' }).success).toBe(true);
+        expect(agentConfigSchema.safeParse({ oauthToken: 'x', mainModel: 'x', fallbackModel: 'x' }).success).toBe(true);
     });
 });
 
@@ -283,6 +336,15 @@ describe('emailConfigSchema', () => {
         expect(result.success).toBe(false);
     });
 
+    test('accepts one-character email credentials and channel IDs', () => {
+        expect(emailConfigSchema.safeParse({
+            ...validEmailBase,
+            user:                  'x',
+            password:              'x',
+            adminDiscordChannelId: 'x',
+        }).success).toBe(true);
+    });
+
     test('should accept valid adminDiscordChannelId', () => {
         const config = {
             ...validEmailBase,
@@ -342,6 +404,14 @@ describe('discordConfigSchema', () => {
 
         const result = discordConfigSchema.safeParse(missingToken);
         expect(result.success).toBe(false);
+    });
+
+    test('accepts one-character bot and application IDs', () => {
+        expect(discordConfigSchema.safeParse({
+            botToken:      'x',
+            applicationId: 'x',
+            homeGuildId:   createGuildId('g'),
+        }).success).toBe(true);
     });
 
     test('should accept valid presence config', () => {
@@ -494,6 +564,10 @@ describe('dynamoDBConfigSchema', () => {
         const result = dynamoDBConfigSchema.safeParse(invalidConfig);
         expect(result.success).toBe(false);
     });
+
+    test('accepts a one-character table name', () => {
+        expect(dynamoDBConfigSchema.safeParse({ tableName: 'x' }).success).toBe(true);
+    });
 });
 
 describe('configSchema', () => {
@@ -603,9 +677,32 @@ describe('configSchema', () => {
             expect(result.data.app.port).toBe(3000);
         }
     });
+
+    test('accepts a one-character administrator ID', () => {
+        expect(configSchema.safeParse({
+            app:                { nodeEnv: 'test', port: 1 },
+            agent:              { oauthToken: 'x' },
+            discord:            { botToken: 'x', applicationId: 'x', homeGuildId: createGuildId('g') },
+            adminDiscordUserId: 'x',
+        }).success).toBe(true);
+    });
 });
 
 describe('perchConfigSchema', () => {
+    test('applies the operational schedule defaults when only the feature is enabled', () => {
+        const result = perchConfigSchema.safeParse({});
+
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data).toMatchObject({
+                intervalMinutes:      60,
+                jitterMinutes:        15,
+                maxSessionMinutes:    45,
+                wrapUpTimeoutMinutes: 5,
+            });
+        }
+    });
+
     test('should apply default enabled = true when not provided', () => {
         const configWithoutEnabled = {
             timezone:          'America/Los_Angeles',
@@ -1090,6 +1187,15 @@ describe.concurrent('browserConfigSchema', () => {
         const result = browserConfigSchema.safeParse({ viewportHeight: 4096 });
         expect(result.success).toBe(true);
     });
+
+    test('enforces the viewport bounds immediately inside and outside each edge', () => {
+        for(const dimension of ['viewportWidth', 'viewportHeight'] as const) {
+            expect(browserConfigSchema.safeParse({ [dimension]: 319 }).success).toBe(false);
+            expect(browserConfigSchema.safeParse({ [dimension]: 320 }).success).toBe(true);
+            expect(browserConfigSchema.safeParse({ [dimension]: 4096 }).success).toBe(true);
+            expect(browserConfigSchema.safeParse({ [dimension]: 4097 }).success).toBe(false);
+        }
+    });
 });
 
 describe.concurrent('vectorIndexConfigSchema', () => {
@@ -1243,6 +1349,10 @@ describe.concurrent('bskyConfigSchema', () => {
             appPassword: '',
         });
         expect(result.success).toBe(false);
+    });
+
+    test('accepts one-character handles and app passwords', () => {
+        expect(bskyConfigSchema.safeParse({ handle: 'x', appPassword: 'x' }).success).toBe(true);
     });
 });
 
@@ -1432,6 +1542,10 @@ describe('sessionConfigSchema', () => {
 
     test('rejects a compactThresholdMaxPercent above 100', () => {
         expect(sessionConfigSchema.safeParse({ compactThresholdMaxPercent: 101 }).success).toBe(false);
+    });
+
+    test('accepts the maximum percentage for either compaction-threshold band edge', () => {
+        expect(sessionConfigSchema.safeParse({ compactThresholdMinPercent: 100, compactThresholdMaxPercent: 100 }).success).toBe(true);
     });
 
     test('rejects a non-integer compactTargetIntervalMs', () => {

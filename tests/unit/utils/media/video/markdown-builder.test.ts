@@ -31,6 +31,8 @@ const SAMPLE_TRANSCRIPTION: TranscriptionResult = {
     segments: [
         { startTime: 5,   endTime: 8,   speaker: 'SPEAKER_00', text: 'Hello world' },
         { startTime: 65,  endTime: 68,  speaker: 'SPEAKER_01', text: 'How are you' },
+        { startTime: 118, endTime: 119, text: 'Minute divisor boundary' },
+        { startTime: 120, endTime: 121, text: 'Minute rollover boundary' },
         { startTime: 130, endTime: 133, text: 'No speaker label here' },
     ],
     fullText: 'Hello world How are you No speaker label here',
@@ -53,12 +55,64 @@ describe('formatDuration', () => {
         expect(formatDuration(3600)).toBe('1h 0s');
     });
 
+    it('floors hours and seconds for ordinary video durations', () => {
+        expect(formatDuration(1800)).toBe('30m 0s');
+        expect(formatDuration(154.25)).toBe('2m 34s');
+        expect(formatDuration(7198)).toBe('1h 59m 58s');
+    });
+
     it('formats zero seconds', () => {
         expect(formatDuration(0)).toBe('0s');
     });
 });
 
 describe('buildMetadataMarkdown', () => {
+    it('keeps technical details and transcription segments in source order', () => {
+        const md = buildMetadataMarkdown(FULL_METADATA, undefined, SAMPLE_TRANSCRIPTION);
+
+        expect(md).toBe([
+            '# Video Metadata',
+            '',
+            '## Technical Details',
+            '- **Duration**: 2m 34s',
+            '- **Resolution**: 1920x1080',
+            '- **Video Codec**: h264',
+            '- **Frame Rate**: 30 fps',
+            '- **Video Bitrate**: 4000 kbps',
+            '- **Audio Codec**: aac (stereo, 44100 Hz)',
+            '- **Subtitle Tracks**: Track 0 — eng — English, Track 1 — fra',
+            '',
+            '## Transcription',
+            '',
+            '[00:05] **SPEAKER_00**: Hello world',
+            '[01:05] **SPEAKER_01**: How are you',
+            '[01:58] Minute divisor boundary',
+            '[02:00] Minute rollover boundary',
+            '[02:10] No speaker label here',
+        ].join('\n'));
+    });
+
+    it('formats track labels and separators without losing track identity', () => {
+        const md = buildMetadataMarkdown(FULL_METADATA);
+        expect(md).toContain('- **Subtitle Tracks**: Track 0 — eng — English, Track 1 — fra');
+    });
+
+    it('renders the technical-details row when there is exactly one subtitle track', () => {
+        const md = buildMetadataMarkdown({
+            ...MINIMAL_METADATA,
+            subtitleTracks: [{ index: 4, language: 'eng', title: 'English' }],
+        });
+
+        expect(md).toContain('- **Subtitle Tracks**: Track 4 — eng — English');
+    });
+
+    it('preserves section spacing and trims embedded subtitle text', () => {
+        const md = buildMetadataMarkdown(MINIMAL_METADATA, '  subtitle line  ', { segments: [], fullText: 'Transcript' }, 'Description');
+        expect(md).toContain('## Description\n\nDescription\n\n## Subtitles\n\nsubtitle line\n\n## Transcription\n\nTranscript');
+        expect(md).toEndWith('Transcript');
+        expect(md).toStartWith('# Video Metadata\n\n## Technical Details');
+        expect(md).toContain('fps\n\n## Description');
+    });
     it('includes all technical details for full metadata', () => {
         const md = buildMetadataMarkdown(FULL_METADATA);
         expect(md).toContain('# Video Metadata');
@@ -93,6 +147,8 @@ describe('buildMetadataMarkdown', () => {
         expect(md).toContain('## Transcription');
         expect(md).toContain('[00:05] **SPEAKER_00**: Hello world');
         expect(md).toContain('[01:05] **SPEAKER_01**: How are you');
+        expect(md).toContain('[01:58] Minute divisor boundary');
+        expect(md).toContain('[02:00] Minute rollover boundary');
         expect(md).toContain('[02:10] No speaker label here');
     });
 
@@ -138,5 +194,10 @@ describe('buildMetadataMarkdown', () => {
         const md = buildMetadataMarkdown(surround);
         expect(md).toContain('6-channel');
         expect(md).toContain('48000 Hz');
+    });
+
+    it('does not append channel details when audio codec exists without channel count', () => {
+        const md = buildMetadataMarkdown({ ...MINIMAL_METADATA, audioCodec: 'aac' });
+        expect(md).toEndWith('- **Audio Codec**: aac');
     });
 });

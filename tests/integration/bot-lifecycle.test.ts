@@ -19,8 +19,10 @@ import * as channelRegistryBackendModule from '@/integrations/discord/channel-re
 import * as channelRegistryManagerModule from '@/integrations/discord/channel-registry/manager';
 import * as registerCommandsModule from '@/integrations/discord/register-commands';
 import { createGuildId } from '@/integrations/discord/types';
+import * as servicesModule from '@/services';
 import * as storageModule from '@/storage';
 import * as dynamoClient from '@/storage/client';
+import { DynamoDBClientHolder } from '@/storage/client-holder';
 
 /**
  * Integration tests for bot lifecycle and component wiring with Agent SDK.
@@ -80,7 +82,7 @@ describe('Bot Lifecycle Integration', () => {
 
         // Mock DynamoDB client creation
         // Must include destroy() — app.stop() calls storage.holder.destroy()
-        const mockClient = { destroy: mock(() => {}) } as unknown as DynamoDBClient;
+        const mockClient = { destroy: mock(() => undefined) } as unknown as DynamoDBClient;
         // mockDocClient.send must return empty Items so outbox drain (triggered on Discord CONNECT_SUCCESS)
         // does not throw when the health subscription fires during app.start()
         const mockDocClient = {
@@ -639,6 +641,153 @@ describe('Bot Lifecycle Integration', () => {
     });
 
     describe('Shutdown Sequence', () => {
+        it('cleans a failed second construction and can rebuild again without reclosing old owners', async () => {
+            const constructionFailure = new Error('second bot construction failed');
+            const clients: { destroy: ReturnType<typeof mock> }[] = [];
+            const docClient = { send: mock(async () => ({ Items: [], Count: 0 })) } as unknown as DynamoDBDocumentClient;
+            const createClient = spyOn(dynamoClient, 'createDynamoDBClient').mockImplementation(() => {
+                const client = { destroy: mock(() => undefined) };
+                clients.push(client);
+                return { client: client as unknown as DynamoDBClient, docClient, tableName: 'IsambardMemory' };
+            });
+            // Restore this nested factory spy before the shared beforeEach spy.
+            spies.unshift(createClient);
+
+            const bots: DiscordBot[] = [];
+            let botBuilds = 0;
+            const createBot = spyOn(discordBot, 'createDiscordBot').mockImplementation(() => {
+                botBuilds += 1;
+                if(botBuilds === 2) {
+                    throw constructionFailure;
+                }
+                const bot: DiscordBot = {
+                    start:          mock(async () => undefined),
+                    stop:           mock(async () => undefined),
+                    triggerCatchUp: mock(async () => undefined),
+                };
+                bots.push(bot);
+                return bot;
+            });
+            const holderDestroy = spyOn(DynamoDBClientHolder.prototype, 'destroy');
+            const healthStop = spyOn(servicesModule.ServiceHealthRegistryImpl.prototype, 'stop');
+            const outboxOwners: { stop: ReturnType<typeof mock> }[] = [];
+            const sagaOwners: { stop: ReturnType<typeof mock> }[] = [];
+            const createOutbox = spyOn(servicesModule, 'createOutboxDrainer').mockImplementation(() => {
+                const owner = {
+                    drain: mock(async () => ({ delivered: 0, failed: 0, skipped: 0 })),
+                    stop:  mock(() => undefined),
+                };
+                outboxOwners.push(owner);
+                return owner;
+            });
+            const createSaga = spyOn(servicesModule, 'createSagaExecutor').mockImplementation(() => {
+                const owner = {
+                    start:       mock(() => undefined),
+                    stop:        mock(() => undefined),
+                    executeOnce: mock(async () => ({ executed: 0, failed: 0 })),
+                };
+                sagaOwners.push(owner);
+                return owner;
+            });
+            const setIntervalSpy = spyOn(globalThis, 'setInterval');
+            const probeIntervals = () => setIntervalSpy.mock.results
+                .filter((_, index) => setIntervalSpy.mock.calls[index]?.[1] === 60_000)
+                .map(result => result.value);
+            const clearIntervalSpy = spyOn(globalThis, 'clearInterval');
+            const notifierSpy = spyOn(storageModule, 'setDynamoHealthNotifier');
+            spies.push(
+                createBot,
+                holderDestroy,
+                healthStop,
+                createOutbox,
+                createSaga,
+                setIntervalSpy,
+                clearIntervalSpy,
+                notifierSpy,
+                spyOn(configLoader, 'loadConfig').mockReturnValue({
+                    discord: mockDiscordConfig,
+                    agent:   mockAgentConfig,
+                    session: mockSessionConfig,
+                } as unknown as Config),
+                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig)
+            );
+
+            const app = await createApp();
+            await app.start();
+            await app.stop();
+            const firstClientDestructions = clients.map(client => client.destroy.mock.calls.length);
+            const firstClientCount = clients.length;
+            expect(probeIntervals()).toHaveLength(1);
+            expect(clearIntervalSpy).toHaveBeenCalledWith(probeIntervals()[0]);
+            const firstNotifierClears = notifierSpy.mock.calls.filter(([value]) => value === undefined).length;
+
+            await expect(app.start()).rejects.toBe(constructionFailure);
+            expect(holderDestroy).toHaveBeenCalledTimes(2);
+            expect(healthStop).toHaveBeenCalledTimes(2);
+            expect(outboxOwners[0].stop).toHaveBeenCalledTimes(1);
+            expect(outboxOwners[1].stop).toHaveBeenCalledTimes(1);
+            expect(sagaOwners[0].stop).toHaveBeenCalledTimes(1);
+            expect(sagaOwners[1].stop).toHaveBeenCalledTimes(1);
+            expect(probeIntervals()).toHaveLength(2);
+            expect(clearIntervalSpy).toHaveBeenCalledWith(probeIntervals()[1]);
+            expect(notifierSpy.mock.calls.filter(([value]) => value === undefined)).toHaveLength(firstNotifierClears + 1);
+            for(const [index, client] of clients.entries()) {
+                if(index < firstClientCount) {
+                    expect(client.destroy).toHaveBeenCalledTimes(firstClientDestructions[index]);
+                } else {
+                    expect(client.destroy).toHaveBeenCalled();
+                }
+            }
+            expect(bots[0].stop).toHaveBeenCalledTimes(1);
+
+            await app.start();
+            await app.stop();
+            expect(createBot).toHaveBeenCalledTimes(3);
+            expect(holderDestroy).toHaveBeenCalledTimes(3);
+            expect(outboxOwners[2].stop).toHaveBeenCalledTimes(1);
+            expect(sagaOwners[2].stop).toHaveBeenCalledTimes(1);
+            expect(bots[0].stop).toHaveBeenCalledTimes(1);
+            expect(bots[1].stop).toHaveBeenCalledTimes(1);
+        });
+
+        it('releases later owners after bot.stop rejects without repeating teardown', async () => {
+            const stopFailure = new Error('Discord shutdown failed');
+            mockDiscordBot.stop = mock(async () => {
+                throw stopFailure;
+            });
+            const healthStop = spyOn(servicesModule.ServiceHealthRegistryImpl.prototype, 'stop');
+            const holderDestroy = spyOn(DynamoDBClientHolder.prototype, 'destroy');
+            const createBot = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
+            spies.push(
+                healthStop,
+                holderDestroy,
+                spyOn(configLoader, 'loadConfig').mockReturnValue({
+                    discord: mockDiscordConfig,
+                    agent:   mockAgentConfig,
+                    session: mockSessionConfig,
+                } as unknown as Config),
+                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
+                createBot
+            );
+
+            const app = await createApp();
+            const firstStop = app.stop();
+            expect(app.stop()).toBe(firstStop);
+            await expect(firstStop).rejects.toBe(stopFailure);
+            expect(holderDestroy).toHaveBeenCalledTimes(1);
+            expect(healthStop).toHaveBeenCalledTimes(1);
+
+            const repeatedStop = app.stop();
+            expect(repeatedStop).toBe(firstStop);
+            await expect(repeatedStop).rejects.toBe(stopFailure);
+            expect(mockDiscordBot.stop).toHaveBeenCalledTimes(1);
+            expect(holderDestroy).toHaveBeenCalledTimes(1);
+            expect(healthStop).toHaveBeenCalledTimes(1);
+            await expect(app.start()).rejects.toBe(stopFailure);
+            expect(app.stop()).toBe(firstStop);
+            expect(createBot).toHaveBeenCalledTimes(1);
+        });
+
         it('should call bot.stop when app.stop is called', async () => {
             spies.push(
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
@@ -658,25 +807,53 @@ describe('Bot Lifecycle Integration', () => {
         });
 
         it('should allow multiple start/stop cycles', async () => {
+            const bots: DiscordBot[] = [];
+            const firstConfig = {
+                discord: mockDiscordConfig,
+                agent:   mockAgentConfig,
+                session: mockSessionConfig,
+            } as unknown as Config;
+            const nextConfig = {
+                ...firstConfig,
+                session: { ...mockSessionConfig, shutdownDeadlineMs: mockSessionConfig.shutdownDeadlineMs + 1000 },
+            };
+            let configLoads = 0;
+            const createBot = spyOn(discordBot, 'createDiscordBot').mockImplementation(() => {
+                const bot: DiscordBot = {
+                    start:          mock(async () => undefined),
+                    stop:           mock(async () => undefined),
+                    triggerCatchUp: mock(async () => undefined),
+                };
+                bots.push(bot);
+                return bot;
+            });
             spies.push(
-                spyOn(configLoader, 'loadConfig').mockReturnValue({
-                    discord: mockDiscordConfig,
-                    agent:   mockAgentConfig,
-                    session: mockSessionConfig,
-                } as unknown as Config),
+                spyOn(configLoader, 'loadConfig').mockImplementation(() => {
+                    configLoads += 1;
+                    return configLoads === 1 ? firstConfig : nextConfig;
+                }),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
+                createBot
             );
 
             const app = await createApp();
+            expect(app.config).toBe(firstConfig);
 
             await app.start();
             await app.stop();
-            await app.start();
-            await app.stop();
+            const secondStart = app.start();
+            expect(app.start()).toBe(secondStart);
+            const secondStop = app.stop();
+            await secondStart;
+            expect(app.config).toBe(nextConfig);
+            await secondStop;
 
-            expect(mockDiscordBot.start).toHaveBeenCalledTimes(2);
-            expect(mockDiscordBot.stop).toHaveBeenCalledTimes(2);
+            expect(createBot).toHaveBeenCalledTimes(2);
+            expect(bots[0]).not.toBe(bots[1]);
+            for(const bot of bots) {
+                expect(bot.start).toHaveBeenCalledTimes(1);
+                expect(bot.stop).toHaveBeenCalledTimes(1);
+            }
         });
     });
 

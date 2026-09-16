@@ -1,5 +1,21 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { delay, retryWithBackoff } from '@/storage/memory-tool/reconciliation/reconciler';
+import { delay, retryWithBackoff, isAbortError } from '@/storage/memory-tool/reconciliation/reconciler';
+
+describe('isAbortError', () => {
+    test('recognizes only a DOMException with the AbortError name', () => {
+        expect(isAbortError(new DOMException('Aborted', 'AbortError'))).toBe(true);
+        expect(isAbortError(new DOMException('bad data', 'DataError'))).toBe(false);
+        const ordinaryError = new Error('not a DOM abort');
+        ordinaryError.name = 'AbortError';
+        expect(isAbortError(ordinaryError)).toBe(false);
+    });
+});
+
+function namedError(name: string): Error {
+    const error = new Error(name);
+    error.name = name;
+    return error;
+}
 
 describe('delay', () => {
     beforeEach(() => {
@@ -7,6 +23,7 @@ describe('delay', () => {
     });
 
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.useRealTimers();
     });
 
@@ -23,14 +40,34 @@ describe('delay', () => {
         const rejected = delay(100, controller.signal);
         expect(rejected).rejects.toBeInstanceOf(DOMException);
         expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
+        expect(rejected).rejects.toMatchObject({ message: 'Aborted' });
+        expect(rejected).rejects.toMatchObject({ message: 'Aborted' });
     });
 
     test('should reject if signal aborted mid-delay', async () => {
         const controller = new AbortController();
+        const addListener = jest.spyOn(controller.signal, 'addEventListener');
+        const removeListener = jest.spyOn(controller.signal, 'removeEventListener');
         const delayPromise = delay(100, controller.signal);
         controller.abort();
-        expect(delayPromise).rejects.toBeInstanceOf(DOMException);
-        expect(delayPromise).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(delayPromise).rejects.toBeInstanceOf(DOMException);
+        await expect(delayPromise).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(delayPromise).rejects.toMatchObject({ message: 'Aborted' });
+        const registeredListener = addListener.mock.calls.find(([event]) => event === 'abort')?.[1];
+        expect(registeredListener).toEqual(expect.any(Function));
+        expect(removeListener).toHaveBeenCalledWith('abort', registeredListener);
+    });
+
+    test('removes its abort listener after the timer settles', async () => {
+        const controller = new AbortController();
+        const addListener = jest.spyOn(controller.signal, 'addEventListener');
+        const removeListener = jest.spyOn(controller.signal, 'removeEventListener');
+        const waiting = delay(10, controller.signal);
+        jest.advanceTimersByTime(10);
+        await waiting;
+        const registeredListener = addListener.mock.calls.find(([event]) => event === 'abort')?.[1];
+        expect(registeredListener).toEqual(expect.any(Function));
+        expect(removeListener).toHaveBeenCalledWith('abort', registeredListener);
     });
 
     test('should return immediately when ms <= 0', async () => {
@@ -111,8 +148,7 @@ describe('retryWithBackoff', () => {
     });
 
     test('should return undefined when retries are exhausted', async () => {
-        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
-        const operation = mock(() => Promise.reject({ name: 'ProvisionedThroughputExceededException' }));
+        const operation = mock(() => Promise.reject(namedError('ProvisionedThroughputExceededException')));
 
         const resultPromise = retryWithBackoff(
             operation,
@@ -135,8 +171,7 @@ describe('retryWithBackoff', () => {
         const controller = new AbortController();
         const operation = mock(() => {
             controller.abort();
-            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
-            return Promise.reject({ name: 'ProvisionedThroughputExceededException' });
+            return Promise.reject(namedError('ProvisionedThroughputExceededException'));
         });
 
         const rejected = retryWithBackoff(
@@ -150,8 +185,7 @@ describe('retryWithBackoff', () => {
     });
 
     test('should use exponential backoff delays', async () => {
-        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
-        const operation = mock(() => Promise.reject({ name: 'ThrottlingException' }));
+        const operation = mock(() => Promise.reject(namedError('ThrottlingException')));
 
         const resultPromise = retryWithBackoff(
             operation,
@@ -167,6 +201,25 @@ describe('retryWithBackoff', () => {
         // Attempt 3 fails → done
         await resultPromise;
 
+        expect(operation).toHaveBeenCalledTimes(3);
+    });
+
+    test('retries at 10ms then 20ms, with no early third request', async () => {
+        const operation = mock()
+            .mockRejectedValueOnce(namedError('ThrottlingException'))
+            .mockRejectedValueOnce(namedError('ThrottlingException'))
+            .mockResolvedValueOnce('complete');
+        const waiting = retryWithBackoff(operation, { baseDelayMs: 10, maxAttempts: 3 }, 'timed');
+        await Promise.resolve();
+        jest.advanceTimersByTime(9);
+        expect(operation).toHaveBeenCalledTimes(1);
+        jest.advanceTimersByTime(1);
+        await Promise.resolve();
+        expect(operation).toHaveBeenCalledTimes(2);
+        jest.advanceTimersByTime(19);
+        expect(operation).toHaveBeenCalledTimes(2);
+        jest.advanceTimersByTime(1);
+        expect(await waiting).toBe('complete');
         expect(operation).toHaveBeenCalledTimes(3);
     });
 });

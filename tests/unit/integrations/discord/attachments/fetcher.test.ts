@@ -495,6 +495,9 @@ describe('Attachment Fetcher', () => {
 
             expect(mockFsPromises.mkdir).toHaveBeenCalledWith('/tmp/scratch/attachments/discord-msg123', { recursive: true });
             expect(mockFsPromises.writeFile).toHaveBeenCalledWith('/tmp/scratch/attachments/discord-msg123/document.pdf', fileData);
+            const fetchOptions = mockFetch.mock.calls[0]?.[1];
+            expect(fetchOptions?.signal).toBeInstanceOf(AbortSignal);
+            expect(fetchOptions?.signal?.aborted).toBe(false);
         });
 
         test('creates nested directory structure', async () => {

@@ -2,7 +2,6 @@ import { logger } from '@hughescr/logger';
 import type { PlatformHistoryProvider, HistoryFetchParams, HistoryEntry } from '@/agent';
 import type { BlueskyClient } from '@/integrations/bsky/client';
 
-// Stryker disable next-line ArithmeticOperator: text truncation limit is a UX constant
 const MAX_TEXT_LENGTH = 200;
 
 /**
@@ -40,7 +39,6 @@ export class BskyHistoryProvider implements PlatformHistoryProvider {
 
             return await this.fetchAuthorFeed(params.identifier, maxMessages);
         } catch (err: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log call structure and message text are informational only
             logger.warn({ err }, 'BskyHistoryProvider: failed to fetch history');
             return [];
         }
@@ -55,7 +53,6 @@ export class BskyHistoryProvider implements PlatformHistoryProvider {
         return [{
             platform:  'bsky',
             timestamp: post.createdAt,
-            // Stryker disable next-line StringLiteral: formatting template — cosmetic punctuation
             summary:   `@${post.author.handle}: ${truncate(post.text)}`,
             direction: 'inbound',
         }];
@@ -85,7 +82,6 @@ export class BskyHistoryProvider implements PlatformHistoryProvider {
             platform:  'bsky',
             timestamp: msg.sentAt,
             summary:   truncate(msg.text),
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: direction depends on selfDid being known — if not provided all messages are inbound by design
             direction: (selfDid && msg.senderDid === selfDid) ? 'outbound' : 'inbound',
         }));
     }
@@ -103,7 +99,6 @@ export class BskyHistoryProvider implements PlatformHistoryProvider {
         return items.map((item): HistoryEntry => ({
             platform:  'bsky',
             timestamp: item.post.createdAt,
-            // Stryker disable next-line StringLiteral: formatting template — cosmetic punctuation
             summary:   `@${item.post.author.handle}: ${truncate(item.post.text)}`,
             direction: 'inbound',
         }));
@@ -115,9 +110,5 @@ export class BskyHistoryProvider implements PlatformHistoryProvider {
 // ---------------------------------------------------------------------------
 
 function truncate(text: string): string {
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: true mutant always truncates but short strings produce same result; >= is equivalent since slice(0,N) on length=N returns same string
-    if(text.length > MAX_TEXT_LENGTH) {
-        return text.slice(0, MAX_TEXT_LENGTH);
-    }
-    return text;
+    return text.slice(0, MAX_TEXT_LENGTH);
 }

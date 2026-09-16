@@ -1,13 +1,27 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions check mock call args defensively; captures may be undefined at index if calls are fewer than expected */
 /* eslint-disable no-restricted-syntax -- setTimeout calls in mock processor implementations are intentional: they simulate async processing and are controlled by jest.useFakeTimers() + jest.advanceTimersByTime() in the test body, not real wall-clock time */
+/* eslint-disable @typescript-eslint/dot-notation -- These contract tests exercise private state transitions through bracket access. */
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
 import { mockLogger } from '../../../setup';
 import type { ResumeContext } from '@/agent/resume-prompt-builder';
 import { StreamTracker } from '@/agent/stream-tracker';
+import { InvariantViolationError } from '@/errors';
 import { MessageCoordinator, type ProcessResult, type MessageProcessor  } from '@/integrations/discord/message-coordinator';
 import { type DiscordMessageContext, createChannelId, createGuildId, createUserId  } from '@/integrations/discord/types';
+
+function createDelayedProcessor(delayMs: number): MessageProcessor {
+    return async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, delayMs);
+        });
+        return {
+            response:       'Response',
+            wasInterrupted: abortSignal.aborted,
+            streamTracker:  new StreamTracker(),
+        };
+    };
+}
 
 describe('MessageCoordinator', () => {
     let coordinator: MessageCoordinator;
@@ -19,6 +33,7 @@ describe('MessageCoordinator', () => {
         jest.useFakeTimers();
         jest.clearAllTimers();
         jest.setSystemTime(1000);
+        mockLogger.debug.mockClear();
 
         // Create a basic message context
         mockContext = {
@@ -49,6 +64,7 @@ describe('MessageCoordinator', () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- teardown also runs when setup or a test throws before assigning coordinator
         if(coordinator) {
             coordinator.stop();
         }
@@ -80,7 +96,20 @@ describe('MessageCoordinator', () => {
         });
 
         it('should throw error when handleMessage called without processor set', () => {
-            expect(() => coordinator.handleMessage(mockContext, mockMessage)).toThrow();
+            expect(() => coordinator.handleMessage(mockContext, mockMessage)).toThrow(
+                new InvariantViolationError('handleMessage', 'Processor not set. Call setProcessor() before handling messages.')
+            );
+        });
+
+        it('rejects internal processing entry points when no processor is configured', () => {
+            const startProcessing = coordinator['startProcessing'].bind(coordinator);
+            const processWithResume = coordinator['processWithResume'].bind(coordinator);
+            expect(() => startProcessing(mockContext.channelId, [mockContext], mockMessage)).toThrow(
+                new InvariantViolationError('startProcessing', 'Processor not set. Call setProcessor() before handling messages.')
+            );
+            expect(() => processWithResume(mockContext.channelId)).toThrow(
+                new InvariantViolationError('processWithResume', 'Processor not set. Call setProcessor() before handling messages.')
+            );
         });
     });
 
@@ -101,6 +130,7 @@ describe('MessageCoordinator', () => {
             const warnArg = mockLogger.warn.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
             expect(warnArg?.channelId).toBe(mockContext.channelId);
             expect(warnArg?.messageId).toBe(mockContext.messageId);
+            expect(warnArg?.msg).toBe('MessageCoordinator: dropping message — channel registry not ready');
         });
 
         it('should process message normally when registry is ready', async () => {
@@ -298,10 +328,8 @@ describe('MessageCoordinator', () => {
             // mutant, state.partialWork would be set to result.streamTracker.getProgress() (a
             // truthy object, even with empty fields) regardless of hasMeaningfulProgress(), so the
             // very next processWithResume call would receive a non-null resumeContext instead of null.
-            // The resumeContext is captured into an outer variable and asserted after the promise
-            // chain settles (rather than inside the processor callback) because the processing IIFE
-            // wraps processor calls in a catch-all safety net that would otherwise swallow a thrown
-            // assertion failure.
+            // Capture the resumeContext and assert it after the processor settles so the failure
+            // describes the public coordinator behavior rather than an asynchronous callback.
             let callCount = 0;
             let resumeContextOnSecondCall: ResumeContext | null | undefined;
             const zeroProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
@@ -410,8 +438,8 @@ describe('MessageCoordinator', () => {
                     resumeContextInThirdCall = resumeContext;
                 }
 
-                if(callCount === 1) {
-                    // First call (startProcessing) - runs long enough to be interrupted
+                if(callCount === 1 || callCount === 2) {
+                    // Both initial calls run long enough to be interrupted and return zero progress.
                     await new Promise((resolve) => {
                         setTimeout(resolve, 200);
                     });
@@ -419,17 +447,6 @@ describe('MessageCoordinator', () => {
                         response:       null,
                         wasInterrupted: abortSignal.aborted,
                         streamTracker:  new StreamTracker(), // zero progress when interrupted
-                    };
-                // eslint-disable-next-line sonarjs/no-duplicated-branches -- both calls 1 and 2 intentionally return identical zero-progress results to verify no partial work captured
-                } else if(callCount === 2) {
-                    // Second call (processWithResume) - also interrupted with zero progress
-                    await new Promise((resolve) => {
-                        setTimeout(resolve, 200);
-                    });
-                    return {
-                        response:       null,
-                        wasInterrupted: abortSignal.aborted,
-                        streamTracker:  new StreamTracker(), // zero progress
                     };
                 } else {
                     // Third call - should NOT receive resume context from second interrupted call
@@ -1023,22 +1040,13 @@ describe('MessageCoordinator', () => {
         });
 
         it('should reset debounce timer when new message arrives during debounce', async () => {
+            const typingChannel = { sendTyping: mock(async () => undefined) };
             // Make processor slow to allow interruption
-            // eslint-disable-next-line sonarjs/no-identical-functions -- same slow processor pattern; different test scenario (debounce reset vs batching)
-            const slowDebounceProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
-                await new Promise((resolve) => {
-                    setTimeout(resolve, 150);
-                });
-                return {
-                    response:       'Response',
-                    wasInterrupted: abortSignal.aborted,
-                    streamTracker:  new StreamTracker(),
-                };
-            };
+            const slowDebounceProcessor = createDelayedProcessor(150);
             processorMock.mockImplementation(slowDebounceProcessor);
 
             // Start processing
-            coordinator.handleMessage(mockContext, mockMessage);
+            coordinator.handleMessage(mockContext, mockMessage, typingChannel);
             jest.advanceTimersByTime(10);
             await Promise.resolve(); // Flush microtasks
             await Promise.resolve(); // Flush again to ensure completion
@@ -1067,6 +1075,8 @@ describe('MessageCoordinator', () => {
             const lastCallArgs = processorMock.mock.calls[processorMock.mock.calls.length - 1] as unknown[];
             const contexts = lastCallArgs[0] as DiscordMessageContext[];
             expect(contexts.length).toBeGreaterThanOrEqual(2);
+            const state = (coordinator as unknown as { channelStates: Map<string, { typingInterval?: unknown }> }).channelStates.get(mockContext.channelId);
+            expect(state?.typingInterval).toBeUndefined();
         });
     });
 
@@ -1344,17 +1354,7 @@ describe('MessageCoordinator', () => {
             });
 
             // Make processor slow to allow interruption
-            // eslint-disable-next-line sonarjs/no-identical-functions -- same slow processor pattern; different test scenario (re-queued null message)
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
-                await new Promise((resolve) => {
-                    setTimeout(resolve, 150);
-                });
-                return {
-                    response:       'Response',
-                    wasInterrupted: abortSignal.aborted,
-                    streamTracker:  new StreamTracker(),
-                };
-            };
+            const slowProcessor = createDelayedProcessor(150);
             processorMock.mockImplementation(slowProcessor);
             coordinator.setProcessor(processorMock);
 
@@ -1384,17 +1384,7 @@ describe('MessageCoordinator', () => {
             coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
 
-            // eslint-disable-next-line sonarjs/no-identical-functions -- same slow processor pattern; different test scenario (stop/cleanup)
-            const cleanupProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
-                await new Promise((resolve) => {
-                    setTimeout(resolve, 200);
-                });
-                return {
-                    response:       'Response',
-                    wasInterrupted: abortSignal.aborted,
-                    streamTracker:  new StreamTracker(),
-                };
-            };
+            const cleanupProcessor = createDelayedProcessor(200);
             processorMock.mockImplementation(cleanupProcessor);
 
             // Start processing
@@ -2169,21 +2159,18 @@ describe('MessageCoordinator', () => {
             // This test ensures that when the error is thrown, no processing happens
             // If mutants #1816 or #1817 survive, processing would proceed incorrectly
 
-            let didThrow = false;
-            let errorMessage = '';
+            let thrown: unknown;
 
             try {
                 coordinator.handleMessage(mockContext, mockMessage);
-                // If we reach here without throwing, the test should fail
-                expect.unreachable('handleMessage should have thrown an error');
             } catch (error) {
-                didThrow = true;
-                errorMessage = (error as Error).message;
+                thrown = error;
             }
 
             // Verify the error was actually thrown
-            expect(didThrow).toBe(true);
-            expect(errorMessage).toContain('Processor not set. Call setProcessor() before handling messages.');
+            expect(thrown).toBeInstanceOf(InvariantViolationError);
+            expect((thrown as Error).message).toContain('Processor not set. Call setProcessor() before handling messages.');
+            expect((coordinator as unknown as { channelStates: Map<string, unknown> }).channelStates.size).toBe(0);
 
             // Verify that no processing state was created (no channel state)
             // We can indirectly verify this by setting processor and calling handleMessage
@@ -2220,17 +2207,7 @@ describe('MessageCoordinator', () => {
             };
             globalThis.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
 
-            // eslint-disable-next-line sonarjs/no-identical-functions -- same slow processor pattern; different test scenario (timer creation verification)
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
-                await new Promise((resolve) => {
-                    setTimeout(resolve, 200);
-                });
-                return {
-                    response:       'Response',
-                    wasInterrupted: abortSignal.aborted,
-                    streamTracker:  new StreamTracker(),
-                };
-            };
+            const slowProcessor = createDelayedProcessor(200);
             processorMock.mockImplementation(slowProcessor);
 
             // Start processing
@@ -2262,17 +2239,7 @@ describe('MessageCoordinator', () => {
             };
             globalThis.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
 
-            // eslint-disable-next-line sonarjs/no-identical-functions -- same slow processor pattern; different test scenario (timer count verification)
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
-                await new Promise((resolve) => {
-                    setTimeout(resolve, 200);
-                });
-                return {
-                    response:       'Response',
-                    wasInterrupted: abortSignal.aborted,
-                    streamTracker:  new StreamTracker(),
-                };
-            };
+            const slowProcessor = createDelayedProcessor(200);
             processorMock.mockImplementation(slowProcessor);
 
             // Start processing
@@ -2318,17 +2285,7 @@ describe('MessageCoordinator', () => {
             };
             globalThis.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
-            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (clear-on-new-message-during-active), identical structure intentional for test isolation
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
-                await new Promise((resolve) => {
-                    setTimeout(resolve, 200);
-                });
-                return {
-                    response:       'Response',
-                    wasInterrupted: abortSignal.aborted,
-                    streamTracker:  new StreamTracker(),
-                };
-            };
+            const slowProcessor = createDelayedProcessor(200);
             processorMock.mockImplementation(slowProcessor);
             coordinator.setProcessor(processorMock);
 
@@ -2416,17 +2373,7 @@ describe('MessageCoordinator', () => {
             };
             globalThis.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
-            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (clear-on-stop), identical structure intentional for test isolation
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
-                await new Promise((resolve) => {
-                    setTimeout(resolve, 200);
-                });
-                return {
-                    response:       'Response',
-                    wasInterrupted: abortSignal.aborted,
-                    streamTracker:  new StreamTracker(),
-                };
-            };
+            const slowProcessor = createDelayedProcessor(200);
             processorMock.mockImplementation(slowProcessor);
             coordinator.setProcessor(processorMock);
 
@@ -2452,7 +2399,6 @@ describe('MessageCoordinator', () => {
 
     describe('Typing Indicator Support', () => {
         let mockChannel: { sendTyping: ReturnType<typeof mock> };
-
         beforeEach(() => {
             coordinator = new MessageCoordinator();
             mockChannel = {
@@ -2461,6 +2407,20 @@ describe('MessageCoordinator', () => {
 
                 }),
             };
+        });
+
+        it('keeps one typing refresh when start is requested twice for the same channel', async () => {
+            coordinator = new MessageCoordinator();
+            const state = coordinator['getOrCreateState'](mockContext.channelId);
+            const sendTyping = mock(async (): Promise<void> => {});
+            state.typingChannel = { sendTyping };
+
+            coordinator['startTypingIndicator'](state);
+            coordinator['startTypingIndicator'](state);
+            expect(sendTyping).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(8000);
+            await Promise.resolve();
+            expect(sendTyping).toHaveBeenCalledTimes(2);
         });
 
         it('should call sendTyping when processing starts', async () => {
@@ -3362,7 +3322,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should clear typing interval when removing a channel', async () => {
-            let intervalCleared = false;
+            let intervalCleared: boolean;
             const originalClearInterval = clearInterval;
             globalThis.clearInterval = ((intervalId: ReturnType<typeof setInterval>) => {
                 intervalCleared = true;
@@ -3370,17 +3330,29 @@ describe('MessageCoordinator', () => {
             }) as unknown as typeof clearInterval;
 
             try {
+                processorMock.mockImplementation(async () => {
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, 5000);
+                    });
+                    return {
+                        response:       'Response',
+                        wasInterrupted: false,
+                        streamTracker:  new StreamTracker(),
+                    };
+                });
                 // Start processing with typing indicator
                 coordinator.handleMessage(mockContext, mockMessage, mockChannel);
                 jest.advanceTimersByTime(10);
                 await Promise.resolve(); // Flush microtasks
                 await Promise.resolve(); // Flush again to ensure completion
 
+                intervalCleared = false;
                 // Remove the channel
                 coordinator.removeChannel(mockContext.channelId);
 
                 // Typing interval should be cleared
                 expect(intervalCleared).toBe(true);
+                expect((coordinator as unknown as { channelStates: Map<string, unknown> }).channelStates.has(mockContext.channelId)).toBe(false);
 
                 // Clean up processing
                 jest.advanceTimersByTime(100);
@@ -3705,6 +3677,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should call onProcessingEnd with wasInterrupted=true from processWithResume when processor throws', async () => {
+            mockLogger.error.mockClear();
             const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willResume: boolean }) => undefined);
             let callCount = 0;
 
@@ -3751,6 +3724,13 @@ describe('MessageCoordinator', () => {
             expect(onProcessingEnd.mock.calls[0]?.[0]).toEqual({ wasInterrupted: true, willResume: true });
             // Second: processWithResume threw → wasInterrupted stays true (default), no pending messages
             expect(onProcessingEnd.mock.calls[1]?.[0]).toEqual({ wasInterrupted: true, willResume: false });
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err:        new Error('Resume processor error'),
+                channelId:  mockContext.channelId,
+                messageIds: ['msg-001', 'msg-002'],
+                phase:      'processor',
+                msg:        'MessageCoordinator: processing failed',
+            });
         });
 
         it('should call onProcessingEnd with willResume=true from processWithResume when new messages arrive during resume', async () => {
@@ -3838,10 +3818,653 @@ describe('MessageCoordinator', () => {
         });
     });
 
+    describe('Delivery ownership and failures', () => {
+        it('finishes an interrupted result in the processor microtask on fresh and resumed runs', async () => {
+            const check = async (resumed: boolean): Promise<void> => {
+                let finish: ((result: ProcessResult) => void) | undefined;
+                const result = new Promise<ProcessResult>((resolve) => {
+                    finish = resolve;
+                });
+                let notified = false;
+                coordinator = new MessageCoordinator({ onProcessingEnd: () => {
+                    notified = true;
+                } });
+                coordinator.setProcessor(mock(() => result));
+                if(resumed) {
+                    const state = coordinator['getOrCreateState'](mockContext.channelId);
+                    state.pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
+                    coordinator['processWithResume'](mockContext.channelId);
+                } else {
+                    coordinator.handleMessage(mockContext, mockMessage);
+                }
+                finish?.({ response: null, wasInterrupted: true, streamTracker: new StreamTracker() });
+                let notifiedAtCheckpoint = false;
+                queueMicrotask(() => {
+                    notifiedAtCheckpoint = notified;
+                });
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(notifiedAtCheckpoint).toBe(true);
+            };
+            await check(false);
+            await check(true);
+        });
+
+        it('logs a synchronous typing failure when a continuation starts the resumed run', async () => {
+            mockLogger.error.mockClear();
+            const typingError = new Error('resumed typing failed');
+            let typingCalls = 0;
+            const channel = { sendTyping: mock((): Promise<void> => {
+                typingCalls++;
+                if(typingCalls === 2) {
+                    throw typingError;
+                }
+                return Promise.resolve();
+            }) };
+            const processor = mock(async (_contexts: DiscordMessageContext[], _resume: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+                if(!signal.aborted) {
+                    await new Promise<void>((resolve) => {
+                        signal.addEventListener('abort', () => resolve(), { once: true });
+                    });
+                }
+                return { response: null, wasInterrupted: true, streamTracker: new StreamTracker() };
+            });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
+            coordinator.setProcessor(processor);
+            coordinator.handleMessage(mockContext, mockMessage, channel);
+            coordinator.handleMessage({ ...mockContext, messageId: 'msg-002' }, { ...mockMessage, id: 'msg-002' } as Message);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(typingCalls).toBe(2);
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err:       typingError,
+                channelId: mockContext.channelId,
+                msg:       'MessageCoordinator: failed to resume after interruption',
+            });
+        });
+
+        it('starts fresh after unqueued partial work and does not leak it into a later batch', async () => {
+            const tracker = new StreamTracker();
+            tracker.update({ type: 'assistant', message: { content: [{ type: 'text', text: 'old partial' }] } });
+            const resumeContexts: (ResumeContext | null)[] = [];
+            let calls = 0;
+            coordinator = new MessageCoordinator();
+            coordinator.setProcessor(mock(async (_contexts, resumeContext): Promise<ProcessResult> => {
+                calls++;
+                resumeContexts.push(resumeContext);
+                return { response: calls === 1 ? null : 'fresh', wasInterrupted: calls === 1, streamTracker: calls === 1 ? tracker : new StreamTracker() };
+            }));
+            coordinator.handleMessage(mockContext, mockMessage);
+            await Promise.resolve();
+            await Promise.resolve();
+            const next = { ...mockContext, messageId: 'msg-002' };
+            coordinator.handleMessage(next, { ...mockMessage, id: 'msg-002' } as Message);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(resumeContexts).toEqual([null, null]);
+            expect(coordinator['getOrCreateState'](mockContext.channelId).partialWork).toBeUndefined();
+        });
+
+        it('does not mark a removed run complete after its processor settles', async () => {
+            const checkLateResult = async (resumed: boolean): Promise<void> => {
+                mockLogger.error.mockClear();
+                let finish: ((result: ProcessResult) => void) | undefined;
+                const pending = new Promise<ProcessResult>((resolve) => {
+                    finish = resolve;
+                });
+                coordinator = new MessageCoordinator();
+                coordinator.setProcessor(mock(() => pending));
+                if(resumed) {
+                    const state = coordinator['getOrCreateState'](mockContext.channelId);
+                    state.pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
+                    coordinator['processWithResume'](mockContext.channelId);
+                } else {
+                    coordinator.handleMessage(mockContext, mockMessage);
+                }
+                coordinator.removeChannel(mockContext.channelId);
+                finish?.({ response: 'completed late', wasInterrupted: false, streamTracker: new StreamTracker() });
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(mockLogger.error).not.toHaveBeenCalled();
+                expect(coordinator['channelStates'].has(mockContext.channelId)).toBe(false);
+            };
+            await checkLateResult(false);
+            await checkLateResult(true);
+        });
+        it('does not start a resumed run from an empty pending queue', () => {
+            coordinator = new MessageCoordinator();
+            coordinator.setProcessor(processorMock);
+            coordinator['processWithResume'](mockContext.channelId);
+            expect(processorMock).not.toHaveBeenCalled();
+        });
+
+        it('does not resume queued work while the channel is active or debouncing', async () => {
+            let finishActive: (() => void) | undefined;
+            const active = new Promise<void>((resolve) => {
+                finishActive = resolve;
+            });
+            const processor = mock(async (): Promise<ProcessResult> => {
+                await active;
+                return { response: 'done', wasInterrupted: false, streamTracker: new StreamTracker() };
+            });
+            coordinator = new MessageCoordinator();
+            coordinator.setProcessor(processor);
+            coordinator.handleMessage(mockContext, mockMessage);
+            const state = coordinator['getOrCreateState'](mockContext.channelId);
+            const second = { ...mockContext, messageId: 'msg-002' };
+            state.pendingMessages.push({ context: second, discordMessage: mockMessage });
+            coordinator['resumePending'](mockContext.channelId, state);
+            expect(processor).toHaveBeenCalledTimes(1);
+            finishActive?.();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            state.debounceTimer = setTimeout(() => {}, 1000);
+            coordinator['resumePending'](mockContext.channelId, state);
+            expect(processor).toHaveBeenCalledTimes(1);
+            expect(state.pendingMessages).toHaveLength(1);
+        });
+
+        it('does not recreate a removed channel from a stale resume continuation', () => {
+            coordinator = new MessageCoordinator();
+            coordinator.setProcessor(processorMock);
+            const state = coordinator['getOrCreateState'](mockContext.channelId);
+            state.pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
+            coordinator.removeChannel(mockContext.channelId);
+            coordinator['resumePending'](mockContext.channelId, state);
+            expect(processorMock).not.toHaveBeenCalled();
+            expect(coordinator['channelStates'].has(mockContext.channelId)).toBe(false);
+        });
+
+        it('accepts a requeued context without a Discord message object', async () => {
+            const onResponse = mock(async (_result: ProcessResult, firstMessage: Message | null, batch: Message[]): Promise<void> => {
+                expect(firstMessage).toBeNull();
+                expect(batch).toEqual([]);
+            });
+            coordinator = new MessageCoordinator({ onResponse });
+            coordinator.setProcessor(processorMock);
+            const state = coordinator['getOrCreateState'](mockContext.channelId);
+            state.pendingMessages.push({ context: mockContext, discordMessage: null });
+            coordinator['processWithResume'](mockContext.channelId);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(processorMock.mock.calls[0]?.[0]).toEqual([mockContext]);
+            expect(onResponse).toHaveBeenCalledTimes(1);
+        });
+
+        it('holds the active run until response delivery resolves', async () => {
+            let finishDelivery: (() => void) | undefined;
+            const delivery = new Promise<void>((resolve) => {
+                finishDelivery = resolve;
+            });
+            const onProcessingEnd = mock(() => {});
+            coordinator = new MessageCoordinator({ onResponse: async () => delivery, onProcessingEnd });
+            coordinator.setProcessor(processorMock);
+            coordinator.handleMessage(mockContext, mockMessage);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(onProcessingEnd).not.toHaveBeenCalled();
+            expect(coordinator['getOrCreateState'](mockContext.channelId).activeQuery?.resultCompleted).toBe(true);
+            finishDelivery?.();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(onProcessingEnd).toHaveBeenCalledTimes(1);
+        });
+
+        it('holds a resumed run until response delivery resolves', async () => {
+            let finishDelivery: (() => void) | undefined;
+            const delivery = new Promise<void>((resolve) => {
+                finishDelivery = resolve;
+            });
+            const onProcessingEnd = mock(() => {});
+            coordinator = new MessageCoordinator({ onResponse: async () => delivery, onProcessingEnd });
+            coordinator.setProcessor(processorMock);
+            const state = coordinator['getOrCreateState'](mockContext.channelId);
+            state.pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
+            coordinator['processWithResume'](mockContext.channelId);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(onProcessingEnd).not.toHaveBeenCalled();
+            expect(state.activeQuery?.resultCompleted).toBe(true);
+            finishDelivery?.();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(onProcessingEnd).toHaveBeenCalledTimes(1);
+        });
+
+        it('reports a synchronously throwing end callback without losing the next message', async () => {
+            mockLogger.error.mockClear();
+            const callbackError = new Error('sync end failed');
+            coordinator = new MessageCoordinator({ onProcessingEnd: () => {
+                throw callbackError;
+            } });
+            coordinator.setProcessor(processorMock);
+            coordinator.handleMessage(mockContext, mockMessage);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err:       callbackError,
+                channelId: mockContext.channelId,
+                msg:       'MessageCoordinator: processing-end callback failed',
+            });
+
+            const nextContext = { ...mockContext, messageId: 'msg-002' };
+            coordinator.handleMessage(nextContext, { ...mockMessage, id: 'msg-002' } as Message);
+            await Promise.resolve();
+            expect(processorMock.mock.calls.map(call => call[0])).toEqual([[mockContext], [nextContext]]);
+        });
+
+        it('clears ownership when a processor throws synchronously', async () => {
+            mockLogger.error.mockClear();
+            const processorError = new Error('synchronous processor failure');
+            const throwingProcessor: MessageProcessor = mock(() => {
+                throw processorError;
+            });
+            coordinator = new MessageCoordinator();
+            coordinator.setProcessor(throwingProcessor);
+            coordinator.handleMessage(mockContext, mockMessage);
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err:        processorError,
+                channelId:  mockContext.channelId,
+                messageIds: ['msg-001'],
+                phase:      'processor',
+                msg:        'MessageCoordinator: processing failed',
+            });
+
+            const succeedingProcessor = mock(async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _signal: AbortSignal): Promise<ProcessResult> => ({
+                response:       'next response',
+                wasInterrupted: false,
+                streamTracker:  new StreamTracker(),
+            }));
+            coordinator.setProcessor(succeedingProcessor);
+            const nextContext = { ...mockContext, messageId: 'msg-002', content: 'Next' };
+            const nextMessage = { ...mockMessage, id: 'msg-002' } as Message;
+            coordinator.handleMessage(nextContext, nextMessage);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(succeedingProcessor).toHaveBeenCalledTimes(1);
+            expect(succeedingProcessor.mock.calls[0]?.[0]).toEqual([nextContext]);
+        });
+
+        it('clears ownership when a resumed processor throws synchronously', async () => {
+            mockLogger.error.mockClear();
+            const processorError = new Error('synchronous resume failure');
+            const processor: MessageProcessor = mock((contexts, _resumeContext, signal) => {
+                if(contexts.length > 1) {
+                    throw processorError;
+                }
+                return new Promise<ProcessResult>((resolve) => {
+                    signal.addEventListener('abort', () => {
+                        resolve({ response: null, wasInterrupted: true, streamTracker: new StreamTracker() });
+                    }, { once: true });
+                });
+            });
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
+            coordinator.setProcessor(processor);
+            coordinator.handleMessage(mockContext, mockMessage);
+            const secondContext = { ...mockContext, messageId: 'msg-002', content: 'Second' };
+            const secondMessage = { ...mockMessage, id: 'msg-002' } as Message;
+            coordinator.handleMessage(secondContext, secondMessage);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err:        processorError,
+                channelId:  mockContext.channelId,
+                messageIds: ['msg-001', 'msg-002'],
+                phase:      'processor',
+                msg:        'MessageCoordinator: processing failed',
+            });
+
+            const succeedingProcessor = mock(async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _signal: AbortSignal): Promise<ProcessResult> => ({
+                response:       'next response',
+                wasInterrupted: false,
+                streamTracker:  new StreamTracker(),
+            }));
+            coordinator.setProcessor(succeedingProcessor);
+            const nextContext = { ...mockContext, messageId: 'msg-003', content: 'Next' };
+            const nextMessage = { ...mockMessage, id: 'msg-003' } as Message;
+            coordinator.handleMessage(nextContext, nextMessage);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(succeedingProcessor).toHaveBeenCalledTimes(1);
+            expect(succeedingProcessor.mock.calls[0]?.[0]).toEqual([nextContext]);
+        });
+
+        it('keeps a queued batch ahead of a message submitted by onProcessingEnd', async () => {
+            const thirdContext = { ...mockContext, messageId: 'msg-003', content: 'Third' };
+            const thirdMessage = { ...mockMessage, id: 'msg-003' } as Message;
+            let submittedThird = false;
+            const onProcessingEnd = mock((info: { wasInterrupted: boolean, willResume: boolean }) => {
+                if(info.wasInterrupted && info.willResume && !submittedThird) {
+                    submittedThird = true;
+                    coordinator.handleMessage(thirdContext, thirdMessage);
+                }
+            });
+            const onResponse = mock(async (): Promise<void> => undefined);
+            const processor = mock(async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+                if(contexts.length === 1) {
+                    await new Promise<void>((resolve) => {
+                        signal.addEventListener('abort', () => resolve(), { once: true });
+                    });
+                    return { response: null, wasInterrupted: true, streamTracker: new StreamTracker() };
+                }
+                return { response: 'combined', wasInterrupted: false, streamTracker: new StreamTracker() };
+            });
+            coordinator = new MessageCoordinator({ debounceMs: 100, onProcessingEnd, onResponse });
+            coordinator.setProcessor(processor);
+            coordinator.handleMessage(mockContext, mockMessage);
+            const secondContext = { ...mockContext, messageId: 'msg-002', content: 'Second' };
+            const secondMessage = { ...mockMessage, id: 'msg-002' } as Message;
+            coordinator.handleMessage(secondContext, secondMessage);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(submittedThird).toBe(true);
+            expect(processor).toHaveBeenCalledTimes(2);
+            expect(processor.mock.calls[1]?.[0].map(context => context.messageId)).toEqual(['msg-001', 'msg-002', 'msg-003']);
+            expect(onResponse).toHaveBeenCalledTimes(1);
+        });
+
+        it('evicts the oldest newer message when a reentrant push reaches the queue cap', async () => {
+            const newestContext = { ...mockContext, messageId: 'msg-052', content: 'Newest' };
+            const newestMessage = { ...mockMessage, id: 'msg-052' } as Message;
+            let submittedNewest = false;
+            const onProcessingEnd = mock((info: { wasInterrupted: boolean, willResume: boolean }) => {
+                if(info.wasInterrupted && info.willResume && !submittedNewest) {
+                    submittedNewest = true;
+                    coordinator.handleMessage(newestContext, newestMessage);
+                }
+            });
+            const processor = mock(async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+                if(contexts.length === 1) {
+                    await new Promise<void>((resolve) => {
+                        signal.addEventListener('abort', () => resolve(), { once: true });
+                    });
+                    return { response: null, wasInterrupted: true, streamTracker: new StreamTracker() };
+                }
+                return { response: 'combined', wasInterrupted: false, streamTracker: new StreamTracker() };
+            });
+            coordinator = new MessageCoordinator({ debounceMs: 100, onProcessingEnd });
+            coordinator.setProcessor(processor);
+            coordinator.handleMessage(mockContext, mockMessage);
+            for(let i = 2; i <= 51; i++) {
+                const id = `msg-${String(i).padStart(3, '0')}`;
+                const context = { ...mockContext, messageId: id, content: `Message ${i}` };
+                const message = { ...mockMessage, id } as Message;
+                coordinator.handleMessage(context, message);
+            }
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(submittedNewest).toBe(true);
+            expect(processor).toHaveBeenCalledTimes(2);
+            const resumedIds = processor.mock.calls[1]?.[0].map(context => context.messageId);
+            expect(resumedIds).toHaveLength(50);
+            expect(resumedIds).toEqual([
+                'msg-001',
+                ...Array.from({ length: 48 }, (_unused, index) => `msg-${String(index + 3).padStart(3, '0')}`),
+                'msg-052',
+            ]);
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                evicted: 1,
+                max:     50,
+                msg:     'MessageCoordinator: queue cap eviction (reentrant push)',
+            });
+        });
+
+        it('observes a rejected asynchronous onProcessingEnd callback', async () => {
+            mockLogger.error.mockClear();
+            const callbackError = new Error('async end failed');
+            const onProcessingEnd = mock(async (): Promise<void> => {
+                throw callbackError;
+            });
+            coordinator = new MessageCoordinator({ onProcessingEnd });
+            coordinator.setProcessor(processorMock);
+            coordinator.handleMessage(mockContext, mockMessage);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err:       callbackError,
+                channelId: mockContext.channelId,
+                msg:       'MessageCoordinator: processing-end callback failed',
+            });
+            expect(processorMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('resumes a slow aborted processor once after two debounce expiries', async () => {
+            let finishCleanup: (() => void) | undefined;
+            const cleanup = new Promise<void>((resolve) => {
+                finishCleanup = resolve;
+            });
+            const completedBatches: string[][] = [];
+            const onResponse = mock(async (_result: ProcessResult, _message: Message | null, batch: Message[]): Promise<void> => {
+                completedBatches.push(batch.map(message => message.id));
+            });
+            coordinator = new MessageCoordinator({ debounceMs: 100, onResponse });
+            // Use a separate spy so the first invocation can stay unresolved deterministically.
+            const processor = mock(async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+                if(contexts.length === 1) {
+                    await cleanup;
+                    return { response: null, wasInterrupted: signal.aborted, streamTracker: new StreamTracker() };
+                }
+                return { response: 'resumed', wasInterrupted: false, streamTracker: new StreamTracker() };
+            });
+            coordinator.setProcessor(processor);
+
+            coordinator.handleMessage(mockContext, mockMessage);
+            const secondContext = { ...mockContext, messageId: 'msg-002', content: 'Second' };
+            const secondMessage = { ...mockMessage, id: 'msg-002' } as Message;
+            coordinator.handleMessage(secondContext, secondMessage);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+
+            const thirdContext = { ...mockContext, messageId: 'msg-003', content: 'Third' };
+            const thirdMessage = { ...mockMessage, id: 'msg-003' } as Message;
+            coordinator.handleMessage(thirdContext, thirdMessage);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+            expect(processor).toHaveBeenCalledTimes(1);
+
+            finishCleanup?.();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(processor).toHaveBeenCalledTimes(2);
+            expect(processor.mock.calls[1]?.[0].map(context => context.messageId)).toEqual(['msg-001', 'msg-002', 'msg-003']);
+            expect(onResponse).toHaveBeenCalledTimes(1);
+            expect(onResponse.mock.calls[0]?.[1]).toBe(mockMessage);
+            expect(completedBatches).toEqual([['msg-002', 'msg-003']]);
+        });
+
+        it('finishes an in-flight response before processing later messages without replaying its original', async () => {
+            let finishDelivery: (() => void) | undefined;
+            const delivery = new Promise<void>((resolve) => {
+                finishDelivery = resolve;
+            });
+            const onResponse = mock(async (result: ProcessResult): Promise<void> => {
+                if(result.response === 'first') {
+                    await delivery;
+                }
+            });
+            const processor = mock(async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _signal: AbortSignal): Promise<ProcessResult> => ({
+                response:       contexts[0]?.messageId === 'msg-001' ? 'first' : 'second',
+                wasInterrupted: false,
+                streamTracker:  new StreamTracker(),
+            }));
+            coordinator = new MessageCoordinator({ debounceMs: 100, onResponse });
+            coordinator.setProcessor(processor);
+            coordinator.handleMessage(mockContext, mockMessage);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(onResponse).toHaveBeenCalledTimes(1);
+
+            const secondContext = { ...mockContext, messageId: 'msg-002', content: 'Second' };
+            const secondMessage = { ...mockMessage, id: 'msg-002' } as Message;
+            coordinator.handleMessage(secondContext, secondMessage);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+            expect(processor).toHaveBeenCalledTimes(1);
+
+            finishDelivery?.();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(processor).toHaveBeenCalledTimes(2);
+            expect(processor.mock.calls[1]?.[0].map(context => context.messageId)).toEqual(['msg-002']);
+            expect(onResponse).toHaveBeenCalledTimes(2);
+        });
+
+        it('logs processor and delivery failures with their phase and does not replay a failed delivery', async () => {
+            mockLogger.error.mockClear();
+            const processorError = new Error('processor failed');
+            const deliveryError = new Error('delivery failed');
+            const onResponse = mock(async (): Promise<void> => {
+                throw deliveryError;
+            });
+            const processor = mock(async (contexts: DiscordMessageContext[]): Promise<ProcessResult> => {
+                if(contexts[0]?.messageId === 'msg-001') {
+                    throw processorError;
+                }
+                return { response: 'second', wasInterrupted: false, streamTracker: new StreamTracker() };
+            });
+            coordinator = new MessageCoordinator({ onResponse });
+            coordinator.setProcessor(processor);
+            coordinator.handleMessage(mockContext, mockMessage);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err:        processorError,
+                channelId:  mockContext.channelId,
+                messageIds: ['msg-001'],
+                phase:      'processor',
+                msg:        'MessageCoordinator: processing failed',
+            });
+
+            const secondContext = { ...mockContext, messageId: 'msg-002', content: 'Second' };
+            const secondMessage = { ...mockMessage, id: 'msg-002' } as Message;
+            coordinator.handleMessage(secondContext, secondMessage);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err:        deliveryError,
+                channelId:  mockContext.channelId,
+                messageIds: ['msg-002'],
+                phase:      'onResponse',
+                msg:        'MessageCoordinator: processing failed',
+            });
+            expect(processor.mock.calls.map(call => call[0].map(context => context.messageId))).toEqual([['msg-001'], ['msg-002']]);
+            expect(onResponse).toHaveBeenCalledTimes(1);
+        });
+
+        it('logs typing failures without stopping the processor', async () => {
+            mockLogger.warn.mockClear();
+            const typingError = new Error('typing failed');
+            let finishProcessing: (() => void) | undefined;
+            const processing = new Promise<void>((resolve) => {
+                finishProcessing = resolve;
+            });
+            const typingChannel = { sendTyping: mock(async (): Promise<void> => {
+                throw typingError;
+            }) };
+            const processor = mock(async (): Promise<ProcessResult> => {
+                await processing;
+                return { response: 'done', wasInterrupted: false, streamTracker: new StreamTracker() };
+            });
+            coordinator = new MessageCoordinator();
+            coordinator.setProcessor(processor);
+            coordinator.handleMessage(mockContext, mockMessage, typingChannel);
+            await Promise.resolve();
+            expect(mockLogger.warn).toHaveBeenCalledWith({ err: typingError, msg: 'MessageCoordinator: initial typing indicator failed' });
+
+            jest.advanceTimersByTime(8000);
+            await Promise.resolve();
+            expect(mockLogger.warn).toHaveBeenCalledWith({ err: typingError, msg: 'MessageCoordinator: typing indicator refresh failed' });
+            expect(processor).toHaveBeenCalledTimes(1);
+            finishProcessing?.();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+    });
+
     describe('Queue Cap', () => {
         beforeEach(() => {
             coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
+        });
+
+        it('does not evict or report eviction at the exact fifty-message limit', () => {
+            mockLogger.debug.mockClear();
+            const pending = new Promise<ProcessResult>(() => {});
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
+            coordinator.setProcessor(mock(() => pending));
+            coordinator.handleMessage(mockContext, mockMessage);
+            for(let index = 0; index < 50; index++) {
+                coordinator.handleMessage(
+                    { ...mockContext, messageId: `queued-${index}` },
+                    { ...mockMessage, id: `queued-${index}` } as Message
+                );
+            }
+            const state = coordinator['getOrCreateState'](mockContext.channelId);
+            expect(state.pendingMessages).toHaveLength(50);
+            expect(mockLogger.debug.mock.calls.filter(call => String((call[0] as { msg?: string }).msg).includes('queue cap eviction'))).toHaveLength(0);
+        });
+
+        it('preserves a short debouncing queue without eviction', () => {
+            mockLogger.debug.mockClear();
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
+            coordinator.setProcessor(processorMock);
+            const state = coordinator['getOrCreateState'](mockContext.channelId);
+            state.debounceTimer = setTimeout(() => {}, 100);
+            for(let index = 0; index < 50; index++) {
+                coordinator.handleMessage(
+                    { ...mockContext, messageId: `debounced-${index}` },
+                    { ...mockMessage, id: `debounced-${index}` } as Message
+                );
+            }
+            expect(state.pendingMessages).toHaveLength(50);
+            expect(mockLogger.debug.mock.calls.filter(call => String((call[0] as { msg?: string }).msg).includes('queue cap eviction'))).toHaveLength(0);
+        });
+
+        it('keeps every queued message when a reentrant push reaches exactly fifty', async () => {
+            mockLogger.debug.mockClear();
+            coordinator = new MessageCoordinator();
+            coordinator.setProcessor(processorMock);
+            const state = coordinator['getOrCreateState'](mockContext.channelId);
+            for(let index = 0; index < 49; index++) {
+                state.pendingMessages.push({
+                    context:        { ...mockContext, messageId: `waiting-${index}` },
+                    discordMessage: { ...mockMessage, id: `waiting-${index}` } as Message,
+                });
+            }
+            const newest = { ...mockContext, messageId: 'newest' };
+            coordinator.handleMessage(newest, { ...mockMessage, id: 'newest' } as Message);
+            await Promise.resolve();
+            expect(processorMock.mock.calls[0]?.[0]).toHaveLength(50);
+            expect(processorMock.mock.calls[0]?.[0].at(-1)).toEqual(newest);
+            expect(mockLogger.debug.mock.calls.filter(call => String((call[0] as { msg?: string }).msg).includes('queue cap eviction'))).toHaveLength(0);
         });
 
         it('should cap pendingMessages at 50 when messages arrive during active processing (Case 1)', async () => {
@@ -3899,6 +4522,11 @@ describe('MessageCoordinator', () => {
             expect(messageIds).not.toContain('msg-002');
             // msg-001 (original, re-queued) must be preserved at the front
             expect(messageIds).toContain('msg-001');
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                evicted: 1,
+                max:     50,
+                msg:     'MessageCoordinator: queue cap eviction (Case 1 push)',
+            });
         });
 
         it('should preserve re-queued original messages when unshift causes overflow', async () => {
@@ -4069,6 +4697,203 @@ describe('MessageCoordinator', () => {
             expect(case2MessageIds).not.toContain('msg-002');
             // Most recent messages should be preserved
             expect(case2MessageIds).toContain('msg-062');
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                max: 50,
+                msg: 'MessageCoordinator: queue cap eviction (Case 2)',
+            });
+        });
+    });
+
+    describe('Boundary contracts', () => {
+        it('uses the documented two-second default before interrupting queued work', async () => {
+            const firstFinished = Promise.withResolvers<void>();
+            const resumed = Promise.withResolvers<void>();
+            const allEnded = Promise.withResolvers<void>();
+            let endedCount = 0;
+            let firstSignal: AbortSignal | undefined;
+            let callCount = 0;
+            coordinator = new MessageCoordinator({ onProcessingEnd: () => {
+                endedCount++;
+                if(endedCount === 2) {
+                    allEnded.resolve();
+                }
+            } });
+            coordinator.setProcessor(mock(async (_contexts: DiscordMessageContext[], _resume: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+                callCount++;
+                if(callCount === 1) {
+                    firstSignal = signal;
+                    await new Promise<void>((resolve) => {
+                        signal.addEventListener('abort', () => resolve(), { once: true });
+                    });
+                    firstFinished.resolve();
+                } else {
+                    resumed.resolve();
+                }
+                return { response: null, wasInterrupted: signal.aborted, streamTracker: new StreamTracker() };
+            }));
+            coordinator.handleMessage(mockContext, mockMessage);
+            coordinator.handleMessage(
+                { ...mockContext, messageId: 'queued-boundary' },
+                { ...mockMessage, id: 'queued-boundary' } as Message
+            );
+
+            jest.advanceTimersByTime(1999);
+            expect(firstSignal?.aborted).toBe(false);
+            jest.advanceTimersByTime(1);
+            expect(firstSignal?.aborted).toBe(true);
+            await firstFinished.promise;
+            await resumed.promise;
+            await allEnded.promise;
+        });
+
+        it('refreshes Discord typing at eight seconds without firing early', async () => {
+            const processingGate = Promise.withResolvers<void>();
+            const processingEnded = Promise.withResolvers<void>();
+            const sendTyping = mock(async (): Promise<void> => undefined);
+            coordinator = new MessageCoordinator({ onProcessingEnd: () => processingEnded.resolve() });
+            coordinator.setProcessor(mock(async (): Promise<ProcessResult> => {
+                await processingGate.promise;
+                return { response: null, wasInterrupted: false, streamTracker: new StreamTracker() };
+            }));
+            coordinator.handleMessage(mockContext, mockMessage, { sendTyping });
+            try {
+                expect(sendTyping).toHaveBeenCalledTimes(1);
+                jest.advanceTimersByTime(7999);
+                expect(sendTyping).toHaveBeenCalledTimes(1);
+                jest.advanceTimersByTime(1);
+                expect(sendTyping).toHaveBeenCalledTimes(2);
+            } finally {
+                processingGate.resolve();
+                await processingEnded.promise;
+            }
+        });
+
+        it('evicts one oldest queued message immediately when an active queue reaches fifty-one', async () => {
+            const processingEnded = Promise.withResolvers<void>();
+            coordinator = new MessageCoordinator({ onProcessingEnd: () => processingEnded.resolve() });
+            coordinator.setProcessor(mock(async (_contexts: DiscordMessageContext[], _resume: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+                await new Promise<void>((resolve) => {
+                    signal.addEventListener('abort', () => resolve(), { once: true });
+                });
+                return { response: null, wasInterrupted: true, streamTracker: new StreamTracker() };
+            }));
+            coordinator.handleMessage(mockContext, mockMessage);
+            try {
+                for(let index = 0; index < 51; index++) {
+                    coordinator.handleMessage(
+                        { ...mockContext, messageId: `queued-${index}` },
+                        { ...mockMessage, id: `queued-${index}` } as Message
+                    );
+                }
+                const pending = coordinator['getOrCreateState'](mockContext.channelId).pendingMessages;
+                expect(pending).toHaveLength(50);
+                expect(pending[0]?.context.messageId).toBe('queued-1');
+            } finally {
+                coordinator.stop();
+                await processingEnded.promise;
+            }
+        });
+
+        it('processes a single queued message ahead of a reentrant arrival', async () => {
+            const processed = Promise.withResolvers<DiscordMessageContext[]>();
+            const ended = Promise.withResolvers<void>();
+            coordinator = new MessageCoordinator({ onProcessingEnd: () => ended.resolve() });
+            coordinator.setProcessor(mock(async (contexts: DiscordMessageContext[]): Promise<ProcessResult> => {
+                processed.resolve(contexts);
+                return { response: null, wasInterrupted: false, streamTracker: new StreamTracker() };
+            }));
+            const queued = { ...mockContext, messageId: 'queued-first' };
+            coordinator['getOrCreateState'](mockContext.channelId).pendingMessages.push({
+                context: queued, discordMessage: { ...mockMessage, id: 'queued-first' } as Message,
+            });
+            coordinator.handleMessage(
+                { ...mockContext, messageId: 'reentrant-second' },
+                { ...mockMessage, id: 'reentrant-second' } as Message
+            );
+
+            const processedContexts = await processed.promise;
+            expect(processedContexts.map(context => context.messageId)).toEqual(['queued-first', 'reentrant-second']);
+            await ended.promise;
+        });
+
+        it('reports one queued message when fresh processing ends', async () => {
+            const processingGate = Promise.withResolvers<void>();
+            const ended = Promise.withResolvers<{ wasInterrupted: boolean, willResume: boolean }>();
+            coordinator = new MessageCoordinator({ debounceMs: 100, onProcessingEnd: info => ended.resolve(info) });
+            coordinator.setProcessor(mock(async (): Promise<ProcessResult> => {
+                await processingGate.promise;
+                return { response: null, wasInterrupted: false, streamTracker: new StreamTracker() };
+            }));
+            coordinator.handleMessage(mockContext, mockMessage);
+            coordinator.handleMessage(
+                { ...mockContext, messageId: 'one-pending' },
+                { ...mockMessage, id: 'one-pending' } as Message
+            );
+            processingGate.resolve();
+
+            expect(await ended.promise).toEqual({ wasInterrupted: false, willResume: true });
+        });
+
+        it('uses the first new Discord message as the resumed response anchor', async () => {
+            const delivered = Promise.withResolvers<Message | null>();
+            const ended = Promise.withResolvers<void>();
+            coordinator = new MessageCoordinator({
+                onResponse:      async (_result, firstMessage) => delivered.resolve(firstMessage),
+                onProcessingEnd: () => ended.resolve(),
+            });
+            coordinator.setProcessor(processorMock);
+            const firstMessage = { ...mockMessage, id: 'first-new' } as Message;
+            const state = coordinator['getOrCreateState'](mockContext.channelId);
+            state.pendingMessages.push(
+                { context: { ...mockContext, messageId: 'first-new' }, discordMessage: firstMessage },
+                { context: { ...mockContext, messageId: 'second-new' }, discordMessage: { ...mockMessage, id: 'second-new' } as Message }
+            );
+            coordinator['processWithResume'](mockContext.channelId);
+
+            expect(await delivered.promise).toBe(firstMessage);
+            await ended.promise;
+        });
+
+        it('labels a resumed delivery failure as onResponse', async () => {
+            mockLogger.error.mockClear();
+            const deliveryError = new Error('resumed delivery failed');
+            const ended = Promise.withResolvers<void>();
+            coordinator = new MessageCoordinator({
+                onResponse:      async () => { throw deliveryError; },
+                onProcessingEnd: () => ended.resolve(),
+            });
+            coordinator.setProcessor(processorMock);
+            coordinator['getOrCreateState'](mockContext.channelId).pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
+            coordinator['processWithResume'](mockContext.channelId);
+            await ended.promise;
+
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                err:        deliveryError,
+                channelId:  mockContext.channelId,
+                messageIds: ['msg-001'],
+                phase:      'onResponse',
+                msg:        'MessageCoordinator: processing failed',
+            });
+        });
+
+        it('reports one queued message when resumed processing ends', async () => {
+            const processingGate = Promise.withResolvers<void>();
+            const ended = Promise.withResolvers<{ wasInterrupted: boolean, willResume: boolean }>();
+            coordinator = new MessageCoordinator({ debounceMs: 100, onProcessingEnd: info => ended.resolve(info) });
+            coordinator.setProcessor(mock(async (): Promise<ProcessResult> => {
+                await processingGate.promise;
+                return { response: null, wasInterrupted: false, streamTracker: new StreamTracker() };
+            }));
+            const state = coordinator['getOrCreateState'](mockContext.channelId);
+            state.pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
+            coordinator['processWithResume'](mockContext.channelId);
+            coordinator.handleMessage(
+                { ...mockContext, messageId: 'queued-during-resume' },
+                { ...mockMessage, id: 'queued-during-resume' } as Message
+            );
+            processingGate.resolve();
+
+            expect(await ended.promise).toEqual({ wasInterrupted: false, willResume: true });
         });
     });
 });

@@ -1,12 +1,13 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Message } from 'discord.js';
+import pLimit from 'p-limit';
 import {
     fetchImages,
     saveNonImageAttachment,
     isSupportedImageType,
     formatBytes
 } from '../attachments';
-import type { FetchedImage } from '../attachments/types';
+import type { AttachmentMetadata, FetchedImage } from '../attachments/types';
 import type { DiscordCapability } from '../capability';
 import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry';
 import type { InboxManager } from '../inbox';
@@ -30,6 +31,40 @@ export interface ProcessedAttachments {
     contentAdditions: string[]
 }
 
+async function saveNonImageAttachments(
+    attachments: AttachmentMetadata[],
+    scratchDir: string,
+    messageId: string
+): Promise<string[]> {
+    const additions: string[] = [];
+    const saveNext = async (index: number): Promise<void> => {
+        const attachment = attachments[index];
+        if(!attachment) {
+            return;
+        }
+        const stored = await saveNonImageAttachment(attachment, scratchDir, messageId);
+        if(stored) {
+            const detail = `${stored.localPath} (${stored.contentType}, ${formatBytes(stored.size)})`;
+            additions.push(stored.contentType.startsWith('video/')
+                ? `[Video file saved: ${detail}. Use analyzeLocalVideo to analyze this video for scene frames, metadata, and transcription.]`
+                : `[Attached file: ${detail}]`);
+            logger.info({
+                filename:    stored.originalFilename, localPath:   stored.localPath,
+                contentType: stored.contentType, size:        stored.size,
+                msg:         `Saved non-image attachment: ${stored.originalFilename}`,
+            });
+        } else {
+            logger.warn({
+                filename:    attachment.filename, contentType: attachment.contentType,
+                msg:         `Failed to save non-image attachment: ${attachment.filename}`,
+            });
+        }
+        await saveNext(index + 1);
+    };
+    await saveNext(0);
+    return additions;
+}
+
 /**
  * Processes all attachments from Discord contexts.
  * Images are fetched and prepared for Claude's vision API.
@@ -38,86 +73,47 @@ export interface ProcessedAttachments {
  * @param contexts - Discord message contexts containing attachments
  * @returns Processed images and content additions for message text
  */
-// Stryker disable all: Integration function with external dependencies - tested via bot integration tests
-// eslint-disable-next-line sonarjs/cognitive-complexity -- attachment pipeline: image fetching, non-image file saving, and video hints require distinct branching per attachment type
 export async function processAttachments(contexts: DiscordMessageContext[]): Promise<ProcessedAttachments> {
+    if(contexts.length === 0) {
+        return { images: [], contentAdditions: [] };
+    }
+
     const allAttachments = contexts.flatMap(ctx => ctx.attachments ?? []);
     let images: FetchedImage[] = [];
     const contentAdditions: string[] = [];
 
-    if(allAttachments.length > 0) {
-        // Fetch images
-        const imageAttachments = allAttachments.filter(att => isSupportedImageType(att.contentType));
-        if(imageAttachments.length > 0) {
-            const result = await fetchImages(imageAttachments);
-            images = result.images;
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
-            logger.info({
-                totalAttachments: imageAttachments.length,
-                fetchedImages:    images.length,
-                failedImages:     result.failures.length,
-                msg:              `Fetched ${images.length} images from ${imageAttachments.length} image attachments (${result.failures.length} failed)`,
+    const imageAttachments = allAttachments.filter(att => isSupportedImageType(att.contentType));
+    if(imageAttachments.length > 0) {
+        const result = await fetchImages(imageAttachments);
+        images = result.images;
+        logger.info({
+            totalAttachments: imageAttachments.length,
+            fetchedImages:    images.length,
+            failedImages:     result.failures.length,
+            msg:              `Fetched ${images.length} images from ${imageAttachments.length} image attachments (${result.failures.length} failed)`,
+        });
+
+        for(const failure of result.failures) {
+            logger.warn({
+                filename:    failure.filename,
+                contentType: failure.contentType,
+                size:        failure.size,
+                error:       failure.error,
+                msg:         `Failed to fetch image: ${failure.filename}`,
             });
-
-            // Log failures
-            for(const failure of result.failures) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
-                logger.warn({
-                    filename:    failure.filename,
-                    contentType: failure.contentType,
-                    size:        failure.size,
-                    error:       failure.error,
-                    msg:         `Failed to fetch image: ${failure.filename}`,
-                });
-                contentAdditions.push(
-                    `[Image fetch failed: ${failure.filename} - ${failure.error}]`
-                );
-            }
-        }
-
-        // Save non-image attachments to scratch directory; add video hints for video files
-        const nonImageAttachments = allAttachments.filter(att => !isSupportedImageType(att.contentType));
-        if(nonImageAttachments.length > 0) {
-            const scratchDir = process.cwd();
-            const messageId = contexts[0]?.messageId ?? 'unknown';
-
-            for(const attachment of nonImageAttachments) {
-                // eslint-disable-next-line no-await-in-loop -- sequential: per-file save to disk
-                const stored = await saveNonImageAttachment(attachment, scratchDir, messageId);
-                if(stored) {
-                    if(stored.contentType.startsWith('video/')) {
-                        contentAdditions.push(
-                            `[Video file saved: ${stored.localPath} (${stored.contentType}, ${formatBytes(stored.size)}). Use analyzeLocalVideo to analyze this video for scene frames, metadata, and transcription.]`
-                        );
-                    } else {
-                        contentAdditions.push(
-                            `[Attached file: ${stored.localPath} (${stored.contentType}, ${formatBytes(stored.size)})]`
-                        );
-                    }
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
-                    logger.info({
-                        filename:    stored.originalFilename,
-                        localPath:   stored.localPath,
-                        contentType: stored.contentType,
-                        size:        stored.size,
-                        msg:         `Saved non-image attachment: ${stored.originalFilename}`,
-                    });
-                } else {
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
-                    logger.warn({
-                        filename:    attachment.filename,
-                        contentType: attachment.contentType,
-                        msg:         `Failed to save non-image attachment: ${attachment.filename}`,
-                    });
-                }
-            }
+            contentAdditions.push(
+                `[Image fetch failed: ${failure.filename} - ${failure.error}]`
+            );
         }
     }
 
+    const nonImageAttachments = allAttachments.filter(att => !isSupportedImageType(att.contentType));
+    contentAdditions.push(...await saveNonImageAttachments(
+        nonImageAttachments, process.cwd(), contexts[0]!.messageId ?? 'unknown'
+    ));
+
     return { images, contentAdditions };
 }
-// Stryker restore all
-
 /**
  * Sentinel thrown from inside the `send` callback passed to `conversationConductor.deliver`
  * (`onResponse`, below) when `sendEnvelopeResponse` reports neither `sent` nor `queued` — an
@@ -155,8 +151,7 @@ interface SetupCoordinatorParams {
      * transitions are driven entirely by the conductor's own ledger (composed by
      * `presence-setup.ts`'s `setupConductorPresence`), not by this coordinator.
      * `conversationConductor`/`contextPolicy`/`envelopeProvider`/
-     * `contextBuilder` travel together — this file stays Stryker-disabled so no test exercises
-     * the required-ness itself, only bot.ts's own wiring, which always supplies all four.
+     * `contextBuilder` travel together; bot.ts's own wiring always supplies all four.
      */
     conversationConductor: Conductor
     contextPolicy:         ContextPolicy
@@ -188,10 +183,8 @@ export function toPlatformImages(images: FetchedImage[]): PlatformImage[] {
  * defensively so a hypothetical multi-channel batch still advances every channel's watermark
  * exactly once.
  *
- * Deliberately kept OUTSIDE the `Stryker disable all` region below: unlike that region's
- * integration-glue functions, this is a pure, directly-testable helper with real branching logic
- * (the snowflake comparison and the `!existing` guard), so it earns full mutation coverage rather
- * than riding along with the composition-root disable.
+ * This pure helper has direct behavioral coverage for its snowflake comparison and `!existing`
+ * guard, while its caller exercises the delivery and watermark data flow.
  */
 function newestMessagePerChannel(batch: Message[]): Map<string, Message> {
     const newest = new Map<string, Message>();
@@ -226,12 +219,102 @@ function newestMessagePerChannel(batch: Message[]): Map<string, Message> {
  * @param params - Configuration for coordinator setup
  * @returns Configured message coordinator
  */
-// Stryker disable all: Integration function coordinating multiple components with callbacks - tested via bot integration tests
 export function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoordinator {
     const {
         responseRouter, rateLimiter, readyClient,
         conversationConductor, contextPolicy, envelopeProvider, contextBuilder, inboxManager,
     } = params;
+    const limitWatermarkWrites = pLimit(3);
+    const watermarkTails = new Map<string, Promise<void>>();
+
+    function recordHandledInChannelOrder(manager: InboxManager, channelId: string, message: Message): Promise<void> {
+        // Wait outside the concurrency limit so a queued write cannot occupy a permit.
+        const previous = watermarkTails.get(channelId) ?? Promise.resolve();
+        const write = previous.then(() => limitWatermarkWrites(() => manager.recordHandled(
+            createChannelId(channelId), message.id, message.createdAt.toISOString()
+        )));
+        // The queue tail always settles successfully; the caller observes the write outcome.
+        const settledTail = Promise.allSettled([write]).then(() => {
+            if(watermarkTails.get(channelId) === settledTail) {
+                watermarkTails.delete(channelId);
+            }
+            return undefined;
+        });
+        watermarkTails.set(channelId, settledTail);
+        return write;
+    }
+
+    async function deliverAndMark(
+        response: string,
+        envelopeId: string | undefined,
+        discordMessage: Message,
+        batch: Message[]
+    ): Promise<void> {
+        if(envelopeId === undefined) {
+            logger.warn({ msg: 'Conductor response has no envelopeId — cannot deliver idempotently, skipping send' });
+            return;
+        }
+
+        try {
+            const deliverResult = await conversationConductor.deliver(envelopeId, async () => {
+                const sendResult = await sendEnvelopeResponse({
+                    envelopeId,
+                    kind:              'discord',
+                    channelId:         createChannelId(discordMessage.channelId),
+                    text:              response,
+                    responseRouter,
+                    client:            readyClient,
+                    rateLimiter,
+                    discordCapability: params.discordCapability,
+                });
+                if(!sendResult.sent && !sendResult.queued) {
+                    throw new ResponseNotSentError();
+                }
+                return { channelId: discordMessage.channelId, messageIds: [] };
+            });
+            if(deliverResult.delivered) {
+                params.addRecentChannel?.(createChannelId(discordMessage.channelId));
+            }
+        } catch (err) {
+            if(!(err instanceof ResponseNotSentError)) {
+                logger.error({ err, envelopeId, msg: 'Conductor response delivery failed' });
+            }
+        }
+
+        // A settled response advances each channel's watermark even when delivery queued or skipped.
+        if(inboxManager) {
+            const newestByChannel = [...newestMessagePerChannel(batch)];
+            const outcomes = await Promise.allSettled(newestByChannel.map(([channelId, newestMessage]) =>
+                recordHandledInChannelOrder(inboxManager, channelId, newestMessage)));
+            for(const [index, outcome] of outcomes.entries()) {
+                if(outcome.status === 'rejected') {
+                    logger.warn({ err: outcome.reason, channelId: newestByChannel[index]![0], msg: 'Failed to record handled watermark' });
+                }
+            }
+        }
+    }
+
+    function logExchange(response: string, discordMessage: Message): void {
+        if(!params.activityLogger) {
+            return;
+        }
+        const userContent = discordMessage.content;
+        const actLogger = params.activityLogger;
+        void (async () => {
+            try {
+                let summary = 'Discord exchange in channel';
+                const generated = await generateText(
+                    `Summarize this Discord exchange in one sentence (max 30 words):\nUser: ${userContent.slice(0, 500)}\nIzzy: ${response.slice(0, 500)}`
+                );
+                if(generated) {
+                    summary = generated;
+                }
+                await actLogger.log({ type: 'discord-exchange', summary });
+            } catch (err) {
+                logger.warn({ err, channelId: discordMessage.channelId, msg: 'Activity log failed for Discord exchange' });
+            }
+        })();
+    }
 
     const coordinator = new MessageCoordinator({
         debounceMs:      250,
@@ -241,90 +324,12 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
             // own ledger (composed in presence-setup.ts), never by the coordinator's
             // processing-end signal.
         },
-        // eslint-disable-next-line sonarjs/cognitive-complexity -- onResponse coordinates idempotent delivery, the per-channel HANDLED watermark, ring-buffer, and activity-log writes; branching is inherent
         onResponse: async (result, discordMessage, batch) => {
             if(result.response && discordMessage) {
                 params.addRecentMessage?.(result.response, 'izzy');
-
-                const { envelopeId } = result;
-                if(envelopeId === undefined) {
-                    // Should not happen in practice — createConductorProcessor always sets it —
-                    // but delivering under a fabricated id would break deliver()'s idempotency
-                    // guarantee, so skip the send entirely rather than guess.
-                    logger.warn({ msg: 'Conductor response has no envelopeId — cannot deliver idempotently, skipping send' });
-                } else {
-                    try {
-                        const deliverResult = await conversationConductor.deliver(envelopeId, async () => {
-                            const sendResult = await sendEnvelopeResponse({
-                                envelopeId,
-                                kind:              'discord',
-                                channelId:         createChannelId(discordMessage.channelId),
-                                text:              result.response!,
-                                responseRouter,
-                                client:            readyClient,
-                                rateLimiter,
-                                discordCapability: params.discordCapability,
-                            });
-                            if(!sendResult.sent && !sendResult.queued) {
-                                // Genuinely nothing to journal — the @@NO_RESPONSE@@ sentinel or a
-                                // missing well-known channel. Throwing here is deliver()'s only way
-                                // to learn the send did not happen at all, so it does not journal a
-                                // response_delivered row or mark the guard for something that was
-                                // never actually delivered (or queued for later delivery).
-                                throw new ResponseNotSentError();
-                            }
-                            return { channelId: discordMessage.channelId, messageIds: [] };
-                        });
-                        if(deliverResult.delivered) {
-                            params.addRecentChannel?.(createChannelId(discordMessage.channelId));
-                        }
-                    } catch (err) {
-                        if(!(err instanceof ResponseNotSentError)) {
-                            logger.error({ err, envelopeId, msg: 'Conductor response delivery failed' });
-                        }
-                    }
-
-                    // Advance the per-channel HANDLED watermark on every one of the three outcomes
-                    // above (sent, no-response skip, or outbox-queued) — only an interrupted turn
-                    // with no response at all (the outer `if` above being false) leaves a batch's
-                    // messages unhandled for a future crash replay.
-                    if(inboxManager) {
-                        for(const [channelId, newestMessage] of newestMessagePerChannel(batch)) {
-                            try {
-                                // eslint-disable-next-line no-await-in-loop -- sequential per-channel watermark writes, bounded by the batch's small channel count
-                                await inboxManager.recordHandled(createChannelId(channelId), newestMessage.id, newestMessage.createdAt.toISOString());
-                            } catch (err) {
-                                logger.warn({ err, channelId, msg: 'Failed to record handled watermark' });
-                            }
-                        }
-                    }
-                }
-
-                // Log the exchange as activity (fire-and-forget with Haiku summary).
-                if(params.activityLogger) {
-                    const userContent = discordMessage.content;
-                    const botResponse = result.response;
-                    const actLogger = params.activityLogger;
-                    void (async () => {
-                        try {
-                            let summary = 'Discord exchange in channel';
-                            const generated = await generateText(
-                                `Summarize this Discord exchange in one sentence (max 30 words):\nUser: ${userContent.slice(0, 500)}\nIzzy: ${botResponse.slice(0, 500)}`
-                            );
-                            if(generated) {
-                                summary = generated;
-                            }
-                            await actLogger.log({
-                                type: 'discord-exchange',
-                                summary,
-                            });
-                        } catch (err) {
-                            logger.warn({ err, channelId: discordMessage.channelId, msg: 'Activity log failed for Discord exchange' });
-                        }
-                    })();
-                }
+                await deliverAndMark(result.response, result.envelopeId, discordMessage, batch);
+                logExchange(result.response, discordMessage);
             }
-
             params.setLastSessionId?.(result.sessionId);
         },
     });
@@ -341,4 +346,3 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
 
     return coordinator;
 }
-// Stryker restore all

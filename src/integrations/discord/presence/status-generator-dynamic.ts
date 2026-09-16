@@ -306,16 +306,13 @@ async function executeWithCooldown(
     state: InstanceState
 ): Promise<string | null> {
     // Cancel-and-replace: abort any previous in-flight call (from THIS instance only) and start fresh
-    // Stryker disable next-line ConditionalExpression,BlockStatement: abort previous call — cancel-and-replace pattern
     if(state.inFlightController) {
         state.inFlightController.abort();
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Debug logging for cancellation diagnostics
         logger.debug({ ...logContext.inFlight });
     }
 
     // Rate limiting - check if we're within cooldown window (measured from last call completion)
     const now = Date.now();
-    // Stryker disable next-line EqualityOperator: < vs <= boundary at exact cooldown time is equivalent
     if(now - state.lastHaikuCall < HAIKU_COOLDOWN_MS && state.cachedStatus) {
         logger.debug(logContext.cooldown);
         return state.cachedStatus;
@@ -330,7 +327,6 @@ async function executeWithCooldown(
 
         logger.debug(logContext.generating);
 
-        // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
         const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true, abortController: controller });
         // Stryker disable next-line MethodExpression: trim() is defensive — generateTextWithSystemPrompt() already returns trimmed output
         const candidate = text.trim().replace(SURROUNDING_QUOTES_PATTERN, '$1');
@@ -346,12 +342,15 @@ async function executeWithCooldown(
 
         const statusText = truncateToWordBoundary(candidate, HARD_MAX_STATUS_LENGTH);
 
-        // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
         if(!statusText) {
             return null;
         }
 
-        // eslint-disable-next-line require-atomic-updates -- cancel-and-replace: inFlightController identity check in finally ensures only the winning call updates cachedStatus
+        // A controller is replaced only after it has been aborted above, so signal state is the
+        // single source of truth for whether this completion may publish a cached status.
+        if(controller.signal.aborted) {
+            return null;
+        }
         state.cachedStatus = statusText;
         logger.info({ statusText, ...logContext.success });
         return statusText;
@@ -359,19 +358,15 @@ async function executeWithCooldown(
         // Aborted by a newer call — expected, return null silently.
         // generateTextWithSystemPrompt() handles abort internally (returns ''), so this catch only fires
         // for non-abort errors (e.g., from promptBuilder). The signal check is defensive.
-        // Stryker disable next-line ConditionalExpression,BlockStatement: NoCoverage — generateTextWithSystemPrompt() swallows abort and returns ''; this catch is only reached for genuine errors
         if(controller.signal.aborted) {
             return null;
         }
         logger.error({ error, ...logContext.failure });
         return null;
     } finally {
-        // Record timestamp for cooldown AFTER call completion (not before)
-        // eslint-disable-next-line require-atomic-updates -- cancel-and-replace: each call sets its own lastHaikuCall in finally; concurrent calls don't share this write path
-        state.lastHaikuCall = Date.now();
-        // Only clear if WE are still the current controller
-        // Stryker disable next-line EqualityOperator,ConditionalExpression,BlockStatement: identity check — only clear if we're still the active controller; if we skip clearing, the next call aborts this controller at its start (equivalent behavior)
+        // A cancelled older call must not start a cooldown or clear the newer controller.
         if(state.inFlightController === controller) {
+            state.lastHaikuCall = Date.now();
             state.inFlightController = null;
         }
     }
@@ -421,9 +416,6 @@ export function createDynamicStatusGenerator(
     // eligible for cross-call prompt caching. Everything per-call lives in the user prompt.
     const systemPrompt = [buildSystemPrompt(identityContext), SYSTEM_PROMPT_DYNAMIC_BOUNDARY];
 
-    // Stryker disable next-line ObjectLiteral: initial field values are irrelevant — the first call
-    // through executeWithCooldown always sets lastHaikuCall/cachedStatus itself and treats a null
-    // inFlightController identically to one already cleared by a prior call's finally block.
     const state: InstanceState = {
         lastHaikuCall:      0,
         cachedStatus:       null,
@@ -438,7 +430,6 @@ export function createDynamicStatusGenerator(
                 // the status this instance most recently produced.
                 () => ({ systemPrompt, userPrompt: buildUserPrompt(context, state.cachedStatus) }),
                 {
-                    // Stryker disable next-line StringLiteral: log message configuration
                     inFlight:   { phase, msg: 'Cancelling previous in-flight synopsis call' },
                     cooldown:   { phase, msg: 'Haiku call within cooldown, using cached status' },
                     generating: { phase, userMessageLength: context.userMessage.length, msg: 'Generating synopsis with Haiku' },

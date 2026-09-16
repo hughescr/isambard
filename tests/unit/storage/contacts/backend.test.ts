@@ -6,7 +6,7 @@ import {
     BatchWriteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { ErrorCode, ContactNoIdentifiersError } from '@/errors';
+import { ErrorCode, ContactNoIdentifiersError, type BatchWriteExhaustedError } from '@/errors';
 import { ContactBackend } from '@/storage/contacts/backend';
 import {
     type Contact,
@@ -94,6 +94,7 @@ describe('ContactBackend', () => {
     });
 
     afterEach(() => {
+        jest.useRealTimers();
         jest.restoreAllMocks();
         mockSleep.mockReset();
         ddbMock.restore();
@@ -565,6 +566,22 @@ describe('ContactBackend', () => {
             expect(deletes).toHaveLength(0);
         });
 
+        test('keeps Unicode lowercasing aligned with lookup keys', async () => {
+            const existing: Contact = { ...ALICE, identifiers: [{ platform: 'name', value: 'Straße' }] };
+            const updated: Contact = { ...existing, identifiers: [{ platform: 'name', value: 'STRASSE' }] };
+            ddbMock.on(GetCommand).resolves(contactGetResponse(existing));
+            ddbMock.on(BatchWriteCommand).resolves({});
+
+            await backend.putContact(updated);
+
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(calls).toHaveLength(3);
+            expect(calls[0].args[0].input.RequestItems?.TestTable[0]?.PutRequest?.Item?.PK)
+                .toBe('CONTACT_LOOKUP#name#strasse');
+            expect(calls[2].args[0].input.RequestItems?.TestTable[0]?.DeleteRequest?.Key?.PK)
+                .toBe('CONTACT_LOOKUP#name#straße');
+        });
+
         test('treats identifier as unchanged when existing value has leading/trailing whitespace', async () => {
             // Existing: [email with surrounding whitespace]. New: [trimmed email] + [bsky].
             // The email identifier should be recognized as unchanged (trimmed comparison).
@@ -624,6 +641,66 @@ describe('ContactBackend', () => {
             expect(allItems).toHaveLength(49);
         });
 
+        test('runs independent lookup batches with bounded concurrency before profile write', async () => {
+            const contact: Contact = { ...ALICE, identifiers: makeIdentifiers(125) };
+            ddbMock.on(GetCommand).resolves(notFound());
+            const releaseLookups = Promise.withResolvers<void>();
+            const fourStarted = Promise.withResolvers<void>();
+            let started = 0;
+            let active = 0;
+            let peak = 0;
+            ddbMock.on(BatchWriteCommand).callsFake(async () => {
+                started++;
+                active++;
+                peak = Math.max(peak, active);
+                if(started === 4) {
+                    fourStarted.resolve();
+                }
+                if(started <= 5) {
+                    await releaseLookups.promise;
+                }
+                active--;
+                return {};
+            });
+
+            const writing = backend.putContact(contact);
+            await fourStarted.promise;
+            expect(started).toBe(4);
+            releaseLookups.resolve();
+            await writing;
+            expect(peak).toBe(4);
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(6);
+        });
+
+        test('waits for in-flight lookup writes before reporting a batch failure', async () => {
+            const contact: Contact = { ...ALICE, identifiers: makeIdentifiers(50) };
+            ddbMock.on(GetCommand).resolves(notFound());
+            const releaseSecond = Promise.withResolvers<void>();
+            const secondStarted = Promise.withResolvers<void>();
+            let calls = 0;
+            ddbMock.on(BatchWriteCommand).callsFake(async () => {
+                calls++;
+                if(calls === 1) {
+                    throw new Error('first lookup batch failed');
+                }
+                secondStarted.resolve();
+                await releaseSecond.promise;
+                return {};
+            });
+
+            let completed = false;
+            const writing = backend.putContact(contact).catch((error: unknown) => {
+                completed = true;
+                throw error;
+            });
+            await secondStarted.promise;
+            await Promise.resolve();
+            expect(completed).toBe(false);
+            releaseSecond.resolve();
+            await expect(writing).rejects.toThrow('first lookup batch failed');
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(2);
+        });
+
         test('each batch contains at most 25 items', async () => {
             const contact24: Contact = { ...ALICE, identifiers: makeIdentifiers(24) };
             ddbMock.on(GetCommand).resolves(notFound());
@@ -643,6 +720,49 @@ describe('ContactBackend', () => {
     // putContact — partial batch failure / UnprocessedItems retry with deps.sleep
     // ======================================================================
     describe('putContact (partial batch failure)', () => {
+        test('empty UnprocessedItems map finishes without retry', async () => {
+            ddbMock.on(GetCommand).resolves(notFound());
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+
+            await backend.putContact(ALICE, { sleep: mockSleep });
+
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(2);
+            expect(mockSleep).not.toHaveBeenCalled();
+        });
+
+        test('default retry waits before resending an unprocessed lookup', async () => {
+            jest.useFakeTimers();
+            try {
+                ddbMock.on(GetCommand).resolves(notFound());
+                let attempts = 0;
+                ddbMock.on(BatchWriteCommand).callsFake((input) => {
+                    if(attempts++ === 0) {
+                        const first = input.RequestItems?.TestTable[0];
+                        if(first === undefined) {
+                            throw new Error('Expected a submitted lookup request');
+                        }
+                        return { UnprocessedItems: { TestTable: [first] } };
+                    }
+                    return {};
+                });
+
+                const operation = backend.putContact(ALICE);
+                for(let i = 0; i < 10; i++) {
+                    // eslint-disable-next-line no-await-in-loop -- flush the finite async repository pipeline
+                    await Promise.resolve();
+                }
+                expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
+                expect(jest.getTimerCount()).toBe(1);
+                jest.advanceTimersByTime(99);
+                expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
+                jest.advanceTimersByTime(1);
+                await operation;
+                expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(3);
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
         test('propagates error when BatchWriteCommand throws', async () => {
             ddbMock.on(GetCommand).resolves(notFound());
             ddbMock.on(BatchWriteCommand).rejects(new Error('DynamoDB unavailable'));
@@ -653,21 +773,26 @@ describe('ContactBackend', () => {
         test('retries when BatchWriteCommand returns UnprocessedItems on first call — uses injected sleep', async () => {
             ddbMock.on(GetCommand).resolves(notFound());
 
-            // First call returns unprocessed items; second call succeeds
-            ddbMock.on(BatchWriteCommand)
-                .resolvesOnce({
-                    UnprocessedItems: {
-                        TestTable: [
-                            { PutRequest: { Item: { PK: 'CONTACT#alice-smith', SK: 'PROFILE' } } },
-                        ],
-                    },
-                })
-                .resolves({});
+            // Dynamo can only return a subset of the requests actually submitted.
+            let attempts = 0;
+            ddbMock.on(BatchWriteCommand).callsFake((input) => {
+                if(attempts++ === 0) {
+                    const first = input.RequestItems?.TestTable[0];
+                    if(first === undefined) {
+                        throw new Error('Expected a submitted lookup request');
+                    }
+                    return { UnprocessedItems: { TestTable: [first] } };
+                }
+                return {};
+            });
 
             await backend.putContact(ALICE, { sleep: mockSleep });
 
-            // Must have issued at least 2 BatchWriteCommand calls (original + retry)
-            expect(ddbMock.commandCalls(BatchWriteCommand).length).toBeGreaterThanOrEqual(2);
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(calls).toHaveLength(3); // lookup attempt, lookup retry, profile write
+            expect(calls[1].args[0].input.RequestItems?.TestTable).toHaveLength(1);
+            expect(calls[1].args[0].input.RequestItems?.TestTable[0])
+                .toEqual(calls[0].args[0].input.RequestItems?.TestTable[0]);
             // Sleep must have been called for the retry backoff (100ms * 2^0 = 100ms)
             expect(mockSleep).toHaveBeenCalledWith(BATCH_WRITE_BASE_DELAY_MS);
         });
@@ -675,16 +800,22 @@ describe('ContactBackend', () => {
         test('throws after all retries exhausted if UnprocessedItems persist — uses injected sleep', async () => {
             ddbMock.on(GetCommand).resolves(notFound());
 
-            // Always return unprocessed items — never succeeds
-            ddbMock.on(BatchWriteCommand).resolves({
-                UnprocessedItems: {
-                    TestTable: [
-                        { PutRequest: { Item: { PK: 'CONTACT#alice-smith', SK: 'PROFILE' } } },
-                    ],
-                },
+            // Always return the first actually submitted request as unprocessed.
+            ddbMock.on(BatchWriteCommand).callsFake((input) => {
+                const first = input.RequestItems?.TestTable[0];
+                if(first === undefined) {
+                    throw new Error('Expected a submitted lookup request');
+                }
+                return { UnprocessedItems: { TestTable: [first] } };
             });
 
-            expect(backend.putContact(ALICE, { sleep: mockSleep })).rejects.toThrow();
+            await expect(backend.putContact(ALICE, { sleep: mockSleep })).rejects.toMatchObject({
+                context: { remainingCount: 1, maxRetries: 3, operation: 'ContactBackend.batchWriteWithRetry' },
+            } satisfies Partial<BatchWriteExhaustedError>);
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(3);
+            expect(mockSleep.mock.calls.map(([delay]) => delay)).toEqual([100, 200]);
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
+            expect(calls[1].args[0].input.RequestItems).toEqual(calls[2].args[0].input.RequestItems);
         });
 
         test('new lookup rows remain intact when profile write fails', async () => {
@@ -893,6 +1024,8 @@ describe('ContactBackend', () => {
             await backend.resolveIdentifier('email', 'ALICE@EXAMPLE.COM');
 
             const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls[0].args[0].input.KeyConditionExpression).toBe('#pk = :pk');
+            expect(calls[0].args[0].input.ExpressionAttributeNames).toEqual({ '#pk': 'PK' });
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':pk'])
                 .toBe('CONTACT_LOOKUP#email#alice@example.com');
         });
@@ -933,6 +1066,31 @@ describe('ContactBackend', () => {
             expect(result).toHaveLength(2);
         });
 
+        test('fetches matches concurrently while returning query order', async () => {
+            ddbMock.on(QueryCommand).resolves({
+                Items: [
+                    { SK: 'CONTACT#alice-smith' },
+                    { SK: 'CONTACT#bob-jones' },
+                ],
+            });
+            const first = Promise.withResolvers<{ Item: Record<string, unknown> }>();
+            const secondStarted = Promise.withResolvers<void>();
+            let calls = 0;
+            ddbMock.on(GetCommand).callsFake(() => {
+                calls++;
+                if(calls === 1) {
+                    return first.promise;
+                }
+                secondStarted.resolve();
+                return contactGetResponse(BOB);
+            });
+
+            const resolved = backend.resolveIdentifier('name', 'shared');
+            await secondStarted.promise;
+            first.resolve(contactGetResponse(ALICE));
+            expect(await resolved).toEqual([ALICE, BOB]);
+        });
+
         test('skips missing contacts gracefully', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items: [{ PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#alice-smith' }],
@@ -942,6 +1100,7 @@ describe('ContactBackend', () => {
 
             const result = await backend.resolveIdentifier('email', 'alice@example.com');
 
+            expect(result).toHaveLength(0);
             expect(result).toEqual([]);
         });
     });
@@ -1334,8 +1493,8 @@ describe('ContactBackend', () => {
         test('ranks exact matches above prefix matches', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    contactQueryItem({ ...ALICE, identifiers: [{ platform: 'name', value: 'alice' }] }),
                     contactQueryItem({ ...BOB,   identifiers: [{ platform: 'email', value: 'alice@example.com' }] }),
+                    contactQueryItem({ ...ALICE, identifiers: [{ platform: 'name', value: 'alice' }] }),
                 ],
             });
 

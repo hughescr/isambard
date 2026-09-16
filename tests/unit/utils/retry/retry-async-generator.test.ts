@@ -217,6 +217,10 @@ describe('retryAsyncGenerator', () => {
             expect(classifier).toHaveBeenCalledTimes(1);
             expect(sleepMock).not.toHaveBeenCalled();
             expect(mockLogger.error).toHaveBeenCalledTimes(1);
+            expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                msg:       'Retry aborted due to permanent error',
+                elapsedMs: 0,
+            }));
         });
 
         it('should throw permanent error after initial transient errors', async () => {
@@ -988,21 +992,18 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock<ErrorClassifier>(() => ({ category: 'permanent', message: 'Permanent error' }));
 
-            // eslint-disable-next-line sonarjs/no-unused-collection -- results collected within error-throwing async; test verifies error behavior not collection contents
-            const results: number[] = [];
-
             expect(async () => {
                 for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
-                    results.push(value);
+                    expect(value).toBe(1);
                 }
             }).toThrow('Permanent error');
 
             expect(mockLogger.error).toHaveBeenCalledTimes(1);
             const errorLog = (mockLogger.error as ReturnType<typeof mock>).mock.calls[0][0];
 
-            expect(errorLog).toHaveProperty('elapsedMs');
+            expect(errorLog).toHaveProperty('msg', 'Retry aborted due to permanent error');
+            expect(errorLog).toHaveProperty('elapsedMs', 0);
             expect(errorLog).toHaveProperty('attempt', 1);
-            expect((errorLog as { elapsedMs: number }).elapsedMs).toBeGreaterThanOrEqual(0);
         });
 
         it('should log elapsed time for max attempts exhausted', async () => {
@@ -1022,9 +1023,11 @@ describe('retryAsyncGenerator', () => {
             expect(mockLogger.error).toHaveBeenCalledTimes(1);
             const errorLog = (mockLogger.error as ReturnType<typeof mock>).mock.calls[0][0];
 
-            expect(errorLog).toHaveProperty('elapsedMs');
+            expect(errorLog).toHaveProperty('msg', 'Max retry attempts exhausted');
             expect(errorLog).toHaveProperty('attempts', 3);
-            expect((errorLog as { elapsedMs: number }).elapsedMs).toBeGreaterThanOrEqual(0);
+            const totalDelay = sleepMock.mock.calls[0][0] + sleepMock.mock.calls[1][0];
+            expect((errorLog as { elapsedMs: number }).elapsedMs).toBeGreaterThanOrEqual(totalDelay - 2);
+            expect((errorLog as { elapsedMs: number }).elapsedMs).toBeLessThanOrEqual(totalDelay + 2);
         });
     });
 
@@ -1051,10 +1054,14 @@ describe('retryAsyncGenerator', () => {
             const secondElapsed = (secondWarnLog as { elapsedMs: number }).elapsedMs;
             const finalElapsed = (errorLog as { elapsedMs: number }).elapsedMs;
 
-            // CRITICAL: Elapsed time must strictly increase over time
-            // With subtraction (now() - startTime), later calls have larger elapsed
-            expect(secondElapsed).toBeGreaterThan(firstElapsed);
-            expect(finalElapsed).toBeGreaterThanOrEqual(secondElapsed);
+            expect(firstWarnLog).toHaveProperty('msg', 'Retrying generator after error');
+            expect(secondWarnLog).toHaveProperty('msg', 'Retrying generator after error');
+            expect(firstElapsed).toBe(0);
+            expect(secondElapsed).toBeGreaterThanOrEqual(sleepMock.mock.calls[0][0] - 1);
+            expect(secondElapsed).toBeLessThanOrEqual(sleepMock.mock.calls[0][0] + 1);
+            const totalDelay = sleepMock.mock.calls[0][0] + sleepMock.mock.calls[1][0];
+            expect(finalElapsed).toBeGreaterThanOrEqual(totalDelay - 2);
+            expect(finalElapsed).toBeLessThanOrEqual(totalDelay + 2);
 
             // All must be non-negative
             expect(firstElapsed).toBeGreaterThanOrEqual(0);

@@ -96,6 +96,7 @@ describe('createTaskListReader', () => {
         const mockFiles: Dirent[] = [
             { name: 'not-json.txt', isFile: () => true } as Dirent,
             { name: 'README.md', isFile: () => true } as Dirent,
+            { name: 'task.json.backup', isFile: () => true } as Dirent,
         ];
         mockReaddir = mock(() => Promise.resolve(mockFiles));
 
@@ -109,6 +110,7 @@ describe('createTaskListReader', () => {
         const result = await reader.buildTaskListSummary();
 
         expect(result).toBeUndefined();
+        expect(mockReadFile).not.toHaveBeenCalled();
     });
 
     test('should filter out non-JSON files and directories', async () => {
@@ -435,6 +437,11 @@ describe('createTaskListReader', () => {
         const result = await reader.buildTaskListSummary();
 
         expect(result).toBe('1 pending tasks');
+        expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+            error: expect.any(SyntaxError),
+            file:  'task1.json',
+            msg:   'Failed to parse task file',
+        }));
     });
 
     test('should skip files with valid JSON but wrong shape', async () => {
@@ -475,6 +482,60 @@ describe('createTaskListReader', () => {
 
         // Should only process task3 (valid shape)
         expect(result).toBe('1 pending tasks');
+    });
+
+    test.each([
+        [{ id: 7, subject: 'Invalid id', status: 'pending' }],
+        [{ id: 'task', subject: 7, status: 'pending' }],
+    ])('rejects a task with a non-string required field', async (invalid) => {
+        mockReaddir = mock(() => Promise.resolve([{ name: 'invalid.json', isFile: () => true } as Dirent]));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify(invalid)));
+        const reader = createTaskListReader({
+            getCurrentSessionId: mockGetCurrentSessionId,
+            logger:              mockLogger,
+            readdir:             mockReaddir,
+            readFile:            mockReadFile,
+        });
+        expect(await reader.buildTaskListSummary()).toBeUndefined();
+    });
+
+    test('joins multiple active subjects with a comma and space', async () => {
+        mockReaddir = mock(() => Promise.resolve([
+            { name: 'one.json', isFile: () => true } as Dirent,
+            { name: 'two.json', isFile: () => true } as Dirent,
+        ]));
+        mockReadFile = mock((file: string) => Promise.resolve(JSON.stringify({
+            id:      file,
+            subject: file.endsWith('one.json') ? 'First' : 'Second',
+            status:  'in_progress',
+        })));
+        const reader = createTaskListReader({
+            getCurrentSessionId: mockGetCurrentSessionId,
+            logger:              mockLogger,
+            readdir:             mockReaddir,
+            readFile:            mockReadFile,
+        });
+        expect(await reader.buildTaskListSummary()).toBe('Working on: First, Second');
+    });
+
+    test('joins multiple recently completed subjects with a comma and space', async () => {
+        mockReaddir = mock(() => Promise.resolve([
+            { name: 'one.json', isFile: () => true } as Dirent,
+            { name: 'two.json', isFile: () => true } as Dirent,
+        ]));
+        mockReadFile = mock((file: string) => Promise.resolve(JSON.stringify({
+            id:       file,
+            subject:  file.endsWith('one.json') ? 'First' : 'Second',
+            status:   'completed',
+            metadata: { completedAt: new Date().toISOString() },
+        })));
+        const reader = createTaskListReader({
+            getCurrentSessionId: mockGetCurrentSessionId,
+            logger:              mockLogger,
+            readdir:             mockReaddir,
+            readFile:            mockReadFile,
+        });
+        expect(await reader.buildTaskListSummary()).toBe('Recently done: First, Second');
     });
 
     test('should limit to top 10 tasks', async () => {
@@ -586,7 +647,9 @@ describe('createTaskListReader', () => {
     });
 
     test('should return undefined on error', async () => {
-        mockReaddir = mock(() => Promise.reject(new Error('Unexpected error')));
+        mockGetCurrentSessionId = mock(() => {
+            throw new Error('Unexpected error');
+        });
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -598,5 +661,36 @@ describe('createTaskListReader', () => {
         const result = await reader.buildTaskListSummary();
 
         expect(result).toBeUndefined();
+        expect(mockLogger.debug).toHaveBeenCalledWith({
+            error: expect.any(Error),
+            msg:   'Failed to build task list summary',
+        });
+    });
+
+    test('bounds file reads while retaining directory order in the summary', async () => {
+        const names = Array.from({ length: 12 }, (_, index) => `task-${String(index).padStart(2, '0')}.json`);
+        let active = 0;
+        let peak = 0;
+        mockReaddir = mock(async () => names.map(name => ({ name, isFile: () => true } as Dirent)));
+        mockReadFile = mock(async (filePath: string) => {
+            active++;
+            peak = Math.max(peak, active);
+            await Bun.sleep(2);
+            active--;
+            const name = nodePath.basename(filePath);
+            return JSON.stringify({ id: name, subject: name, status: 'in_progress' });
+        });
+
+        const reader = createTaskListReader({
+            getCurrentSessionId: mockGetCurrentSessionId,
+            logger:              mockLogger,
+            readdir:             mockReaddir,
+            readFile:            mockReadFile,
+        });
+        const result = await reader.buildTaskListSummary();
+
+        expect(peak).toBeGreaterThan(1);
+        expect(peak).toBeLessThanOrEqual(8);
+        expect(result).toBe(`Working on: ${names.slice(0, 10).join(', ')}`);
     });
 });

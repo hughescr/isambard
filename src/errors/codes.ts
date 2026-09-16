@@ -2,7 +2,6 @@
  * Centralized error codes for all Isambard errors.
  * Used for programmatic error identification and handling.
  */
-// Stryker disable all: Enum values are static definitions
 export enum ErrorCode {
     // Storage errors
     STORAGE_ERROR = 'STORAGE_ERROR',

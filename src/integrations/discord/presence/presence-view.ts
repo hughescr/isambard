@@ -206,13 +206,13 @@ export interface PresenceThrottle {
  * `shouldUpdate()` is true until the first `record()`, then again once `throttleMs` have elapsed
  * since the most recent `record()`.
  */
-// eslint-disable-next-line @typescript-eslint/default-param-last -- pinned signature (P11 brief): createPresenceThrottle(throttleMs = 12_000, now)
-export function createPresenceThrottle(throttleMs = 12_000, now: () => number): PresenceThrottle {
+export function createPresenceThrottle(throttleMs: number | undefined, now: () => number): PresenceThrottle {
     let lastRecordedAt: number | null = null;
+    const intervalMs = throttleMs ?? 12_000;
 
     return {
         shouldUpdate(): boolean {
-            return lastRecordedAt === null || now() - lastRecordedAt >= throttleMs;
+            return lastRecordedAt === null || now() - lastRecordedAt >= intervalMs;
         },
         record(): void {
             lastRecordedAt = now();

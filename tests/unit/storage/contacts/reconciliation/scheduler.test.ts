@@ -5,6 +5,7 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { mockLogger } from '../../../../setup';
 import type { ContactReconciliationResult } from '@/storage/contacts/reconciliation/reconciler';
 import { createContactReconciliationScheduler, type ContactReconciliationSchedulerDeps  } from '@/storage/contacts/reconciliation/scheduler';
 
@@ -31,6 +32,9 @@ describe('createContactReconciliationScheduler', () => {
 
     beforeEach(() => {
         jest.useFakeTimers();
+        mockLogger.debug.mockClear();
+        mockLogger.info.mockClear();
+        mockLogger.error.mockClear();
         ddbMock = mockClient(DynamoDBDocumentClient);
         runReconciliation = mock(async (): Promise<ContactReconciliationResult> => SUCCESS_RESULT);
         deps = {
@@ -62,6 +66,10 @@ describe('createContactReconciliationScheduler', () => {
 
         // No immediate reconciliation on start
         expect(runReconciliation).not.toHaveBeenCalled();
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            intervalMs: 60_000,
+            msg:        'Contact reconciliation scheduler started',
+        });
 
         scheduler.stop();
     });
@@ -75,6 +83,10 @@ describe('createContactReconciliationScheduler', () => {
         await Promise.resolve();
 
         expect(runReconciliation).toHaveBeenCalledTimes(1);
+        expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Starting contact reconciliation' });
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+            msg: 'Contact reconciliation complete',
+        }));
 
         scheduler.stop();
     });
@@ -90,6 +102,7 @@ describe('createContactReconciliationScheduler', () => {
         jest.advanceTimersByTime(60_000 * 10);
 
         expect(runReconciliation).not.toHaveBeenCalled();
+        expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Contact reconciliation scheduler disabled' });
 
         scheduler.stop();
     });
@@ -106,6 +119,7 @@ describe('createContactReconciliationScheduler', () => {
         expect(runReconciliation).toHaveBeenCalledTimes(1);
 
         scheduler.stop();
+        expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Contact reconciliation scheduler stopped' });
 
         // No more runs after stop
         jest.advanceTimersByTime(60_000 * 5);
@@ -161,6 +175,97 @@ describe('createContactReconciliationScheduler', () => {
         scheduler.stop();
     });
 
+    test('starting twice replaces the pending interval instead of duplicating it', async () => {
+        const scheduler = createContactReconciliationScheduler(deps);
+        scheduler.start();
+        scheduler.start();
+        expect(jest.getTimerCount()).toBe(1);
+
+        jest.advanceTimersByTime(60_000);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(runReconciliation).toHaveBeenCalledTimes(1);
+        scheduler.stop();
+    });
+
+    test('stop clears a pending interval before its first trigger', async () => {
+        const scheduler = createContactReconciliationScheduler(deps);
+        scheduler.start();
+        expect(jest.getTimerCount()).toBe(1);
+        scheduler.stop();
+        expect(jest.getTimerCount()).toBe(0);
+        jest.advanceTimersByTime(120_000);
+        await Promise.resolve();
+        expect(runReconciliation).not.toHaveBeenCalled();
+    });
+
+    test('a stopped scheduled run cannot schedule another interval after it settles', async () => {
+        let finish!: (result: ContactReconciliationResult) => void;
+        runReconciliation.mockImplementationOnce(() => new Promise<ContactReconciliationResult>((resolve) => {
+            finish = resolve;
+        }));
+        const scheduler = createContactReconciliationScheduler(deps);
+        scheduler.start();
+        jest.advanceTimersByTime(60_000);
+        expect(runReconciliation).toHaveBeenCalledTimes(1);
+        scheduler.stop();
+        finish(SUCCESS_RESULT);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(jest.getTimerCount()).toBe(0);
+        jest.advanceTimersByTime(120_000);
+        await Promise.resolve();
+        expect(runReconciliation).toHaveBeenCalledTimes(1);
+    });
+
+    test('a stale scheduled completion does not reset the restarted timer deadline', async () => {
+        let finish!: (result: ContactReconciliationResult) => void;
+        runReconciliation.mockImplementationOnce(() => new Promise<ContactReconciliationResult>((resolve) => {
+            finish = resolve;
+        }));
+        const scheduler = createContactReconciliationScheduler(deps);
+        scheduler.start();
+        jest.advanceTimersByTime(60_000);
+        scheduler.stop();
+        scheduler.start();
+        jest.advanceTimersByTime(30_000);
+        finish(SUCCESS_RESULT);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        jest.advanceTimersByTime(30_000);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(runReconciliation).toHaveBeenCalledTimes(2);
+        scheduler.stop();
+    });
+
+    test('a queued manual request is discarded if stopped again before prior work settles', async () => {
+        let finish!: (result: ContactReconciliationResult) => void;
+        runReconciliation.mockImplementationOnce(() => new Promise<ContactReconciliationResult>((resolve) => {
+            finish = resolve;
+        }));
+        const scheduler = createContactReconciliationScheduler(deps);
+        scheduler.start();
+        const first = scheduler.triggerNow();
+        scheduler.stop();
+        scheduler.start();
+        const queued = scheduler.triggerNow();
+        scheduler.stop();
+        finish(SUCCESS_RESULT);
+        await first;
+        expect(await queued).toBeUndefined();
+        expect(runReconciliation).toHaveBeenCalledTimes(1);
+    });
+
     test('prevents concurrent runs — second triggerNow() returns undefined when already running', async () => {
         let resolveFirst: () => void;
         const firstRunPromise = new Promise<ContactReconciliationResult>((resolve) => {
@@ -179,6 +284,7 @@ describe('createContactReconciliationScheduler', () => {
 
         // Only one reconciliation call should have been made
         expect(runReconciliation).toHaveBeenCalledTimes(1);
+        expect(mockLogger.debug).toHaveBeenCalledWith({ msg: 'Contact reconciliation already running - skipping trigger' });
 
         resolveFirst!();
         await firstResult;
@@ -252,6 +358,9 @@ describe('createContactReconciliationScheduler', () => {
         expect(result).toBeUndefined();
         // isRunning must be reset to false after the error
         expect(scheduler.getState().isRunning).toBe(false);
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            msg: 'Contact reconciliation failed',
+        }));
 
         scheduler.stop();
     });
@@ -292,5 +401,76 @@ describe('createContactReconciliationScheduler', () => {
         jest.advanceTimersByTime(60_000 * 3);
         await Promise.resolve();
         expect(runReconciliation).toHaveBeenCalledTimes(1);
+    });
+
+    test('restart waits for aborted work to settle before starting another reconciliation', async () => {
+        let resolveFirst!: (result: ContactReconciliationResult) => void;
+        let resolveSecond!: (result: ContactReconciliationResult) => void;
+        let markSecondStarted!: () => void;
+        const secondStarted = new Promise<void>((resolve) => {
+            markSecondStarted = resolve;
+        });
+        const signals: AbortSignal[] = [];
+        runReconciliation.mockImplementationOnce((_deps, options) => {
+            signals.push(options.signal);
+            return new Promise<ContactReconciliationResult>((resolve) => {
+                resolveFirst = resolve;
+            });
+        });
+        runReconciliation.mockImplementationOnce((_deps, options) => {
+            signals.push(options.signal);
+            markSecondStarted();
+            return new Promise<ContactReconciliationResult>((resolve) => {
+                resolveSecond = resolve;
+            });
+        });
+
+        const scheduler = createContactReconciliationScheduler(deps);
+        scheduler.start();
+        const first = scheduler.triggerNow();
+        scheduler.stop();
+        expect(scheduler.getState().isRunning).toBe(false);
+        expect(signals[0]?.aborted).toBe(true);
+
+        scheduler.start();
+        const second = scheduler.triggerNow();
+        expect(scheduler.getState().isRunning).toBe(false);
+        expect(runReconciliation).toHaveBeenCalledTimes(1);
+        resolveFirst(SUCCESS_RESULT);
+        await first;
+        await secondStarted;
+        expect(scheduler.getState().isRunning).toBe(true);
+        expect(signals[1]?.aborted).toBe(false);
+        expect(await scheduler.triggerNow()).toBeUndefined();
+
+        scheduler.stop();
+        expect(signals[1]?.aborted).toBe(true);
+        resolveSecond(SUCCESS_RESULT);
+        await second;
+        expect(scheduler.getState().isRunning).toBe(false);
+    });
+
+    test('old scheduled completion cannot replace a restarted scheduler timer', async () => {
+        let resolveFirst!: (result: ContactReconciliationResult) => void;
+        runReconciliation.mockImplementationOnce(() => new Promise<ContactReconciliationResult>((resolve) => {
+            resolveFirst = resolve;
+        }));
+        const scheduler = createContactReconciliationScheduler(deps);
+        scheduler.start();
+        jest.advanceTimersByTime(60_000);
+        expect(runReconciliation).toHaveBeenCalledTimes(1);
+
+        scheduler.stop();
+        scheduler.start();
+        expect(jest.getTimerCount()).toBe(1);
+        resolveFirst(SUCCESS_RESULT);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(jest.getTimerCount()).toBe(1);
+
+        jest.advanceTimersByTime(60_000);
+        await Promise.resolve();
+        expect(runReconciliation).toHaveBeenCalledTimes(2);
+        scheduler.stop();
     });
 });

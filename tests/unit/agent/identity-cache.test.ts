@@ -20,6 +20,8 @@ describe('IdentityCache', () => {
 
             expect(result).toBe('identity text');
             expect(loaderMock).toHaveBeenCalledTimes(1);
+            expect(await cache.get()).toBe('identity text');
+            expect(loaderMock).toHaveBeenCalledTimes(1);
         });
 
         test('warm hit — second call returns cached value without invoking loader again', async () => {
@@ -30,6 +32,21 @@ describe('IdentityCache', () => {
 
             expect(result).toBe('identity text');
             expect(loaderMock).toHaveBeenCalledTimes(1);
+        });
+
+        test('warm hit settles after one microtask without adopting a retained load promise', async () => {
+            const cache = new IdentityCache(loaderMock);
+            await cache.get();
+
+            let settled = false;
+            const settlement = cache.get().then(() => {
+                settled = true;
+                return undefined;
+            });
+            await Promise.resolve();
+
+            expect(settled).toBe(true);
+            await settlement;
         });
 
         test('concurrent in-flight gets share the same loader invocation', async () => {
@@ -309,10 +326,10 @@ describe('IdentityCache', () => {
 
             cache.invalidate();
             const afterInvalidate = cache.revision();
-            expect(afterInvalidate).not.toBe(start);
+            expect(afterInvalidate).toBe(start + 1);
 
             cache.set('pushed');
-            expect(cache.revision()).not.toBe(afterInvalidate);
+            expect(cache.revision()).toBe(afterInvalidate + 1);
         });
     });
 

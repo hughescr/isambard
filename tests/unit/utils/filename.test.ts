@@ -14,18 +14,17 @@ describe('sanitizeFilename', () => {
 
     test('should replace path separator / with _', () => {
         const result = sanitizeFilename('some/path/file.txt');
-        expect(result).not.toContain('/');
+        expect(result).toBe('some_path_file.txt');
     });
 
     test(String.raw`should replace path separator \ with _`, () => {
         const result = sanitizeFilename(String.raw`some\path\file.txt`);
-        expect(result).not.toContain('\\');
+        expect(result).toBe('some_path_file.txt');
     });
 
     test('should replace dotdot sequences to prevent path traversal', () => {
         const result = sanitizeFilename('../../../etc/passwd');
-        expect(result).not.toContain('..');
-        expect(result).not.toContain('/');
+        expect(result).toBe('______etc_passwd');
     });
 
     test('should strip leading dots', () => {
@@ -40,8 +39,7 @@ describe('sanitizeFilename', () => {
     test('should replace dotdot sequences (not fall back to attachment)', () => {
         // '...' → dotdot regex replaces with '_', then trim leaves '_' which is truthy
         const result = sanitizeFilename('...');
-        expect(result).not.toContain('..');
-        expect(result).not.toBe('');
+        expect(result).toBe('_');
     });
 
     test('should produce a non-empty result for all-dots string', () => {
@@ -53,6 +51,11 @@ describe('sanitizeFilename', () => {
     test('should strip leading and trailing spaces', () => {
         const result = sanitizeFilename('  report.pdf  ');
         expect(result).toBe('report.pdf');
+    });
+
+    test('preserves interior spaces while trimming both ends', () => {
+        expect(sanitizeFilename('  my report  ')).toBe('my report');
+        expect(sanitizeFilename(' . report . ')).toBe('report');
     });
 
     test('should replace null bytes', () => {
@@ -71,6 +74,15 @@ describe('sanitizeFilename', () => {
 });
 
 describe('deduplicateFilename', () => {
+    test('uses the lowest available suffix even when unrelated names are already reserved', () => {
+        const used = new Set(['report.pdf', 'unrelated.txt']);
+        expect(deduplicateFilename('report.pdf', used)).toBe('report-(1).pdf');
+    });
+
+    test('terminates at the first available suffix after finite occupied candidates', () => {
+        const used = new Set(['clip.mov', 'clip-(1).mov', 'clip-(2).mov', 'clip-(3).mov']);
+        expect(deduplicateFilename('clip.mov', used)).toBe('clip-(4).mov');
+    });
     test('should return the filename unchanged when not in the used set', () => {
         const used = new Set<string>();
         expect(deduplicateFilename('report.pdf', used)).toBe('report.pdf');

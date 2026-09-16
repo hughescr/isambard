@@ -87,13 +87,11 @@ describe('createTaskTrackingHooks', () => {
             };
 
             await fn(input, undefined, { signal: makeSignal() });
-            expect(debugSpy).toHaveBeenCalled();
-            const call = debugSpy.mock.calls.find(
-                (c: unknown[]) => typeof (c[0] as Record<string, unknown>).taskId === 'string'
-            );
-            expect(call).toBeDefined();
-            expect((call?.[0] as Record<string, unknown>).taskId).toBe('task-log-123');
-            expect((call?.[0] as Record<string, unknown>).taskSubject).toBe('Log me');
+            expect(debugSpy).toHaveBeenCalledWith({
+                taskId:      'task-log-123',
+                taskSubject: 'Log me',
+                msg:         'TaskCreated hook fired — task launched by agent',
+            });
         });
 
         test('should return { continue: true } when called multiple times', async () => {
@@ -101,13 +99,12 @@ describe('createTaskTrackingHooks', () => {
             const fn = getHook(hooks, 'TaskCreated');
             const signal = makeSignal();
 
-            for(const id of ['task-1', 'task-2', 'task-3']) {
-                // eslint-disable-next-line no-await-in-loop -- sequential hook invocations in test; no parallelism needed
-                const result = await fn(
-                    { ...BASE_HOOK_FIELDS, hook_event_name: 'TaskCreated', task_id: id, task_subject: `Task ${id}` },
-                    undefined,
-                    { signal }
-                );
+            const results = await Promise.all(['task-1', 'task-2', 'task-3'].map(id => fn(
+                { ...BASE_HOOK_FIELDS, hook_event_name: 'TaskCreated', task_id: id, task_subject: `Task ${id}` },
+                undefined,
+                { signal }
+            )));
+            for(const result of results) {
                 expect(result).toEqual({ 'continue': true });
             }
         });
@@ -149,13 +146,11 @@ describe('createTaskTrackingHooks', () => {
             };
 
             await fn(input, undefined, { signal: makeSignal() });
-            expect(debugSpy).toHaveBeenCalled();
-            const call = debugSpy.mock.calls.find(
-                (c: unknown[]) => typeof (c[0] as Record<string, unknown>).taskId === 'string'
-                  && (c[0] as Record<string, unknown>).taskId === 'task-done-456'
-            );
-            expect(call).toBeDefined();
-            expect((call?.[0] as Record<string, unknown>).taskSubject).toBe('Finished task');
+            expect(debugSpy).toHaveBeenCalledWith({
+                taskId:      'task-done-456',
+                taskSubject: 'Finished task',
+                msg:         'TaskCompleted hook fired — sub-agent finished',
+            });
         });
 
         test('should always return { continue: true }', async () => {

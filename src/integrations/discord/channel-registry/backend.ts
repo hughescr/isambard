@@ -141,7 +141,6 @@ export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord>
 
         // Step 2: Extract channelId from PK and fetch full record
         const firstItem = items[0];
-        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — items.length !== 0 checked just above; unreachable in practice
         if(firstItem === undefined) {
             // Stryker disable next-line StringLiteral: invariant violation message — debug context only
             throw new InvariantViolationError('getWellKnownChannelByType', 'items[0] undefined despite items.length !== 0');

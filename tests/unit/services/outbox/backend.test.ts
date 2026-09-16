@@ -110,6 +110,8 @@ describe('OutboxBackend', () => {
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls).toHaveLength(1);
             const input = calls[0].args[0].input;
+            expect(input.KeyConditionExpression).toBe('#pk = :pk');
+            expect(input.ExpressionAttributeNames).toEqual({ '#pk': 'PK' });
             expect(input.ExpressionAttributeValues).toMatchObject({ ':pk': 'OUTBOX#discord' });
             expect(input.Limit).toBe(10);
             expect(input.ScanIndexForward).toBe(true);

@@ -10,6 +10,10 @@ describe.concurrent('checkVerificationResults', () => {
         expect(checkVerificationResults({ spf: 'example.com', dkim: 'example.com' }, '')).toEqual({ spfPass: false, dkimPass: false });
     });
 
+    test('empty fromAddress does not match empty verification values', () => {
+        expect(checkVerificationResults({ spf: '', dkim: '' }, '')).toEqual({ spfPass: false, dkimPass: false });
+    });
+
     test('spf domain matches from domain → spfPass true', () => {
         expect(checkVerificationResults({ spf: 'example.com' }, 'alice@example.com')).toEqual({ spfPass: true, dkimPass: false });
     });
@@ -52,5 +56,18 @@ describe.concurrent('checkVerificationResults', () => {
 
     test('angle-bracket fromAddress is stripped before domain extraction', () => {
         expect(checkVerificationResults({ spf: 'example.com' }, '<alice@example.com>')).toEqual({ spfPass: true, dkimPass: false });
+    });
+
+    test('trims whitespace around an angle-bracket address before extracting the domain', () => {
+        expect(checkVerificationResults({ spf: 'example.com' }, '  <alice@example.com>  ')).toEqual({ spfPass: true, dkimPass: false });
+    });
+
+    test('does not remove non-envelope angle brackets from a bare domain', () => {
+        expect(checkVerificationResults({ spf: 'example<.com' }, 'example<.com')).toEqual({ spfPass: true, dkimPass: false });
+        expect(checkVerificationResults({ dkim: 'example>.com' }, 'example>.com')).toEqual({ spfPass: false, dkimPass: true });
+    });
+
+    test('accepts a bare domain as the From domain', () => {
+        expect(checkVerificationResults({ spf: 'example.com', dkim: 'example.com' }, 'example.com')).toEqual({ spfPass: true, dkimPass: true });
     });
 });

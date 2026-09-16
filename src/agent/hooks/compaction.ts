@@ -37,7 +37,6 @@ export function createCompactionHooks(sink: CompactionSink): Partial<Record<Hook
                 hooks: [
                     async (input): Promise<{ 'continue': boolean }> => {
                         const preInput = input as PreCompactHookInput;
-                        // Stryker disable StringLiteral,ObjectLiteral: Observability — logging only
                         logger.info({
                             session_id:      preInput.session_id,
                             hook_event_name: preInput.hook_event_name,
@@ -48,7 +47,6 @@ export function createCompactionHooks(sink: CompactionSink): Partial<Record<Hook
 
                         // Report to the sink so it can do whatever it does (e.g. fold the trigger
                         // into the session ledger).
-                        // Stryker disable BlockStatement: Sink side effect — outcome doesn't affect return value
                         try {
                             sink.onCompactionStart(preInput.trigger);
                         } catch{
@@ -73,7 +71,6 @@ export function createCompactionHooks(sink: CompactionSink): Partial<Record<Hook
                         // SDKCompactBoundaryMessage (compact_metadata.pre_tokens), which is
                         // already logged by logSystemEvent() in stream-event-logger.ts. No token
                         // logging here.
-                        // Stryker disable StringLiteral,ObjectLiteral: Observability — logging only
                         logger.info({
                             session_id:      postInput.session_id,
                             hook_event_name: postInput.hook_event_name,
@@ -85,7 +82,6 @@ export function createCompactionHooks(sink: CompactionSink): Partial<Record<Hook
 
                         // Report to the sink (e.g. record the compaction summary in the session
                         // ledger).
-                        // Stryker disable BlockStatement: Sink side effect — outcome doesn't affect return value
                         try {
                             sink.onCompactionEnd(postInput.compact_summary);
                         } catch{

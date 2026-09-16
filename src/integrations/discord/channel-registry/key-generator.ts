@@ -19,7 +19,6 @@ export interface ChannelRegistryKeys {
     GSI2SK?: string
 }
 
-// Stryker disable StringLiteral: PK/SK key constants are configuration values
 const PREFIX_CHANNEL   = 'CHANNEL';
 const PREFIX_GUILD     = 'GUILD';
 const PREFIX_WELLKNOWN = 'WELLKNOWN';
@@ -51,13 +50,9 @@ export const ChannelRegistryKeyGenerator = {
      */
     createKeys(channelId: string, guildId: string): ChannelRegistryKeys {
         return {
-            // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
             PK:     createPrefixedKey(PREFIX_CHANNEL, channelId),
-            // Stryker disable next-line StringLiteral: SK key constant is a configuration value
             SK:     SK_METADATA,
-            // Stryker disable next-line StringLiteral: GSI1PK key constant is a configuration value
             GSI1PK: createPrefixedKey(PREFIX_GUILD, guildId),
-            // Stryker disable next-line StringLiteral: GSI1SK key constant is a configuration value
             GSI1SK: createPrefixedKey(PREFIX_CHANNEL, channelId),
         };
     },
@@ -79,9 +74,7 @@ export const ChannelRegistryKeyGenerator = {
      */
     createWellKnownKeys(type: string): Pick<ChannelRegistryKeys, 'GSI2PK' | 'GSI2SK'> {
         return {
-            // Stryker disable next-line StringLiteral: GSI2PK key constant is a configuration value
             GSI2PK: createPrefixedKey(PREFIX_WELLKNOWN, type),
-            // Stryker disable next-line StringLiteral: GSI2SK key constant is a configuration value
             GSI2SK: GSI2SK_CHANNEL,
         };
     },
@@ -101,7 +94,6 @@ export const ChannelRegistryKeyGenerator = {
      */
     parseChannelId(pk: string): string {
         if(!pk.startsWith('CHANNEL#')) {
-            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
             throw new InvariantViolationError('parseChannelId', `Invalid PK format: expected CHANNEL#..., got ${pk}`);
         }
         return parsePrefixedKey(PREFIX_CHANNEL, pk);
@@ -126,11 +118,9 @@ export const ChannelRegistryKeyGenerator = {
      */
     parseGuildKeys(gsi1pk: string, gsi1sk: string): { guildId: string, channelId: string } {
         if(!gsi1pk.startsWith('GUILD#')) {
-            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
             throw new InvariantViolationError('parseGuildKeys', `Invalid GSI1PK format: expected GUILD#..., got ${gsi1pk}`);
         }
         if(!gsi1sk.startsWith('CHANNEL#')) {
-            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
             throw new InvariantViolationError('parseGuildKeys', `Invalid GSI1SK format: expected CHANNEL#..., got ${gsi1sk}`);
         }
 

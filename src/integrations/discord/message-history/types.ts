@@ -1,4 +1,3 @@
-// Stryker disable StringLiteral: All .describe() calls in this file are documentation only
 import { z } from 'zod';
 import { channelIdSchema, guildIdSchema } from '@/integrations/discord/types';
 

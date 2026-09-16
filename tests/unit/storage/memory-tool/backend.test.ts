@@ -9,6 +9,7 @@ import {
     UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { mockLogger } from '../../../setup';
 import { ItemNotFoundError, ValidationError } from '@/errors/storage';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryToolItemData, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
@@ -20,6 +21,7 @@ describe('MemoryToolBackend', () => {
 
     beforeEach(() => {
         ddbMock.reset();
+        mockLogger.warn.mockClear();
         backend = new MemoryToolBackend(
             ddbMock as unknown as DynamoDBDocumentClient,
             'TestTable'
@@ -404,6 +406,42 @@ describe('MemoryToolBackend', () => {
         const testPath = '/state/test-file.md' as MemoryPath;
 
         describe('create with tags', () => {
+            test('uses the unknown layer for a valid path outside configured layers', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                const path = '/other/note.md' as MemoryPath;
+
+                await backend.create({
+                    path,
+                    content:     'Unclassified memory',
+                    contentType: 'text/markdown',
+                    tags:        new Set(['important']),
+                });
+
+                const request = ddbMock.commandCalls(BatchWriteCommand)[0]?.args[0].input.RequestItems?.TestTable[0];
+                expect(request?.PutRequest?.Item?.layer).toBe('unknown');
+            });
+
+            test('preserves the memory write and reports malformed tag-index retries', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: { TestTable: [{ PutRequest: { Item: { PK: 123 } } }] },
+                });
+
+                const result = await backend.create({
+                    path:        testPath,
+                    content:     'Body to preserve',
+                    contentType: 'text/markdown',
+                    tags:        new Set(['important']),
+                });
+
+                expect(result.content).toBe('Body to preserve');
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    path:  testPath,
+                    msg:   'Failed to create tag index items',
+                    error: expect.objectContaining({ context: { location: 'failedTagFromRequest', invariant: expect.any(String) } }),
+                }));
+            });
+
             test('should create tag index items when tags are present', async () => {
                 ddbMock.on(PutCommand).resolves({});
 
@@ -490,6 +528,39 @@ describe('MemoryToolBackend', () => {
                 createdAt: '2024-01-01T00:00:00.000Z',
                 updatedAt: '2024-01-01T00:00:00.000Z',
             };
+
+            test('preserves the unknown layer when refreshing an unclassified memory', async () => {
+                const path = '/other/test-file.md' as MemoryPath;
+                ddbMock.on(GetCommand).resolves({ Item: {
+                    ...existingItem,
+                    PK:     'DIR#/other',
+                    GSI1PK: 'LAYER#other',
+                    path,
+                } });
+                ddbMock.on(PutCommand).resolves({});
+
+                await backend.update(path, { content: 'Updated content' });
+
+                const requests = ddbMock.commandCalls(BatchWriteCommand).flatMap(call => call.args[0].input.RequestItems?.TestTable ?? []);
+                expect(requests.some(request => request.PutRequest?.Item?.layer === 'unknown')).toBe(true);
+            });
+
+            test('preserves an updated memory and reports malformed tag-index retries', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                ddbMock.on(PutCommand).resolves({});
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: { TestTable: [{ PutRequest: { Item: { PK: 123 } } }] },
+                });
+
+                const result = await backend.update(testPath, { tags: new Set(['newtag']) });
+
+                expect(result.tags).toEqual(new Set(['newtag']));
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    path:  testPath,
+                    msg:   'Failed to update tag index items',
+                    error: expect.any(Error),
+                }));
+            });
 
             test('should update tag index items when tags change', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingItem });
@@ -599,6 +670,23 @@ describe('MemoryToolBackend', () => {
                 createdAt: '2024-01-01T00:00:00.000Z',
                 updatedAt: '2024-01-01T00:00:00.000Z',
             };
+
+            test('returns the deleted memory and reports malformed tag-index retries', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingWithTags });
+                ddbMock.on(DeleteCommand).resolves({});
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: { TestTable: [{ DeleteRequest: { Key: { PK: 123 } } }] },
+                });
+
+                const result = await backend.delete(testPath);
+
+                expect(result?.path).toBe(testPath);
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    path:  testPath,
+                    msg:   'Failed to delete tag index items',
+                    error: expect.any(Error),
+                }));
+            });
 
             test('should delete tag index items when memory is deleted', async () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingWithTags });
@@ -806,6 +894,23 @@ describe('MemoryToolBackend', () => {
         }
 
         describe('create', () => {
+            test('marks an unclassified path as unknown in the indexer job', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithIndexer = makeBackendWithIndexer();
+
+                await backendWithIndexer.create({
+                    path:        '/other/note.md' as MemoryPath,
+                    content:     'Unclassified memory',
+                    contentType: 'text/markdown',
+                });
+
+                expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({
+                    kind:  'upsert',
+                    layer: 'unknown',
+                    path:  '/other/note.md',
+                }));
+            });
+
             test('calls indexer.enqueue with upsert job after successful create', async () => {
                 ddbMock.on(PutCommand).resolves({});
                 const backendWithIndexer = makeBackendWithIndexer();
@@ -815,8 +920,7 @@ describe('MemoryToolBackend', () => {
                     contentType: 'text/plain',
                 });
                 expect(enqueueMock).toHaveBeenCalledTimes(1);
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; mock.calls is guaranteed non-empty after toHaveBeenCalledTimes(1)
-                const job = enqueueMock.mock.calls[0]![0] as { kind: string, path: string, content: string, layer: string };
+                const job = enqueueMock.mock.calls[0][0] as { kind: string, path: string, content: string, layer: string };
                 expect(job.kind).toBe('upsert');
                 expect(job.path).toBe('/identity/foo');
                 expect(job.content).toBe('hello world');
@@ -847,6 +951,11 @@ describe('MemoryToolBackend', () => {
                     contentType: 'text/plain',
                 });
                 expect(createPromise).resolves.toBeDefined();
+                await createPromise;
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    msg:   'MemoryToolBackend: indexer.enqueue failed, ignoring',
+                    error: expect.objectContaining({ message: 'indexer failure' }),
+                }));
             });
         });
 
@@ -871,8 +980,7 @@ describe('MemoryToolBackend', () => {
                 const backendWithIndexer = makeBackendWithIndexer();
                 await backendWithIndexer.update('/identity/foo' as MemoryPath, { content: 'new content' });
                 expect(enqueueMock).toHaveBeenCalledTimes(1);
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; mock.calls is guaranteed non-empty after toHaveBeenCalledTimes(1)
-                const job = enqueueMock.mock.calls[0]![0] as { kind: string, content: string };
+                const job = enqueueMock.mock.calls[0][0] as { kind: string, content: string };
                 expect(job.kind).toBe('upsert');
                 expect(job.content).toBe('new content');
             });
@@ -910,8 +1018,7 @@ describe('MemoryToolBackend', () => {
                 const backendWithIndexer = makeBackendWithIndexer();
                 await backendWithIndexer.delete('/identity/foo' as MemoryPath);
                 expect(enqueueMock).toHaveBeenCalledTimes(1);
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; mock.calls is guaranteed non-empty after toHaveBeenCalledTimes(1)
-                const job = enqueueMock.mock.calls[0]![0];
+                const job = enqueueMock.mock.calls[0][0];
                 expect((job as { kind: string }).kind).toBe('delete');
             });
 

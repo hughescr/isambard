@@ -4,7 +4,7 @@ import { logger } from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendQuery } from '@/storage/memory-tool/backend-query';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
-import type { MemoryToolItem, MemoryPath } from '@/storage/memory-tool/types';
+import type { MemoryToolItem, MemoryPath, StoredMemoryToolItem, LayerName } from '@/storage/memory-tool/types';
 import { stripDynamoKeys } from '@/storage/utils/strip-keys';
 
 describe('MemoryToolBackendQuery - list', () => {
@@ -29,6 +29,48 @@ describe('MemoryToolBackendQuery - list', () => {
     afterEach(() => {
         ddbMock.reset();
     });
+
+    for(const [name, read] of [
+        ['list', () => queryOps.list('/state').then(result => result.items)],
+        ['listByLayer', () => queryOps.listByLayer('state' as LayerName).then(result => result.items)],
+        ['searchByTimeRange', () => queryOps.searchByTimeRange('2024-01-01T00:00:00.000Z', '2024-01-03T00:00:00.000Z', 'state' as LayerName)],
+        ['searchSince', () => queryOps.searchSince('2024-01-01T00:00:00.000Z', 'state' as LayerName)],
+    ] as const) {
+        test(`${name} restores nullish legacy metadata without changing current metadata`, async () => {
+            const legacy: StoredMemoryToolItem = {
+                PK:          'DIR#/state',
+                SK:          'FILE#legacy.md',
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/state/legacy.md' as MemoryPath,
+                content:     'Legacy',
+                contentType: 'text/markdown',
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+            const current: MemoryToolItem = {
+                ...legacy,
+                SK:       'FILE#current.md',
+                path:     '/state/current.md' as MemoryPath,
+                metadata: { retained: true },
+            };
+            const nullMetadata: StoredMemoryToolItem = {
+                ...legacy,
+                SK:       'FILE#null.md',
+                path:     '/state/null.md' as MemoryPath,
+                metadata: null,
+            };
+            ddbMock.on(QueryCommand).resolves({ Items: [legacy, nullMetadata, current] });
+
+            const items = await read();
+            expect(items).toHaveLength(3);
+            expect(items.find(item => item.path === legacy.path)?.metadata).toEqual({});
+            expect(items.find(item => item.path === nullMetadata.path)?.metadata).toEqual({});
+            expect(items.find(item => item.path === current.path)?.metadata).toEqual({ retained: true });
+            expect(items.every(item => !Object.hasOwn(item, 'PK'))).toBe(true);
+            expect(legacy).not.toHaveProperty('metadata');
+        });
+    }
 
     test('should query with correct PK and KeyConditionExpression', async () => {
         ddbMock.on(QueryCommand).resolves({ Items: [] });

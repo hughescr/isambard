@@ -2,7 +2,6 @@ import type { FetchedImage } from '../types';
 import type { SceneInfo, BinarySpawnRunner } from './types';
 import { InvariantViolationError } from '@/errors';
 
-// Stryker disable next-line ArithmeticOperator: concurrency limit is configuration
 const FRAME_EXTRACT_CONCURRENCY = 4;
 
 /** Run fn over items with at most concurrency items in flight at once. */
@@ -11,17 +10,13 @@ async function mapWithConcurrency<T, R>(
     concurrency: number,
     fn:          (item: T) => Promise<R>
 ): Promise<R[]> {
-    // Stryker disable next-line ArrayDeclaration: Array.from structural initialization — equivalent mutations break results shape
     const results: R[] = Array.from({ length: items.length });
     let index = 0;
-    // Stryker disable BlockStatement: worker body is tested via results array — Stryker cannot isolate the loop internals
     async function worker(): Promise<void> {
         while(index < items.length) {
             const i = index++;
             const item = items[i];
-            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — i was index when < items.length so items[i] exists; unreachable in practice
             if(item === undefined) {
-                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
                 throw new InvariantViolationError('mapWithConcurrency', 'items[i] undefined despite i < items.length');
             }
             // eslint-disable-next-line no-await-in-loop -- sequential within each worker is intentional
@@ -29,7 +24,6 @@ async function mapWithConcurrency<T, R>(
         }
     }
     // Stryker restore BlockStatement
-    // Stryker disable next-line ArrayDeclaration,MethodExpression: Array.from structural initialization — Math.min/max produce same results (both yield all items), min just avoids excess workers
     await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
     return results;
 }
@@ -40,7 +34,6 @@ async function extractFrameAt(
     timestamp: number,
     run:       BinarySpawnRunner
 ): Promise<FetchedImage | null> {
-    // Stryker disable StringLiteral: ffmpeg command arguments are configuration
     const result = await run([
         'ffmpeg',
         '-ss', String(timestamp),
@@ -50,15 +43,12 @@ async function extractFrameAt(
         '-vcodec', 'png',
         'pipe:1',
     ]);
-    // Stryker restore StringLiteral
 
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: empty stdout check — exitCode 0 with empty stdout is a degenerate failure case
     if(result.exitCode !== 0 || result.stdout.length === 0) {
         return null;
     }
 
     return {
-        // Stryker disable next-line StringLiteral: filename template is informational
         filename:     `frame-${timestamp.toFixed(3)}s.png`,
         mediaType:    'image/png',
         base64Data:   result.stdout.toString('base64'),
@@ -75,7 +65,6 @@ export async function extractSceneFrames(
     frameRate: number,
     run:       BinarySpawnRunner
 ): Promise<FetchedImage[]> {
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: frameRate <= 0 guard — both branches produce same result for valid non-negative frameRate
     const frameOffset = frameRate > 0 ? 1 / frameRate : 0;
 
     const timestamps: number[] = [];
@@ -128,7 +117,6 @@ export async function extractFramesInRange(
         timestamps.push((startTime + endTime) / 2);
     } else {
         const step = (endTime - startTime) / (count - 1);
-        // Stryker disable next-line UpdateOperator: i-- infinite loop — Stryker cannot test decrementing loop counters
         for(let i = 0; i < count; i++) {
             timestamps.push(startTime + i * step);
         }

@@ -71,9 +71,8 @@ export class CheckpointManager {
      */
     private serializeChannelWrites<T>(channelId: ChannelId, fn: () => Promise<T>): Promise<T> {
         const previous = this.channelWriteChains.get(channelId) ?? Promise.resolve();
-        // eslint-disable-next-line no-restricted-syntax -- sequencing only: a prior write's failure must not block this write from starting; that prior write's own error already propagated to its own caller via the promise `serializeChannelWrites` returned for it
-        const settled = previous.catch(() => undefined);
-        const result = settled.then(fn);
+        // The stored tail below always resolves, including when its caller's write rejects.
+        const result = previous.then(fn);
         // eslint-disable-next-line no-restricted-syntax -- sequencing only: stored purely as a tail marker so the NEXT write for this channel waits for this one; this write's real outcome is returned to its own caller via `result`, not swallowed
         this.channelWriteChains.set(channelId, result.catch(() => undefined));
         return result;
@@ -85,28 +84,22 @@ export class CheckpointManager {
      */
     private parseCheckpoint(channelId: ChannelId, content: string): DiscordChannelCheckpoint | undefined {
         let rawParsed: unknown;
-        // Stryker disable BlockStatement: catch block is equivalent to empty — both paths return undefined via schema failure, differing only in which warn message fires
         try {
             rawParsed = JSON.parse(content);
         } catch (error) {
-            // Stryker disable next-line ObjectLiteral: Logger warn object for observability
             logger.warn({
                 channelId,
                 err: error,
-                // Stryker disable next-line StringLiteral: log message is informational only
                 msg: 'Checkpoint data is corrupt: failed to parse JSON',
             });
             return undefined;
         }
-        // Stryker restore BlockStatement
 
         const parseResult = discordChannelCheckpointSchema.safeParse(rawParsed);
         if(!parseResult.success) {
-            // Stryker disable next-line ObjectLiteral: Logger warn object for observability
             logger.warn({
                 channelId,
                 issues: parseResult.error.issues,
-                // Stryker disable next-line StringLiteral: log message is informational only
                 msg:    'Checkpoint data is corrupt: schema validation failed',
             });
             return undefined;
@@ -337,22 +330,16 @@ export class CheckpointManager {
 
         for(const item of result.items) {
             // Only include checkpoint files (not other items in channel directories) - tested with non-checkpoint path test
-            // Stryker disable next-line StringLiteral: path.endsWith('') is always true - equivalent mutant; ConditionalExpression tested by 'should skip non-checkpoint items' test
             if(item.path.endsWith('/checkpoint')) {
-                // Stryker disable BlockStatement: Error handling for corrupted/invalid data - tested with invalid JSON test case
                 try {
                     // Parse and validate with Zod
                     const parsed: unknown = JSON.parse(item.content);
                     const checkpoint = discordChannelCheckpointSchema.parse(parsed);
                     checkpoints.push(checkpoint);
                 } catch{
-                    // Silent: malformed or schema-invalid checkpoint data (truncated write,
-                    // format migration). Skipping the item and continuing means the inbox
-                    // will re-scan that channel from scratch rather than crashing startup.
-                    // The channel will catch up normally on the next session.
-                    continue;
+                    // Malformed or schema-invalid checkpoint data is skipped. Reaching the next
+                    // loop iteration naturally keeps startup alive and re-scans that channel.
                 }
-                // Stryker restore BlockStatement
             }
         }
 

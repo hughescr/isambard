@@ -1,4 +1,3 @@
-// Stryker disable all: CLI entry-point with external dependencies (DynamoDB, SST, process.argv); not unit-testable in isolation
 /**
  * Backfill CLI for CONTACT_LOOKUP GSI2 keys.
  *
@@ -31,6 +30,7 @@ import {
     type QueryPageFn,
     type ProcessContactsFn,
     parseArgs,
+    createUpdateRateLimiter,
     processContacts,
     runBackfillLoop
 } from './backfill-contact-lookup-gsi2-core';
@@ -61,22 +61,48 @@ const GSI2PK_CONTACTS = 'CONTACTS';
 /** Number of contact profiles to fetch per Query page (each may have several identifiers) */
 const CONTACTS_PAGE_LIMIT = 50;
 
-async function main(): Promise<void> {
-    const opts = parseArgs(process.argv);
+interface BackfillCliRuntime {
+    docClient:  ReturnType<typeof createDynamoDBClient>['docClient']
+    tableName:  string
+    keepAlive?: DynamoDBClientHolder
+}
+
+export interface BackfillCliDeps {
+    loadRuntime?: () => BackfillCliRuntime
+    write?:       (text: string) => void
+    paceUpdates?: () => Promise<void>
+    sleep?:       (ms: number) => Promise<void>
+}
+
+/** The CLI's real backoff timer, kept separate from the injectable run boundary. */
+export function backfillSleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
+
+export async function runBackfillCli(argv: string[], deps: BackfillCliDeps = {}): Promise<void> {
+    const opts = parseArgs(argv);
+    const write = deps.write ?? ((text: string) => {
+        process.stdout.write(text);
+    });
 
     if(opts.showHelp) {
-        process.stdout.write(HELP_TEXT);
+        write(HELP_TEXT);
         return;
     }
 
-    const dynamoDBConfig = loadDynamoDBConfig(Resource);
-    const { client, docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
-    // DynamoDBClientHolder keeps client references alive; suppress unused-expression lint via assignment
-    const _holder = new DynamoDBClientHolder(client, docClient);
+    const loadRuntime = deps.loadRuntime ?? (() => {
+        const dynamoDBConfig = loadDynamoDBConfig(Resource);
+        const { client, docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
+        return { docClient, tableName, keepAlive: new DynamoDBClientHolder(client, docClient) };
+    });
+    const runtime = loadRuntime();
+    const { docClient, tableName } = runtime;
 
-    process.stdout.write(`Querying CONTACTS GSI2 partition in table: ${tableName}\n`);
+    write(`Querying CONTACTS GSI2 partition in table: ${tableName}\n`);
     if(opts.dryRun) {
-        process.stdout.write('[DRY RUN] No writes will be performed.\n');
+        write('[DRY RUN] No writes will be performed.\n');
     }
 
     const MAX_CONSECUTIVE_FAILURES = 5;
@@ -97,11 +123,12 @@ async function main(): Promise<void> {
         };
     };
 
+    const paceUpdates = deps.paceUpdates ?? createUpdateRateLimiter();
     const doProcessContacts: ProcessContactsFn = items =>
-        processContacts(items, tableName, docClient, opts.dryRun);
+        processContacts(items, tableName, docClient, opts.dryRun, paceUpdates);
 
     const onSummary = (stats: BackfillStats, _lastCursor: Record<string, unknown> | undefined): void => {
-        process.stdout.write(`
+        write(`
 Backfill complete:
   Contacts scanned: ${stats.totalScanned}
   Lookup rows updated: ${stats.totalUpdated}
@@ -110,15 +137,11 @@ Backfill complete:
 `);
     };
 
-    const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-    });
-
     const finalStats = await runBackfillLoop(
         queryPage,
         doProcessContacts,
         onSummary,
-        sleep,
+        deps.sleep ?? backfillSleep,
         MAX_CONSECUTIVE_FAILURES,
         CONSECUTIVE_FAILURE_BASE_BACKOFF_MS
     );
@@ -128,4 +151,6 @@ Backfill complete:
     }
 }
 
-await main();
+if(import.meta.main) {
+    await runBackfillCli(process.argv);
+}

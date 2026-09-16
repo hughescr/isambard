@@ -12,6 +12,7 @@ import { describe, it, expect, mock, beforeEach, jest, afterEach } from 'bun:tes
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
 import { makeHealthRegistry } from '../../../../helpers/fake-health-registry';
+import { mockLogger } from '../../../../setup';
 import type { NotifyParams } from '@/agent';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { BlueskyClient } from '@/integrations/bsky';
@@ -43,6 +44,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
     let options: BskySetupOptions;
 
     beforeEach(() => {
+        mockLogger.info.mockClear();
         options = {
             bskyClient:            { getPost: mock(async () => { throw new Error('no post'); }) } as unknown as BlueskyClient,
             docClient:             makeMockDocClient(),
@@ -82,7 +84,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
         const result = await setupBsky(options);
 
         // Call sendApprovalRequest — it will call isSendableChannel with the string
-        expect(
+        await expect(
             result.sendApprovalRequest('hello', '@user.bsky.social', 'at://uri', 'cid123')
         ).rejects.toBeInstanceOf(ChannelNotAccessibleError);
     });
@@ -96,9 +98,17 @@ describe('setupBsky — isSendableChannel type guard', () => {
 
         const result = await setupBsky(options);
 
-        expect(
+        await expect(
             result.sendApprovalRequest('hello', '@user.bsky.social', 'at://uri', 'cid123')
         ).rejects.toBeInstanceOf(ChannelNotAccessibleError);
+    });
+
+    it('throws ChannelNotAccessibleError when the DM approval channel is not sendable', async () => {
+        options.client = { channels: { fetch: mock(async () => null) } } as unknown as Client;
+        const result = await setupBsky(options);
+
+        await expect(result.sendDMApprovalRequest('hello', ['@user.bsky.social'], 'convo-1'))
+            .rejects.toBeInstanceOf(ChannelNotAccessibleError);
     });
 
     it('sends message when channel.fetch returns a sendable channel (object with send method)', async () => {
@@ -114,6 +124,95 @@ describe('setupBsky — isSendableChannel type guard', () => {
         await result.sendApprovalRequest('hello', '@user.bsky.social', 'at://uri', 'cid123');
 
         expect(mockSend).toHaveBeenCalledTimes(1);
+        expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({
+            embeds: expect.any(Array), components: expect.any(Array),
+        }));
+    });
+
+    it('retries a transient approval-send failure through the injected sleep dependency', async () => {
+        const sleep = mock(async (_ms: number) => {});
+        const send = mock(async () => {
+            if(send.mock.calls.length === 1) {
+                throw new Error('temporary Discord failure');
+            }
+        });
+        options._deps = { sleep };
+        options.client = { channels: { fetch: mock(async () => ({ send })) } } as unknown as Client;
+
+        const result = await setupBsky(options);
+
+        await result.sendApprovalRequest('hello', '@user.bsky.social', 'at://uri', 'cid123');
+
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(sleep).toHaveBeenCalledTimes(1);
+        expect(sleep.mock.calls[0]?.[0]).toBeGreaterThan(0);
+    });
+
+    it('sends the reply approval embed and its action row through direct Discord delivery', async () => {
+        const send = mock(async () => undefined);
+        options.client = { channels: { fetch: mock(async () => ({ send })) } } as unknown as Client;
+        (options.bskyClient.getPost as ReturnType<typeof mock>).mockResolvedValue({ text: 'Parent preview' });
+        const result = await setupBsky(options);
+
+        await result.sendApprovalRequest('reply text', '@user.bsky.social', 'at://parent', 'cid');
+
+        const [payload] = send.mock.calls[0] as unknown as [{ embeds: { toJSON(): { fields?: { name: string, value: string }[] } }[], components: unknown[] }];
+        expect(payload.embeds).toHaveLength(1);
+        expect(payload.components).toHaveLength(1);
+        expect(payload.embeds[0]?.toJSON().fields?.find(field => field.name === 'Replying to')?.value).toBe('@user.bsky.social');
+    });
+
+    it('uses the capability facade for reply and DM approvals with the durable approval priority', async () => {
+        const sendToChannel = mock(async () => ({ status: 'sent' as const }));
+        options.discordCapability = { sendToChannel } as never;
+        (options.bskyClient.getPost as ReturnType<typeof mock>).mockResolvedValue({ text: 'Parent preview ✓' });
+        const result = await setupBsky(options);
+
+        await result.sendApprovalRequest('reply text', '@user.bsky.social', 'at://parent', 'cid');
+        await result.sendDMApprovalRequest('dm text', ['@first.bsky.social', '@second.bsky.social'], 'convo');
+
+        expect(sendToChannel).toHaveBeenCalledTimes(2);
+        const calls = sendToChannel.mock.calls as unknown as [string, { embeds: { toJSON(): { fields?: { name: string, value: string }[] } }[], components: { components: unknown[] }[] }, unknown][];
+        for(const call of calls) {
+            expect(call[0]).toBe('admin-channel-id');
+            expect(call[1].embeds).toHaveLength(1);
+            expect(call[1].components).toHaveLength(1);
+            expect(call[1].components[0]?.components).toHaveLength(3);
+            expect(call[2]).toEqual({ priority: 'high', type: 'bsky_approval' });
+        }
+        expect(calls[0]?.[1].embeds[0]?.toJSON().fields?.find(field => field.name === 'Parent Post')?.value)
+            .toBe('Parent preview ✓');
+        expect(calls[1]?.[1].embeds[0]?.toJSON().fields?.find(field => field.name === 'Recipients')?.value)
+            .toBe(JSON.stringify(['@first.bsky.social', '@second.bsky.social']));
+    });
+
+    it('uses the direct Discord send contract when the capability is unavailable', async () => {
+        const send = mock(async () => undefined);
+        const fetch = mock(async () => ({ send }));
+        options.client = { channels: { fetch } } as unknown as Client;
+        const result = await setupBsky(options);
+
+        await result.sendDMApprovalRequest('dm text', ['@first.bsky.social'], 'convo');
+
+        expect(fetch).toHaveBeenCalledWith('admin-channel-id');
+        expect(send).toHaveBeenCalledTimes(1);
+        const [payload] = send.mock.calls[0] as unknown as [{ embeds: { toJSON(): { fields?: { name: string, value: string }[] } }[], components: { components: unknown[] }[] }];
+        expect(payload.embeds).toHaveLength(1);
+        expect(payload.components).toHaveLength(1);
+        expect(payload.components[0]?.components).toHaveLength(3);
+        expect(payload.embeds[0]?.toJSON().fields?.find(field => field.name === 'Recipients')?.value)
+            .toBe(JSON.stringify(['@first.bsky.social']));
+    });
+
+    it('starts the outbound rate limiter at its documented 24-message capacity', async () => {
+        const { rateLimiter } = await setupBsky(options);
+        expect(rateLimiter.tokensRemaining()).toBe(24);
+    });
+
+    it('logs successful integration initialization', async () => {
+        await setupBsky(options);
+
+        expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Bluesky integration initialized' });
     });
 });
 

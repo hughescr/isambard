@@ -141,6 +141,32 @@ describe('PresenceManager Lifecycle', () => {
             clearIntervalSpy.mockRestore();
         });
 
+        it('drops an interval callback queued before leaving idle', async () => {
+            const intervalSpy = spyOn(globalThis, 'setInterval');
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            const queuedCallback = intervalSpy.mock.calls[0]?.[0] as (() => void) | undefined;
+            expect(queuedCallback).toBeDefined();
+            const idleCalls = mockIdleGenerator.generate.mock.calls.length;
+
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            queuedCallback?.();
+            await Promise.resolve();
+
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCalls);
+            expect(mockClient.user.setActivity).toHaveBeenLastCalledWith({
+                name: 'Status for thinking', type: ActivityType.Custom,
+            });
+            intervalSpy.mockRestore();
+        });
+
         it('should not trigger idle refresh in start() - caller must explicitly transition', async () => {
             const manager = new PresenceManager({
                 discordClient:         mockClient as unknown as Client,
@@ -301,6 +327,30 @@ describe('PresenceManager Lifecycle', () => {
                 { phase },
                 'Updating presence phase'
             );
+        });
+
+        it('serializes the idle timestamp in the phase log without changing the phase', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+            const since = new Date('2025-01-02T03:04:05.000Z');
+
+            const phase: PresencePhase = { type: 'idle', since };
+
+            await manager.updatePhase(phase);
+
+            const updateCalls = (mockLogger.debug as MockWithCalls).mock.calls.filter(call => call[1] === 'Updating presence phase');
+            expect(updateCalls).toHaveLength(1);
+            const loggedPhase = (updateCalls[0]?.[0] as { phase?: { type?: unknown, since?: unknown } }).phase;
+            expect(loggedPhase).toEqual({ type: 'idle', since: expect.any(String) });
+            expect(loggedPhase?.since).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:Z|[+-]\d{2}:\d{2})$/);
+            expect(Date.parse(String(loggedPhase?.since))).toBe(since.getTime());
+            expect(phase).toEqual({ type: 'idle', since });
+            expect(phase.since).toBe(since);
         });
 
         it('should apply all updates (no throttle logging)', async () => {

@@ -37,7 +37,6 @@ export function createSessionLifecycleHooks(deps: SessionLifecycleHooksDeps): Pa
                 hooks: [
                     async (input): Promise<{ 'continue': boolean }> => {
                         const stopInput = input as StopHookInput;
-                        // Stryker disable StringLiteral,ObjectLiteral,MethodExpression: Observability — logging only, no behavior change
                         logger.info({
                             session_id:             stopInput.session_id,
                             hook_event_name:        stopInput.hook_event_name,
@@ -45,8 +44,6 @@ export function createSessionLifecycleHooks(deps: SessionLifecycleHooksDeps): Pa
                             last_assistant_message: stopInput.last_assistant_message?.slice(0, 100),
                             msg:                    'Agent session stopped normally',
                         });
-                        // Stryker restore StringLiteral,ObjectLiteral
-                        // Stryker disable OptionalChaining: Callback invocation side effect
                         onStop?.(stopInput);
                         // Stryker restore OptionalChaining
                         return { 'continue': true };
@@ -59,7 +56,6 @@ export function createSessionLifecycleHooks(deps: SessionLifecycleHooksDeps): Pa
                 hooks: [
                     async (input): Promise<{ 'continue': boolean }> => {
                         const failInput = input as StopFailureHookInput;
-                        // Stryker disable StringLiteral,ObjectLiteral: Observability — logging only, no behavior change
                         logger.error({
                             session_id:      failInput.session_id,
                             hook_event_name: failInput.hook_event_name,
@@ -67,8 +63,6 @@ export function createSessionLifecycleHooks(deps: SessionLifecycleHooksDeps): Pa
                             error_details:   failInput.error_details,
                             msg:             'Agent session stopped with failure',
                         });
-                        // Stryker restore StringLiteral,ObjectLiteral
-                        // Stryker disable OptionalChaining: Callback invocation side effect
                         onStopFailure?.(failInput);
                         // Stryker restore OptionalChaining
                         return { 'continue': true };

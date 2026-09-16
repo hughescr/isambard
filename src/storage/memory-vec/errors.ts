@@ -16,7 +16,6 @@ export class MemoryVecError extends IsambardError {
         context?: Record<string, unknown>
     ) {
         super(message, code, context);
-        // Stryker disable next-line StringLiteral: error class name is debug-only metadata
         this.name = 'MemoryVecError';
     }
 }
@@ -33,10 +32,8 @@ export class ModelFileNotFoundError extends MemoryVecError {
             `Model file not found: ${modelPath}\n`
             + `Run \`tools/generate-embedding-gguf.sh ${slug} ${quant}\` to generate it.`,
             ErrorCode.MODEL_FILE_NOT_FOUND,
-            // Stryker disable next-line ObjectLiteral: context bag is debug-only — mutation to {} doesn't affect throw behavior
             { modelPath, slug, quant }
         );
-        // Stryker disable next-line StringLiteral: error class name is debug-only metadata
         this.name = 'ModelFileNotFoundError';
     }
 }
@@ -53,20 +50,16 @@ export class IncompatibleLlamaCppError extends MemoryVecError {
     declare public readonly context: { currentBuild: number | null, minimumBuild: number };
 
     constructor(currentBuild: number | null, minimumBuild: number) {
-        // Stryker disable ConditionalExpression,StringLiteral: cosmetic message text — checked via message.toContain('unknown') / message.toContain('b8390'); remediation instructions don't affect throw behavior
         const currentDesc = currentBuild === null ? 'unknown (version file missing)' : `b${currentBuild}`;
         const message = `Bundled llama.cpp is incompatible: found ${currentDesc}, need ≥ b${minimumBuild}.\n`
           + 'Run a source build to fix:\n'
           + '  bunx node-llama-cpp source download --release b8953\n'
           + '  bunx node-llama-cpp source build';
-        // Stryker restore ConditionalExpression,StringLiteral
         super(
             message,
             ErrorCode.INCOMPATIBLE_LLAMA_CPP,
-            // Stryker disable next-line ObjectLiteral: context bag is debug-only — mutation to {} doesn't affect throw behavior
             { currentBuild, minimumBuild }
         );
-        // Stryker disable next-line StringLiteral: error class name is debug-only metadata
         this.name = 'IncompatibleLlamaCppError';
     }
 }
@@ -80,7 +73,6 @@ export class EmbedderClosedError extends MemoryVecError {
             'Embedder has been closed. Create a new Embedder with loadEmbedder().',
             ErrorCode.EMBEDDER_CLOSED
         );
-        // Stryker disable next-line StringLiteral: error class name is debug-only metadata
         this.name = 'EmbedderClosedError';
     }
 }

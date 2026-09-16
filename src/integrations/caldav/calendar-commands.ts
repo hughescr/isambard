@@ -109,8 +109,16 @@ export class CalendarCommandHandler {
             : this.handleUser(interaction, subcommand));
     }
 
+    private requiredString(interaction: ChatInputCommandInteraction, option: string): string | null {
+        return interaction.options.getString(option);
+    }
+
+    private requiredNonEmptyString(interaction: ChatInputCommandInteraction, option: string): string | null {
+        const value = this.requiredString(interaction, option);
+        return value === null || value.length === 0 ? null : value;
+    }
+
     private async handleUser(interaction: ChatInputCommandInteraction, subcommand: string): Promise<void> {
-        // Stryker disable next-line StringLiteral: Discord option name must match command definition exactly
         const targetUser = interaction.options.getUser('user');
 
         // Admin check: only admin can manage other users' calendars
@@ -190,18 +198,14 @@ export class CalendarCommandHandler {
             .setMinValues(1)
             .setMaxValues(capped.length)
             .addOptions(capped.map((c, i) => ({
-                // Stryker disable next-line MethodExpression: Discord API enforces max 100-char option labels
                 label: c.displayName.slice(0, 100),
                 value: String(i),
             })));
-        // Stryker disable next-line StringLiteral: placeholder text is cosmetic UI copy
         select.setPlaceholder('Select calendars to add');
 
         const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
-        // Stryker disable next-line StringLiteral: UI prompt text is not behavior-affecting
         let prompt = `Found ${calendars.length} calendar(s). Select which to add:`;
         if(calendars.length > 25) {
-            // Stryker disable next-line StringLiteral: UI warning text is not behavior-affecting
             prompt += `\n⚠️ Only showing the first 25 of ${calendars.length} calendars (Discord limit).`;
         }
 
@@ -210,7 +214,6 @@ export class CalendarCommandHandler {
             components: [row],
         });
 
-        // Stryker disable BlockStatement: try/catch wraps Discord collector timeout — integration boundary
         try {
             // No user filter needed — the reply is ephemeral (only the invoker can see/click it)
             const response = await message.awaitMessageComponent({
@@ -223,9 +226,7 @@ export class CalendarCommandHandler {
             // Safe: Discord only returns values we provided (String(0)..String(capped.length-1))
             return selectedIndices.map((idx) => {
                 const cal = capped[Number(idx)];
-                // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — Discord should only return indices we provided; catches malformed or adversarial Discord payload values
                 if(cal === undefined) {
-                    // Stryker disable next-line StringLiteral,ArithmeticOperator: invariant violation message — debug context only; capped.length - 1 is message-only
                     throw new InvariantViolationError('selectCalendars', `Discord returned calendar index ${idx} outside provided range [0..${String(capped.length - 1)}]`);
                 }
                 return cal;
@@ -233,15 +234,12 @@ export class CalendarCommandHandler {
         } catch (error: unknown) {
             const isTimeout = error instanceof Error && error.message.includes('reason: time');
             if(isTimeout) {
-                // Stryker disable next-line StringLiteral: UI timeout message is not behavior-affecting
                 await interaction.editReply({
                     content:    `Calendar selection timed out. Run \`${retryCommand}\` again to retry.`,
                     components: [],
                 });
             } else {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
                 logger.error({ error }, 'Calendar selection failed unexpectedly');
-                // Stryker disable next-line StringLiteral: UI error message is not behavior-affecting
                 await interaction.editReply({
                     content:    `Calendar selection failed. Run \`${retryCommand}\` again to retry.`,
                     components: [],
@@ -253,16 +251,16 @@ export class CalendarCommandHandler {
     }
 
     private async handleAddServer(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const serverUrl   = interaction.options.getString('server_url') ?? '';
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const username    = interaction.options.getString('username') ?? '';
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const password    = interaction.options.getString('password') ?? '';
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const description = interaction.options.getString('description') ?? '';
+        const serverUrl   = this.requiredNonEmptyString(interaction, 'server_url');
+        const username    = this.requiredString(interaction, 'username');
+        const password    = this.requiredString(interaction, 'password');
+        const description = this.requiredNonEmptyString(interaction, 'description');
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
+        if(serverUrl === null || username === null || password === null || description === null) {
+            await interaction.editReply({ content: 'Missing required calendar server details.' });
+            return;
+        }
+
         try {
             const calendars = await this.caldavClient.discoverCalendars(serverUrl, username, password);
 
@@ -271,7 +269,6 @@ export class CalendarCommandHandler {
                 return;
             }
 
-            // Stryker disable next-line StringLiteral: command hint is cosmetic retry instruction text
             const selected = await this.selectCalendars(interaction, calendars, '/calendar add-server');
             if(!selected) {
                 return;
@@ -290,14 +287,12 @@ export class CalendarCommandHandler {
                 })),
             });
 
-            // Stryker disable next-line StringLiteral: join separator is cosmetic formatting
             const calList = selected.map(c => `  - ${c.displayName}`).join('\n');
             await interaction.editReply({
                 content:    `Added server "${description}" with ${selected.length} calendar(s):\n${calList}`,
                 components: [],
             });
         } catch (error: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
             logger.error({ error, serverUrl }, 'Failed to add calendar server');
             const message = error instanceof Error ? error.message : String(error);
             await interaction.editReply({ content: `Failed to add server: ${message}`, components: [] });
@@ -306,7 +301,6 @@ export class CalendarCommandHandler {
     }
 
     private async handleList(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const record = await this.registry.getUserRecord(userId);
 
@@ -316,15 +310,12 @@ export class CalendarCommandHandler {
             }
 
             const lines = record.servers.map((s) => {
-                // Stryker disable next-line StringLiteral: join separator is cosmetic formatting
                 const calLines = s.calendars.map(c => `  - ${c.label} (${c.calendarPath})`).join('\n');
                 return `**${s.description}** (${s.serverId}):\n${calLines}`;
             });
 
-            // Stryker disable next-line StringLiteral: join separator is cosmetic formatting
             await interaction.editReply({ content: lines.join('\n\n') });
         } catch (error: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
             logger.error({ error, userId }, 'Failed to list calendars');
             await interaction.editReply({ content: 'Failed to list calendars.' });
         }
@@ -332,30 +323,28 @@ export class CalendarCommandHandler {
     }
 
     private async handleRemoveServer(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - server_id is required
-        const serverInput = interaction.options.getString('server_id') ?? '';
+        const serverInput = this.requiredNonEmptyString(interaction, 'server_id');
+        if(serverInput === null) {
+            await interaction.editReply({ content: 'Missing required server ID.' });
+            return;
+        }
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const record = await this.registry.getUserRecord(userId);
             if(!record || record.servers.length === 0) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: 'No calendars configured.' });
                 return;
             }
             const server = resolveServer(record.servers, serverInput);
             if(!server) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: `Server "${serverInput}" not found.` });
                 return;
             }
             const removed = await this.registry.removeServer(userId, server.serverId);
             if(!removed) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: 'Server was already removed.' });
                 return;
             }
-            // Stryker disable next-line StringLiteral: user-facing success message is informational
             await interaction.editReply({
                 content: `Removed server "${server.description}" (${server.serverId}).`,
             });
@@ -364,7 +353,6 @@ export class CalendarCommandHandler {
                 await interaction.editReply({ content: error.message });
                 return;
             }
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
             logger.error({ error, serverInput }, 'Failed to remove server');
             await interaction.editReply({ content: 'Failed to remove server.' });
         }
@@ -372,38 +360,34 @@ export class CalendarCommandHandler {
     }
 
     private async handleRemoveCalendar(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const serverInput   = interaction.options.getString('server_id') ?? '';
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const calendarInput = interaction.options.getString('calendar_path') ?? '';
+        const serverInput   = this.requiredNonEmptyString(interaction, 'server_id');
+        const calendarInput = this.requiredNonEmptyString(interaction, 'calendar_path');
+        if(serverInput === null || calendarInput === null) {
+            await interaction.editReply({ content: 'Missing required calendar details.' });
+            return;
+        }
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const record = await this.registry.getUserRecord(userId);
             if(!record || record.servers.length === 0) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: 'No calendars configured.' });
                 return;
             }
             const server = resolveServer(record.servers, serverInput);
             if(!server) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: `Server "${serverInput}" not found.` });
                 return;
             }
             const calendar = resolveCalendar(server, calendarInput);
             if(!calendar) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: 'Calendar not found.' });
                 return;
             }
             const removed = await this.registry.removeCalendar(userId, server.serverId, calendar.calendarPath);
             if(!removed) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: 'Calendar was already removed.' });
                 return;
             }
-            // Stryker disable next-line StringLiteral: user-facing success message is informational
             await interaction.editReply({
                 content: `Removed calendar "${calendar.label}" (${calendar.calendarPath}) from server "${server.description}".`,
             });
@@ -412,7 +396,6 @@ export class CalendarCommandHandler {
                 await interaction.editReply({ content: error.message });
                 return;
             }
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
             logger.error({ error, serverInput, calendarInput }, 'Failed to remove calendar');
             await interaction.editReply({ content: 'Failed to remove calendar.' });
         }
@@ -420,16 +403,16 @@ export class CalendarCommandHandler {
     }
 
     private async handleSharedAddServer(interaction: ChatInputCommandInteraction): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const serverUrl   = interaction.options.getString('server_url') ?? '';
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const username    = interaction.options.getString('username') ?? '';
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const password    = interaction.options.getString('password') ?? '';
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const description = interaction.options.getString('description') ?? '';
+        const serverUrl   = this.requiredNonEmptyString(interaction, 'server_url');
+        const username    = this.requiredString(interaction, 'username');
+        const password    = this.requiredString(interaction, 'password');
+        const description = this.requiredNonEmptyString(interaction, 'description');
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
+        if(serverUrl === null || username === null || password === null || description === null) {
+            await interaction.editReply({ content: 'Missing required shared calendar server details.' });
+            return;
+        }
+
         try {
             const calendars = await this.caldavClient.discoverCalendars(serverUrl, username, password);
 
@@ -456,14 +439,12 @@ export class CalendarCommandHandler {
                 })),
             });
 
-            // Stryker disable next-line StringLiteral: join separator is cosmetic formatting
             const calList = selected.map(c => `  - ${c.displayName}`).join('\n');
             await interaction.editReply({
                 content:    `Added shared server "${description}" with ${selected.length} calendar(s):\n${calList}`,
                 components: [],
             });
         } catch (error: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
             logger.error({ error, serverUrl }, 'Failed to add shared calendar server');
             const message = error instanceof Error ? error.message : String(error);
             await interaction.editReply({ content: `Failed to add shared server: ${message}`, components: [] });
@@ -472,7 +453,6 @@ export class CalendarCommandHandler {
     }
 
     private async handleSharedList(interaction: ChatInputCommandInteraction): Promise<void> {
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const record = await this.registry.getSharedRecord();
 
@@ -482,15 +462,12 @@ export class CalendarCommandHandler {
             }
 
             const lines = record.servers.map((s) => {
-                // Stryker disable next-line StringLiteral: join separator is cosmetic formatting
                 const calLines = s.calendars.map(c => `  - ${c.label} (${c.calendarPath})`).join('\n');
                 return `**${s.description}** (${s.serverId}):\n${calLines}`;
             });
 
-            // Stryker disable next-line StringLiteral: join separator is cosmetic formatting
             await interaction.editReply({ content: lines.join('\n\n') });
         } catch (error: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
             logger.error({ error }, 'Failed to list shared calendars');
             await interaction.editReply({ content: 'Failed to list shared calendars.' });
         }
@@ -498,30 +475,28 @@ export class CalendarCommandHandler {
     }
 
     private async handleSharedRemoveServer(interaction: ChatInputCommandInteraction): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - server_id is required
-        const serverInput = interaction.options.getString('server_id') ?? '';
+        const serverInput = this.requiredNonEmptyString(interaction, 'server_id');
+        if(serverInput === null) {
+            await interaction.editReply({ content: 'Missing required shared server ID.' });
+            return;
+        }
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const record = await this.registry.getSharedRecord();
             if(!record || record.servers.length === 0) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: 'No shared calendars configured.' });
                 return;
             }
             const server = resolveServer(record.servers, serverInput);
             if(!server) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: `Shared server "${serverInput}" not found.` });
                 return;
             }
             const removed = await this.registry.removeSharedServer(server.serverId);
             if(!removed) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: 'Shared server was already removed.' });
                 return;
             }
-            // Stryker disable next-line StringLiteral: user-facing success message is informational
             await interaction.editReply({
                 content: `Removed shared server "${server.description}" (${server.serverId}).`,
             });
@@ -530,7 +505,6 @@ export class CalendarCommandHandler {
                 await interaction.editReply({ content: error.message });
                 return;
             }
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
             logger.error({ error, serverInput }, 'Failed to remove shared server');
             await interaction.editReply({ content: 'Failed to remove shared server.' });
         }
@@ -538,38 +512,34 @@ export class CalendarCommandHandler {
     }
 
     private async handleSharedRemoveCalendar(interaction: ChatInputCommandInteraction): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const serverInput   = interaction.options.getString('server_id') ?? '';
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const calendarInput = interaction.options.getString('calendar_path') ?? '';
+        const serverInput   = this.requiredNonEmptyString(interaction, 'server_id');
+        const calendarInput = this.requiredNonEmptyString(interaction, 'calendar_path');
+        if(serverInput === null || calendarInput === null) {
+            await interaction.editReply({ content: 'Missing required shared calendar details.' });
+            return;
+        }
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const record = await this.registry.getSharedRecord();
             if(!record || record.servers.length === 0) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: 'No shared calendars configured.' });
                 return;
             }
             const server = resolveServer(record.servers, serverInput);
             if(!server) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: `Shared server "${serverInput}" not found.` });
                 return;
             }
             const calendar = resolveCalendar(server, calendarInput);
             if(!calendar) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: 'Shared calendar not found.' });
                 return;
             }
             const removed = await this.registry.removeSharedCalendar(server.serverId, calendar.calendarPath);
             if(!removed) {
-                // Stryker disable next-line StringLiteral: user-facing message is informational
                 await interaction.editReply({ content: 'Shared calendar was already removed.' });
                 return;
             }
-            // Stryker disable next-line StringLiteral: user-facing success message is informational
             await interaction.editReply({
                 content: `Removed shared calendar "${calendar.label}" (${calendar.calendarPath}).`,
             });
@@ -578,7 +548,6 @@ export class CalendarCommandHandler {
                 await interaction.editReply({ content: error.message });
                 return;
             }
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
             logger.error({ error, serverInput, calendarInput }, 'Failed to remove shared calendar');
             await interaction.editReply({ content: 'Failed to remove shared calendar.' });
         }

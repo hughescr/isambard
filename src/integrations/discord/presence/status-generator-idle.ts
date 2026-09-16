@@ -239,7 +239,6 @@ export function createIdleStatusGenerator(
             : USER_PROMPT_WITHOUT_CONTEXT;
 
         const previousStatus = getPreviousStatus?.();
-        // Stryker disable next-line ConditionalExpression: previousStatus guard — undefined on cold start; block is omitted
         const previousBlock = previousStatus === undefined
             ? ''
             : `\nThe idea is to make the status different each time it's generated;\nthe last one said this: "${previousStatus}"`;
@@ -308,7 +307,6 @@ export function createIdleStatusGenerator(
     }
 
     return {
-        // Stryker disable StringLiteral,ObjectLiteral: Prompt template building and logging for status generation
         async generate(options?: IdleStatusOptions): Promise<ActivitiesOptions> {
             try {
                 logger.debug('Generating idle status with Haiku');

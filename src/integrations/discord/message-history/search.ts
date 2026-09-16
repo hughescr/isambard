@@ -170,7 +170,6 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
         allMessages = allMessages.toSorted((a, b) => a.id.localeCompare(b.id));
 
         // 5. Filter by text query if provided
-        // Stryker disable next-line ConditionalExpression: if(true) is equivalent since x.includes('') is always true
         if(query) {
             const lowerQuery = query.toLowerCase();
             allMessages = allMessages.filter(msg =>
@@ -189,7 +188,6 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
                 // Count-only overflow (no Haiku calls)
                 overflow = {
                     count: overflowMessages.length,
-                    // Stryker disable next-line StringLiteral: Hint message is documentation only
                     hint:  'Use searchMessages with startTime/endTime to get AI summaries of older messages',
                 };
             } else {
@@ -201,7 +199,6 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
                     batchSummaries,
                     ...(overflowMessages.length > MAX_OVERFLOW_FOR_SUMMARY && {
                         hasMore: true,
-                        // Stryker disable next-line StringLiteral: Hint message is documentation only
                         hint:    'Narrow your search with startTime/endTime to see all messages',
                     }),
                 };

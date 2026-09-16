@@ -30,13 +30,11 @@ export function mergeHookMaps(...maps: (Partial<Record<HookEvent, HookCallbackMa
     const result: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {};
 
     for(const map of maps) {
-        // Stryker disable next-line ConditionalExpression: Guard skips null/undefined maps — equivalent mutant would add empty iteration with no entries
         if(map === null || map === undefined) {
             continue;
         }
         for(const [event, matchers] of Object.entries(map) as [HookEvent, HookCallbackMatcher[]][]) {
             const existing = result[event];
-            // Stryker disable next-line ConditionalExpression: Equivalent — ternary determines concat vs assign, both produce correct final array
             result[event] = existing ? [...existing, ...matchers] : [...matchers];
         }
     }

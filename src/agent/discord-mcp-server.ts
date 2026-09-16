@@ -37,7 +37,6 @@ function validateRequestingUserId(
     if(!personAllowlist || personAllowlist.isAllowed('discord', requestingUserId)) {
         return createUserId(requestingUserId);
     }
-    // Stryker disable next-line all: Logging for observability
     logger.warn({ requestingUserId }, 'askUserQuestion requestingUserId not allowlisted; falling back to client user id');
     return undefined;
 }
@@ -49,7 +48,6 @@ function validateRequestingUserId(
 
 function validateThreadCreation(createThread?: boolean, threadName?: string): CallToolResult | null {
     if(createThread && !threadName) {
-        // Stryker disable next-line all: Logging for observability
         logger.warn({ createThread, threadName }, 'Discord tool returned error: threadName required when createThread is true');
         return {
             content: [{ type: 'text' as const, text: 'Error: threadName is required when createThread is true' }],
@@ -62,6 +60,15 @@ function validateThreadCreation(createThread?: boolean, threadName?: string): Ca
 /** Type guard: check if a channel/normalize result is an error result (has error property). */
 function isErrorResult(result: unknown): result is { error: CallToolResult } {
     return typeof result === 'object' && result !== null && 'error' in result;
+}
+
+/** Add local time only to search records with a usable timestamp. */
+function addLocalTimestamps(messages: unknown[], timezone: string): void {
+    for(const message of messages) {
+        if(typeof message === 'object' && message !== null && 'timestamp' in message && typeof message.timestamp === 'string') {
+            Object.assign(message, { localTimestamp: formatLocalDateTime(message.timestamp, timezone) });
+        }
+    }
 }
 
 /**
@@ -78,7 +85,6 @@ async function fetchAndValidateChannel(
     );
 
     if(!channel) {
-        // Stryker disable next-line all: Logging for observability
         logger.warn({ channelId }, 'Discord tool returned error: Channel not found');
         return {
             error: {
@@ -89,7 +95,6 @@ async function fetchAndValidateChannel(
     }
 
     if(!channel.isTextBased()) {
-        // Stryker disable next-line all: Logging for observability
         logger.warn({ channelId }, 'Discord tool returned error: Channel is not text-based');
         return {
             error: {
@@ -144,23 +149,19 @@ async function sendAllChunks(
     files?: string[]
 ): Promise<Message[]> {
     const firstChunk = chunks[0];
-    // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — splitMessage guarantees ≥1 chunk; unreachable in practice
     if(firstChunk === undefined) {
-        // Stryker disable next-line StringLiteral: invariant message tested via toContain in discord-mcp-server.test.ts
         throw new InvariantViolationError('sendAllChunks', 'splitMessage returned empty chunks array');
     }
     const sentMessages: Message[] = [];
     const firstMessage = await sendMessage(channel, firstChunk, retryHelper, replyToMessageId, files);
+    // Stryker disable next-line ArrayMethodSwap: sentMessages is newly allocated, so this first insertion has the same order.
     sentMessages.push(firstMessage);
-    // Stryker disable next-line EqualityOperator,UpdateOperator: Loop mutation would cause infinite loop
     for(let i = 1; i < chunks.length; i++) {
         const chunk = chunks[i];
-        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — loop bounds guarantee i < chunks.length; unreachable in practice
         if(chunk === undefined) {
-            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
             throw new InvariantViolationError('sendAllChunks', 'chunks[i] undefined despite i < chunks.length');
         }
-        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
+        // eslint-disable-next-line no-await-in-loop -- send chunks in order and return sent messages in that same order
         const msg = await sendMessage(channel, chunk, retryHelper);
         sentMessages.push(msg);
     }
@@ -183,7 +184,6 @@ async function createThreadIfRequested(
     }
 
     // Check if channel supports threads (not DM channels or thread-incapable channels)
-    // Stryker disable next-line ConditionalExpression,LogicalOperator: All conditions required for thread capability check
     if('threads' in channel && channel.isTextBased() && !channel.isThread() && !channel.isDMBased()) {
         const thread = await retryHelper.withRetry(
             () => sentMessage.startThread({ name: threadName })
@@ -200,9 +200,7 @@ async function createThreadIfRequested(
  */
 
 function validateQuestionOptions(options?: { label: string, value: string }[]): CallToolResult | null {
-    // Stryker disable next-line EqualityOperator: 25 options is valid max
     if(options && options.length > 25) {
-        // Stryker disable next-line all: Logging for observability
         logger.warn({ optionCount: options.length }, 'Discord tool returned error: Too many options (max 25)');
         return {
             content: [{ type: 'text' as const, text: 'Error: Too many options. Discord allows a maximum of 25 buttons (5 rows × 5 buttons per row).' }],
@@ -230,7 +228,6 @@ async function normalizeChannelId(
     );
 
     if(!fetchedChannel) {
-        // Stryker disable next-line all: Logging for observability
         logger.warn({ channelId }, 'Discord tool returned error: Channel not found in normalizeChannelId');
         return {
             error: {
@@ -255,7 +252,6 @@ async function normalizeChannelId(
         : fetchedChannel;
 
     if(!channel) {
-        // Stryker disable next-line all: Logging for observability
         logger.warn({ normalizedChannelId }, 'Discord tool returned error: Parent channel not found');
         return {
             error: {
@@ -266,7 +262,6 @@ async function normalizeChannelId(
     }
 
     if(!channel.isTextBased()) {
-        // Stryker disable next-line all: Logging for observability
         logger.warn({ normalizedChannelId }, 'Discord tool returned error: Parent channel is not text-based');
         return {
             error: {
@@ -305,11 +300,9 @@ async function prepareQuestionChannel(
         };
     }
 
-    // Stryker disable next-line LogicalOperator: Both conditions required - createThread flag AND channel capability
     if(createThread && 'threads' in channel) {
         const thread = await retryHelper.withRetry(
             () => channel.threads.create({
-                // Stryker disable next-line LogicalOperator,StringLiteral: Fallback chain for thread name with default
                 name: threadName ?? 'Q&A'
             })
         );
@@ -366,7 +359,6 @@ async function registerAndWaitForAnswer(
         timeoutSeconds?:     number
     }
 ): Promise<Awaited<ReturnType<QuestionRegistry['register']>>> {
-    // Stryker disable next-line ArithmeticOperator,LogicalOperator: Timeout conversion
     const timeoutMs = (params.timeoutSeconds ?? 300) * 1000;
 
     return questionRegistry.register({
@@ -380,7 +372,6 @@ async function registerAndWaitForAnswer(
         options:      params.options,
         targetUserId: params.targetUserId ? createUserId(params.targetUserId) : undefined,
         createdAt:    Date.now(),
-        // Stryker disable next-line ArithmeticOperator: Expiration calculation
         expiresAt:    Date.now() + timeoutMs,
     });
 }
@@ -396,14 +387,12 @@ function formatQuestionResult(
     threadId?: string
 ): CallToolResult {
     if(result.timedOut) {
-        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
         logger.info({
             questionId,
             channelId,
             threadId,
             msg: 'Question timed out without answer',
         });
-        // Stryker restore ObjectLiteral,StringLiteral
 
         return {
             content: [{ type: 'text' as const, text: JSON.stringify({
@@ -416,7 +405,6 @@ function formatQuestionResult(
         };
     }
 
-    // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
     logger.info({
         questionId,
         channelId:         result.channelId,
@@ -425,7 +413,6 @@ function formatQuestionResult(
         hasSelectedOption: Boolean(result.answer?.selectedOption),
         msg:               'Question answered',
     });
-    // Stryker restore ObjectLiteral,StringLiteral
 
     return {
         content: [{ type: 'text' as const, text: JSON.stringify({
@@ -501,19 +488,13 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                 'searchMessages',
                 'Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit. Accepts channel ID or #channel-name format.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     query:     z.string().optional().describe('Text to search for in message content'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     startTime: z.string().optional().describe('Start of time range (ISO 8601 format)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     endTime:   z.string().optional().describe('End of time range (ISO 8601 format)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().max(100).optional().describe('Maximum messages to return (default 10, max 100)'),
                 },
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('searchMessages', async (args): Promise<CallToolResult> => {
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
                         const result = await searchService.searchMessages({
@@ -521,23 +502,18 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                             query:     args.query,
                             startTime: args.startTime ? new Date(args.startTime) : undefined,
                             endTime:   args.endTime ? new Date(args.endTime) : undefined,
-                            // Stryker disable next-line LogicalOperator: ?? operator provides default value
                             limit:     args.limit ?? 10,
                         });
 
                         // Enrich messages with local timestamps if timezone is provided
                         if(timezone) {
-                            for(const msg of result.messages) {
-                            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-                                msg.localTimestamp = formatLocalDateTime(msg.timestamp as string, timezone);
-                            }
+                            addLocalTimestamps(result.messages, timezone);
                         }
 
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     })),
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
 
@@ -545,34 +521,26 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                 'getRecentMessages',
                 'Get the most recent messages from a Discord channel. Returns the N most recent messages plus an overflow count. Use searchMessages with time range for AI summaries of older messages. Accepts channel ID or #channel-name format.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().max(100).optional().describe('Number of messages to return (default 10, max 100)'),
                 },
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('getRecentMessages', async (args): Promise<CallToolResult> => {
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
                         const result = await searchService.getRecentMessages(
                             channelId,
-                            // Stryker disable next-line LogicalOperator: ?? operator provides default value, tested via integration
                             args.limit ?? 10
                         );
 
                         // Enrich messages with local timestamps if timezone is provided
                         if(timezone) {
-                            for(const msg of result.messages) {
-                            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-                                msg.localTimestamp = formatLocalDateTime(msg.timestamp as string, timezone);
-                            }
+                            addLocalTimestamps(result.messages, timezone);
                         }
 
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     })),
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
 
@@ -580,13 +548,10 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                 'getMessageById',
                 'Fetch a specific Discord message by its ID, or multiple messages by an array of IDs. Accepts channel ID or #channel-name format.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageId: z.union([z.string(), z.array(z.string())]).describe('Discord message ID or array of message IDs'),
                 },
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('getMessageById', async (args): Promise<CallToolResult> => {
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
                         // Handle array input
@@ -628,7 +593,6 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     })),
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
 
@@ -647,24 +611,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.
 
 The channel must always be given explicitly — there is no ambient conversation context.`,
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId:        z.string().describe('Target channel ID, #channel-name, or @username for DM - use from message context, memory, or default: 1451694737026449581 (#general)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     content:          z.string().describe('Message content (max 2000 chars)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     replyToMessageId: z.string().optional().describe('Optional message ID to reply to'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     createThread:     z.boolean().optional().describe('Create a new thread for this message'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     threadName:       z.string().optional().describe('Thread name (required if createThread is true)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     files:            z.union([z.string(), z.array(z.string())]).optional().describe('File path(s) to attach. Must be inside the working directory (no symlinks).'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     requestingUserId: z.string().optional().describe('User id from the envelope/message header, for logging only.'),
                 },
 
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('sendDiscordMessage',
 
                         async (args): Promise<CallToolResult> => {
@@ -681,7 +637,6 @@ The channel must always be given explicitly — there is no ambient conversation
                                     validatedFiles = await validateFilePaths(args.files);
                                 } catch (error) {
                                     if(error instanceof PathSecurityError) {
-                                        // Stryker disable next-line all: Logging parameters don't affect behavior
                                         logger.warn({ tool: 'sendDiscordMessage', error: error.message, path: error.context.path }, 'Discord tool returned security error');
                                         return {
                                             content: [{ type: 'text' as const, text: `Security Error: ${error.message}` }],
@@ -718,6 +673,7 @@ The channel must always be given explicitly — there is no ambient conversation
                             }
 
                             // Split message into chunks and send all
+                            // Stryker disable next-line llm: MCP validation requires a string, and every accepted string satisfies s || '' === s.
                             const chunks = messageSplitter.splitMessage(args.content);
                             const sentMessages = await sendAllChunks(
                                 channelResult.channel,
@@ -726,12 +682,8 @@ The channel must always be given explicitly — there is no ambient conversation
                                 args.replyToMessageId,
                                 validatedFiles
                             );
-                            const firstMessage = sentMessages[0];
-                            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — sendAllChunks always pushes ≥1 message or throws; unreachable in practice
-                            if(firstMessage === undefined) {
-                                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
-                                throw new InvariantViolationError('sendMessage tool', 'sendAllChunks returned empty array');
-                            }
+                            // sendAllChunks throws before returning when the splitter yields no first chunk.
+                            const firstMessage = sentMessages[0]!;
 
                             // Create thread if requested (on first message only)
                             const threadId = await createThreadIfRequested(
@@ -750,14 +702,12 @@ The channel must always be given explicitly — there is no ambient conversation
                                 ...(validatedFiles && { filesAttached: validatedFiles.length }),
                             };
 
-                            // Stryker disable next-line all: Logging for observability
                             logger.info({ requestingUserId: args.requestingUserId, channelId: args.channelId, messageIds: result.messageIds, msg: 'Message sent via MCP tool' });
 
                             return {
                                 content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                             };
                         })),
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
 
@@ -765,25 +715,16 @@ The channel must always be given explicitly — there is no ambient conversation
                 'askUserQuestion',
                 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId:        z.string().describe('Channel to ask in - channel ID or #channel-name (e.g., #general)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     question:         z.string().describe('Question text'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     options:          z.array(questionOptionSchema).optional().describe('Optional button choices for the user'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     timeoutSeconds:   z.number().optional().describe('Timeout in seconds (default: 300)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     createThread:     z.boolean().optional().describe('Create a thread for this Q&A'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     threadName:       z.string().optional().describe('Thread name if creating thread'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     targetUserId:     z.string().optional().describe('Optional user ID to @mention in the question. Advisory only - anyone can answer.'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     requestingUserId: z.string().optional().describe('User id from the envelope/message header you are answering. Validated against the person allowlist; falls back to the bot user id when missing or not allowlisted.'),
                 },
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('askUserQuestion', async (args): Promise<CallToolResult> => {
                         // 1. Validate options count
                         const optionsError = validateQuestionOptions(args.options);
@@ -827,7 +768,6 @@ The channel must always be given explicitly — there is no ambient conversation
                             () => targetChannel.send(messageOptions)
                         );
 
-                        // Stryker disable ObjectLiteral,StringLiteral,LogicalOperator: Logger info object - content not behavior-affecting
                         logger.info({
                             questionId,
                             channelId:    args.channelId,
@@ -837,7 +777,6 @@ The channel must always be given explicitly — there is no ambient conversation
                             optionCount:  args.options?.length ?? 0,
                             msg:          'Question asked via MCP tool',
                         });
-                        // Stryker restore ObjectLiteral,StringLiteral,LogicalOperator
 
                         // 7. Register question and wait for answer
                         const result = await registerAndWaitForAnswer(questionRegistry, {
@@ -856,7 +795,6 @@ The channel must always be given explicitly — there is no ambient conversation
                         // 8. Format and return result
                         return formatQuestionResult(result, questionId, args.channelId, threadId);
                     })),
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
 
@@ -864,15 +802,11 @@ The channel must always be given explicitly — there is no ambient conversation
                 'addReaction',
                 'Add one or more emoji reactions to a Discord message. Accepts channel ID or #channel-name format.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageId: z.string().describe('Discord message ID to react to'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     emoji:     z.union([z.string(), z.array(z.string())]).describe('Emoji or array of emojis to react with (e.g., "👍" or ["👍", "❤️"])'),
                 },
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('addReaction', async (args): Promise<CallToolResult> => {
                         // Resolve channel name to ID if needed
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
@@ -888,16 +822,6 @@ The channel must always be given explicitly — there is no ambient conversation
                             () => channelResult.channel.messages.fetch(args.messageId)
                         );
 
-                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Discord.js types fetch() as non-nullable but runtime may return falsy
-                        if(!message) {
-                        // Stryker disable next-line all: Logging for observability
-                            logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error: Message not found');
-                            return {
-                                content: [{ type: 'text' as const, text: 'Error: Message not found' }],
-                                isError: true,
-                            };
-                        }
-
                         // Normalize emoji to array
                         const emojis = Array.isArray(args.emoji) ? args.emoji : [args.emoji];
 
@@ -907,7 +831,7 @@ The channel must always be given explicitly — there is no ambient conversation
 
                         for(const emoji of emojis) {
                             try {
-                            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
+                            // eslint-disable-next-line no-await-in-loop -- preserve emoji attempt order and ordered success/failure results
                                 await retryHelper.withRetry(
                                     () => message.react(emoji)
                                 );
@@ -921,84 +845,66 @@ The channel must always be given explicitly — there is no ambient conversation
                         const result = {
                             success:      failedEmojis.length === 0,
                             addedEmojis,
-                            // Stryker disable next-line ConditionalExpression,EqualityOperator: Check needed to conditionally include failedEmojis
                             failedEmojis: failedEmojis.length > 0 ? failedEmojis : undefined,
                             channelId:    args.channelId,
                             messageId:    args.messageId,
                         };
 
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Logging for observability
                         if(failedEmojis.length > 0) {
-                        // Stryker disable next-line all: Logging parameters don't affect behavior
                             logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId, failedEmojis }, 'Discord tool returned partial error: Some reactions failed');
                         }
 
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                            // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: Conditional isError flag
                             ...(failedEmojis.length > 0 && { isError: true }),
                         };
                     })),
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
 
             tool(
                 'muteChannel',
-                // Stryker disable next-line StringLiteral: Tool description is documentation only
                 'Mute a Discord channel so the bot will not respond to messages in it. Use this when you want to observe a channel without participating. Accepts either a numeric channel ID or channel name with # prefix (e.g., #general).',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or name with # prefix (e.g., #general)'),
                 },
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('muteChannel', async (args): Promise<CallToolResult> => {
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
                         await channelRegistry.muteChannel(channelId);
-                        // Stryker disable next-line all: Logging for observability
                         logger.info({ tool: 'muteChannel', channelId, msg: 'Channel muted' });
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: true }) }],
                         };
                     })),
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
 
             tool(
                 'unmuteChannel',
-                // Stryker disable next-line StringLiteral: Tool description is documentation only
                 'Unmute a Discord channel so the bot will respond to messages in it again. Accepts either a numeric channel ID or channel name with # prefix (e.g., #general).',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or name with # prefix (e.g., #general)'),
                 },
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('unmuteChannel', async (args): Promise<CallToolResult> => {
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
                         await channelRegistry.unmuteChannel(channelId);
-                        // Stryker disable next-line all: Logging for observability
                         logger.info({ tool: 'unmuteChannel', channelId, msg: 'Channel unmuted' });
                         return {
                             content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: false }) }],
                         };
                     })),
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
 
             tool(
                 'listChannels',
-                // Stryker disable next-line StringLiteral: Tool description is documentation only
                 'List all channels the bot is tracking, with their mute status. Use this to see available channels.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     includesMuted: z.boolean().optional().describe('Include muted channels in the list (default: false)'),
                 },
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is used for logging only
                     withToolErrorHandling('listChannels', async (args): Promise<CallToolResult> => {
                         // Get channels based on includesMuted parameter (default false)
                         const includesMuted = args.includesMuted === true;
@@ -1019,7 +925,6 @@ The channel must always be given explicitly — there is no ambient conversation
                             content: [{ type: 'text' as const, text: JSON.stringify({ channels: formatted, count: formatted.length }) }],
                         };
                     })),
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
         ],

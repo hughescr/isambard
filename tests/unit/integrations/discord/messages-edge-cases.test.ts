@@ -39,6 +39,11 @@ describe.concurrent('Discord Message Splitting', () => {
         });
 
         describe('edge cases', () => {
+            test('should preserve repeated paragraph breaks and indentation in fitting messages', () => {
+                expect(splitMessage('a\n\n\nb', 100)).toEqual(['a\n\n\nb']);
+                expect(splitMessage('a\n\n b', 100)).toEqual(['a\n\n b']);
+            });
+
             test('should handle newlines without double breaks', () => {
                 const message = 'Line1\nLine2\nLine3';
                 const result = splitMessage(message, 100);

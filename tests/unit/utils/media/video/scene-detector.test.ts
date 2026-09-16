@@ -28,6 +28,28 @@ const SINGLE_SCENE_STDERR = `
 `;
 
 describe('detectScenes', () => {
+    it('sends the scdet command and preserves multi-digit fractional timestamps', async () => {
+        const calls: string[][] = [];
+        const runner: SpawnRunner = async (cmd) => {
+            calls.push(cmd);
+            return { stdout: '', stderr: 'lavfi.scd.time=12.345\nlavfi.scd.time=19.001', exitCode: 0 };
+        };
+        const scenes = await detectScenes('/tmp/input.mp4', 25, runner);
+        expect(calls).toEqual([['ffmpeg', '-i', '/tmp/input.mp4', '-vf', 'scdet=s=1:t=10', '-f', 'null', '-']]);
+        expect(scenes.map(scene => scene.endTime)).toEqual([12.345, 19.001, 25]);
+    });
+
+    it('warns only for nonzero exit with no scene output', async () => {
+        const warnSpy = spyOn(logger, 'warn');
+        try {
+            warnSpy.mockClear();
+            await detectScenes('input.mp4', 10, makeRunner('', 0));
+            await detectScenes('input.mp4', 10, makeRunner('lavfi.scd.time=3.000', 1));
+            expect(warnSpy).not.toHaveBeenCalled();
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
     it('builds scenes from multiple scdet timestamps', async () => {
         const scenes = await detectScenes('/test/video.mp4', 20, makeRunner(MULTI_SCENE_STDERR));
         // 4 scenes: [0,4], [4,8.5], [8.5,14.2], [14.2,20]

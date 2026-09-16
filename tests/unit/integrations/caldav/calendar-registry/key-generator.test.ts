@@ -67,9 +67,18 @@ describe('CalendarRegistryKeyGenerator', () => {
         });
 
         it('should throw error for invalid PK prefix', () => {
-            expect(() => {
+            const parseInvalidPrefix = (): void => {
                 CalendarRegistryKeyGenerator.parseUserId('INVALID#user-123');
-            }).toThrow('Invalid PK format: expected CALCAL#..., got INVALID#user-123');
+            };
+
+            expect(parseInvalidPrefix).toThrow('Invalid PK format: expected CALCAL#..., got INVALID#user-123');
+            try {
+                parseInvalidPrefix();
+            } catch (error) {
+                expect(error).toMatchObject({
+                    context: { location: 'CalendarRegistryKeyGenerator.parseUserId' },
+                });
+            }
         });
 
         it('should throw error for missing prefix', () => {
@@ -82,6 +91,12 @@ describe('CalendarRegistryKeyGenerator', () => {
             expect(() => {
                 CalendarRegistryKeyGenerator.parseUserId('calcal#user-123');
             }).toThrow('Invalid PK format: expected CALCAL#..., got calcal#user-123');
+        });
+
+        it('rejects a key whose expected prefix appears only in the value', () => {
+            expect(() => CalendarRegistryKeyGenerator.parseUserId('OTHER#CALCAL#user-123')).toThrow(
+                expect.objectContaining({ context: expect.objectContaining({ location: 'CalendarRegistryKeyGenerator.parseUserId' }) })
+            );
         });
     });
 

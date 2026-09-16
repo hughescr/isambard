@@ -91,7 +91,6 @@ export function createBskyDmPoller(options: BskyDmPollerOptions): BskyDmPoller {
                 }
             }
         } catch (err) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             log.error({ err, msg: 'Bluesky DM poll tick failed' });
         }
     }

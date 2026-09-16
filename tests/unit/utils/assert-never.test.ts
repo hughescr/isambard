@@ -35,5 +35,6 @@ describe('assertNever', () => {
         }
         expect(caughtError).toBeInstanceOf(InvariantViolationError);
         expect((caughtError as Error).message).toContain('myPlatform');
+        expect((caughtError as InvariantViolationError).context.location).toBe('assertNever');
     });
 });

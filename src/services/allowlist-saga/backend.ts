@@ -3,7 +3,6 @@ import { logger } from '@hughescr/logger';
 import { allowlistSagaSchema, type AllowlistSaga } from './types';
 import { BaseRepository, createPrefixedKey } from '@/storage';
 
-// Stryker disable StringLiteral: PK/SK key constants are configuration values
 const SAGA_PK        = 'ALLOWLIST#SAGA';
 const SAGA_SK_PREFIX = 'SAGA';
 // Stryker restore StringLiteral
@@ -11,7 +10,6 @@ const SAGA_SK_PREFIX = 'SAGA';
 const TTL_DAYS = 30;
 
 function sagaSK(id: string): string {
-    // Stryker disable next-line StringLiteral: SK prefix is a configuration constant
     return createPrefixedKey(SAGA_SK_PREFIX, id);
 }
 
@@ -25,7 +23,6 @@ export class AllowlistSagaBackend extends BaseRepository<AllowlistSaga> {
      */
     async create(saga: AllowlistSaga): Promise<void> {
         await this.putItem({
-            // Stryker disable next-line StringLiteral: PK is a configuration constant
             PK:  SAGA_PK,
             SK:  sagaSK(saga.id),
             ...saga,
@@ -38,7 +35,6 @@ export class AllowlistSagaBackend extends BaseRepository<AllowlistSaga> {
      */
     async get(id: string): Promise<AllowlistSaga | undefined> {
         const item = await this.getItem<Record<string, unknown>>({
-            // Stryker disable next-line StringLiteral: PK is a configuration constant
             PK: SAGA_PK,
             SK: sagaSK(id),
         });
@@ -55,7 +51,6 @@ export class AllowlistSagaBackend extends BaseRepository<AllowlistSaga> {
     async update(id: string, updates: Partial<AllowlistSaga>): Promise<void> {
         const saga = await this.get(id);
         if(saga === undefined) {
-            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
             logger.warn({ id, updates }, 'AllowlistSagaBackend.update: saga not found');
             // Stryker restore ObjectLiteral,StringLiteral
             return;
@@ -68,16 +63,13 @@ export class AllowlistSagaBackend extends BaseRepository<AllowlistSaga> {
         };
 
         // Recompute TTL from createdAt to match the TTL set at creation time.
-        // Stryker disable next-line ArithmeticOperator: TTL preserved from creation time
         const originalTTL = Math.floor(new Date(saga.createdAt).getTime() / 1000) + (TTL_DAYS * 24 * 60 * 60);
 
         // Use docClient directly to include ConditionExpression for optimistic concurrency.
         // putItem() in BaseRepository does not support condition expressions.
-        // Stryker disable StringLiteral,ObjectLiteral: DynamoDB condition expression and attribute maps are configuration
         await this.docClient.send(new PutCommand({
             TableName: this.tableName,
             Item:      {
-                // Stryker disable next-line StringLiteral: PK is a configuration constant
                 PK:  SAGA_PK,
                 SK:  sagaSK(id),
                 ...updated,

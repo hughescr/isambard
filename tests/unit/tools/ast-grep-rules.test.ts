@@ -55,7 +55,6 @@ async function scanFixture(fixturePath: string): Promise<ScanResult> {
         const proc = Bun.spawn(['ast-grep', 'scan', '--json'], { cwd: projectDir, stdout: 'pipe', stderr: 'pipe' });
         const stdout = await new Response(proc.stdout).text();
         const exitCode = await proc.exited;
-        // Stryker disable next-line all: parsing the external tool's output, not application logic
         const matches = JSON.parse(stdout || '[]') as AstGrepMatch[];
         return { matches, exitCode };
     } finally {

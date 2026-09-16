@@ -98,7 +98,11 @@ function renameWorkflowScript(script: string): string | undefined {
     if(match === null) {
         return undefined;
     }
-    const [whole, prefix, quote, name] = match as unknown as [string, string, string, string];
+    const whole = match[0];
+    // META_NAME_PATTERN has three mandatory capture groups, so a successful exec supplies 1-3.
+    const prefix = match[1]!;
+    const quote = match[2]!;
+    const name = match[3]!;
     if(name.startsWith(IZZY_PREFIX)) {
         return undefined;
     }

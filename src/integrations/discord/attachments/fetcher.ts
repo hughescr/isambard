@@ -15,8 +15,6 @@ export async function saveNonImageAttachment(
         const dir = path.join(scratchDir, 'attachments', `discord-${messageId}`);
         await mkdir(dir, { recursive: true });
 
-        // Stryker disable next-line ObjectLiteral: Fetch timeout options are not unit-testable without flaky timing dependencies
-
         const response = await fetch(metadata.url, {
 
             signal: AbortSignal.timeout(MediaFetchTimeoutMs),

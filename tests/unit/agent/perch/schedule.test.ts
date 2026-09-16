@@ -323,6 +323,26 @@ describe.concurrent('getNextSlot', () => {
         });
     });
 
+    describe.concurrent('fractional and NaN hours', () => {
+        test.each<[number, PerchSlot]>([
+            [0.5, 'pre-dawn'],
+            [1.5, 'pre-dawn'],
+            [4.5, 'pre-dawn'],
+            [5.5, 'mid-morning'],
+            [10.5, 'wikipedia'],
+            [13.5, 'afternoon'],
+            [15.5, 'evening'],
+            [19.5, 'late-night'],
+            [22.5, 'late-night'],
+        ])('hour %d returns the next slot after its containing or unscheduled interval', (hour, expected) => {
+            expect(getNextSlot(hour)).toBe(expected);
+        });
+
+        test('NaN preserves the established pre-dawn fallback', () => {
+            expect(getNextSlot(Number.NaN)).toBe('pre-dawn');
+        });
+    });
+
     describe.concurrent('hour validation', () => {
         test('should throw RangeError for negative hour', () => {
             expect(() => getNextSlot(-1)).toThrow(RangeError);

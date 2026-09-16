@@ -95,6 +95,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
         test.each([
             { length: 300, 'char': 'A', shouldTruncate: true, description: 'truncate content preview to 200 characters' },
+            { length: 201, 'char': 'C', shouldTruncate: true, description: 'mark a 201-character preview as truncated' },
             { length: 200, 'char': 'B', shouldTruncate: false, description: 'not truncate content exactly at 200 characters' },
         ])('should $description', async ({ length, char, shouldTruncate }) => {
             const content = char.repeat(length);
@@ -300,6 +301,27 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBe(true);
         });
 
+        test('should stringify a symbol thrown by backend.list', async () => {
+            mockBackend.list = mock(async () => {
+                throw Symbol('list failure');
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+            let outcome: { kind: 'result', result: CallToolResult } | { kind: 'error', error: unknown };
+            try {
+                outcome = { kind: 'result', result: await handler({ path: '/memories' }) };
+            } catch (error) {
+                outcome = { kind: 'error', error };
+            }
+
+            expect(outcome.kind).toBe('result');
+            if(outcome.kind === 'result') {
+                expect(textContent(outcome.result.content[0])).toBe('Error listing directory: Symbol(list failure)');
+                expect(outcome.result.isError).toBe(true);
+            }
+        });
+
         test('should join multiple paths with newlines', async () => {
             mockBackend.list = mock<MemoryToolBackend['list']>(async () => ({
                 items: [
@@ -387,34 +409,17 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                 expect(mockBackend.list).not.toHaveBeenCalled();
             });
 
-            test('should use regular list for non-layer paths', async () => {
+            test.each([
+                ['non-layer path', '/users/alice'],
+                ['root path', '/'],
+                ['nested layer path', '/events/conversation'],
+            ])('should use regular list for %s', async (_description, path) => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'list');
 
-                await handler({ path: '/users/alice' });
+                await handler({ path });
 
-                expect(mockBackend.list).toHaveBeenCalledWith('/users/alice', undefined);
-                expect(mockBackend.listByLayer).not.toHaveBeenCalled();
-            });
-
-            test('should use regular list for root path', async () => {
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                await handler({ path: '/' });
-
-                expect(mockBackend.list).toHaveBeenCalledWith('/', undefined);
-                expect(mockBackend.listByLayer).not.toHaveBeenCalled();
-            });
-
-            test('should use regular list for nested layer paths', async () => {
-                // Nested paths like /events/conversation should use regular list for directory browsing
-                const server = createMemoryMCPServer(mockBackend);
-                const handler = getToolHandler(server, 'list');
-
-                await handler({ path: '/events/conversation' });
-
-                expect(mockBackend.list).toHaveBeenCalledWith('/events/conversation', undefined);
+                expect(mockBackend.list).toHaveBeenCalledWith(path, undefined);
                 expect(mockBackend.listByLayer).not.toHaveBeenCalled();
             });
         });

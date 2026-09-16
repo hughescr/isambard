@@ -2,7 +2,6 @@ import { logger } from '@hughescr/logger';
 import { approvalSagaSchema, type ApprovalSaga, type ApprovalSagaState } from './types';
 import { BaseRepository, createPrefixedKey } from '@/storage';
 
-// Stryker disable StringLiteral: PK/SK key constants are configuration values
 const SAGA_PK        = 'APPROVAL#SAGA';
 const SAGA_SK_PREFIX = 'SAGA';
 // Stryker restore StringLiteral
@@ -10,7 +9,6 @@ const SAGA_SK_PREFIX = 'SAGA';
 const TTL_DAYS = 30;
 
 function sagaSK(id: string): string {
-    // Stryker disable next-line StringLiteral: SK prefix is a configuration constant
     return createPrefixedKey(SAGA_SK_PREFIX, id);
 }
 
@@ -24,7 +22,6 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
      */
     async create(saga: ApprovalSaga): Promise<void> {
         await this.putItem({
-            // Stryker disable next-line StringLiteral: PK is a configuration constant
             PK:  SAGA_PK,
             SK:  sagaSK(saga.id),
             ...saga,
@@ -37,7 +34,6 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
      */
     async get(id: string): Promise<ApprovalSaga | undefined> {
         const item = await this.getItem<Record<string, unknown>>({
-            // Stryker disable next-line StringLiteral: PK is a configuration constant
             PK: SAGA_PK,
             SK: sagaSK(id),
         });
@@ -58,7 +54,6 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
     ): Promise<void> {
         const saga = await this.get(id);
         if(saga === undefined) {
-            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
             logger.warn({ id, newState }, 'ApprovalSagaBackend.updateState: saga not found');
             // Stryker restore ObjectLiteral,StringLiteral
             return;
@@ -72,7 +67,6 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
         };
 
         await this.putItem({
-            // Stryker disable next-line StringLiteral: PK is a configuration constant
             PK: SAGA_PK,
             SK: sagaSK(id),
             ...updated,
@@ -83,7 +77,6 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
      * List all sagas that are in the given state.
      */
     async listByState(state: ApprovalSagaState): Promise<ApprovalSaga[]> {
-        // Stryker disable StringLiteral,ObjectLiteral: DynamoDB expression strings and attribute maps are configuration
         const items = await this.query<Record<string, unknown>>({
             KeyConditionExpression:    '#pk = :pk',
             FilterExpression:          '#state = :state',
@@ -101,7 +94,6 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
             if(parsed.success) {
                 results.push(parsed.data);
             } else {
-                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                 logger.warn({ item, error: parsed.error.message }, 'ApprovalSagaBackend.listByState: failed to parse saga');
                 // Stryker restore ObjectLiteral,StringLiteral
             }

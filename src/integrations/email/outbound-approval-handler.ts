@@ -2,7 +2,6 @@ import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { chain } from 'lodash-es';
 import type { NotifyFn } from '@/agent';
-import { InvariantViolationError } from '@/errors';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
@@ -53,45 +52,37 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
     // ---------------------------------------------------------------------------
 
     protected isKnownButtonPrefix(prefix: string): boolean {
-        // Stryker disable next-line StringLiteral,ConditionalExpression: prefix checks are configuration
         return prefix === 'email-send-approve' || prefix === 'email-send-approveallowlist' || prefix === 'email-send-reject';
     }
 
     protected isRejectButtonPrefix(prefix: string): boolean {
-        // Stryker disable next-line StringLiteral,ConditionalExpression: prefix check is configuration
         return prefix === 'email-send-reject';
     }
 
     protected isKnownModalPrefix(prefix: string): boolean {
-        // Stryker disable next-line StringLiteral,ConditionalExpression: prefix check is configuration
         return prefix === 'email-send-reject-reason';
     }
 
     protected parseId(raw: string): number | null {
         const uid = Number.parseInt(raw, 10);
-        // Stryker disable next-line ConditionalExpression: NaN guard — invalid UID causes early return
         return Number.isNaN(uid) ? null : uid;
     }
 
     protected rejectModalCustomId(_buttonPrefix: string, rawId: string): string {
-        // Stryker disable next-line StringLiteral: customId is configuration
         return `email-send-reject-reason:${rawId}`;
     }
 
     protected rejectModalTitle(_buttonPrefix: string): string {
-        // Stryker disable next-line StringLiteral: Modal title is UI configuration
         return 'Reject Outbound Email';
     }
 
     protected async dispatchApprovedButton(prefix: string, interaction: ButtonInteraction, uid: number): Promise<void> {
-        // Stryker disable next-line StringLiteral,ConditionalExpression: prefix check is configuration
         await (prefix === 'email-send-approve'
             ? this.handleApprove(interaction, uid)
             : this.handleApproveShowAllowlist(interaction, uid));
     }
 
     protected buildRejectionFailedLog(err: unknown, uid: number): Record<string, unknown> {
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         return { err, uid, msg: 'Failed to persist email rejection to WildDuck — Discord message left active for retry' };
     }
 
@@ -104,17 +95,13 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
     ): Promise<void> {
         // Gate: persist rejection to WildDuck — must succeed before updating Discord to "Rejected"
         await this.wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, {
-            // Stryker disable next-line StringLiteral: ISO timestamp format is convention
             rejectedAt: new Date().toISOString(),
             reason,
         });
 
         // Set flag so context-builder's searchByFlag can find rejected drafts
-        // Stryker disable next-line StringLiteral: flag name is configuration
         await this.wildDuckClient.updateMessageFlags(EmailFolder.Drafts, uid, { addFlags: ['SendRejectedByAdmin'] });
 
-        // Stryker disable next-line StringLiteral: activity log summary text is informational only
-        // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: fire-and-forget .catch() error handler — uncoverable without triggering activityLogger failures
         void this.activityLogger?.log({ type: 'email-rejected', summary: 'Email rejected' }).catch((err) => {
             logger.warn({ err, msg: 'Activity log failed for email rejection' });
         });
@@ -124,7 +111,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         const updatedEmbed = this.buildRejectedEmbed(reason);
 
         let discordUpdated = false;
-        // Stryker disable BlockStatement: try-catch wraps best-effort Discord UI update
         try {
             await interaction.editReply({
                 embeds:     [updatedEmbed],
@@ -132,7 +118,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             });
             discordUpdated = true;
         } catch (editError) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ err: editError, uid, msg: 'Failed to update Discord embed after email rejection' });
         }
         // Stryker restore BlockStatement
@@ -152,7 +137,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             logger.warn({ err, uid, msg: 'Notify failed for email rejection' });
         }
 
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({ uid, reason, discordUpdated, msg: 'Discord admin rejected outbound email' });
     }
 
@@ -162,19 +146,9 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
 
     async handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
         const parts  = interaction.customId.split(':');
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: defensive guard — split always returns ≥1 element; < 2 and <= 1 are equivalent; removing return is masked by downstream prefix and NaN checks
-        if(parts.length < 2) {
-            return;
-        }
-        const prefix = parts[0];
-        const uidStr = parts[1];
-        // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: invariant guard — parts.length >= 2 guarantees indices 0 and 1; unreachable in practice
-        if(prefix === undefined || uidStr === undefined) {
-            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
-            throw new InvariantViolationError('handleSelectMenu', 'parts[0]/parts[1] undefined despite parts.length >= 2');
-        }
+        const prefix = parts[0]!;
+        const uidStr = parts[1]!;
 
-        // Stryker disable next-line StringLiteral,ConditionalExpression: customId prefix check is configuration
         if(prefix !== 'email-allowlist-select') {
             return;
         }
@@ -186,12 +160,10 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
 
         await interaction.deferUpdate();
 
-        // Stryker disable BlockStatement: try-catch wraps select menu handler - error handling
         try {
             // Rate limiter is intentionally not incremented here — Craig's manual approval
             // is itself the rate control mechanism for non-allowlisted sends.
 
-            // Stryker disable next-line StringLiteral: ISO timestamp format is convention
             const now = new Date().toISOString();
             await this.sagaBackend.create({
                 id:        crypto.randomUUID(),
@@ -202,8 +174,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
                 updatedAt: now,
             });
 
-            // Stryker disable next-line StringLiteral: activity log summary text is informational only
-            // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: fire-and-forget .catch() error handler — uncoverable without triggering activityLogger failures
             void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch((err) => {
                 logger.warn({ err, msg: 'Activity log failed for email send (allowlist path)' });
             });
@@ -212,7 +182,7 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             // Kick off the allowlist saga for each selected recipient address.
             // Uses followUp (not showModal) since deferUpdate was already called.
             for(const emailAddress of interaction.values) {
-                // eslint-disable-next-line no-await-in-loop -- sequential: each saga start depends on the prior completing before the next followUp
+                // eslint-disable-next-line no-await-in-loop -- serialize saga starts and followUps on the shared interaction in recipient order
                 await this.allowlistInteractionHandler.startFromApproval(interaction, 'email', emailAddress);
             }
 
@@ -238,18 +208,14 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
                 logger.warn({ err: notifyError, uid, msg: 'Notify failed for email approval' });
             }
         } catch (err) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({ err, uid, msg: 'Failed to process allowlist select menu' });
-            // Stryker disable BlockStatement: try-catch wraps editReply - best-effort error reply
             try {
                 await interaction.editReply({
-                    // Stryker disable next-line StringLiteral: Error message is UI configuration
                     content:    'An error occurred processing your request. Please try again.',
                     embeds:     [],
                     components: [],
                 });
             } catch (error) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.error({ err: error, msg: 'Failed to send error editReply for select menu' });
             }
             // Stryker restore BlockStatement
@@ -265,7 +231,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         // Rate limiter is intentionally not incremented here — Craig's manual approval
         // is itself the rate control mechanism for non-allowlisted sends.
 
-        // Stryker disable next-line StringLiteral: ISO timestamp format is convention
         const now = new Date().toISOString();
         await this.sagaBackend.create({
             id:        crypto.randomUUID(),
@@ -276,8 +241,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             updatedAt: now,
         });
 
-        // Stryker disable next-line StringLiteral: activity log summary text is informational only
-        // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: fire-and-forget .catch() error handler — uncoverable without triggering activityLogger failures
         void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch((err) => {
             logger.warn({ err, msg: 'Activity log failed for email send (direct path)' });
         });
@@ -287,14 +250,12 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
 
         // The approval saga above is already persisted, so a failed Discord UI update must not
         // suppress the wake notification below (mirrors performRejection's editReply guard).
-        // Stryker disable BlockStatement: try-catch wraps best-effort Discord UI update \u2014 the wake notification below must fire even if this fails
         try {
             await interaction.editReply({
                 embeds:     [updatedEmbed],
                 components: [],
             });
         } catch (editError) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ err: editError, uid, msg: 'Failed to update Discord embed after email approval' });
         }
         // Stryker restore BlockStatement
@@ -318,15 +279,11 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         // Fetch draft message to get to + cc recipients from message fields
         let toAddresses: string[];
         let ccAddresses: string[];
-        // Stryker disable BlockStatement: try-catch wraps pre-submit fetch — best-effort, falls back to simple approve
         try {
             const msg   = await this.wildDuckClient.getMessage(EmailFolder.Drafts, uid);
-            // Stryker disable next-line StringLiteral,LogicalOperator,ArrayDeclaration: 'address' is property shorthand; ?? [] is defensive fallback for null/undefined msg fields
-            toAddresses = chain(msg?.to ?? []).map('address').compact().value();
-            // Stryker disable next-line StringLiteral,ArrayDeclaration: 'address' is property shorthand; ?? [] is defensive fallback for null/undefined cc field
-            ccAddresses = chain(msg?.cc ?? []).map('address').compact().value();
+            toAddresses = chain(msg?.to).map('address').compact().value();
+            ccAddresses = chain(msg?.cc).map('address').compact().value();
         } catch (error) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ err: error, uid, msg: 'Failed to fetch draft message before allowlist select — falling back to simple approve' });
             // Fall back to simple approve on fetch error
             await this.handleApprove(interaction, uid);
@@ -334,7 +291,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         }
         // Stryker restore BlockStatement
 
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,ArrayDeclaration: deduplicate in case to appears in cc
         const allRecipients = [...new Set([...toAddresses, ...ccAddresses])];
 
         if(allRecipients.length === 0) {
@@ -344,11 +300,9 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         }
 
         // Build Select Menu with all recipients
-        // Stryker disable StringLiteral: Select Menu builder config — strings are UI configuration
         const menu = new StringSelectMenuBuilder()
             .setCustomId(`email-allowlist-select:${uid}`)
             .setPlaceholder('Select recipients to add to allowlist')
-            // Stryker disable next-line: minimum 0 selections is correct
             .setMinValues(0)
             .setMaxValues(allRecipients.length)
             .addOptions(allRecipients.map(r =>
@@ -358,7 +312,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
 
         await interaction.editReply({
-            // Stryker disable next-line StringLiteral: prompt text is UI configuration
             content:    'Select recipients to add to allowlist, then click Submit:',
             components: [actionRow],
         });

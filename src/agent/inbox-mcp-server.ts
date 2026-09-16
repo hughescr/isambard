@@ -13,7 +13,6 @@ import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
  * System prompt for generating channel summaries.
  * Used by the getChannelSummary tool to create concise summaries of unread messages.
  */
-// Stryker disable next-line StringLiteral: Static system prompt configuration
 const SUMMARY_SYSTEM_PROMPT = `You are summarizing Discord messages for an AI assistant who missed them while offline.
 Create a concise summary (2-4 sentences) that captures:
 - Key topics or questions discussed
@@ -57,11 +56,9 @@ export function createInboxMCPServer(
                 'Get a high-level overview of unread messages across all channels. Returns counts only, no message content.',
                 {},
                 withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('getUnreadOverview', async (): Promise<CallToolResult> => {
                         const overview = inboxManager.getUnreadOverview();
 
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             totalUnread:  overview.totalUnread,
                             channelCount: overview.channels.length,
@@ -77,11 +74,9 @@ export function createInboxMCPServer(
                 'getChannelSummary',
                 'Get an AI-generated summary of unread messages in a channel, plus message metadata for selective reading. Accepts channel ID or #channel-name format.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                 },
                 withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('getChannelSummary', async (args): Promise<CallToolResult> => {
                         const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
                         const messages = inboxManager.getChannelMessages(channelId);
@@ -99,7 +94,6 @@ export function createInboxMCPServer(
                         }
 
                         // Build message content for summarization
-                        // Stryker disable StringLiteral,ArrowFunction: Format strings and arrow fn for LLM prompt are not behavior-tested (generateTextWithSystemPrompt is mocked)
                         const messagesText = messages.map(m =>
                             `[${m.author} at ${m.timestamp}]: ${m.content}`).join('\n');
 
@@ -108,7 +102,6 @@ export function createInboxMCPServer(
                             SUMMARY_SYSTEM_PROMPT,
                             `Summarize these ${messages.length} messages:\n\n${messagesText}`
                         );
-                        // Stryker restore StringLiteral,ArrowFunction
 
                         // Build metadata for each message
                         const metadata: MCPMessageMetadata[] = messages.map(m => ({
@@ -125,25 +118,16 @@ export function createInboxMCPServer(
                         const timestamps = chain(messages).map('timestamp').sortBy().value();
                         const firstTimestamp = timestamps[0];
                         const lastTimestamp  = timestamps[timestamps.length - 1];
-                        // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: invariant guard — timestamps is non-empty when messages.length > 0; unreachable in practice
-                        if(firstTimestamp === undefined || lastTimestamp === undefined) {
+                        if(lastTimestamp === undefined) {
                             // note(inbox-mcp): structured refactor to return mcpErrorResult would improve agent UX here
-                            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
                             throw new InvariantViolationError('channelSummary tool', 'timestamps empty despite messages.length > 0');
                         }
-                        // Stryker disable next-line ArrayDeclaration,ArithmeticOperator: Array access with [0] and [length-1] for first/last elements
                         const timeRange = {
-                            start: firstTimestamp,
+                            start: firstTimestamp!,
                             end:   lastTimestamp,
                         };
 
-                        const firstMessage = messages[0];
-                        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — messages.length > 0 guaranteed by outer check; unreachable in practice
-                        if(firstMessage === undefined) {
-                            // note(inbox-mcp): structured refactor to return mcpErrorResult would improve agent UX here
-                            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
-                            throw new InvariantViolationError('channelSummary tool', 'messages[0] undefined despite messages.length > 0');
-                        }
+                        const firstMessage = messages[0]!;
                         const response: MCPChannelSummaryResponse = {
                             channelId,
                             channelName:  firstMessage.channelName,
@@ -154,7 +138,6 @@ export function createInboxMCPServer(
                             messages:     metadata,
                         };
 
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             channelId,
                             channelName:  firstMessage.channelName,
@@ -172,13 +155,10 @@ export function createInboxMCPServer(
                 'fetchMessages',
                 'Fetch full content of specific messages by ID. Use after reviewing channel summary to get details. Accepts channel ID or #channel-name format.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId:  z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageIds: z.array(z.string()).describe('Array of message IDs to fetch'),
                 },
                 withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('fetchMessages', async (args): Promise<CallToolResult> => {
                         const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
 
@@ -196,7 +176,6 @@ export function createInboxMCPServer(
                             }
                         }
 
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             channelId,
                             requestedCount: args.messageIds.length,
@@ -213,18 +192,14 @@ export function createInboxMCPServer(
                 'markAsRead',
                 'Mark specific messages as read. Updates the checkpoint for the channel. Accepts channel ID or #channel-name format.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId:  z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageIds: z.array(z.string()).describe('Array of message IDs to mark as read'),
                 },
                 withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('markAsRead', async (args): Promise<CallToolResult> => {
                         const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
                         await inboxManager.markAsRead(channelId, args.messageIds);
 
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             channelId,
                             markedCount: args.messageIds.length,
@@ -240,16 +215,13 @@ export function createInboxMCPServer(
                 'markChannelRead',
                 'Mark all messages in a channel as read. Updates the checkpoint to the latest message. Accepts channel ID or #channel-name format.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                 },
                 withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
-                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('markChannelRead', async (args): Promise<CallToolResult> => {
                         const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
                         await inboxManager.markChannelRead(channelId);
 
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             channelId,
                             msg: 'Channel marked as read',

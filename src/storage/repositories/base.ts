@@ -14,7 +14,6 @@ import {
     type UpdateCommandOutput,
     type ScanCommandInput
 } from '@aws-sdk/lib-dynamodb';
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports -- DynamoDBClientHolder used in instanceof check at runtime
 import { DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
 import { withDynamoTimeout } from '@/storage/dynamo-retry';
 

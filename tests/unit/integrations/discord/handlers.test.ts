@@ -143,7 +143,7 @@ describe('Discord Event Handlers', () => {
         const botUserId = createUserId('bot-123');
         const monitoredChannelId = createChannelId('channel-456');
 
-        const createMockMessage = (attachments: { name: string | null, contentType: string | null }[]): Message => {
+        const createMockMessage = (attachments: { name: string, contentType: string | null }[]): Message => {
             const attachmentCollection = new Map() as Collection<string, Attachment>;
 
             for(const [index, att] of attachments.entries()) {
@@ -169,7 +169,7 @@ describe('Discord Event Handlers', () => {
                 cleanContent: 'Test message',
                 channel:      {
                     id:         monitoredChannelId,
-                    // Stryker disable next-line all: Mock function for testing only
+                    isThread:   () => false,
                     sendTyping: mock(async () => {}),
                 },
                 guild: {
@@ -500,27 +500,6 @@ describe('Discord Event Handlers', () => {
             );
         });
 
-        it('should use filename "unknown" when attachment name is null', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: null, contentType: 'image/png' }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ filename: 'unknown', contentType: 'image/png' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
         it('should use actual filename when attachment name is provided', async () => {
             const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
@@ -737,27 +716,6 @@ describe('Discord Event Handlers', () => {
             );
         });
 
-        it('should return non-empty string for unknown filename', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: null, contentType: 'image/png' }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ filename: 'unknown', contentType: 'image/png' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
         it('should return non-empty string for octet-stream', async () => {
             const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
@@ -879,24 +837,19 @@ describe('Discord Event Handlers', () => {
 
     describe('extractAttachmentMetadata', () => {
         const createMockMessageForExtraction = (
-            attachments: { name: string | null, contentType: string | null }[] | null | undefined
+            attachments: { name: string, contentType: string | null }[]
         ): Message => {
-            let attachmentCollection: Collection<string, Attachment> | undefined;
-
-            if(attachments !== null && attachments !== undefined) {
-                attachmentCollection = new Map() as Collection<string, Attachment>;
-
-                for(const [index, att] of attachments.entries()) {
-                    attachmentCollection.set(`att-${index}`, {
-                        id:          `att-${index}`,
-                        name:        att.name,
-                        contentType: att.contentType,
-                        url:         `https://cdn.discord.com/attachments/test-${index}`,
-                        size:        1024,
-                        width:       null,
-                        height:      null,
-                    } as Attachment);
-                }
+            const attachmentCollection = new Map() as Collection<string, Attachment>;
+            for(const [index, att] of attachments.entries()) {
+                attachmentCollection.set(`att-${index}`, {
+                    id:          `att-${index}`,
+                    name:        att.name,
+                    contentType: att.contentType,
+                    url:         `https://cdn.discord.com/attachments/test-${index}`,
+                    size:        1024,
+                    width:       null,
+                    height:      null,
+                } as Attachment);
             }
 
             return {
@@ -905,23 +858,27 @@ describe('Discord Event Handlers', () => {
             } as unknown as Message;
         };
 
-        it('should return empty array when attachments is undefined', () => {
-            // Mutant 2373: conditional → false (would try to access undefined.size and throw)
-            const message = createMockMessageForExtraction(null);
-            // Should not throw when attachments is undefined
-            expect(() => extractAttachmentMetadata(message)).not.toThrow();
-            const result = extractAttachmentMetadata(message);
-            expect(result).toEqual([]);
-            expect(result).toHaveLength(0);
-            expect(Array.isArray(result)).toBe(true);
-        });
-
         it('should return empty array when attachments.size is 0', () => {
             // Mutant 2374: === 0 → !== 0 (would invert logic)
             const message = createMockMessageForExtraction([]);
             const result = extractAttachmentMetadata(message);
             expect(result).toEqual([]);
             expect(result).toHaveLength(0);
+        });
+
+        it('does not iterate an empty Discord attachment collection', () => {
+            // Discord exposes a Collection at runtime, but only `size` is needed in this branch.
+            // Keeping iteration out of the empty case avoids touching an unavailable/lazy iterator.
+            const message = {
+                attachments: {
+                    size:   0,
+                    values: () => {
+                        throw new Error('empty attachment collection must not be iterated');
+                    },
+                },
+            } as unknown as Message;
+
+            expect(extractAttachmentMetadata(message)).toEqual([]);
         });
 
         it('should return array with metadata when attachments exist', () => {
@@ -936,38 +893,6 @@ describe('Discord Event Handlers', () => {
                 url:         'https://cdn.discord.com/attachments/test-0',
                 size:        1024,
             });
-        });
-
-        it('should use "unknown" when attachment.name is null', () => {
-            // Mutants 2379-2382: attachment.name ?? 'unknown' mutations
-            // Line 33: filename uses 'unknown'
-            // Line 34: contentType inference uses 'unknown'
-            const message = createMockMessageForExtraction([
-                { name: null, contentType: 'image/png' }
-            ]);
-            const result = extractAttachmentMetadata(message);
-            expect(result).toHaveLength(1);
-            expect(result[0].filename).toBe('unknown');
-            // Verify exact string match
-            expect(result[0].filename).toBe('unknown');
-            // ContentType should use Discord's value (image/png)
-            expect(result[0].contentType).toBe('image/png');
-        });
-
-        it('should pass "unknown" to inferImageContentType when name is null', () => {
-            // Mutant 2382 specifically targets line 34: attachment.name ?? 'unknown' in contentType
-            // If mutated to '', empty filename would be treated differently
-            // Create scenario where filename matters for content type inference
-            const message = createMockMessageForExtraction([
-                { name: null, contentType: null }
-            ]);
-            const result = extractAttachmentMetadata(message);
-            expect(result).toHaveLength(1);
-            // inferImageContentType('unknown', null) → 'application/octet-stream'
-            // inferImageContentType('', null) → 'application/octet-stream' (SAME!)
-            // This mutant requires checking that 'unknown' filename is used in the call
-            expect(result[0].filename).toBe('unknown');
-            expect(result[0].contentType).toBe('application/octet-stream');
         });
 
         it('should use actual name when attachment.name is provided', () => {
@@ -1000,13 +925,13 @@ describe('Discord Event Handlers', () => {
         it('should handle multiple attachments', () => {
             const message = createMockMessageForExtraction([
                 { name: 'photo1.jpg', contentType: 'image/jpeg' },
-                { name: null, contentType: 'image/png' },
+                { name: 'photo2.png', contentType: 'image/png' },
                 { name: 'doc.pdf', contentType: 'application/pdf' }
             ]);
             const result = extractAttachmentMetadata(message);
             expect(result).toHaveLength(3);
             expect(result[0].filename).toBe('photo1.jpg');
-            expect(result[1].filename).toBe('unknown');
+            expect(result[1].filename).toBe('photo2.png');
             expect(result[2].filename).toBe('doc.pdf');
         });
 
@@ -1032,19 +957,6 @@ describe('Discord Event Handlers', () => {
             expect(resultWithAttachments).not.toEqual([]);
             expect(resultWithAttachments).toHaveLength(1);
         });
-
-        it('should return empty array when condition is true, not continue', () => {
-            // Kill mutant 2373: conditional → false
-            // If always false, would not return [] for undefined/empty
-            const messageUndefined = createMockMessageForExtraction(null);
-            const messageEmpty = createMockMessageForExtraction([]);
-
-            const resultUndefined = extractAttachmentMetadata(messageUndefined);
-            const resultEmpty = extractAttachmentMetadata(messageEmpty);
-
-            expect(resultUndefined).toEqual([]);
-            expect(resultEmpty).toEqual([]);
-        });
     });
 
     describe('Reply-to-bot detection', () => {
@@ -1063,7 +975,7 @@ describe('Discord Event Handlers', () => {
                 cleanContent: 'Test message',
                 channel:      {
                     id:         monitoredChannelId,
-                    // Stryker disable next-line all: Mock function for testing only
+                    isThread:   () => false,
                     sendTyping: mock(async () => {}),
                 },
                 guild: {
@@ -1133,11 +1045,14 @@ describe('Discord Event Handlers', () => {
             });
 
             const message = createMockMessageForReply(false, null, false);
+            const fetchReference = mock(async () => ({ author: { id: botUserId } }));
+            Object.defineProperty(message, 'fetchReference', { value: fetchReference });
             await handler(message);
 
             // shouldProcess(channelId, isDM, isMention, isReplyToBot)
             expect(mockShouldProcess).toHaveBeenCalled();
             expect(shouldProcessArgs[3]).toBe(false); // isReplyToBot should be false
+            expect(fetchReference).not.toHaveBeenCalled();
         });
 
         it('should pass isReplyToBot=false to shouldProcess when referenced message is from different user', async () => {

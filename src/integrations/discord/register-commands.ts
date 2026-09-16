@@ -1,8 +1,6 @@
 import { logger } from '@hughescr/logger';
 import { type Client, type SlashCommandBuilder } from 'discord.js';
 
-// Stryker disable all: Composition root wiring — not unit testable
-
 /**
  * Bulk-register all application slash commands with Discord.
  *
@@ -26,14 +24,11 @@ export async function registerAllCommands(
     }
 
     try {
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('Registering slash commands...');
         const commands = builders.map(build => build().toJSON());
         await client.application!.commands.set(commands);
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({ count: commands.length, msg: 'Slash commands registered' });
     } catch (err) {
-        // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.error({
             error: err instanceof Error ? err.message : String(err),
             msg:   'Failed to register slash commands — bot continues without updated commands',

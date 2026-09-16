@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { z } from 'zod';
 import { createBskyMCPServer } from '../../../src/agent/bsky-mcp-server';
 import type { BskyCheckpointManager } from '../../../src/integrations/bsky';
 import type { BlueskyClient } from '../../../src/integrations/bsky/client';
@@ -8,14 +9,14 @@ import type { BskyRejectionBackend, BskyRejectionItem } from '../../../src/integ
 import type { BskyAuthor, BskyConversation, BskyDirectMessage, BskyFeedItem, BskyNotification, BskyPost } from '../../../src/integrations/bsky/types';
 import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters/token-bucket';
 import type { PersonAllowlist } from '../../../src/storage';
-import { textContent } from '../../setup';
+import { mockLogger, textContent } from '../../setup';
 import { BskyValidationError } from '@/errors';
 
 interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<CallToolResult>
     description: string
-    inputSchema: { shape: Record<string, unknown> }
-    annotations: Record<string, boolean>
+    inputSchema: { shape: Record<string, z.ZodType> }
+    annotations: Record<string, string | boolean>
 }
 interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool>, server: { _serverInfo: { version: string } } }
 
@@ -71,10 +72,11 @@ const mockConversation = (overrides: Partial<BskyConversation> = {}): BskyConver
     ...overrides,
 });
 
-describe.concurrent('createBskyMCPServer', () => {
+describe('createBskyMCPServer', () => {
     let mockClient: BlueskyClient;
 
     beforeEach(() => {
+        mockLogger.warn.mockClear();
         mockClient = {
             getFeed:                   mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [mockFeedItem()], cursor: 'cursor-abc' })),
             getNotifications:          mock(async (): Promise<{ notifications: BskyNotification[], cursor?: string }> => ({ notifications: [mockNotification()], cursor: 'notif-cursor' })),
@@ -103,6 +105,61 @@ describe.concurrent('createBskyMCPServer', () => {
     const getToolHandler = (server: ReturnType<typeof createBskyMCPServer>, toolName: string): ((...args: unknown[]) => Promise<CallToolResult>) => {
         return (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName].handler;
     };
+
+    test.each([
+        ['getNotifications', 'getNotifications', {}],
+        ['searchPosts', 'searchPosts', { query: 'hello' }],
+        ['getPost', 'getPost', { uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz' }],
+        ['getProfile', 'getProfile', { actor: 'alice.bsky.social' }],
+        ['getAuthorFeed', 'getAuthorFeed', { actor: 'alice.bsky.social' }],
+        ['likePost', 'getPost', { uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' }],
+        ['follow', 'follow', { actor: 'alice.bsky.social' }],
+        ['unfollow', 'unfollow', { actor: 'alice.bsky.social' }],
+        ['sendPost', 'sendPost', { text: 'hello' }],
+        ['replyToPost', 'getPost', { text: 'hello', parentUri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', parentCid: 'bafyreiabc' }],
+        ['listConversations', 'listConversations', {}],
+        ['getDirectMessages', 'getProfile', { recipients: ['alice.bsky.social'] }],
+        ['sendDirectMessage', 'getProfile', { recipients: ['alice.bsky.social'], text: 'hello' }],
+    ] as const)('logs the invoked tool name when %s fails', async (toolName, clientMethod, args) => {
+        const failure = new Error('synthetic backend failure');
+        const client = { ...mockClient, [clientMethod]: mock(async () => {
+            throw failure;
+        }) } as BlueskyClient;
+        const server = createBskyMCPServer({ client });
+
+        const result = await getToolHandler(server, toolName)(args);
+
+        expect(result.isError).toBe(true);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            { tool: toolName, error: failure.message },
+            'MCP tool error'
+        );
+    });
+
+    test.each([
+        ['listRejectedPosts', {}],
+        ['clearRejection', { uuid: '00000000-0000-0000-0000-000000000001' }],
+        ['clearAllRejections', {}],
+    ] as const)('logs the invoked tool name when %s rejection storage fails', async (toolName, args) => {
+        const failure = new Error('synthetic rejection storage failure');
+        const reject = mock(async () => {
+            throw failure;
+        });
+        const rejectionBackend = {
+            listRejections:  reject,
+            deleteRejection: reject,
+            clearAll:        reject,
+        } as unknown as BskyRejectionBackend;
+        const server = createBskyMCPServer({ client: mockClient, rejectionBackend });
+
+        const result = await getToolHandler(server, toolName)(args);
+
+        expect(result.isError).toBe(true);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            { tool: toolName, error: failure.message },
+            'MCP tool error'
+        );
+    });
 
     describe('createBskyMCPServer function', () => {
         test('should create MCP server with correct properties', () => {
@@ -164,6 +221,53 @@ describe.concurrent('createBskyMCPServer', () => {
                 expect(registeredTool.inputSchema.shape[field]).toBeDefined();
             }
         });
+
+        test('exposes field guidance and safety hints for every Bluesky operation', () => {
+            const server = createBskyMCPServer({ client: mockClient });
+            const tools = (server.instance as unknown as RegisteredToolInstance)._registeredTools;
+            const expected: Record<string, [string, boolean, boolean, boolean?]> = {
+                getFeed:            ['Get Feed', false, false],
+                getNotifications:   ['Get Notifications', false, false],
+                searchPosts:        ['Search Posts', true, true],
+                getPost:            ['Get Post', true, true],
+                getProfile:         ['Get Profile', true, true],
+                getAuthorFeed:      ['Get Author Feed', false, false],
+                likePost:           ['Like Post', false, true, false],
+                follow:             ['Follow', false, true, false],
+                unfollow:           ['Unfollow', false, true, true],
+                sendPost:           ['Send Post', false, false, false],
+                replyToPost:        ['Reply To Post', false, false, false],
+                listConversations:  ['List Conversations', true, true],
+                getDirectMessages:  ['Get Direct Messages', false, false],
+                sendDirectMessage:  ['Send Direct Message', false, false, false],
+                listRejectedPosts:  ['List Rejected Posts', true, true],
+                clearRejection:     ['Clear Rejection', false, true, true],
+                clearAllRejections: ['Clear All Rejections', false, false, true],
+            };
+            expect(Object.keys(tools).toSorted((a, b) => a.localeCompare(b))).toEqual(Object.keys(expected).toSorted((a, b) => a.localeCompare(b)));
+            for(const [name, [title, readOnlyHint, idempotentHint, destructiveHint]] of Object.entries(expected)) {
+                const entry = tools[name];
+                expect(entry.annotations).toEqual({ title, readOnlyHint, idempotentHint, ...(destructiveHint === undefined ? {} : { destructiveHint }) });
+                for(const field of Object.values(entry.inputSchema.shape)) {
+                    expect(field.description?.length).toBeGreaterThan(8);
+                }
+            }
+            expect(tools.getFeed.inputSchema.shape.feedName.description).toContain('for-you');
+            expect(tools.sendDirectMessage.inputSchema.shape.recipients.description).toContain('recipients');
+        });
+
+        test('rejects empty recipients and preserves checkpoint pagination defaults in exposed schemas', () => {
+            const server = createBskyMCPServer({ client: mockClient });
+            const tools = (server.instance as unknown as RegisteredToolInstance)._registeredTools;
+            expect(tools.getDirectMessages.inputSchema.shape.recipients.safeParse([]).success).toBe(false);
+            expect(tools.getDirectMessages.inputSchema.shape.recipients.safeParse(['alice.bsky.social']).success).toBe(true);
+            expect(tools.sendDirectMessage.inputSchema.shape.recipients.safeParse([]).success).toBe(false);
+            expect(tools.sendDirectMessage.inputSchema.shape.recipients.safeParse(['alice.bsky.social']).success).toBe(true);
+            expect(tools.getFeed.inputSchema.shape.includeProcessed.parse(undefined)).toBe(false);
+            expect(tools.getNotifications.inputSchema.shape.includeProcessed.parse(undefined)).toBe(false);
+            expect(tools.getAuthorFeed.inputSchema.shape.includeProcessed.parse(undefined)).toBe(false);
+            expect(tools.getFeed.inputSchema.shape.limit.safeParse(0).success).toBe(false);
+        });
     });
 
     describe('getFeed tool', () => {
@@ -210,6 +314,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toBe('Error: Network error');
+            expect(mockLogger.warn).toHaveBeenCalledWith({ tool: 'getFeed', error: 'Network error' }, 'MCP tool error');
         });
 
         test('should handle non-Error rejection', async () => {
@@ -739,6 +844,21 @@ describe.concurrent('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'getNotifications');
 
             await handler({});
+
+            expect(mockClient.updateNotificationsSeen).toHaveBeenCalledTimes(1);
+        });
+
+        test('should mark new notifications seen when a checkpoint already exists', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            mockCheckpointManager.processNotifications.mockImplementation(async () => ({
+                newNotifications:      [mockNotification()],
+                totalFetched:          1,
+                lastSeenAt:            '2025-01-01T00:00:00.000Z',
+                hadExistingCheckpoint: true,
+            }));
+            const server = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
+
+            await getToolHandler(server, 'getNotifications')({});
 
             expect(mockClient.updateNotificationsSeen).toHaveBeenCalledTimes(1);
         });
@@ -1313,6 +1433,10 @@ describe.concurrent('createBskyMCPServer', () => {
             // Approval delivery failure returns an error result
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toContain('failed to send approval request');
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                error: 'Discord unavailable',
+                msg:   'Failed to send bsky approval request',
+            });
         });
 
         test('should call rateLimiter.increment() after allowlisted send', async () => {
@@ -1680,6 +1804,22 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(member.did).toBeUndefined();
         });
 
+        test('preserves conversation metadata without a last message while stripping member DIDs', async () => {
+            (mockClient.listConversations as ReturnType<typeof mock>).mockResolvedValueOnce({
+                conversations: [mockConversation({ rev: 'conversation-rev', muted: true, unreadCount: 7, status: 'request' })],
+                cursor:        undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'listConversations');
+
+            const result = await handler({});
+            const parsed = JSON.parse(textContent(result.content[0])) as { conversations: Record<string, unknown>[] };
+            const conversation = parsed.conversations[0] ?? {};
+
+            expect(conversation).toMatchObject({ id: 'convo-1', rev: 'conversation-rev', muted: true, unreadCount: 7, status: 'request' });
+            expect((conversation.members as Record<string, unknown>[])[0]?.did).toBeUndefined();
+        });
+
         test('should replace senderDid with senderHandle in lastMessage', async () => {
             (mockClient.listConversations as ReturnType<typeof mock>).mockResolvedValueOnce({
                 conversations: [mockConversation({
@@ -1697,6 +1837,30 @@ describe.concurrent('createBskyMCPServer', () => {
             const msg = parsed.conversations[0]?.lastMessage ?? {};
             expect(msg.senderHandle).toBe('alice.bsky.social');
             expect(msg.senderDid).toBeUndefined();
+        });
+
+        test('preserves conversation and last-message metadata while replacing the sender DID', async () => {
+            (mockClient.listConversations as ReturnType<typeof mock>).mockResolvedValueOnce({
+                conversations: [mockConversation({
+                    rev:         'conversation-rev',
+                    muted:       true,
+                    unreadCount: 3,
+                    status:      'accepted',
+                    lastMessage: mockDirectMessage({ id: 'message-id', rev: 'message-rev', text: 'Keep this text', senderDid: 'did:plc:abc123', sentAt: '2026-09-15T12:00:00.000Z' }),
+                })],
+                cursor: undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'listConversations');
+
+            const result = await handler({});
+            const parsed = JSON.parse(textContent(result.content[0])) as { conversations: { lastMessage: Record<string, unknown> }[] };
+            const conversation = parsed.conversations[0];
+            const message = conversation.lastMessage;
+
+            expect(conversation).toMatchObject({ id: 'convo-1', rev: 'conversation-rev', muted: true, unreadCount: 3, status: 'accepted' });
+            expect(message).toMatchObject({ id: 'message-id', rev: 'message-rev', text: 'Keep this text', sentAt: '2026-09-15T12:00:00.000Z', senderHandle: 'alice.bsky.social' });
+            expect(message.senderDid).toBeUndefined();
         });
 
         test('should pass limit, cursor, readState, status to client.listConversations', async () => {
@@ -1843,6 +2007,10 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(result.isError).toBeUndefined();
             const parsed = JSON.parse(textContent(result.content[0])) as { messages: unknown[] };
             expect(parsed.messages).toHaveLength(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                error: 'Mark read failed',
+                msg:   'Failed to mark conversation as read',
+            });
         });
 
         test('should pass through embed field when message has a forwarded post', async () => {
@@ -1906,8 +2074,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
             expect(result.content).toHaveLength(2);
             const hint = textContent(result.content[1]);
-            expect(hint).toContain('analyzeVideoFromUrl');
-            expect(hint).toContain('https://video.bsky.app/watch/abc/playlist.m3u8');
+            expect(hint).toBe('Note: This response contains a video embed. Use the analyzeVideoFromUrl tool to analyze:\n  - https://video.bsky.app/watch/abc/playlist.m3u8');
         });
 
         test('should not append video hint when messages have no video embeds', async () => {
@@ -1971,8 +2138,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
             const hint = textContent(result.content[1]);
             expect(hint).toContain('contains video embeds');
-            expect(hint).toContain('https://video.bsky.app/watch/one/playlist.m3u8');
-            expect(hint).toContain('https://video.bsky.app/watch/two/playlist.m3u8');
+            expect(hint).toBe('Note: This response contains video embeds. Use the analyzeVideoFromUrl tool to analyze:\n  - https://video.bsky.app/watch/one/playlist.m3u8\n  - https://video.bsky.app/watch/two/playlist.m3u8');
         });
     });
 
@@ -2122,6 +2288,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
             expect(mockClient.sendDirectMessage).not.toHaveBeenCalled();
             expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('DM requires approval but no approval handler is configured.');
         });
 
         test('should return error when approval request fails', async () => {
@@ -2138,6 +2305,11 @@ describe.concurrent('createBskyMCPServer', () => {
             const result = await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
 
             expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('DM requires approval but failed to send approval request to admin. Please try again later.');
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                error: 'Discord channel not found',
+                msg:   'Failed to send bsky DM approval request',
+            });
         });
 
         test('should increment rateLimiter when DM is sent', async () => {

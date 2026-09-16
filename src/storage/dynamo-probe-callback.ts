@@ -41,13 +41,11 @@ export async function runDynamoDBProbe(
         // a bare probe-success here doesn't re-mark online (reconnect loop does that).
     } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger?.warn({ error, msg: 'DynamoDB periodic probe failed' });
         try {
             eventSender.sendEvent('dynamodb', 'CONNECTION_LOST', { error });
         } catch (error_) {
             const sendError = error_ instanceof Error ? error_.message : String(error_);
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger?.warn({ error: sendError, msg: 'DynamoDB probe: failed to send CONNECTION_LOST event' });
         }
     }

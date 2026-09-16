@@ -16,23 +16,17 @@ function formatIdentifiers(identifiers: ContactIdentifier[]): string {
  * Format a Contact into a Discord embed.
  */
 function buildContactEmbed(contact: Contact): EmbedBuilder {
-    // Stryker disable next-line StringLiteral: UI label is configuration
     const embed = new EmbedBuilder().setTitle(contact.displayName).setColor(GREEN);
-    // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
     embed.addFields({ name: 'Person ID', value: contact.personId, inline: true });
 
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: Contact schema requires min 1 identifier — length > 0 is always true
     if(contact.identifiers.length > 0) {
-        // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
         embed.addFields({ name: 'Identifiers', value: formatIdentifiers(contact.identifiers), inline: false });
     }
 
     if(contact.notes) {
-        // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
         embed.addFields({ name: 'Notes', value: contact.notes, inline: false });
     }
 
-    // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
     embed.addFields({ name: 'Updated', value: contact.updatedAt, inline: true });
 
     return embed;
@@ -59,59 +53,48 @@ export function buildContactApprovalEmbed(request: ContactApprovalRequest, uuid:
     embed:     EmbedBuilder
     actionRow: ActionRowBuilder<ButtonBuilder>
 } {
-    // Stryker disable next-line ConditionalExpression,StringLiteral: title depends on action type
     const title = request.action === 'create' ? 'Contact Create Request' : 'Contact Update Request';
     const embed = new EmbedBuilder()
-        // Stryker disable next-line StringLiteral: UI label is configuration
         .setTitle(title)
         .setColor(AMBER);
 
     if(request.displayName) {
         embed.addFields(
-            // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
             { name: 'Display Name', value: request.displayName, inline: true }
         );
     }
 
     if(request.personId) {
         embed.addFields(
-            // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
             { name: 'Person ID', value: request.personId, inline: true }
         );
     }
 
     if(request.addIdentifiers && request.addIdentifiers.length > 0) {
         embed.addFields(
-            // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
             { name: 'Add Identifiers', value: formatIdentifiers(request.addIdentifiers), inline: false }
         );
     }
 
     if(request.removeIdentifiers && request.removeIdentifiers.length > 0) {
         embed.addFields(
-            // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
             { name: 'Remove Identifiers', value: formatIdentifiers(request.removeIdentifiers), inline: false }
         );
     }
 
     if(request.notes) {
         embed.addFields(
-            // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
             { name: 'Notes', value: request.notes, inline: false }
         );
     }
 
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
             .setCustomId(`contact-approve:${uuid}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
             .setLabel('Approve')
             .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
             .setCustomId(`contact-reject:${uuid}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
             .setLabel('Reject')
             .setStyle(ButtonStyle.Danger)
     );
@@ -123,7 +106,6 @@ export function buildContactApprovalEmbed(request: ContactApprovalRequest, uuid:
  * Build the /contact slash command with add, link, unlink, list, and show subcommands.
  */
 export function buildContactCommand(): SlashCommandBuilder {
-    // Stryker disable all: Enum values and command configuration are static definitions
     return new SlashCommandBuilder()
         .setName('contact')
         .setDescription('Manage the contacts address book')
@@ -297,20 +279,15 @@ export function buildDeleteConfirmationEmbed(contact: Contact, uuid: string): {
     actionRow: ActionRowBuilder<ButtonBuilder>
 } {
     const embed = buildContactEmbed(contact);
-    // Stryker disable next-line StringLiteral: UI description is configuration
     embed.setDescription('Are you sure you want to delete this contact?');
 
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
             .setCustomId(`contact-delete-confirm:${uuid}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
             .setLabel('Confirm')
             .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
             .setCustomId(`contact-delete-cancel:${uuid}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
             .setLabel('Cancel')
             .setStyle(ButtonStyle.Secondary)
     );
@@ -323,9 +300,7 @@ export function buildDeleteConfirmationEmbed(contact: Contact, uuid: string): {
  */
 function buildNotFoundEmbed(): EmbedBuilder {
     return new EmbedBuilder()
-        // Stryker disable next-line StringLiteral: UI label is configuration
         .setTitle('Request Not Found')
-        // Stryker disable next-line StringLiteral: UI message is configuration
         .setDescription('This request has already been processed or expired.')
         .setColor(AMBER);
 }
@@ -351,7 +326,6 @@ export class ContactCommandHandler {
         // Permission check — only the admin may manage contacts
         if(interaction.user.id !== this.adminDiscordUserId) {
             await interaction.reply({
-                // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
                 content: 'Only the admin can manage contacts.',
                 flags:   MessageFlags.Ephemeral,
             });
@@ -394,8 +368,7 @@ export class ContactCommandHandler {
     }
 
     private async handleAdd(interaction: ChatInputCommandInteraction): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - name is required option
-        const displayName = interaction.options.getString('name') ?? '';
+        const displayName = interaction.options.getString('name', true);
         const discord     = interaction.options.getString('discord') ?? undefined;
         const email       = interaction.options.getString('email') ?? undefined;
         const bsky        = interaction.options.getString('bsky') ?? undefined;
@@ -418,8 +391,8 @@ export class ContactCommandHandler {
             identifiers.push({ platform: 'nickname', value: nickname });
         }
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
+            // Stryker disable next-line llm: required getString('name', true) returns a string, so an empty-string fallback cannot change this argument.
             const baseId = generatePersonId(displayName);
             if(!baseId) {
                 await interaction.editReply({ content: `Cannot generate a valid ID from display name: ${displayName}` });
@@ -436,12 +409,9 @@ export class ContactCommandHandler {
                 updatedAt: now,
             };
             await this.backend.putContact(contact);
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Contact **${displayName}** created with ID \`${personId}\`.` });
         } catch (err: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
             logger.error({ err, displayName, msg: 'Failed to create contact' });
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Failed to create contact: ${err instanceof Error ? err.message : String(err)}` });
         }
         // Stryker restore BlockStatement
@@ -449,40 +419,30 @@ export class ContactCommandHandler {
 
     private extractLinkOptions(interaction: ChatInputCommandInteraction): { personRaw: string, platformRaw: string, idValue: string } {
         return {
-            // Stryker disable next-line StringLiteral: fallback '' is unreachable - person is required option
-            personRaw:   interaction.options.getString('person') ?? '',
-            // Stryker disable next-line StringLiteral: fallback '' is unreachable - platform is required option
-            platformRaw: interaction.options.getString('platform') ?? '',
-            // Stryker disable next-line StringLiteral: fallback '' is unreachable - id is required option
-            idValue:     interaction.options.getString('id') ?? '',
+            personRaw:   interaction.options.getString('person', true),
+            platformRaw: interaction.options.getString('platform', true),
+            idValue:     interaction.options.getString('id', true),
         };
     }
 
     private async handleLink(interaction: ChatInputCommandInteraction): Promise<void> {
         const { personRaw, platformRaw, idValue } = this.extractLinkOptions(interaction);
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const personId   = createContactId(personRaw);
             const identifier: ContactIdentifier = contactIdentifierSchema.parse({ platform: platformRaw, value: idValue });
             await this.backend.addIdentifier(personId, identifier);
             // Best-effort allowlist cache refresh
-            // Stryker disable BlockStatement: defensive catch — refresh failure must not prevent success reply
             try {
                 await this.personAllowlist?.refreshPerson(personId);
             } catch (error) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.warn({ err: error, personId, msg: 'Failed to refresh allowlist cache after link' });
             }
             // Stryker restore BlockStatement
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Added ${platformRaw}: ${idValue} to contact \`${personRaw}\`.` });
         } catch (err: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
             logger.error({ err, personRaw, msg: 'Failed to link identifier' });
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             const errMsg = err instanceof Error ? err.message : String(err);
-            // Stryker disable next-line ConditionalExpression,StringLiteral: error message distinguishes not-found from other failures
             const replyContent = err instanceof ContactNotFoundError ? `Contact \`${personRaw}\` not found.` : `Failed to link identifier: ${errMsg}`;
             await interaction.editReply({ content: replyContent });
         }
@@ -492,27 +452,20 @@ export class ContactCommandHandler {
     private async handleUnlink(interaction: ChatInputCommandInteraction): Promise<void> {
         const { personRaw, platformRaw, idValue } = this.extractLinkOptions(interaction);
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const personId = createContactId(personRaw);
             await this.backend.removeIdentifier(personId, platformRaw as Parameters<ContactBackend['removeIdentifier']>[1], idValue);
             // Best-effort allowlist cache refresh
-            // Stryker disable BlockStatement: defensive catch — refresh failure must not prevent success reply
             try {
                 await this.personAllowlist?.refreshPerson(personId);
             } catch (error) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.warn({ err: error, personId, msg: 'Failed to refresh allowlist cache after unlink' });
             }
             // Stryker restore BlockStatement
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Removed ${platformRaw}: ${idValue} from contact \`${personRaw}\`.` });
         } catch (err: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
             logger.error({ err, personRaw, msg: 'Failed to unlink identifier' });
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             const errMsg = err instanceof Error ? err.message : String(err);
-            // Stryker disable next-line ConditionalExpression,StringLiteral: error message distinguishes not-found from other failures
             const replyContent = err instanceof ContactNotFoundError ? `Contact \`${personRaw}\` not found.` : `Failed to remove identifier: ${errMsg}`;
             await interaction.editReply({ content: replyContent });
         }
@@ -520,12 +473,10 @@ export class ContactCommandHandler {
     }
 
     private async handleList(interaction: ChatInputCommandInteraction): Promise<void> {
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const contacts = await this.backend.listContacts();
 
             if(contacts.length === 0) {
-                // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
                 await interaction.editReply({ content: 'No contacts in the address book.' });
                 return;
             }
@@ -536,32 +487,25 @@ export class ContactCommandHandler {
             });
             await interaction.editReply({ content: lines.join('\n') });
         } catch (err: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
             logger.error({ err, msg: 'Failed to list contacts' });
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: 'Failed to list contacts.' });
         }
         // Stryker restore BlockStatement
     }
 
     private async resolveContact(interaction: ChatInputCommandInteraction, personRaw: string): Promise<Contact | undefined> {
-        // Try exact lookup first, then fuzzy
+        // Parse with the canonical ID validator before attempting an exact lookup.
+        // Invalid IDs are names or fuzzy queries, so they fall through below.
         let contact: Contact | undefined;
-        const looksLikePersonId = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/.test(personRaw);
-        if(looksLikePersonId) {
-            // Stryker disable BlockStatement: inner try/catch handles invalid ContactId format gracefully
-            try {
-                const parsedId = createContactId(personRaw);
-                contact = await this.backend.getContact(parsedId);
-            } catch (error: unknown) {
-                // If it was a real backend error (not just invalid format), re-throw
-                // Stryker disable next-line ConditionalExpression: instanceof check distinguishes format errors from backend errors
-                if(!(error instanceof z.ZodError)) {
-                    throw error;
-                }
-                // Not a valid ContactId format — fall through to fuzzy lookup
+        try {
+            const parsedId = createContactId(personRaw);
+            contact = await this.backend.getContact(parsedId);
+        } catch (error: unknown) {
+            // If it was a real backend error (not just invalid format), re-throw
+            if(!(error instanceof z.ZodError)) {
+                throw error;
             }
-            // Stryker restore BlockStatement
+            // Not a valid ContactId format — fall through to fuzzy lookup
         }
 
         if(!contact) {
@@ -570,7 +514,6 @@ export class ContactCommandHandler {
         }
 
         if(!contact) {
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `No contact found matching \`${personRaw}\`.` });
             return undefined;
         }
@@ -579,10 +522,8 @@ export class ContactCommandHandler {
     }
 
     private async handleShow(interaction: ChatInputCommandInteraction): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - person is required option
-        const personRaw = interaction.options.getString('person') ?? '';
+        const personRaw = interaction.options.getString('person', true);
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const contact = await this.resolveContact(interaction, personRaw);
             if(!contact) {
@@ -592,27 +533,22 @@ export class ContactCommandHandler {
             const embed = buildContactEmbed(contact);
             await interaction.editReply({ embeds: [embed] });
         } catch (err: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
             logger.error({ err, personRaw, msg: 'Failed to show contact' });
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Failed to show contact: ${err instanceof Error ? err.message : String(err)}` });
         }
         // Stryker restore BlockStatement
     }
 
     private async handleEdit(interaction: ChatInputCommandInteraction): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - person is required option
-        const personRaw = interaction.options.getString('person') ?? '';
+        const personRaw = interaction.options.getString('person', true);
         const name      = interaction.options.getString('name');
         const notes     = interaction.options.getString('notes');
 
         if(name === null && notes === null) {
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: 'No changes specified.' });
             return;
         }
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const contact = await this.resolveContact(interaction, personRaw);
             if(!contact) {
@@ -636,22 +572,17 @@ export class ContactCommandHandler {
             };
             await this.backend.putContact(updated);
             const displayName = updated.displayName;
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Contact **${displayName}** updated.` });
         } catch (err: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
             logger.error({ err, personRaw, msg: 'Failed to edit contact' });
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Failed to edit contact: ${err instanceof Error ? err.message : String(err)}` });
         }
         // Stryker restore BlockStatement
     }
 
     private async handleDelete(interaction: ChatInputCommandInteraction): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback '' is unreachable - person is required option
-        const personRaw = interaction.options.getString('person') ?? '';
+        const personRaw = interaction.options.getString('person', true);
 
-        // Stryker disable BlockStatement: try/catch is integration boundary
         try {
             const contact = await this.resolveContact(interaction, personRaw);
             if(!contact) {
@@ -659,7 +590,6 @@ export class ContactCommandHandler {
             }
 
             if(!this.approvalHandler) {
-                // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
                 await interaction.editReply({ content: 'Contact deletion is not available.' });
                 return;
             }
@@ -669,9 +599,7 @@ export class ContactCommandHandler {
             this.approvalHandler.storePendingDeletion(uuid, contact.personId);
             await interaction.editReply({ embeds: [embed], components: [actionRow] });
         } catch (err: unknown) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
             logger.error({ err, personRaw, msg: 'Failed to delete contact' });
-            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Failed to delete contact: ${err instanceof Error ? err.message : String(err)}` });
         }
         // Stryker restore BlockStatement
@@ -723,14 +651,9 @@ export class ContactApprovalHandler {
      */
     async handleButton(interaction: ButtonInteraction): Promise<void> {
         const parts  = interaction.customId.split(':');
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: defensive guard — customId may lack colon separator; BlockStatement equivalent — downstream !uuid guard produces same result for undefined uuid
-        if(parts.length < 2) {
-            return;
-        }
         const prefix = parts[0];
         const uuid   = parts[1];
 
-        // Stryker disable next-line StringLiteral,ConditionalExpression: prefix check is configuration
         if(prefix !== 'contact-approve' && prefix !== 'contact-reject' && prefix !== 'contact-delete-confirm' && prefix !== 'contact-delete-cancel') {
             return;
         }
@@ -741,29 +664,23 @@ export class ContactApprovalHandler {
 
         await interaction.deferUpdate();
 
-        // Stryker disable BlockStatement: try-catch wraps button handler - error handling
         try {
             if(prefix === 'contact-delete-confirm') {
                 await this.handleDeleteConfirm(interaction, uuid);
             } else if(prefix === 'contact-delete-cancel') {
                 await this.handleDeleteCancel(interaction, uuid);
             } else {
-                // Stryker disable next-line StringLiteral,ConditionalExpression: prefix check is configuration
                 await (prefix === 'contact-approve' ? this.handleApprove(interaction, uuid) : this.handleReject(interaction, uuid));
             }
         } catch (err) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({ err, uuid, prefix, msg: 'Contact approval button handler failed' });
-            // Stryker disable BlockStatement: try-catch wraps best-effort error reply to Discord
             try {
                 await interaction.editReply({
-                    // Stryker disable next-line StringLiteral: Error message is UI configuration
                     content:    'An error occurred processing your request. Please try again.',
                     embeds:     [],
                     components: [],
                 });
             } catch (replyError) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.error({ err: replyError, msg: 'Failed to send error editReply for contact approval' });
             }
             // Stryker restore BlockStatement
@@ -774,7 +691,6 @@ export class ContactApprovalHandler {
     private async handleApprove(interaction: ButtonInteraction, uuid: string): Promise<void> {
         const request = this.pendingRequests.get(uuid);
         if(!request) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ uuid, msg: 'Contact approval: no pending request found for uuid' });
             await interaction.editReply({ embeds: [buildNotFoundEmbed()], components: [] });
             return;
@@ -782,13 +698,11 @@ export class ContactApprovalHandler {
 
         const now = new Date().toISOString();
 
-        // Stryker disable next-line ConditionalExpression: ternary dispatches to two different async helpers
         await (request.action === 'create' ? this.applyContactCreate(request, now) : this.applyContactUpdate(request, now));
 
         this.pendingRequests.delete(uuid);
 
         const approvedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
             .setTitle('Approved \u2713')
             .setColor(GREEN);
 
@@ -796,9 +710,7 @@ export class ContactApprovalHandler {
     }
 
     private async applyContactCreate(request: ContactApprovalRequest, now: string): Promise<void> {
-        // Stryker disable next-line StringLiteral: fallback is defensive — displayName is always set for create
         const displayName = request.displayName ?? 'Unknown';
-        // Stryker disable next-line StringLiteral,ArrayDeclaration: addIdentifiers fallback is defensive — always set for create
         const identifiers = request.addIdentifiers ?? [{ platform: 'name' as const, value: displayName }];
 
         // Deduplicate personId: if the base ID is already taken, append -2, -3, etc.
@@ -813,13 +725,11 @@ export class ContactApprovalHandler {
             updatedAt: now,
         };
         await this.backend.putContact(contact);
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({ personId, displayName, msg: 'Contact created via admin approval' });
     }
 
     private async applyContactUpdate(request: ContactApprovalRequest, now: string): Promise<void> {
         if(!request.personId) {
-            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
             throw new InvariantViolationError('applyContactUpdate', 'Contact update request is missing personId');
         }
         const personId = createContactId(request.personId);
@@ -838,22 +748,18 @@ export class ContactApprovalHandler {
             }
         }
         // Best-effort allowlist cache refresh after identifier changes
-        // Stryker disable BlockStatement: try/catch is defensive — refresh failure must not block approval
         try {
             await this.personAllowlist?.refreshPerson(personId);
         } catch (error) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ err: error, personId, msg: 'Failed to refresh allowlist cache after contact update' });
         }
         // Stryker restore BlockStatement
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({ personId, msg: 'Contact updated via admin approval' });
     }
 
     private async handleReject(interaction: ButtonInteraction, uuid: string): Promise<void> {
         const request = this.pendingRequests.get(uuid);
         if(!request) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ uuid, msg: 'Contact rejection: no pending request found for uuid' });
             await interaction.editReply({ embeds: [buildNotFoundEmbed()], components: [] });
             return;
@@ -861,7 +767,6 @@ export class ContactApprovalHandler {
 
         this.pendingRequests.delete(uuid);
 
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({
             action:      request.action,
             personId:    request.personId,
@@ -870,7 +775,6 @@ export class ContactApprovalHandler {
         });
 
         const rejectedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
             .setTitle('Rejected')
             .setColor(RED);
 
@@ -880,7 +784,6 @@ export class ContactApprovalHandler {
     private async handleDeleteConfirm(interaction: ButtonInteraction, uuid: string): Promise<void> {
         const personId = this.pendingDeletions.get(uuid);
         if(!personId) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ uuid, msg: 'Contact delete confirm: no pending deletion found for uuid' });
             await interaction.editReply({ embeds: [buildNotFoundEmbed()], components: [] });
             return;
@@ -890,17 +793,14 @@ export class ContactApprovalHandler {
         this.pendingDeletions.delete(uuid);
 
         // Auto-remove from allowlist (best-effort)
-        // Stryker disable BlockStatement: defensive catch — allowlist removal failure must not prevent success reply
         try {
             await this.personAllowlist?.removePerson(personId);
         } catch (error) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ err: error, personId, msg: 'Failed to remove person from allowlist after contact deletion' });
         }
         // Stryker restore BlockStatement
 
         const deletedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
             .setTitle('Deleted \u2713')
             .setColor(GREEN);
 
@@ -910,7 +810,6 @@ export class ContactApprovalHandler {
     private async handleDeleteCancel(interaction: ButtonInteraction, uuid: string): Promise<void> {
         const personId = this.pendingDeletions.get(uuid);
         if(!personId) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ uuid, msg: 'Contact delete cancel: no pending deletion found for uuid' });
             await interaction.editReply({ embeds: [buildNotFoundEmbed()], components: [] });
             return;
@@ -919,7 +818,6 @@ export class ContactApprovalHandler {
         this.pendingDeletions.delete(uuid);
 
         const cancelledEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
             .setTitle('Cancelled')
             .setColor(AMBER);
 

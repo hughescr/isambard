@@ -8,7 +8,6 @@ import { createSpawnRunner, createBinarySpawnRunner } from './spawn-runner';
 import { getSubtitlesOrTranscription } from './subtitle-extractor';
 import type { VideoProcessingResult, SpawnRunner, BinarySpawnRunner } from './types';
 
-// Stryker disable next-line StringLiteral: output filename is configuration
 const METADATA_FILENAME = 'video-metadata.md';
 
 interface ProcessVideoOptions {
@@ -40,7 +39,6 @@ export async function processLocalVideo(
     const alt       = options?.alt;
 
     // Ensure output directory exists
-    // Stryker disable next-line ObjectLiteral,BooleanLiteral: mkdir options — recursive:true is required behavior
     await mkdir(outputDir, { recursive: true });
 
     // 3. Extract metadata
@@ -59,15 +57,12 @@ export async function processLocalVideo(
     const metadataMarkdown = buildMetadataMarkdown(metadata, subtitles, transcription, alt);
 
     // 8. Write markdown to disk
-    // Stryker disable next-line StringLiteral: encoding option is configuration
     await writeFile(`${outputDir}/${METADATA_FILENAME}`, metadataMarkdown, 'utf8');
 
     return {
         metadata,
         frames,
-        // Stryker disable next-line ConditionalExpression,ObjectLiteral: conditional spread — falsy branch produces no subtitles property
         ...(subtitles === undefined ? {} : { subtitles }),
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,ObjectLiteral: conditional spread — falsy branch produces no transcription property
         ...(transcription === undefined ? {} : { transcription }),
         metadataMarkdown,
         outputDir,

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { type WebViewAdapterConfig, createWebViewAdapter } from '../../../../src/agent/browser/webview-adapter';
 import { BrowserNavigateTimeoutError } from '../../../../src/errors/browser';
+import { mockLogger } from '../../../setup';
 
 // ---------------------------------------------------------------------------
 // Fake Bun.WebView
@@ -120,6 +121,7 @@ function makeFactory() {
 let realPlatform: string;
 
 beforeEach(() => {
+    mockLogger.warn.mockClear();
     realPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'darwin', writable: true });
 });
@@ -167,6 +169,21 @@ describe('createWebViewAdapter — lazy init', () => {
 // ---------------------------------------------------------------------------
 
 describe('createWebViewAdapter — constructor mapping', () => {
+    test('reports the actionable platform error before constructing WebKit on non-macOS', async () => {
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+        Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
+        try {
+            const factory = makeFactory();
+            const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
+            await expect(adapter.navigate('https://example.com')).rejects.toThrow(
+                'Bun.WebView requires macOS when using the WebKit backend. On other platforms, set backend: \'chrome\'.'
+            );
+            expect(factory).not.toHaveBeenCalled();
+        } finally {
+            Object.defineProperty(process, 'platform', platform);
+        }
+    });
+
     test('passes width and height from config', async () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
@@ -183,6 +200,17 @@ describe('createWebViewAdapter — constructor mapping', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
             { ...defaultConfig, backend: 'webkit' },
+            factory,
+            immediateDelay
+        );
+        await adapter.navigate('https://example.com');
+        expect(fakeView.constructorOptions.backend).toBe('webkit');
+    });
+
+    test('does not switch a WebKit backend when a Chrome path is also configured', async () => {
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(
+            { ...defaultConfig, backend: 'webkit', chromePath: '/usr/bin/chromium' },
             factory,
             immediateDelay
         );
@@ -388,6 +416,21 @@ describe('createWebViewAdapter — close', () => {
         adapter.close();
         adapter.close();
         expect(closeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('remains closed when the underlying view throws during explicit close', async () => {
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
+        await adapter.navigate('https://example.com');
+        fakeView.close = mock((): void => {
+            throw new Error('close failed');
+        });
+
+        expect(() => adapter.close()).toThrow('close failed');
+        expect(adapter.isClosed).toBe(true);
+        expect(adapter.url).toBe('');
+        expect(() => adapter.close()).not.toThrow();
+        expect(fakeView.close).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -639,6 +682,24 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
         // Navigate once + exactly 2 reloads = 3 total attempts
         expect(fakeView.navigate).toHaveBeenCalledTimes(1);
         expect(fakeView.reload).toHaveBeenCalledTimes(2);
+        expect(mockLogger.warn).toHaveBeenCalledWith('navigate(https://example.com) timed out on attempt 1, retrying with reload()…');
+        expect(mockLogger.warn).toHaveBeenCalledWith('navigate(https://example.com) timed out on attempt 2, retrying with reload()…');
+        expect(mockLogger.warn).toHaveBeenCalledWith('navigate(https://example.com) timed out 3 times; closing view for lazy-reinit');
+    });
+
+    test('attaches a rejection handler to a timed-out navigation promise', async () => {
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
+        await adapter.evaluate('init');
+
+        const hangingNavigate = new Promise<void>(() => {});
+        const catchSpy = spyOn(hangingNavigate, 'catch');
+        fakeView.navigate = mock(() => hangingNavigate);
+        fakeView.reload = mock(async (): Promise<void> => new Promise(() => {}));
+
+        await adapter.navigate('https://example.com').catch(() => undefined);
+
+        expect(catchSpy).toHaveBeenCalledTimes(1);
     });
 
     test('navigate throws BrowserNavigateTimeoutError with correct url and attempts=3', async () => {
@@ -717,12 +778,15 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
         expect(closeTestErr).toBeInstanceOf(BrowserNavigateTimeoutError);
         // view = null was set despite close() throwing, so isClosed is true
         expect(adapter.isClosed).toBe(true);
+        expect(mockLogger.warn).toHaveBeenCalledWith('v.close() threw during navigate timeout recovery: close failed');
     });
 
     test('navigate: reload() throws /pending/ error — falls back to close+reinit+navigate', async () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init'); // trigger init — factory called once
+        const stuckView = fakeView;
+        const closeSpy = spyOn(stuckView, 'close');
 
         fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
         // reload() throws synchronously with a /pending/i message on first call
@@ -736,6 +800,19 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
         // Factory should have been called twice: initial + reinit after pending-slot fallback
         expect(factory).toHaveBeenCalledTimes(2);
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+        expect(mockLogger.warn).toHaveBeenCalledWith('reload() failed with pending-slot conflict; closing view and retrying navigate');
+    });
+
+    test('uses the production timer-backed delay when no delay seam is supplied', async () => {
+        const timerSpy = spyOn(globalThis, 'setTimeout');
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(timeoutConfig, factory);
+
+        await adapter.navigate('https://example.com');
+
+        expect(timerSpy).toHaveBeenCalledWith(expect.any(Function), timeoutConfig.navigationTimeoutMs);
+        timerSpy.mockRestore();
     });
 
     test('navigate: reload() throws non-pending error — error propagates out of navigate', async () => {
@@ -943,6 +1020,43 @@ describe('createWebViewAdapter — scrollTo delegation', () => {
 // ---------------------------------------------------------------------------
 
 describe('createWebViewAdapter — waitForSelector', () => {
+    test('uses the future deadline so an immediately present selector is evaluated', async () => {
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
+        await adapter.navigate('https://example.com');
+        fakeView.evaluate = mock(async () => true);
+        const nowSpy = spyOn(Date, 'now').mockReturnValue(1000);
+        try {
+            await expect(adapter.waitForSelector('button', 25)).resolves.toBeUndefined();
+            expect(fakeView.evaluate).toHaveBeenCalledTimes(1);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    test('does not poll at the exact deadline', async () => {
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
+        const nowSpy = spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValue(1001);
+        try {
+            await expect(adapter.waitForSelector('button', 1)).rejects.toThrow(
+                "waitForSelector: element 'button' not found within timeout"
+            );
+            expect(fakeView.evaluate).not.toHaveBeenCalled();
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    test('initializes the view before a zero-length polling window', async () => {
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
+
+        await expect(adapter.waitForSelector('button', 0)).rejects.toThrow(/timeout|not found/i);
+
+        expect(factory).toHaveBeenCalledTimes(1);
+    });
+
     test('waitForSelector resolves when element is immediately present', async () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
@@ -1027,6 +1141,7 @@ describe('createWebViewAdapter — getConsoleLogs', () => {
 
         const logs = adapter.getConsoleLogs(2);
         expect(logs).toHaveLength(2);
+        expect(logs.map(entry => entry.args[0])).toEqual(['2', '3']);
     });
 
     test('limit equal to entry count returns all entries', async () => {

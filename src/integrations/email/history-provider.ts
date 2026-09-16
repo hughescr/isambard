@@ -9,24 +9,21 @@ const MAX_SUBJECT_CHARS = 100;
 const DEFAULT_MAX_MESSAGES = 10;
 
 /**
- * Extract the folder name from a WildDuck search result message field.
+ * Whether a WildDuck result belongs to the logical Sent Mail folder.
  * The message field is in the format 'FolderName:uid'.
  */
-function extractFolderName(message: string): string {
+function isSentMailFolder(message: string): boolean {
     const colonIdx = message.lastIndexOf(':');
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,UnaryOperator,StringLiteral: defensive guard — message always contains ':' per WildDuck API contract; fallback branch and its empty-string are unreachable; -1 vs +1 is equivalent since colonIdx is never 1
-    return colonIdx === -1 ? '' : message.slice(0, colonIdx);
+    return colonIdx !== -1 && message.slice(0, colonIdx) === 'Sent Mail';
 }
 
 /**
  * Truncate a string to a maximum number of characters, appending '...' if truncated.
  */
 function truncate(text: string, maxChars: number): string {
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: truncation guard — >= would return same result at exact boundary (slice(0,N) on length=N string is unchanged)
     if(text.length <= maxChars) {
         return text;
     }
-    // Stryker disable next-line StringLiteral: ellipsis is cosmetic truncation indicator
     return `${text.slice(0, maxChars)}...`;
 }
 
@@ -36,9 +33,7 @@ function truncate(text: string, maxChars: number): string {
  * - 'inbound' otherwise
  */
 function determineDirection(result: WildDuckSearchResult, botAddress: string): 'inbound' | 'outbound' {
-    const folderName = extractFolderName(result.message);
-    // Stryker disable next-line StringLiteral: 'Sent Mail' is the exact WildDuck folder name for sent messages
-    if(folderName === 'Sent Mail') {
+    if(isSentMailFolder(result.message)) {
         return 'outbound';
     }
     // Check if the from address contains the bot's address
@@ -54,7 +49,6 @@ function determineDirection(result: WildDuckSearchResult, botAddress: string): '
 function toHistoryEntry(result: WildDuckSearchResult, botAddress: string): HistoryEntry {
     const direction  = determineDirection(result, botAddress);
     const subject    = truncate(result.subject, MAX_SUBJECT_CHARS);
-    // Stryker disable next-line StringLiteral: em-dash separator is cosmetic formatting
     const summary    = `${result.from} — "${subject}"`;
 
     return {
@@ -95,28 +89,21 @@ export class EmailHistoryProvider implements PlatformHistoryProvider {
         try {
             results = await this.wildDuckClient.search(searchParams);
         } catch (err) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: log call structure and message text are informational only
             logger.warn({ err, identifier: params.identifier }, 'EmailHistoryProvider: search failed');
             return [];
         }
 
-        // Filter by time range if provided
-        let filtered = results;
-        // Stryker disable next-line ConditionalExpression: outer gate mutated to `true` is equivalent — inner conditions guard with `params.startTime &&` / `params.endTime &&` so no filtering occurs when params are absent
-        if(params.startTime || params.endTime) {
-            filtered = results.filter((result) => {
-                const date = new Date(result.date);
-                // Stryker disable ConditionalExpression,LogicalOperator: individual flag mutants are equivalent — both conditions together form the time-window gate
-                if(params.startTime && date < params.startTime) {
-                    return false;
-                }
-                if(params.endTime && date > params.endTime) {
-                    return false;
-                }
-                // Stryker restore ConditionalExpression,LogicalOperator
-                return true;
-            });
-        }
+        const filtered = results.filter((result) => {
+            const date = new Date(result.date);
+            if(params.startTime && date < params.startTime) {
+                return false;
+            }
+            if(params.endTime && date > params.endTime) {
+                return false;
+            }
+            // Stryker restore ConditionalExpression,LogicalOperator
+            return true;
+        });
 
         // Cap at maxMessages
         const capped = filtered.slice(0, maxMessages);

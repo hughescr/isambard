@@ -4,6 +4,7 @@ import {
     DISCORD_EPOCH,
     timestampToSnowflake,
     snowflakeToTimestamp,
+    snowflakeSchema,
     InvalidSnowflakeError
 } from '@/integrations/discord/message-history/snowflake';
 
@@ -17,6 +18,13 @@ describe.concurrent('DISCORD_EPOCH', () => {
 });
 
 describe('snowflakeToTimestamp', () => {
+    test.each([['', 'Snowflake cannot be empty'], ['abc', 'Snowflake must contain only digits']])('preserves %s validation diagnostic', (input, message) => {
+        const result = snowflakeSchema.safeParse(input);
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toBe(message);
+        }
+    });
     // Known Discord snowflake: 175928847299117063
     // This is a well-known Discord snowflake (Discord's announcement of snowflakes)
     // Timestamp: 1462015105796 (April 30, 2016)
@@ -118,7 +126,8 @@ describe('timestampToSnowflake', () => {
 
     test('should throw for dates before Discord epoch', () => {
         const beforeEpoch = new Date('2014-12-31T23:59:59.999Z');
-        expect(() => timestampToSnowflake(beforeEpoch)).toThrow();
+        expect(() => timestampToSnowflake(beforeEpoch)).toThrow('Date is before Discord epoch (January 1, 2015)');
+        expect(() => timestampToSnowflake(beforeEpoch)).toThrow('Invariant violated in timestampToSnowflake');
     });
 });
 

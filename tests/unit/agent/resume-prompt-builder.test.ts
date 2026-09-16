@@ -66,5 +66,6 @@ describe('buildResumeNote', () => {
         expect(thinkingIndex).toBeGreaterThan(headerIndex);
         expect(responseIndex).toBeGreaterThan(thinkingIndex);
         expect(toolIndex).toBeGreaterThan(responseIndex);
+        expect(note).toBe('[RESUME NOTE]\n\n[Your thinking at the point of interruption:]\nThinking content\n\n[You were composing this response:]\nResponse content\n\n[You were about to use tool "test_tool" - reconsider if this is still appropriate given the new message]');
     });
 });

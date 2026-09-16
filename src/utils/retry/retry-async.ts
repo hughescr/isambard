@@ -18,7 +18,7 @@ interface RetryAsyncOptions {
  * @throws The last error if all retry attempts are exhausted or a permanent error occurs
  *
  * @warning Total wall-clock time grows exponentially with maxAttempts due to exponential backoff.
- * With default settings (1s base delay), maxAttempts=5 takes ~15s total, maxAttempts=10 takes
+ * With default settings (1s base delay), maxAttempts=3 takes ~3s total, maxAttempts=10 takes
  * ~17 minutes. Consider the total wall-clock time impact when setting maxAttempts.
  */
 export async function retryAsync<T>(
@@ -35,7 +35,7 @@ export async function retryAsync<T>(
     const startTime = now();
     let lastError: unknown;
 
-    for(let attempt = 1; attempt <= maxAttempts; /* Stryker disable next-line UpdateOperator: Decrement creates infinite retry loop */ attempt++) {
+    for(let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             // eslint-disable-next-line no-await-in-loop -- sequential: retry loop, each attempt depends on prior failure
             return await operation();
@@ -48,13 +48,11 @@ export async function retryAsync<T>(
 
             // Permanent errors are not retried
             if(category === 'permanent') {
-                // Stryker disable next-line ArithmeticOperator: Elapsed time calculation for logging
                 logger.error({
                     msg:       'Retry aborted due to permanent error',
                     category,
                     errorMessage,
                     attempt,
-                    // Stryker disable next-line ArithmeticOperator: Elapsed time for logging
                     elapsedMs: now() - startTime,
                 });
                 throw error;
@@ -66,7 +64,6 @@ export async function retryAsync<T>(
                     msg:       'Max retry attempts exhausted',
                     attempts:  maxAttempts,
                     errorMessage,
-                    // Stryker disable next-line ArithmeticOperator: Elapsed time calculation
                     elapsedMs: now() - startTime,
                 });
                 throw error;
@@ -79,14 +76,12 @@ export async function retryAsync<T>(
             const delayMs = Math.max(retryAfterMs ?? 0, calculateDelay(attempt, policy));
 
             logger.warn({
-                // Stryker disable next-line StringLiteral: log message string is observability-only configuration
                 msg:       'Retrying after error',
                 attempt,
                 maxAttempts,
                 category,
                 errorMessage,
                 delayMs,
-                // Stryker disable next-line ArithmeticOperator: Elapsed time calculation for logging
                 elapsedMs: now() - startTime,
             });
 

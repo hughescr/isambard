@@ -1,17 +1,16 @@
 import { type Mock, describe, test, expect, beforeEach, mock } from 'bun:test';
-import { MessageFlags, type ChatInputCommandInteraction } from 'discord.js';
+import { ComponentType, MessageFlags, type ChatInputCommandInteraction } from 'discord.js';
+import { mockLogger } from '../../../setup';
 import { buildCalendarCommand, CalendarCommandHandler } from '@/integrations/caldav/calendar-commands';
 import type { CalendarRegistryBackend } from '@/integrations/caldav/calendar-registry/backend';
 import type { CalendarRegistryRecord } from '@/integrations/caldav/calendar-registry/types';
 import type { CalDAVClient } from '@/integrations/caldav/client';
 
 // Admin Discord user ID used in tests
-// Stryker disable next-line StringLiteral: Test admin user ID is a test configuration constant
 const ADMIN_USER_ID = '423276934781468692';
 const USER_ID       = 'user-123';
 const OTHER_USER_ID = 'other-user-456';
 
-// Stryker disable next-line StringLiteral: Test UUID is a test configuration constant
 const TEST_SERVER_UUID = '550e8400-e29b-41d4-a716-446655440001' as `${string}-${string}-${string}-${string}-${string}`;
 
 interface MockInteraction {
@@ -45,7 +44,7 @@ function createMockInteraction(
             getSubcommandGroup: mock(() => subcommandGroup),
             getSubcommand:      mock(() => subcommand),
             getString:          mock((name: string) => stringOptions[name] ?? null),
-            getUser:            mock(() => targetUser ?? null),
+            getUser:            mock((name: string) => (name === 'user' ? targetUser ?? null : null)),
         },
         reply:      replyMock,
         editReply:  editReplyMock,
@@ -91,6 +90,36 @@ function createMockCaldavClient(): {
         discoverCalendars: mock(async (): Promise<{ path: string, displayName: string }[]> => []),
     };
 }
+
+function createDeferred<T>(): PromiseWithResolvers<T> {
+    return Promise.withResolvers<T>();
+}
+
+async function expectHandlerToWaitForReply(
+    invoke:    () => Promise<void>,
+    editReply: Mock<(...args: unknown[]) => Promise<unknown>>,
+    expected:  unknown
+): Promise<void> {
+    const reply = createDeferred<unknown>();
+    editReply.mockImplementation(() => reply.promise);
+
+    let resolved = false;
+    const handling = (async () => {
+        await invoke();
+        resolved = true;
+    })();
+    await Bun.sleep(0);
+
+    expect(editReply).toHaveBeenCalledWith(expected);
+    expect(resolved).toBe(false);
+    reply.resolve({});
+    await handling;
+    expect(resolved).toBe(true);
+}
+
+beforeEach(() => {
+    mockLogger.error.mockClear();
+});
 
 // ─── buildCalendarCommand() ───────────────────────────────────────────────────
 
@@ -314,6 +343,77 @@ describe('CalendarCommandHandler - permission checks', () => {
         await handler.handle(asChatInput);
         expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
     });
+
+    test('waits for Discord to acknowledge the interaction before routing the command', async () => {
+        const acknowledgement = createDeferred<void>();
+        const { asChatInput, deferReply, editReply } = createMockInteraction(USER_ID, null, 'list');
+        deferReply.mockImplementation(() => acknowledgement.promise);
+
+        const handling = handler.handle(asChatInput);
+        await Promise.resolve();
+
+        expect(editReply).not.toHaveBeenCalled();
+        acknowledgement.resolve();
+        await handling;
+        expect(editReply).toHaveBeenCalledWith({ content: 'No calendars configured.' });
+    });
+
+    test('waits for an authorization denial to reach Discord before resolving', async () => {
+        const reply = createDeferred<unknown>();
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'list', {}, { id: OTHER_USER_ID });
+        editReply.mockImplementation(() => reply.promise);
+
+        let resolved = false;
+        const handling = (async () => {
+            await handler.handle(asChatInput);
+            resolved = true;
+        })();
+        await Promise.resolve();
+
+        expect(editReply).toHaveBeenCalledWith({ content: 'Only the admin can manage other users\' calendars.' });
+        expect(resolved).toBe(false);
+        reply.resolve({});
+        await handling;
+        expect(resolved).toBe(true);
+    });
+
+    test('waits for the routed list operation before resolving', async () => {
+        const record = createDeferred<CalendarRegistryRecord | null>();
+        mockRegistry.getUserRecord.mockImplementation(() => record.promise);
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'list');
+
+        const handling = handler.handle(asChatInput);
+        await Promise.resolve();
+
+        expect(editReply).not.toHaveBeenCalled();
+        record.resolve(null);
+        await handling;
+        expect(editReply).toHaveBeenCalledWith({ content: 'No calendars configured.' });
+    });
+
+    test('waits for unknown-command and shared authorization replies before resolving', async () => {
+        const unknownUser = createMockInteraction(USER_ID, null, 'unexpected');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(unknownUser.asChatInput),
+            unknownUser.editReply,
+            { content: 'Unknown subcommand: unexpected' }
+        );
+
+        const deniedShared = createMockInteraction(USER_ID, 'shared', 'remove-server');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(deniedShared.asChatInput),
+            deniedShared.editReply,
+            { content: 'Only the admin can manage shared calendars.' }
+        );
+
+        const unknownShared = createMockInteraction(ADMIN_USER_ID, 'shared', 'unexpected');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(unknownShared.asChatInput),
+            unknownShared.editReply,
+            { content: 'Unknown shared subcommand: unexpected' }
+        );
+        expect(unknownShared.editReply).toHaveBeenCalledTimes(1);
+    });
 });
 
 // ─── /calendar add-server ─────────────────────────────────────────────────────
@@ -357,6 +457,7 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         expect(lastCall.content).toContain('2 calendar');
         expect(lastCall.content).toContain('Personal');
         expect(lastCall.content).toContain('Work');
+        expect(lastCall.content).toBe('Added server "iCloud" with 2 calendar(s):\n  - Personal\n  - Work');
     });
 
     test('replies "No calendars found" when server has no calendars', async () => {
@@ -375,6 +476,36 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         expect(replyArg.content).toContain('No calendars found');
     });
 
+    test('waits for direct add-server outcome replies before resolving', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([]);
+        const noCalendars = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url: 'https://caldav.example.com', username: 'u', password: 'p', description: 'Empty',
+        });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(noCalendars.asChatInput),
+            noCalendars.editReply,
+            { content: 'No calendars found on this server.' }
+        );
+
+        mockCaldav.discoverCalendars.mockRejectedValue(new Error('Connection refused'));
+        const failedDiscovery = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url: 'https://bad.example.com', username: 'u', password: 'p', description: 'Bad',
+        });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(failedDiscovery.asChatInput),
+            failedDiscovery.editReply,
+            { content: 'Failed to add server: Connection refused', components: [] }
+        );
+
+        const missingDetails = createMockInteraction(USER_ID, null, 'add-server');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(missingDetails.asChatInput),
+            missingDetails.editReply,
+            { content: 'Missing required calendar server details.' }
+        );
+        expect(missingDetails.editReply).toHaveBeenCalledTimes(1);
+    });
+
     test('handles discoverCalendars error gracefully', async () => {
         mockCaldav.discoverCalendars.mockRejectedValue(new Error('Connection refused'));
 
@@ -389,6 +520,10 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to add server');
         expect(replyArg.content).toContain('Connection refused');
+        expect(mockLogger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error), serverUrl: 'https://bad.example.com' },
+            'Failed to add calendar server'
+        );
     });
 
     test('uses targetUser when admin specifies a different user', async () => {
@@ -432,9 +567,13 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         await handler.handle(asChatInput);
 
         // First editReply = select menu prompt
-        const promptArg = editReply.mock.calls[0]?.[0] as { content?: string, components?: unknown[] };
+        const promptArg = editReply.mock.calls[0]?.[0] as {
+            content?:    string
+            components?: { toJSON: () => { components?: { placeholder?: string }[] } }[]
+        };
         expect(promptArg.content).toContain('Found 3 calendar(s)');
         expect(promptArg.components).toBeDefined();
+        expect(promptArg.components?.[0]?.toJSON().components?.[0]?.placeholder).toBe('Select calendars to add');
 
         // addServer called with only selected calendars
         expect(mockRegistry.addServer).toHaveBeenCalledTimes(1);
@@ -466,6 +605,58 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         const lastCall = editReply.mock.calls[editReply.mock.calls.length - 1]?.[0] as { content?: string };
         expect(lastCall.content).toContain('timed out');
         expect(lastCall.content).toContain('again to retry');
+        expect(lastCall.content).toBe('Calendar selection timed out. Run `/calendar add-server` again to retry.');
+    });
+
+    test('waits for terminal selector replies before resolving after timeout or failure', async () => {
+        const expectTerminalReply = async (error: Error, expected: string): Promise<void> => {
+            mockCaldav.discoverCalendars.mockResolvedValue([
+                { path: '/cal/a', displayName: 'A' }, { path: '/cal/b', displayName: 'B' },
+            ]);
+            const terminalReply = createDeferred<unknown>();
+            const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+                server_url: 'https://caldav.example.com', username: 'u', password: 'p', description: 'Server',
+            });
+            awaitComponent.mockRejectedValue(error);
+            editReply
+                .mockResolvedValueOnce({ awaitMessageComponent: awaitComponent })
+                .mockReturnValueOnce(terminalReply.promise);
+
+            let resolved = false;
+            const handling = (async () => {
+                await handler.handle(asChatInput);
+                resolved = true;
+            })();
+            await Bun.sleep(0);
+
+            expect(editReply).toHaveBeenLastCalledWith({ content: expected, components: [] });
+            expect(resolved).toBe(false);
+            terminalReply.resolve({});
+            await handling;
+            expect(resolved).toBe(true);
+        };
+
+        await expectTerminalReply(new Error('reason: time'), 'Calendar selection timed out. Run `/calendar add-server` again to retry.');
+        await expectTerminalReply(new Error('reason: time; collector cleanup still pending'), 'Calendar selection timed out. Run `/calendar add-server` again to retry.');
+        await expectTerminalReply(new Error('component transport failed'), 'Calendar selection failed. Run `/calendar add-server` again to retry.');
+    });
+
+    test('waits five minutes for the calendar selector before treating it as timed out', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/a', displayName: 'A' },
+            { path: '/cal/b', displayName: 'B' },
+        ]);
+        const { asChatInput, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockRejectedValue(new Error('reason: time'));
+
+        await handler.handle(asChatInput);
+
+        expect(awaitComponent).toHaveBeenCalledWith({ componentType: ComponentType.StringSelect, time: 300_000 });
     });
 
     test('handles non-timeout select menu errors with generic message', async () => {
@@ -488,6 +679,94 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         expect(lastCall.content).toContain('selection failed');
         expect(lastCall.content).toContain('again to retry');
         expect(lastCall.components).toEqual([]);
+        expect(mockLogger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error) },
+            'Calendar selection failed unexpectedly'
+        );
+    });
+
+    test('rejects a calendar index that was not present in the offered select menu', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/a', displayName: 'A' },
+            { path: '/cal/b', displayName: 'B' },
+        ]);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['999'], deferUpdate: mock(async () => {}) });
+
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.addServer).not.toHaveBeenCalled();
+        const lastCall = editReply.mock.calls.at(-1)?.[0] as { content?: string, components?: unknown[] };
+        expect(lastCall.content).toContain('selection failed');
+        expect(lastCall.components).toEqual([]);
+        const loggedError = (mockLogger.error.mock.calls[0]?.[0] as { error: Error & { context?: unknown } }).error;
+        expect(loggedError.message).toBe('Invariant violated in selectCalendars: Discord returned calendar index 999 outside provided range [0..1]');
+        expect(loggedError.context).toEqual({
+            invariant: 'Discord returned calendar index 999 outside provided range [0..1]',
+            location:  'selectCalendars',
+        });
+    });
+
+    test('rejects a forged non-numeric selection value instead of coercing its numeric prefix', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([{ path: '/cal/a', displayName: 'A' }, { path: '/cal/b', displayName: 'B' }]);
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', { server_url: 'https://caldav.example.com', username: 'u', password: 'p', description: 'Server' });
+        awaitComponent.mockResolvedValue({ values: ['1x'], deferUpdate: mock(async () => {}) });
+
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.addServer).not.toHaveBeenCalled();
+        expect((editReply.mock.calls.at(-1)?.[0] as { content: string }).content).toContain('Calendar selection failed');
+    });
+
+    test('limits select-menu labels to Discord’s 100-character maximum', async () => {
+        const longName = 'A'.repeat(101);
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/long-a', displayName: longName },
+            { path: '/cal/long-b', displayName: 'Short' },
+        ]);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['0'], deferUpdate: mock(async () => {}) });
+        await handler.handle(asChatInput);
+
+        const prompt = editReply.mock.calls[0]?.[0] as { components: unknown[] };
+        const renderedPrompt = {
+            components: (prompt.components as { toJSON(): { components: { options: { label: string }[] }[] } }[])
+                .map(component => component.toJSON()),
+        };
+        expect(renderedPrompt.components[0]?.components[0]?.options[0]?.label).toBe(longName.slice(0, 100));
+    });
+
+    test('rejects missing required server options before CalDAV discovery', async () => {
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'add-server');
+        await handler.handle(asChatInput);
+
+        expect(mockCaldav.discoverCalendars).not.toHaveBeenCalled();
+        expect(editReply).toHaveBeenCalledWith({ content: 'Missing required calendar server details.' });
+    });
+
+    test('rejects blank server URL and description before CalDAV discovery', async () => {
+        await Promise.all([
+            { server_url: '', username: 'user', password: 'pass', description: 'Calendar' },
+            { server_url: 'https://caldav.example.com', username: 'user', password: 'pass', description: '' },
+        ].map(async (stringOptions) => {
+            const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'add-server', stringOptions);
+            await handler.handle(asChatInput);
+
+            expect(mockCaldav.discoverCalendars).not.toHaveBeenCalled();
+            expect(editReply).toHaveBeenCalledWith({ content: 'Missing required calendar server details.' });
+        }));
     });
 
     test('auto-adds single calendar without showing select menu', async () => {
@@ -528,6 +807,32 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         expect(promptArg.content).toContain('25');
     });
 
+    test('offers all 25 permitted choices in source order and accepts the final choice', async () => {
+        const calendars = Array.from({ length: 25 }, (_, index) => ({
+            path:        `/cal/${index}`,
+            displayName: `Calendar ${index}`,
+        }));
+        mockCaldav.discoverCalendars.mockResolvedValue(calendars);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['24'], deferUpdate: mock(async () => {}) });
+        await handler.handle(asChatInput);
+
+        const prompt = editReply.mock.calls[0]?.[0] as { components: { toJSON(): { components: { min_values?: number, options?: { value: string }[] }[] } }[] };
+        const select = prompt.components[0].toJSON().components[0];
+        const options = select.options ?? [];
+        expect(select.min_values).toBe(1);
+        expect(options).toHaveLength(25);
+        expect(options.map(option => option.value)).toEqual(Array.from({ length: 25 }, (_, index) => String(index)));
+        const server = mockRegistry.addServer.mock.calls[0]?.[1] as { calendars: { calendarPath: string, label: string }[] };
+        expect(server.calendars).toEqual([{ calendarPath: '/cal/24', label: 'Calendar 24' }]);
+    });
+
     test('does NOT warn when exactly 25 calendars discovered (boundary)', async () => {
         const exactly25 = Array.from({ length: 25 }, (_, i) => ({
             path:        `/cal/${i}`,
@@ -547,6 +852,26 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         const promptArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(promptArg.content).not.toContain('Only showing the first 25');
         expect(promptArg.content).not.toContain('Discord limit');
+    });
+
+    test('caps a 26-calendar discovery at Discord’s 25-option limit and warns the user', async () => {
+        const calendars = Array.from({ length: 26 }, (_, index) => ({
+            path:        `/cal/${index}`,
+            displayName: `Calendar ${index}`,
+        }));
+        mockCaldav.discoverCalendars.mockResolvedValue(calendars);
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url: 'https://caldav.example.com', username: 'u', password: 'p', description: 'Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['24'], deferUpdate: mock(async () => {}) });
+
+        await handler.handle(asChatInput);
+
+        const prompt = editReply.mock.calls[0]?.[0] as { content: string, components: { toJSON(): { components: { options?: unknown[] }[] } }[] };
+        expect(prompt.content).toContain('Only showing the first 25 of 26');
+        expect(prompt.components[0].toJSON().components[0].options).toHaveLength(25);
+        const server = mockRegistry.addServer.mock.calls[0]?.[1] as { calendars: { calendarPath: string, label: string }[] };
+        expect(server.calendars).toEqual([{ calendarPath: '/cal/24', label: 'Calendar 24' }]);
     });
 
     test('select menu prompt includes components array with one action row', async () => {
@@ -587,6 +912,61 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
 
         expect(deferUpdateFn).toHaveBeenCalledTimes(1);
     });
+
+    test('waits for selection acknowledgement before storing the chosen calendar', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/a', displayName: 'A' },
+            { path: '/cal/b', displayName: 'B' },
+        ]);
+        const acknowledgement = createDeferred<void>();
+        const { asChatInput, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['0'], deferUpdate: () => acknowledgement.promise });
+
+        const handling = handler.handle(asChatInput);
+        await Promise.resolve();
+
+        expect(mockRegistry.addServer).not.toHaveBeenCalled();
+        acknowledgement.resolve();
+        await handling;
+        expect(mockRegistry.addServer).toHaveBeenCalledTimes(1);
+    });
+
+    test('waits for storage and the success reply after automatically selecting one calendar', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([{ path: '/cal/only', displayName: 'Only' }]);
+        const stored = createDeferred<void>();
+        const reply = createDeferred<unknown>();
+        mockRegistry.addServer.mockImplementation(() => stored.promise);
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        editReply.mockImplementation(() => reply.promise);
+
+        let resolved = false;
+        const handling = (async () => {
+            await handler.handle(asChatInput);
+            resolved = true;
+        })();
+        await Bun.sleep(0);
+
+        expect(mockRegistry.addServer).toHaveBeenCalledTimes(1);
+        expect(editReply).not.toHaveBeenCalled();
+        expect(resolved).toBe(false);
+        stored.resolve();
+        await Bun.sleep(0);
+        expect(editReply).toHaveBeenCalledWith(expect.objectContaining({ content: 'Added server "Server" with 1 calendar(s):\n  - Only' }));
+        expect(resolved).toBe(false);
+        reply.resolve({});
+        await handling;
+        expect(resolved).toBe(true);
+    });
 });
 
 // ─── /calendar list ───────────────────────────────────────────────────────────
@@ -626,6 +1006,38 @@ describe('CalendarCommandHandler - /calendar list', () => {
         expect(replyArg.content).toBe('No calendars configured.');
     });
 
+    test('waits for each list outcome reply before resolving', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(null);
+        const empty = createMockInteraction(USER_ID, null, 'list');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(empty.asChatInput),
+            empty.editReply,
+            { content: 'No calendars configured.' }
+        );
+
+        mockRegistry.getUserRecord.mockResolvedValue({
+            userId:    USER_ID, createdAt: '', updatedAt: '', servers:   [{
+                serverId:    TEST_SERVER_UUID, description: 'Work', serverUrl:   'https://caldav.example.com', username:    'u', password:    'p',
+                calendars:   [{ calendarPath: '/work', label: 'Work calendar' }],
+            }],
+        });
+        const listed = createMockInteraction(USER_ID, null, 'list');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(listed.asChatInput),
+            listed.editReply,
+            { content: `**Work** (${TEST_SERVER_UUID}):\n  - Work calendar (/work)` }
+        );
+
+        mockRegistry.getUserRecord.mockRejectedValue(new Error('read failed'));
+        const failed = createMockInteraction(USER_ID, null, 'list');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(failed.asChatInput),
+            failed.editReply,
+            { content: 'Failed to list calendars.' }
+        );
+        expect(failed.editReply).toHaveBeenCalledTimes(1);
+    });
+
     test('lists servers with calendars grouped by server', async () => {
         mockRegistry.getUserRecord.mockResolvedValue({
             userId:    USER_ID,
@@ -643,6 +1055,14 @@ describe('CalendarCommandHandler - /calendar list', () => {
                         { calendarPath: '/cal/family', label: 'Family' },
                     ],
                 },
+                {
+                    serverId:    'bbbbccdd-1111-2222-3333-444455556666' as `${string}-${string}-${string}-${string}-${string}`,
+                    description: 'Work',
+                    serverUrl:   'https://caldav.work.example',
+                    username:    'user@work.example',
+                    password:    'secret',
+                    calendars:   [{ calendarPath: '/cal/work', label: 'Work Calendar' }],
+                },
             ],
         });
 
@@ -655,6 +1075,7 @@ describe('CalendarCommandHandler - /calendar list', () => {
         expect(replyArg.content).toContain('/cal/home');
         expect(replyArg.content).toContain('Family');
         expect(replyArg.content).toContain('/cal/family');
+        expect(replyArg.content).toBe('**iCloud** (aabbccdd-1111-2222-3333-444455556666):\n  - Home (/cal/home)\n  - Family (/cal/family)\n\n**Work** (bbbbccdd-1111-2222-3333-444455556666):\n  - Work Calendar (/cal/work)');
     });
 
     test('handles list error gracefully', async () => {
@@ -665,6 +1086,10 @@ describe('CalendarCommandHandler - /calendar list', () => {
 
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to list calendars');
+        expect(mockLogger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error), userId: USER_ID },
+            'Failed to list calendars'
+        );
     });
 });
 
@@ -697,6 +1122,67 @@ describe('CalendarCommandHandler - /calendar remove-server', () => {
             mockRegistry as unknown as CalendarRegistryBackend,
             ADMIN_USER_ID
         );
+    });
+
+    test('rejects blank or missing server ID before registry reads and removal', async () => {
+        await Promise.all([{ server_id: null }, { server_id: '' }].map(async (stringOptions) => {
+            const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-server', stringOptions);
+            await handler.handle(asChatInput);
+
+            expect(mockRegistry.getUserRecord).not.toHaveBeenCalled();
+            expect(mockRegistry.removeServer).not.toHaveBeenCalled();
+            expect(editReply).toHaveBeenCalledWith({ content: 'Missing required server ID.' });
+        }));
+    });
+
+    test('waits for remove-server outcome replies before resolving', async () => {
+        const missing = createMockInteraction(USER_ID, null, 'remove-server');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(missing.asChatInput),
+            missing.editReply,
+            { content: 'Missing required server ID.' }
+        );
+
+        mockRegistry.getUserRecord.mockResolvedValue(null);
+        const empty = createMockInteraction(USER_ID, null, 'remove-server', { server_id: 'iCloud' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(empty.asChatInput),
+            empty.editReply,
+            { content: 'No calendars configured.' }
+        );
+
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
+        const notFound = createMockInteraction(USER_ID, null, 'remove-server', { server_id: 'missing' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(notFound.asChatInput),
+            notFound.editReply,
+            { content: 'Server "missing" not found.' }
+        );
+
+        mockRegistry.removeServer.mockResolvedValue(false);
+        const alreadyRemoved = createMockInteraction(USER_ID, null, 'remove-server', { server_id: TEST_SERVER_UUID });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(alreadyRemoved.asChatInput),
+            alreadyRemoved.editReply,
+            { content: 'Server was already removed.' }
+        );
+
+        mockRegistry.removeServer.mockResolvedValue(true);
+        const removed = createMockInteraction(USER_ID, null, 'remove-server', { server_id: TEST_SERVER_UUID });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(removed.asChatInput),
+            removed.editReply,
+            { content: `Removed server "iCloud" (${TEST_SERVER_UUID}).` }
+        );
+
+        mockRegistry.getUserRecord.mockRejectedValue(new Error('read failed'));
+        const failed = createMockInteraction(USER_ID, null, 'remove-server', { server_id: TEST_SERVER_UUID });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(failed.asChatInput),
+            failed.editReply,
+            { content: 'Failed to remove server.' }
+        );
+        expect(failed.editReply).toHaveBeenCalledTimes(1);
     });
 
     test('removes server by exact UUID and replies with success', async () => {
@@ -783,7 +1269,6 @@ describe('CalendarCommandHandler - /calendar remove-server', () => {
                     calendars:   [{ calendarPath: '/cal/personal', label: 'Personal' }],
                 },
                 {
-                    // Stryker disable next-line StringLiteral: Test UUID is a test configuration constant
                     serverId:    '550e8400-e29b-41d4-a716-446655440002' as `${string}-${string}-${string}-${string}-${string}`,
                     description: 'iCloud',
                     serverUrl:   'https://caldav.icloud.com',
@@ -798,7 +1283,11 @@ describe('CalendarCommandHandler - /calendar remove-server', () => {
         const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-server', {
             server_id: 'icloud',
         });
-        await handler.handle(asChatInput);
+        await expectHandlerToWaitForReply(
+            () => handler.handle(asChatInput),
+            editReply,
+            { content: expect.stringContaining('Multiple servers match') }
+        );
 
         expect(mockRegistry.removeServer).not.toHaveBeenCalled();
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
@@ -830,6 +1319,10 @@ describe('CalendarCommandHandler - /calendar remove-server', () => {
 
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to remove server');
+        expect(mockLogger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error), serverInput: TEST_SERVER_UUID },
+            'Failed to remove server'
+        );
     });
 
     test('admin can remove another user\'s server via user option', async () => {
@@ -893,6 +1386,74 @@ describe('CalendarCommandHandler - /calendar remove-calendar', () => {
             mockRegistry as unknown as CalendarRegistryBackend,
             ADMIN_USER_ID
         );
+    });
+
+    test('rejects blank or missing calendar identifiers before registry reads and removal', async () => {
+        await Promise.all([{ server_id: null, calendar_path: null }, { server_id: '', calendar_path: '/calendars/home' }, { server_id: TEST_SERVER_UUID, calendar_path: '' }].map(async (stringOptions) => {
+            const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-calendar', stringOptions);
+            await handler.handle(asChatInput);
+
+            expect(mockRegistry.getUserRecord).not.toHaveBeenCalled();
+            expect(mockRegistry.removeCalendar).not.toHaveBeenCalled();
+            expect(editReply).toHaveBeenCalledWith({ content: 'Missing required calendar details.' });
+        }));
+    });
+
+    test('waits for remove-calendar outcome replies before resolving', async () => {
+        const missing = createMockInteraction(USER_ID, null, 'remove-calendar');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(missing.asChatInput),
+            missing.editReply,
+            { content: 'Missing required calendar details.' }
+        );
+
+        mockRegistry.getUserRecord.mockResolvedValue(null);
+        const empty = createMockInteraction(USER_ID, null, 'remove-calendar', { server_id: 'iCloud', calendar_path: 'Home' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(empty.asChatInput),
+            empty.editReply,
+            { content: 'No calendars configured.' }
+        );
+
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
+        const serverNotFound = createMockInteraction(USER_ID, null, 'remove-calendar', { server_id: 'missing', calendar_path: 'Home' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(serverNotFound.asChatInput),
+            serverNotFound.editReply,
+            { content: 'Server "missing" not found.' }
+        );
+
+        const calendarNotFound = createMockInteraction(USER_ID, null, 'remove-calendar', { server_id: TEST_SERVER_UUID, calendar_path: 'missing' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(calendarNotFound.asChatInput),
+            calendarNotFound.editReply,
+            { content: 'Calendar not found.' }
+        );
+
+        mockRegistry.removeCalendar.mockResolvedValue(false);
+        const alreadyRemoved = createMockInteraction(USER_ID, null, 'remove-calendar', { server_id: TEST_SERVER_UUID, calendar_path: '/calendars/home' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(alreadyRemoved.asChatInput),
+            alreadyRemoved.editReply,
+            { content: 'Calendar was already removed.' }
+        );
+
+        mockRegistry.removeCalendar.mockResolvedValue(true);
+        const removed = createMockInteraction(USER_ID, null, 'remove-calendar', { server_id: TEST_SERVER_UUID, calendar_path: '/calendars/home' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(removed.asChatInput),
+            removed.editReply,
+            { content: 'Removed calendar "Home" (/calendars/home) from server "iCloud".' }
+        );
+
+        mockRegistry.getUserRecord.mockRejectedValue(new Error('read failed'));
+        const failed = createMockInteraction(USER_ID, null, 'remove-calendar', { server_id: TEST_SERVER_UUID, calendar_path: '/calendars/home' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(failed.asChatInput),
+            failed.editReply,
+            { content: 'Failed to remove calendar.' }
+        );
+        expect(failed.editReply).toHaveBeenCalledTimes(1);
     });
 
     test('removes calendar by exact path and replies with success', async () => {
@@ -1006,7 +1567,11 @@ describe('CalendarCommandHandler - /calendar remove-calendar', () => {
             server_id:     TEST_SERVER_UUID,
             calendar_path: 'home',
         });
-        await handler.handle(asChatInput);
+        await expectHandlerToWaitForReply(
+            () => handler.handle(asChatInput),
+            editReply,
+            { content: expect.stringContaining('Multiple calendars match') }
+        );
 
         expect(mockRegistry.removeCalendar).not.toHaveBeenCalled();
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
@@ -1039,6 +1604,10 @@ describe('CalendarCommandHandler - /calendar remove-calendar', () => {
 
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to remove calendar');
+        expect(mockLogger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error), serverInput: TEST_SERVER_UUID, calendarInput: '/calendars/home' },
+            'Failed to remove calendar'
+        );
     });
 
     test('admin can remove another user\'s calendar via user option', async () => {
@@ -1112,6 +1681,90 @@ describe('CalendarCommandHandler - /calendar shared add-server', () => {
         const replyArg = editReply.mock.calls[editReply.mock.calls.length - 1]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Company Shared');
         expect(replyArg.content).toContain('Holidays');
+        expect(replyArg.content).toBe('Added shared server "Company Shared" with 1 calendar(s):\n  - Holidays');
+    });
+
+    test('waits for shared storage and the success reply before resolving', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([{ path: '/shared/only', displayName: 'Only' }]);
+        const stored = createDeferred<void>();
+        const reply = createDeferred<unknown>();
+        mockRegistry.addSharedServer.mockImplementation(() => stored.promise);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Shared',
+        });
+        editReply.mockImplementation(() => reply.promise);
+
+        let resolved = false;
+        const handling = (async () => {
+            await handler.handle(asChatInput);
+            resolved = true;
+        })();
+        await Bun.sleep(0);
+
+        expect(mockRegistry.addSharedServer).toHaveBeenCalledTimes(1);
+        expect(editReply).not.toHaveBeenCalled();
+        stored.resolve();
+        await Bun.sleep(0);
+        expect(editReply).toHaveBeenCalledWith(expect.objectContaining({ content: 'Added shared server "Shared" with 1 calendar(s):\n  - Only' }));
+        expect(resolved).toBe(false);
+        reply.resolve({});
+        await handling;
+        expect(resolved).toBe(true);
+    });
+
+    test('rejects missing required shared-server options before CalDAV discovery', async () => {
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server');
+        await handler.handle(asChatInput);
+
+        expect(mockCaldav.discoverCalendars).not.toHaveBeenCalled();
+        expect(mockRegistry.addSharedServer).not.toHaveBeenCalled();
+        expect(editReply).toHaveBeenCalledWith({ content: 'Missing required shared calendar server details.' });
+    });
+
+    test('waits for direct shared add-server outcome replies before resolving', async () => {
+        const missing = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(missing.asChatInput),
+            missing.editReply,
+            { content: 'Missing required shared calendar server details.' }
+        );
+
+        mockCaldav.discoverCalendars.mockResolvedValue([]);
+        const noCalendars = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server', {
+            server_url: 'https://caldav.example.com', username: 'u', password: 'p', description: 'Empty',
+        });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(noCalendars.asChatInput),
+            noCalendars.editReply,
+            { content: 'No calendars found on this server.' }
+        );
+
+        mockCaldav.discoverCalendars.mockRejectedValue(new Error('Connection refused'));
+        const failedDiscovery = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server', {
+            server_url: 'https://bad.example.com', username: 'u', password: 'p', description: 'Bad',
+        });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(failedDiscovery.asChatInput),
+            failedDiscovery.editReply,
+            { content: 'Failed to add shared server: Connection refused', components: [] }
+        );
+        expect(failedDiscovery.editReply).toHaveBeenCalledTimes(1);
+    });
+
+    test('rejects blank shared server URL and description before CalDAV discovery', async () => {
+        await Promise.all([
+            { server_url: '', username: 'admin', password: 'pass', description: 'Shared' },
+            { server_url: 'https://caldav.example.com', username: 'admin', password: 'pass', description: '' },
+        ].map(async (stringOptions) => {
+            const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server', stringOptions);
+            await handler.handle(asChatInput);
+
+            expect(mockCaldav.discoverCalendars).not.toHaveBeenCalled();
+            expect(editReply).toHaveBeenCalledWith({ content: 'Missing required shared calendar server details.' });
+        }));
     });
 
     test('replies "No calendars found" for shared add-server with no calendars', async () => {
@@ -1144,6 +1797,10 @@ describe('CalendarCommandHandler - /calendar shared add-server', () => {
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to add shared server');
         expect(replyArg.content).toContain('Auth failed');
+        expect(mockLogger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error), serverUrl: 'https://bad.example.com' },
+            'Failed to add shared calendar server'
+        );
     });
 
     test('shared: presents select menu and stores only selected calendars', async () => {
@@ -1176,6 +1833,7 @@ describe('CalendarCommandHandler - /calendar shared add-server', () => {
         // Success reply clears the select menu components
         const successArg = editReply.mock.calls[editReply.mock.calls.length - 1]?.[0] as { components?: unknown[] };
         expect(successArg.components).toEqual([]);
+        expect((successArg as { content?: string }).content).toBe('Added shared server "Shared Server" with 2 calendar(s):\n  - Shared A\n  - Shared C');
     });
 
     test('shared: handles select menu timeout gracefully', async () => {
@@ -1232,7 +1890,16 @@ describe('CalendarCommandHandler - /calendar shared list', () => {
                     password:    'pass',
                     calendars:   [
                         { calendarPath: '/shared/holidays', label: 'Holidays' },
+                        { calendarPath: '/shared/birthdays', label: 'Birthdays' },
                     ],
+                },
+                {
+                    serverId:    'bbbbccdd-1111-2222-3333-444455556666' as `${string}-${string}-${string}-${string}-${string}`,
+                    description: 'Birthdays',
+                    serverUrl:   'https://caldav.example.com',
+                    username:    'admin',
+                    password:    'pass',
+                    calendars:   [{ calendarPath: '/shared/team-birthdays', label: 'Team birthdays' }],
                 },
             ],
         });
@@ -1243,6 +1910,7 @@ describe('CalendarCommandHandler - /calendar shared list', () => {
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Holidays');
         expect(replyArg.content).toContain('/shared/holidays');
+        expect(replyArg.content).toBe('**Holidays** (aabbccdd-1111-2222-3333-444455556666):\n  - Holidays (/shared/holidays)\n  - Birthdays (/shared/birthdays)\n\n**Birthdays** (bbbbccdd-1111-2222-3333-444455556666):\n  - Team birthdays (/shared/team-birthdays)');
     });
 
     test('replies "No shared calendars configured" when none exist (null record)', async () => {
@@ -1270,6 +1938,38 @@ describe('CalendarCommandHandler - /calendar shared list', () => {
         expect(replyArg.content).toBe('No shared calendars configured.');
     });
 
+    test('waits for each shared-list outcome reply before resolving', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(null);
+        const empty = createMockInteraction(USER_ID, 'shared', 'list');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(empty.asChatInput),
+            empty.editReply,
+            { content: 'No shared calendars configured.' }
+        );
+
+        mockRegistry.getSharedRecord.mockResolvedValue({
+            userId:    'SHARED', createdAt: '', updatedAt: '', servers:   [{
+                serverId:    TEST_SERVER_UUID, description: 'Holidays', serverUrl:   'https://caldav.example.com', username:    'u', password:    'p',
+                calendars:   [{ calendarPath: '/holidays', label: 'Holidays' }],
+            }],
+        });
+        const listed = createMockInteraction(USER_ID, 'shared', 'list');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(listed.asChatInput),
+            listed.editReply,
+            { content: `**Holidays** (${TEST_SERVER_UUID}):\n  - Holidays (/holidays)` }
+        );
+
+        mockRegistry.getSharedRecord.mockRejectedValue(new Error('read failed'));
+        const failed = createMockInteraction(USER_ID, 'shared', 'list');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(failed.asChatInput),
+            failed.editReply,
+            { content: 'Failed to list shared calendars.' }
+        );
+        expect(failed.editReply).toHaveBeenCalledTimes(1);
+    });
+
     test('handles shared list error gracefully', async () => {
         mockRegistry.getSharedRecord.mockRejectedValue(new Error('DB error'));
 
@@ -1278,6 +1978,10 @@ describe('CalendarCommandHandler - /calendar shared list', () => {
 
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to list shared calendars');
+        expect(mockLogger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error) },
+            'Failed to list shared calendars'
+        );
     });
 });
 
@@ -1310,6 +2014,67 @@ describe('CalendarCommandHandler - /calendar shared remove-server', () => {
             mockRegistry as unknown as CalendarRegistryBackend,
             ADMIN_USER_ID
         );
+    });
+
+    test('rejects blank or missing shared server ID before registry reads and removal', async () => {
+        await Promise.all([{ server_id: null }, { server_id: '' }].map(async (stringOptions) => {
+            const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', stringOptions);
+            await handler.handle(asChatInput);
+
+            expect(mockRegistry.getSharedRecord).not.toHaveBeenCalled();
+            expect(mockRegistry.removeSharedServer).not.toHaveBeenCalled();
+            expect(editReply).toHaveBeenCalledWith({ content: 'Missing required shared server ID.' });
+        }));
+    });
+
+    test('waits for shared remove-server outcome replies before resolving', async () => {
+        const missing = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(missing.asChatInput),
+            missing.editReply,
+            { content: 'Missing required shared server ID.' }
+        );
+
+        mockRegistry.getSharedRecord.mockResolvedValue(null);
+        const empty = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', { server_id: 'Holidays' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(empty.asChatInput),
+            empty.editReply,
+            { content: 'No shared calendars configured.' }
+        );
+
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
+        const notFound = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', { server_id: 'missing' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(notFound.asChatInput),
+            notFound.editReply,
+            { content: 'Shared server "missing" not found.' }
+        );
+
+        mockRegistry.removeSharedServer.mockResolvedValue(false);
+        const alreadyRemoved = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', { server_id: TEST_SERVER_UUID });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(alreadyRemoved.asChatInput),
+            alreadyRemoved.editReply,
+            { content: 'Shared server was already removed.' }
+        );
+
+        mockRegistry.removeSharedServer.mockResolvedValue(true);
+        const removed = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', { server_id: TEST_SERVER_UUID });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(removed.asChatInput),
+            removed.editReply,
+            { content: `Removed shared server "Holidays" (${TEST_SERVER_UUID}).` }
+        );
+
+        mockRegistry.getSharedRecord.mockRejectedValue(new Error('read failed'));
+        const failed = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', { server_id: TEST_SERVER_UUID });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(failed.asChatInput),
+            failed.editReply,
+            { content: 'Failed to remove shared server.' }
+        );
+        expect(failed.editReply).toHaveBeenCalledTimes(1);
     });
 
     test('admin removes shared server by exact UUID and replies with success', async () => {
@@ -1415,6 +2180,10 @@ describe('CalendarCommandHandler - /calendar shared remove-server', () => {
 
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to remove shared server');
+        expect(mockLogger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error), serverInput: TEST_SERVER_UUID },
+            'Failed to remove shared server'
+        );
     });
 
     test('replies ambiguity error when shared server description matches multiple entries', async () => {
@@ -1432,7 +2201,6 @@ describe('CalendarCommandHandler - /calendar shared remove-server', () => {
                     calendars:   [{ calendarPath: '/shared/holidays-1', label: 'Holidays 1' }],
                 },
                 {
-                    // Stryker disable next-line StringLiteral: Test UUID is a test configuration constant
                     serverId:    '550e8400-e29b-41d4-a716-446655440002' as `${string}-${string}-${string}-${string}-${string}`,
                     description: 'Holidays',
                     serverUrl:   'https://caldav.example.com',
@@ -1447,7 +2215,11 @@ describe('CalendarCommandHandler - /calendar shared remove-server', () => {
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', {
             server_id: 'holidays',
         });
-        await handler.handle(asChatInput);
+        await expectHandlerToWaitForReply(
+            () => handler.handle(asChatInput),
+            editReply,
+            { content: expect.stringContaining('Multiple servers match') }
+        );
 
         expect(mockRegistry.removeSharedServer).not.toHaveBeenCalled();
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
@@ -1522,6 +2294,74 @@ describe('CalendarCommandHandler - /calendar shared remove-calendar', () => {
             mockRegistry as unknown as CalendarRegistryBackend,
             ADMIN_USER_ID
         );
+    });
+
+    test('rejects blank or missing shared calendar identifiers before registry reads and removal', async () => {
+        await Promise.all([{ server_id: null, calendar_path: null }, { server_id: '', calendar_path: '/shared/holidays' }, { server_id: TEST_SERVER_UUID, calendar_path: '' }].map(async (stringOptions) => {
+            const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', stringOptions);
+            await handler.handle(asChatInput);
+
+            expect(mockRegistry.getSharedRecord).not.toHaveBeenCalled();
+            expect(mockRegistry.removeSharedCalendar).not.toHaveBeenCalled();
+            expect(editReply).toHaveBeenCalledWith({ content: 'Missing required shared calendar details.' });
+        }));
+    });
+
+    test('waits for shared remove-calendar outcome replies before resolving', async () => {
+        const missing = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar');
+        await expectHandlerToWaitForReply(
+            () => handler.handle(missing.asChatInput),
+            missing.editReply,
+            { content: 'Missing required shared calendar details.' }
+        );
+
+        mockRegistry.getSharedRecord.mockResolvedValue(null);
+        const empty = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', { server_id: 'Holidays', calendar_path: 'Holidays' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(empty.asChatInput),
+            empty.editReply,
+            { content: 'No shared calendars configured.' }
+        );
+
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
+        const serverNotFound = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', { server_id: 'missing', calendar_path: 'Holidays' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(serverNotFound.asChatInput),
+            serverNotFound.editReply,
+            { content: 'Shared server "missing" not found.' }
+        );
+
+        const calendarNotFound = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', { server_id: TEST_SERVER_UUID, calendar_path: 'missing' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(calendarNotFound.asChatInput),
+            calendarNotFound.editReply,
+            { content: 'Shared calendar not found.' }
+        );
+
+        mockRegistry.removeSharedCalendar.mockResolvedValue(false);
+        const alreadyRemoved = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', { server_id: TEST_SERVER_UUID, calendar_path: '/shared/holidays' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(alreadyRemoved.asChatInput),
+            alreadyRemoved.editReply,
+            { content: 'Shared calendar was already removed.' }
+        );
+
+        mockRegistry.removeSharedCalendar.mockResolvedValue(true);
+        const removed = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', { server_id: TEST_SERVER_UUID, calendar_path: '/shared/holidays' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(removed.asChatInput),
+            removed.editReply,
+            { content: 'Removed shared calendar "Holidays" (/shared/holidays).' }
+        );
+
+        mockRegistry.getSharedRecord.mockRejectedValue(new Error('read failed'));
+        const failed = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', { server_id: TEST_SERVER_UUID, calendar_path: '/shared/holidays' });
+        await expectHandlerToWaitForReply(
+            () => handler.handle(failed.asChatInput),
+            failed.editReply,
+            { content: 'Failed to remove shared calendar.' }
+        );
+        expect(failed.editReply).toHaveBeenCalledTimes(1);
     });
 
     test('admin removes shared calendar by exact path and replies with success', async () => {
@@ -1636,6 +2476,10 @@ describe('CalendarCommandHandler - /calendar shared remove-calendar', () => {
 
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to remove shared calendar');
+        expect(mockLogger.error).toHaveBeenCalledWith(
+            { error: expect.any(Error), serverInput: TEST_SERVER_UUID, calendarInput: '/shared/holidays' },
+            'Failed to remove shared calendar'
+        );
     });
 
     test('replies "not found" when shared server does not match in remove-calendar', async () => {
@@ -1667,7 +2511,6 @@ describe('CalendarCommandHandler - /calendar shared remove-calendar', () => {
                     calendars:   [{ calendarPath: '/shared/holidays-1', label: 'Holidays 1' }],
                 },
                 {
-                    // Stryker disable next-line StringLiteral: Test UUID is a test configuration constant
                     serverId:    '550e8400-e29b-41d4-a716-446655440002' as `${string}-${string}-${string}-${string}-${string}`,
                     description: 'Holidays',
                     serverUrl:   'https://caldav.example.com',
@@ -1683,7 +2526,11 @@ describe('CalendarCommandHandler - /calendar shared remove-calendar', () => {
             server_id:     'holidays',
             calendar_path: '/shared/holidays-1',
         });
-        await handler.handle(asChatInput);
+        await expectHandlerToWaitForReply(
+            () => handler.handle(asChatInput),
+            editReply,
+            { content: expect.stringContaining('Multiple servers match') }
+        );
 
         expect(mockRegistry.removeSharedCalendar).not.toHaveBeenCalled();
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };

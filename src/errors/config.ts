@@ -21,12 +21,10 @@ export class ConfigValidationError extends IsambardError {
 
     constructor(prefix: string, validationErrors: { path: string, message: string }[]) {
         super(
-            // Stryker disable next-line StringLiteral: error message is informational only
             `${prefix}: ${JSON.stringify(validationErrors)}`,
             ErrorCode.CONFIG_VALIDATION_ERROR,
             { validationErrors }
         );
-        // Stryker disable next-line StringLiteral: error name is informational only
         this.name = 'ConfigValidationError';
     }
 }

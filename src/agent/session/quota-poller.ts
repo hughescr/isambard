@@ -145,10 +145,7 @@ export interface QuotaPoller {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-    return typeof value === 'object' && (
-        // Stryker disable next-line ConditionalExpression: current consumers treat null and undefined identically
-        value !== null
-    ) && !Array.isArray(value)
+    return value && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
         : undefined;
 }
@@ -442,6 +439,7 @@ export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefin
     // eslint-disable-next-line complexity -- validates all independently optional report fields before admitting a provider
     const providers = raw.providers.flatMap((entry): ProviderStatus[] => {
         const item = asRecord(entry);
+        // Stryker disable next-line llm: stringValue maps every falsy non-string and the empty-string fallback to the same undefined result.
         const provider = stringValue(item?.provider);
         const status = stringValue(item?.status);
         const lastAttempt = dateValue(item?.last_attempt);
@@ -449,6 +447,7 @@ export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefin
         const cached = booleanValue(fresh?.cached);
         const stale = booleanValue(fresh?.stale);
         const ageSeconds = finiteNumber(fresh?.age_seconds);
+        // Stryker disable next-line llm: asRecord/stringValue return a defined value or undefined, never null, so strict and loose undefined checks coincide.
         if(item === undefined || provider === undefined || status === undefined || lastAttempt === undefined
           || lastAttempt > generatedAt || cached === undefined || stale === undefined
           || ageSeconds === undefined || ageSeconds < 0) {
@@ -460,6 +459,7 @@ export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefin
                 const section = stringValue(error?.section);
                 const code = stringValue(error?.code);
                 const retryAt = dateValue(error?.retry_at);
+                // Stryker disable next-line llm: stringValue returns a non-empty string or undefined, never null, so strict and loose undefined checks coincide.
                 if(section === undefined || code === undefined) {
                     return [];
                 }
@@ -513,6 +513,7 @@ export function parseUsageWindows(body: unknown): ParsedUsage {
         const resetsAt = typeof reset === 'number' ? new Date(reset * 1000) : dateValue(reset);
         windows = fileQuotaWindow(windows, id, { utilization: used, ...(resetsAt === undefined ? {} : { resetsAt }) });
     };
+    // Stryker disable next-line llm: asRecord returns a truthy record or undefined, making nullish and falsy fallback identical here.
     for(const [id, value] of Object.entries(raw ?? {})) {
         const entry = asRecord(value);
         add(id, entry?.utilization, entry?.resetsAt ?? entry?.resets_at);
@@ -522,9 +523,6 @@ export function parseUsageWindows(body: unknown): ParsedUsage {
             const limit = asRecord(value);
             const kind = stringValue(limit?.kind);
             const group = stringValue(limit?.group);
-            if(kind === undefined && group !== 'session') {
-                continue;
-            }
             const scope = asRecord(limit?.scope);
             const scoped = scopeLabel(scope?.model) !== undefined || scopeLabel(scope?.surface) !== undefined;
             const id = unifiedAnthropicQuotaId(kind, group, scoped);
@@ -557,6 +555,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
     let running = false;
     let inFlight: Promise<void> | undefined;
     let abortController: AbortController | undefined;
+    // Stryker disable next-line NumberLiteralValue: generation is an opaque equality token; its initial numeric offset is never observed.
     let generation = 0;
     let snapshot: ProviderSnapshot | undefined;
     let lastPollStartedAt = Number.NEGATIVE_INFINITY;
@@ -716,6 +715,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
     return {
         start: () => {
             if(!running) {
+                // Stryker disable next-line NumberLiteralValue: stop's increment invalidates any prior attempt even if this start-side delta is zero or two.
                 generation += 1;
                 running = true;
                 scheduleNext();
@@ -731,6 +731,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
             }
         },
         stop: () => {
+            // Stryker disable next-line NumberLiteralValue: running=false blocks stopped publication, and the next start increment invalidates the old token.
             generation += 1;
             running = false;
             abortController?.abort();

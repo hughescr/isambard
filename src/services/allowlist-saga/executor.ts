@@ -22,6 +22,9 @@ export type SagaStepResult
       | { action: 'review_match', sagaId: string, matchPersonId: ContactId }
       | { action: 'cancelled' };
 
+/** Results returned after the initial saga start, suitable for rendering in an existing interaction. */
+export type SagaInteractionResult = Exclude<SagaStepResult, { action: 'need_name' }>;
+
 export class AllowlistSagaExecutor {
     constructor(private readonly deps: AllowlistSagaExecutorDeps) {}
 
@@ -40,9 +43,7 @@ export class AllowlistSagaExecutor {
         const matches = await this.deps.contactBackend.resolveIdentifier(platform, identifierValue);
         if(matches.length > 0) {
             const firstMatch = matches[0];
-            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — matches.length > 0 checked just above; unreachable in practice
             if(firstMatch === undefined) {
-                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
                 throw new InvariantViolationError('start', 'matches[0] undefined despite matches.length > 0');
             }
             const { personId, displayName } = firstMatch;
@@ -70,7 +71,7 @@ export class AllowlistSagaExecutor {
      * Handle admin providing a display name.
      * Performs fuzzy match against existing contacts.
      */
-    async submitName(sagaId: string, displayName: string): Promise<SagaStepResult> {
+    async submitName(sagaId: string, displayName: string): Promise<SagaInteractionResult> {
         const saga = await this.deps.allowlistSagaBackend.get(sagaId);
         if(saga?.state !== 'pending_name') {
             return { action: 'cancelled' };
@@ -85,6 +86,7 @@ export class AllowlistSagaExecutor {
         }
 
         // Has matches — enter review state
+        // Stryker disable next-line llm: fuzzyLookup returns contactSchema-parsed contacts whose personId is a required string.
         const fuzzyMatches = matches.map(c => c.personId as string);
         await this.deps.allowlistSagaBackend.update(sagaId, {
             state:            'pending_review',
@@ -93,9 +95,7 @@ export class AllowlistSagaExecutor {
             matchIndex:       0,
         });
         const firstFuzzyMatch = fuzzyMatches[0];
-        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — fuzzyMatches is non-empty when we reach this branch; unreachable in practice
         if(firstFuzzyMatch === undefined) {
-            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
             throw new InvariantViolationError('submitName', 'fuzzyMatches[0] undefined despite matches.length > 0');
         }
         return { action: 'review_match', sagaId, matchPersonId: createContactId(firstFuzzyMatch) };
@@ -104,16 +104,14 @@ export class AllowlistSagaExecutor {
     /**
      * Admin confirms a fuzzy match — link identifier to existing contact and complete.
      */
-    async confirmMatch(sagaId: string): Promise<SagaStepResult> {
+    async confirmMatch(sagaId: string): Promise<SagaInteractionResult> {
         const saga = await this.deps.allowlistSagaBackend.get(sagaId);
         if(saga?.state !== 'pending_review' || !saga.fuzzyMatches || saga.matchIndex === undefined) {
             return { action: 'cancelled' };
         }
 
         const fuzzyMatchAtIndex = saga.fuzzyMatches[saga.matchIndex];
-        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — matchIndex is a valid index into fuzzyMatches in pending_review state; unreachable in practice
         if(fuzzyMatchAtIndex === undefined) {
-            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
             throw new InvariantViolationError('confirmMatch', 'fuzzyMatches[matchIndex] undefined despite valid saga state');
         }
         const personId = createContactId(fuzzyMatchAtIndex);
@@ -142,7 +140,7 @@ export class AllowlistSagaExecutor {
     /**
      * Admin skips current match — show next match or transition to create.
      */
-    async skipMatch(sagaId: string): Promise<SagaStepResult> {
+    async skipMatch(sagaId: string): Promise<SagaInteractionResult> {
         const saga = await this.deps.allowlistSagaBackend.get(sagaId);
         if(saga?.state !== 'pending_review' || !saga.fuzzyMatches || saga.matchIndex === undefined) {
             return { action: 'cancelled' };
@@ -153,22 +151,20 @@ export class AllowlistSagaExecutor {
             // More matches to review
             await this.deps.allowlistSagaBackend.update(sagaId, { matchIndex: nextIndex });
             const nextFuzzyMatch = saga.fuzzyMatches[nextIndex];
-            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — nextIndex < fuzzyMatches.length checked just above; unreachable in practice
             if(nextFuzzyMatch === undefined) {
-                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
                 throw new InvariantViolationError('skipMatch', 'fuzzyMatches[nextIndex] undefined despite nextIndex < fuzzyMatches.length');
             }
             return { action: 'review_match', sagaId, matchPersonId: createContactId(nextFuzzyMatch) };
         }
 
         // No more matches — create new contact
-        return this.createAndComplete(saga, saga.adminDisplayName!);
+        return this.createAndComplete(saga, saga.adminDisplayName ?? saga.displayNameHint ?? saga.identifierValue);
     }
 
     /**
      * Admin explicitly requests creating a new contact (skipping remaining matches).
      */
-    async createNew(sagaId: string): Promise<SagaStepResult> {
+    async createNew(sagaId: string): Promise<SagaInteractionResult> {
         const saga = await this.deps.allowlistSagaBackend.get(sagaId);
         if(saga?.state !== 'pending_review' && saga?.state !== 'pending_name') {
             return { action: 'cancelled' };
@@ -187,7 +183,7 @@ export class AllowlistSagaExecutor {
     }
 
     /** Internal: create contact and add to allowlist */
-    private async createAndComplete(saga: AllowlistSaga, displayName: string): Promise<SagaStepResult> {
+    private async createAndComplete(saga: AllowlistSaga, displayName: string): Promise<SagaInteractionResult> {
         const personId = await findOrCreateContact(
             this.deps.contactBackend,
             saga.platform,

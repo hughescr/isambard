@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { mockLogger } from '../../setup';
 import { createInboxMCPServer } from '@/agent/inbox-mcp-server';
 import * as textGenerator from '@/agent/text-generator';
 import type { MCPChannelRegistry, MCPInboxManager } from '@/agent/types';
@@ -12,6 +13,7 @@ describe('createInboxMCPServer', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
 
     beforeEach(() => {
+        mockLogger.info.mockClear();
         mockInboxManager = {
             getUnreadOverview: mock(() => ({
                 totalUnread: 0,
@@ -107,6 +109,11 @@ describe('createInboxMCPServer', () => {
             expect(parsed.totalUnread).toBe(0);
             expect(parsed.channels).toEqual([]);
             expect(mockInboxManager.getUnreadOverview).toHaveBeenCalledTimes(1);
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                totalUnread:  0,
+                channelCount: 0,
+                msg:          'Unread overview retrieved',
+            });
         });
 
         test('should return overview with unread messages', async () => {
@@ -226,6 +233,17 @@ describe('createInboxMCPServer', () => {
 
             const result: CallToolResult = await handler({ channelId: '123456789' });
 
+            expect(spy).toHaveBeenCalledWith(
+                `You are summarizing Discord messages for an AI assistant who missed them while offline.
+Create a concise summary (2-4 sentences) that captures:
+- Key topics or questions discussed
+- Who participated and what they said
+- Any action items or requests directed at the assistant
+
+Keep it factual and actionable. The assistant will decide whether to read full messages based on this summary.`,
+                'Summarize these 2 messages:\n\n[Alice at 2025-01-24T10:00:00.000Z]: Hello everyone!\n[Bob at 2025-01-24T10:05:00.000Z]: Hi Alice!'
+            );
+
             expect(result.content).toBeDefined();
             const text = getTextContent(result);
             expect(text).toBeDefined();
@@ -241,6 +259,35 @@ describe('createInboxMCPServer', () => {
             expect(parsed.messages).toHaveLength(2);
             expect(parsed.messages[0].id).toBe('111');
             expect(parsed.messages[0].sizeChars).toBe(15);
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                channelId:    createChannelId('123456789'),
+                channelName:  'general',
+                messageCount: 2,
+                authorCount:  2,
+                msg:          'Channel summary generated',
+            });
+        });
+
+        test('should reject a message whose timestamp is undefined', async () => {
+            const malformed = {
+                id:          '111',
+                channelId:   createChannelId('123456789'),
+                channelName: 'general',
+                guildId:     'DM',
+                author:      'Alice',
+                content:     'Hello',
+                timestamp:   undefined,
+                isRead:      false,
+            } as unknown as UnreadMessage;
+            mockInboxManager.getChannelMessages = mock(() => [malformed]);
+            const summarySpy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Summary');
+            spies.push(summarySpy);
+
+            const handler = getToolHandler(createInboxMCPServer(mockInboxManager, mockChannelRegistry), 'getChannelSummary');
+            const result = await handler({ channelId: '123456789' });
+
+            expect(result.isError).toBe(true);
+            expect(getTextContent(result)).toContain('Invariant violated in channelSummary tool: timestamps empty despite messages.length > 0');
         });
 
         test('should handle AI summary generation failure', async () => {
@@ -454,6 +501,12 @@ describe('createInboxMCPServer', () => {
             expect(parsed.messages[1]?.id).toBe('222');
             expect(parsed.messages[1]?.author).toBe('Bob');
             expect(mockInboxManager.getMessage).toHaveBeenCalledTimes(2);
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                channelId:      createChannelId('123456789'),
+                requestedCount: 2,
+                fetchedCount:   2,
+                msg:            'Messages fetched',
+            });
         });
 
         test('should skip non-existent messages', async () => {
@@ -533,6 +586,11 @@ describe('createInboxMCPServer', () => {
                 createChannelId('123456789'),
                 ['111', '222']
             );
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                channelId:   createChannelId('123456789'),
+                markedCount: 2,
+                msg:         'Messages marked as read',
+            });
         });
 
         test('should handle empty message list', async () => {
@@ -591,6 +649,10 @@ describe('createInboxMCPServer', () => {
             expect(mockInboxManager.markChannelRead).toHaveBeenCalledWith(
                 createChannelId('123456789')
             );
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                channelId: createChannelId('123456789'),
+                msg:       'Channel marked as read',
+            });
         });
 
         test('should return error on exception', async () => {

@@ -8,7 +8,6 @@ import type { ServiceHealthRegistry } from '@/services';
 import { retryAsync, type RetryDeps, type RetryPolicy } from '@/utils';
 
 // HTTP status codes for error classification (mirrors @atproto/xrpc ResponseType)
-// Stryker disable ObjectLiteral,StringLiteral: HTTP status code constants are configuration
 const HTTP_STATUS = {
     AUTH_REQUIRED: 401,
     RATE_LIMITED:  429,
@@ -26,14 +25,10 @@ interface XRPCErrorLike {
     headers?: Record<string, string | string[] | undefined>
 }
 
-// Stryker disable next-line ArithmeticOperator: Rate-limit retry cap — 3 attempts balances resilience with avoiding long waits
 const BSKY_READ_MAX_ATTEMPTS = 3;
-// Stryker disable next-line ArithmeticOperator: Base backoff for Bluesky rate-limit retry (5s)
 const BSKY_RETRY_BASE_DELAY_MS = 5000;
-// Stryker disable next-line ArithmeticOperator: Max backoff cap for Bluesky rate-limit retry (60s)
 const BSKY_RETRY_MAX_DELAY_MS = 60_000;
 
-// Stryker disable ObjectLiteral,ArithmeticOperator: Bluesky read retry policy — constants are protocol/operational configuration
 const BSKY_READ_RETRY_POLICY: Partial<RetryPolicy> = {
     maxAttempts:       BSKY_READ_MAX_ATTEMPTS,
     baseDelayMs:       BSKY_RETRY_BASE_DELAY_MS,
@@ -43,7 +38,6 @@ const BSKY_READ_RETRY_POLICY: Partial<RetryPolicy> = {
 };
 // Stryker restore ObjectLiteral,ArithmeticOperator
 
-// Stryker disable BlockStatement,ConditionalExpression,LogicalOperator: instanceof guard and typeof checks are paired — mutating either alone cannot change observable behavior for the inputs that reach this code
 function isXRPCError(err: unknown): err is XRPCErrorLike {
     if(!(err instanceof Error)) {
         return false;
@@ -62,45 +56,36 @@ function isXRPCError(err: unknown): err is XRPCErrorLike {
  * If the header is absent or unparseable, returns undefined (exponential backoff is used).
  */
 function extractRateLimitRetryAfterMs(headers: XRPCErrorLike['headers']): number | undefined {
-    // Stryker disable BlockStatement,ConditionalExpression,LogicalOperator: defensive type guards — non-object / missing-header inputs return undefined either way
+    // Stryker disable next-line llm: the SDK XRPC producer supplies Object.fromEntries(...) or undefined, so null cannot occur.
     if(headers === undefined) {
         return undefined;
     }
     // Stryker restore BlockStatement,ConditionalExpression,LogicalOperator
 
     // Bluesky sends `ratelimit-reset` as a Unix epoch timestamp (seconds)
-    // Stryker disable next-line StringLiteral: header key is a protocol constant; tests cover present/absent cases
     const resetRaw = headers['ratelimit-reset'];
     const resetStr = Array.isArray(resetRaw) ? resetRaw[0] : resetRaw;
-    // Stryker disable BlockStatement,ConditionalExpression: non-string / missing header — tests provide string values to exercise the happy path
     if(typeof resetStr !== 'string') {
         return undefined;
     }
     // Stryker restore BlockStatement,ConditionalExpression
 
     const resetEpochSec = Number.parseInt(resetStr, 10);
-    // Stryker disable next-line BooleanLiteral: inversion tested via non-numeric header test
+    // Stryker disable next-line llm: parseInt yields an integer or NaN, making the finite and integer predicates equivalent here.
     if(!Number.isFinite(resetEpochSec)) {
         return undefined;
     }
 
-    // Stryker disable next-line ArithmeticOperator: division converts ms to seconds; * would produce wrong order of magnitude — tests assert exact ms values
     const nowSec    = Math.floor(Date.now() / 1000);
-    // Stryker disable next-line ArithmeticOperator: subtraction computes remaining seconds; + would produce wrong direction — tests assert exact delays
     const delaySec  = resetEpochSec - nowSec;
     // Clamp to [0, 300] seconds — never negative, never longer than 5 minutes
-    // Stryker disable next-line ArithmeticOperator,MethodExpression: arithmetic/clamping tested with past/future/far-future timestamps
     return Math.max(0, Math.min(delaySec, 300)) * 1000;
 }
 
-// Stryker disable next-line StringLiteral: Feed URI is configuration
 const DISCOVER_FEED_URI = 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot';
-// Stryker disable next-line StringLiteral: Feed URI is configuration
 const FOR_YOU_FEED_URI  = 'at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you';
 
-// Stryker disable next-line ArithmeticOperator: Bluesky character limit is a fixed protocol constant
 const BSKY_MAX_GRAPHEME_LENGTH = 300;
-// Stryker disable next-line ArithmeticOperator: Bluesky DM character limit is a fixed protocol constant
 const BSKY_DM_MAX_GRAPHEME_LENGTH = 1000;
 
 interface BlueskyClientOptions {
@@ -109,7 +94,31 @@ interface BlueskyClientOptions {
     serviceUrl?:     string
     healthRegistry?: ServiceHealthRegistry
     retryDeps?:      Partial<RetryDeps>
+    api?:            BlueskyClientApi
 }
+
+/** Dependencies supplied per client so test doubles cannot replace process-wide modules. */
+export interface BlueskyClientApi {
+    AtpAgent:                    typeof AtpAgent
+    RichText:                    typeof RichText
+    AppBskyEmbedRecord:          typeof AppBskyEmbedRecord
+    AppBskyEmbedImages:          typeof AppBskyEmbedImages
+    AppBskyEmbedVideo:           typeof AppBskyEmbedVideo
+    AppBskyEmbedExternal:        typeof AppBskyEmbedExternal
+    AppBskyEmbedRecordWithMedia: typeof AppBskyEmbedRecordWithMedia
+    ChatBskyConvoDefs:           typeof ChatBskyConvoDefs
+}
+
+const DEFAULT_API: BlueskyClientApi = {
+    AtpAgent,
+    RichText,
+    AppBskyEmbedRecord,
+    AppBskyEmbedImages,
+    AppBskyEmbedVideo,
+    AppBskyEmbedExternal,
+    AppBskyEmbedRecordWithMedia,
+    ChatBskyConvoDefs,
+};
 
 /**
  * Bluesky AT Protocol client wrapping AtpAgent with normalized domain types.
@@ -121,10 +130,11 @@ export class BlueskyClient {
     private readonly appPassword:    string;
     private readonly healthRegistry: ServiceHealthRegistry | undefined;
     private readonly retryDeps:      Partial<RetryDeps>;
+    private readonly api:            BlueskyClientApi;
 
     constructor(options: BlueskyClientOptions) {
-        // Stryker disable next-line StringLiteral: default service URL is configuration
-        this.agent          = new AtpAgent({ service: options.serviceUrl ?? 'https://bsky.social' });
+        this.api            = options.api ?? DEFAULT_API;
+        this.agent          = new this.api.AtpAgent({ service: options.serviceUrl ?? 'https://bsky.social' });
         this.handle         = options.handle;
         this.appPassword    = options.appPassword;
         this.healthRegistry = options.healthRegistry;
@@ -156,10 +166,8 @@ export class BlueskyClient {
     async login(): Promise<void> {
         try {
             await this.agent.login({ identifier: this.handle, password: this.appPassword });
-            // Stryker disable next-line StringLiteral: chat service DID is AT Protocol configuration
             this.chatAgent = this.agent.withProxy('bsky_chat', 'did:web:api.bsky.chat');
         } catch (err: unknown) {
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Login failed', false);
         }
     }
@@ -169,7 +177,6 @@ export class BlueskyClient {
      */
     private requireChatAgent(): AtpAgent {
         if(!this.chatAgent) {
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw new BskyError('Chat not available — call login() first');
         }
         return this.chatAgent;
@@ -215,7 +222,6 @@ export class BlueskyClient {
                     cursor: response.data.cursor,
                 };
             } catch (err: unknown) {
-                // Stryker disable next-line StringLiteral: error message is informational only
                 throw this.mapError(err, 'Failed to fetch feed');
             }
         });
@@ -238,7 +244,6 @@ export class BlueskyClient {
                     cursor: response.data.cursor,
                 };
             } catch (err: unknown) {
-                // Stryker disable next-line StringLiteral: error message is informational only
                 throw this.mapError(err, 'Failed to fetch author feed');
             }
         });
@@ -253,13 +258,10 @@ export class BlueskyClient {
                 const response = await this.agent.getPosts({ uris: [uri] });
                 const posts    = response.data.posts;
                 if(posts.length === 0) {
-                    // Stryker disable next-line StringLiteral: error message is informational only
                     throw new BskyError('Post not found', undefined, { uri });
                 }
                 const post = posts[0];
-                // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — posts.length === 0 check above ensures non-empty; unreachable in practice
                 if(post === undefined) {
-                    // Stryker disable next-line StringLiteral: invariant violation message — debug context only
                     throw new InvariantViolationError('getPost', 'posts[0] undefined after posts.length === 0 guard');
                 }
                 return await this.normalizePost(post);
@@ -267,7 +269,6 @@ export class BlueskyClient {
                 if(err instanceof BskyError) {
                     throw err;
                 }
-                // Stryker disable next-line StringLiteral: error message is informational only
                 throw this.mapError(err, 'Failed to fetch post');
             }
         });
@@ -290,7 +291,6 @@ export class BlueskyClient {
                     cursor: response.data.cursor,
                 };
             } catch (err: unknown) {
-                // Stryker disable next-line StringLiteral: error message is informational only
                 throw this.mapError(err, 'Failed to fetch notifications');
             }
         });
@@ -304,7 +304,6 @@ export class BlueskyClient {
         try {
             await this.agent.updateSeenNotifications(seenAt ?? new Date().toISOString());
         } catch (err: unknown) {
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to update notifications seen');
         }
     }
@@ -318,7 +317,6 @@ export class BlueskyClient {
                 const response = await this.agent.getProfile({ actor });
                 return this.normalizeDetailedProfile(response.data);
             } catch (err: unknown) {
-                // Stryker disable next-line StringLiteral: error message is informational only
                 throw this.mapError(err, 'Failed to fetch profile');
             }
         });
@@ -341,7 +339,6 @@ export class BlueskyClient {
                     cursor: response.data.cursor,
                 };
             } catch (err: unknown) {
-                // Stryker disable next-line StringLiteral: error message is informational only
                 throw this.mapError(err, 'Failed to search posts');
             }
         });
@@ -354,7 +351,6 @@ export class BlueskyClient {
         try {
             await this.agent.like(uri, cid);
         } catch (err: unknown) {
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to like post');
         }
     }
@@ -382,10 +378,9 @@ export class BlueskyClient {
      * Detects facets and validates grapheme length against the post limit.
      */
     private async buildValidatedRichText(text: string): Promise<RichText> {
-        const rt = new RichText({ text });
+        const rt = new this.api.RichText({ text });
         await rt.detectFacets(this.agent);
         if(rt.graphemeLength > BSKY_MAX_GRAPHEME_LENGTH) {
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw new BskyValidationError(`Post exceeds ${BSKY_MAX_GRAPHEME_LENGTH} graphemes (${rt.graphemeLength})`, { graphemeLength: rt.graphemeLength });
         }
         return rt;
@@ -396,10 +391,9 @@ export class BlueskyClient {
      * Detects facets and validates grapheme length against the DM limit.
      */
     private async buildValidatedDMRichText(text: string): Promise<RichText> {
-        const rt = new RichText({ text });
+        const rt = new this.api.RichText({ text });
         await rt.detectFacets(this.agent);
         if(rt.graphemeLength > BSKY_DM_MAX_GRAPHEME_LENGTH) {
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw new BskyValidationError(`DM exceeds ${BSKY_DM_MAX_GRAPHEME_LENGTH} graphemes (${rt.graphemeLength})`, { graphemeLength: rt.graphemeLength });
         }
         return rt;
@@ -418,7 +412,6 @@ export class BlueskyClient {
             if(err instanceof BskyValidationError) {
                 throw err;
             }
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to send post');
         }
     }
@@ -452,7 +445,6 @@ export class BlueskyClient {
             if(err instanceof BskyValidationError) {
                 throw err;
             }
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to reply to post');
         }
     }
@@ -474,7 +466,6 @@ export class BlueskyClient {
             await this.agent.follow(response.data.did);
             return { alreadyFollowing: false };
         } catch (err: unknown) {
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to follow user');
         }
     }
@@ -496,7 +487,6 @@ export class BlueskyClient {
             await this.agent.deleteFollow(followUri);
             return { wasFollowing: true };
         } catch (err: unknown) {
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to unfollow user');
         }
     }
@@ -522,7 +512,6 @@ export class BlueskyClient {
                 if(err instanceof BskyError) {
                     throw err;
                 }
-                // Stryker disable next-line StringLiteral: error message is informational only
                 throw this.mapError(err, 'Failed to list conversations');
             }
         });
@@ -539,7 +528,6 @@ export class BlueskyClient {
             if(err instanceof BskyError) {
                 throw err;
             }
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to get conversation for members');
         }
     }
@@ -559,7 +547,7 @@ export class BlueskyClient {
                 return {
                     messages: await Promise.all(
                         response.data.messages
-                            .filter(msg => ChatBskyConvoDefs.isMessageView(msg))
+                            .filter(msg => this.api.ChatBskyConvoDefs.isMessageView(msg))
                             .map(msg => this.normalizeMessage(msg as ChatBskyConvoDefs.MessageView, didCache))
                     ),
                     cursor: response.data.cursor,
@@ -568,7 +556,6 @@ export class BlueskyClient {
                 if(err instanceof BskyError) {
                     throw err;
                 }
-                // Stryker disable next-line StringLiteral: error message is informational only
                 throw this.mapError(err, 'Failed to get messages');
             }
         });
@@ -590,7 +577,6 @@ export class BlueskyClient {
             if(err instanceof BskyError) {
                 throw err;
             }
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to send direct message');
         }
     }
@@ -605,7 +591,6 @@ export class BlueskyClient {
             if(err instanceof BskyError) {
                 throw err;
             }
-            // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to mark conversation as read');
         }
     }
@@ -618,9 +603,7 @@ export class BlueskyClient {
         return {
             did:    profile.did,
             handle: profile.handle,
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(profile.displayName ? { displayName: profile.displayName } : {}),
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(profile.avatar ? { avatar: profile.avatar } : {}),
         };
     }
@@ -629,17 +612,11 @@ export class BlueskyClient {
         return {
             did:    profile.did,
             handle: profile.handle,
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(profile.displayName ? { displayName: profile.displayName } : {}),
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(profile.avatar ? { avatar: profile.avatar } : {}),
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(profile.description ? { description: profile.description } : {}),
-            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
             ...(profile.followersCount === undefined ? {} : { followersCount: profile.followersCount }),
-            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
             ...(profile.followsCount === undefined ? {} : { followsCount: profile.followsCount }),
-            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
             ...(profile.postsCount === undefined ? {} : { postsCount: profile.postsCount }),
         };
     }
@@ -658,31 +635,24 @@ export class BlueskyClient {
             replyCount:  post.replyCount ?? 0,
             likeCount:   post.likeCount ?? 0,
             repostCount: post.repostCount ?? 0,
+            // Stryker disable next-line llm: the runtime PostView validator requires indexedAt, so this fallback is inert.
             indexedAt:   post.indexedAt,
-            // Stryker disable next-line ConditionalExpression: ternary guards optional viewer — truthy/falsy tests both branches
             ...(post.viewer ? { viewer: this.normalizeViewer(post.viewer) } : {}),
-            // Stryker disable next-line ConditionalExpression: ternary guards optional replyRef — truthy/falsy tests both branches
             ...(record.reply ? { replyRef: { root: { uri: record.reply.root.uri, cid: record.reply.root.cid }, parent: { uri: record.reply.parent.uri, cid: record.reply.parent.cid } } } : {}),
-            // Stryker disable next-line ConditionalExpression: ternary guards optional embed normalization
             ...(normalizedEmbed ? { embed: normalizedEmbed } : {}),
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: ternary guards optional facets — empty array means all features were unknown types
             ...(normalizedFacets && normalizedFacets.length > 0 ? { facets: normalizedFacets } : {}),
         };
     }
 
     private normalizeViewer(viewer: AppBskyFeedDefs.ViewerState): BskyViewerState {
         return {
-            // Stryker disable ObjectLiteral: empty spread branches — falsy paths produce no properties
             ...(viewer.like ? { like: viewer.like } : {}),
             ...(viewer.repost ? { repost: viewer.repost } : {}),
             ...(viewer.pinned ? { pinned: viewer.pinned } : {}),
-            // Stryker restore ObjectLiteral
-            // Stryker disable ObjectLiteral,EqualityOperator,ConditionalExpression: undefined checks for optional boolean fields
             ...(viewer.bookmarked === undefined ? {} : { bookmarked: viewer.bookmarked }),
             ...(viewer.threadMuted === undefined ? {} : { threadMuted: viewer.threadMuted }),
             ...(viewer.replyDisabled === undefined ? {} : { replyDisabled: viewer.replyDisabled }),
             ...(viewer.embeddingDisabled === undefined ? {} : { embeddingDisabled: viewer.embeddingDisabled }),
-            // Stryker restore ObjectLiteral,EqualityOperator,ConditionalExpression
         };
     }
 
@@ -710,11 +680,8 @@ export class BlueskyClient {
         return {
             did:    profile.did,
             handle: profile.handle,
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(profile.displayName ? { displayName: profile.displayName } : {}),
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(profile.avatar ? { avatar: profile.avatar } : {}),
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(profile.description ? { description: profile.description } : {}),
         };
     }
@@ -734,11 +701,8 @@ export class BlueskyClient {
         return {
             did:    profile.did,
             handle: profile.handle,
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(profile.displayName ? { displayName: profile.displayName } : {}),
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(profile.avatar ? { avatar: profile.avatar } : {}),
-            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional boolean field
             ...(profile.chatDisabled === undefined ? {} : { chatDisabled: profile.chatDisabled }),
         };
     }
@@ -749,19 +713,18 @@ export class BlueskyClient {
             ?.map(e => this.normalizePostEmbed(e))
             .filter((e): e is BskyPostEmbed => e !== undefined);
         return {
+            // Stryker disable next-line llm: the runtime ViewRecord validator requires uri, so this fallback is inert.
             uri:       viewRecord.uri,
+            // Stryker disable next-line llm: the runtime ViewRecord validator requires cid, so this fallback is inert.
             cid:       viewRecord.cid,
             author:    this.normalizeAuthor(viewRecord.author),
             text:      typeof value.text === 'string' ? value.text : '',
             createdAt: typeof value.createdAt === 'string' ? value.createdAt : '',
+            // Stryker disable next-line llm: the runtime ViewRecord validator requires indexedAt, so this fallback is inert.
             indexedAt: viewRecord.indexedAt,
-            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
             ...(viewRecord.replyCount === undefined ? {} : { replyCount: viewRecord.replyCount }),
-            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
             ...(viewRecord.likeCount === undefined ? {} : { likeCount: viewRecord.likeCount }),
-            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
             ...(viewRecord.repostCount === undefined ? {} : { repostCount: viewRecord.repostCount }),
-            // Stryker disable next-line ConditionalExpression: ternary guards optional nested embeds array
             ...(embeds && embeds.length > 0 ? { embeds } : {}),
         };
     }
@@ -773,7 +736,6 @@ export class BlueskyClient {
                 thumb:    img.thumb,
                 fullsize: img.fullsize,
                 alt:      img.alt,
-                // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
                 ...(img.aspectRatio ? { aspectRatio: { width: img.aspectRatio.width, height: img.aspectRatio.height } } : {}),
             })),
         };
@@ -785,11 +747,8 @@ export class BlueskyClient {
             video: {
                 cid:      view.cid,
                 playlist: view.playlist,
-                // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
                 ...(view.thumbnail ? { thumbnail: view.thumbnail } : {}),
-                // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
                 ...(view.alt ? { alt: view.alt } : {}),
-                // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
                 ...(view.aspectRatio ? { aspectRatio: { width: view.aspectRatio.width, height: view.aspectRatio.height } } : {}),
             },
         };
@@ -802,20 +761,17 @@ export class BlueskyClient {
                 uri:         view.external.uri,
                 title:       view.external.title,
                 description: view.external.description,
-                // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
                 ...(view.external.thumb ? { thumbnail: view.external.thumb } : {}),
             },
         };
     }
 
     private normalizeRecordWithMediaEmbed(view: AppBskyEmbedRecordWithMedia.View): BskyPostEmbed | undefined {
-        // Stryker disable next-line ConditionalExpression: type guard on embedded record — must check ViewRecord to safely cast
-        if(!AppBskyEmbedRecord.isViewRecord(view.record.record)) {
+        if(!this.api.AppBskyEmbedRecord.isViewRecord(view.record.record)) {
             return undefined;
         }
         const normalizedRecord = this.normalizeEmbeddedRecord(view.record.record);
         const normalizedMedia  = this.normalizePostEmbed(view.media);
-        // Stryker disable next-line ConditionalExpression: guard ensures media was successfully normalized
         if(!normalizedMedia) {
             return undefined;
         }
@@ -823,32 +779,27 @@ export class BlueskyClient {
     }
 
     private normalizePostEmbed(embed: unknown): BskyPostEmbed | undefined {
-        if(embed === undefined || embed === null) {
-            return undefined;
-        }
         const e = embed as Record<string, unknown>;
-        // Stryker disable BlockStatement,ConditionalExpression: AT Protocol type guard chain — each isView() check is a distinct type discriminant; order matters for correctness
-        if(AppBskyEmbedImages.isView(e)) {
+        if(this.api.AppBskyEmbedImages.isView(e)) {
             // boundary cast: AppBskyEmbedImages.isView() is a runtime type discriminant; cast to declared type after guard to satisfy TypeScript's narrowing from Record<string,unknown>
             return this.normalizeImageEmbed(e as unknown as AppBskyEmbedImages.View);
         }
-        if(AppBskyEmbedVideo.isView(e)) {
+        if(this.api.AppBskyEmbedVideo.isView(e)) {
             // boundary cast: AppBskyEmbedVideo.isView() is a runtime type discriminant; cast to declared type after guard to satisfy TypeScript's narrowing from Record<string,unknown>
             return this.normalizeVideoEmbed(e as unknown as AppBskyEmbedVideo.View);
         }
-        if(AppBskyEmbedExternal.isView(e)) {
+        if(this.api.AppBskyEmbedExternal.isView(e)) {
             // boundary cast: AppBskyEmbedExternal.isView() is a runtime type discriminant; cast to declared type after guard to satisfy TypeScript's narrowing from Record<string,unknown>
             return this.normalizeExternalEmbed(e as unknown as AppBskyEmbedExternal.View);
         }
-        if(AppBskyEmbedRecordWithMedia.isView(e)) {
+        if(this.api.AppBskyEmbedRecordWithMedia.isView(e)) {
             // boundary cast: AppBskyEmbedRecordWithMedia.isView() is a runtime type discriminant; cast to declared type after guard to satisfy TypeScript's narrowing from Record<string,unknown>
             return this.normalizeRecordWithMediaEmbed(e as unknown as AppBskyEmbedRecordWithMedia.View);
         }
-        if(AppBskyEmbedRecord.isView(e) && AppBskyEmbedRecord.isViewRecord(e.record)) {
+        if(this.api.AppBskyEmbedRecord.isView(e) && this.api.AppBskyEmbedRecord.isViewRecord(e.record)) {
             // boundary cast: AppBskyEmbedRecord.isView() + isViewRecord() are runtime discriminants; cast to declared ViewRecord type after guard to satisfy TypeScript's narrowing from Record<string,unknown>
             return { type: 'record', record: this.normalizeEmbeddedRecord(e.record as unknown as AppBskyEmbedRecord.ViewRecord) };
         }
-        // Stryker restore BlockStatement,ConditionalExpression
         return undefined;
     }
 
@@ -871,7 +822,6 @@ export class BlueskyClient {
             .then(author => author.handle)
             .catch((error: unknown) => {
                 // Intentionally swallow — profile lookup failure falls back to DID as handle
-                // Stryker disable next-line StringLiteral: error message is informational only
                 logger.debug({ error }, 'Failed to resolve mention DID to handle, using DID as fallback');
                 return did;
             });
@@ -880,16 +830,12 @@ export class BlueskyClient {
     }
 
     private buildFacetFeature(f: Record<string, unknown>, didHandleMap: Map<string, string>): BskyFacetFeature | undefined {
-        // Stryker disable next-line ConditionalExpression,LogicalOperator: type discriminant paired with typeof guard — defensive check for malformed AT Protocol data
         if(f.$type === 'app.bsky.richtext.facet#mention' && typeof f.did === 'string') {
-            // Stryker disable next-line StringLiteral: default fallback — DID used as handle when not in resolution map
             return { type: 'mention', handle: didHandleMap.get(f.did) ?? f.did };
         }
-        // Stryker disable next-line ConditionalExpression,LogicalOperator: type discriminant paired with typeof guard — defensive check for malformed AT Protocol data
         if(f.$type === 'app.bsky.richtext.facet#link' && typeof f.uri === 'string') {
             return { type: 'link', uri: f.uri };
         }
-        // Stryker disable next-line ConditionalExpression,LogicalOperator: type discriminant paired with typeof guard — defensive check for malformed AT Protocol data
         if(f.$type === 'app.bsky.richtext.facet#tag' && typeof f.tag === 'string') {
             return { type: 'tag', tag: f.tag };
         }
@@ -902,7 +848,6 @@ export class BlueskyClient {
         for(const facet of facets) {
             for(const feature of facet.features) {
                 const f = feature as Record<string, unknown>;
-                // Stryker disable next-line ConditionalExpression,LogicalOperator: type discriminant paired with typeof guard — defensive check for malformed AT Protocol data
                 if(f.$type === 'app.bsky.richtext.facet#mention' && typeof f.did === 'string') {
                     mentionDids.add(f.did);
                 }
@@ -913,6 +858,7 @@ export class BlueskyClient {
         const didEntries = await Promise.all(
             [...mentionDids].map(async did => [did, await this.resolveMentionDid(did, didCache)] as const)
         );
+        // Stryker disable next-line llm: only Map.get is observed, so Map insertion order is unobservable.
         const didHandleMap = new Map(didEntries);
 
         // Build normalized facets
@@ -921,7 +867,6 @@ export class BlueskyClient {
             const features = facet.features
                 .map(feature => this.buildFacetFeature(feature as Record<string, unknown>, didHandleMap))
                 .filter((f): f is BskyFacetFeature => f !== undefined);
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: optimization guard — only push facets with known features
             if(features.length > 0) {
                 result.push({ index: { byteStart: facet.index.byteStart, byteEnd: facet.index.byteEnd }, features });
             }
@@ -932,8 +877,7 @@ export class BlueskyClient {
 
     private async normalizeMessage(msg: ChatBskyConvoDefs.MessageView, didCache?: Map<string, Promise<string>>): Promise<BskyDirectMessage> {
         const embed        = msg.embed;
-        // Stryker disable next-line ConditionalExpression: ternary guards optional embed normalization
-        const normalizedEmbed = (embed && AppBskyEmbedRecord.isView(embed) && AppBskyEmbedRecord.isViewRecord(embed.record))
+        const normalizedEmbed = (embed && this.api.AppBskyEmbedRecord.isView(embed) && this.api.AppBskyEmbedRecord.isViewRecord(embed.record))
             ? this.normalizeEmbeddedRecord(embed.record)
             : undefined;
         const cache = didCache ?? this.createDIDCache();
@@ -944,9 +888,7 @@ export class BlueskyClient {
             text:      msg.text,
             senderDid: msg.sender.did,
             sentAt:    msg.sentAt,
-            // Stryker disable next-line ConditionalExpression: ternary guards optional embed normalization
             ...(normalizedEmbed ? { embed: normalizedEmbed } : {}),
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: ternary guards optional facets — empty array means all features were unknown types
             ...(normalizedFacets && normalizedFacets.length > 0 ? { facets: normalizedFacets } : {}),
         };
     }
@@ -958,11 +900,9 @@ export class BlueskyClient {
             members:     convo.members.map(m => this.normalizeConversationMember(m)),
             muted:       convo.muted,
             unreadCount: convo.unreadCount,
-            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
             ...(convo.status ? { status: convo.status } : {}),
             // Only normalize lastMessage if it's a MessageView (not DeletedMessageView)
-            // Stryker disable next-line ConditionalExpression: ternary guards optional lastMessage normalization
-            ...(convo.lastMessage && ChatBskyConvoDefs.isMessageView(convo.lastMessage)
+            ...(convo.lastMessage && this.api.ChatBskyConvoDefs.isMessageView(convo.lastMessage)
                 ? { lastMessage: await this.normalizeMessage(convo.lastMessage, didCache) }
                 : {}),
         };
@@ -975,7 +915,6 @@ export class BlueskyClient {
     private mapError(err: unknown, message: string, notifyHealthRegistry = true): BskyError {
         if(isXRPCError(err)) {
             if(err.status === HTTP_STATUS.AUTH_REQUIRED) {
-                // Stryker disable next-line ConditionalExpression: health registry notification guard — only notify for runtime auth failures, not login
                 if(notifyHealthRegistry) {
                     this.healthRegistry?.sendEvent('bluesky', 'CONNECTION_LOST', { error: err.message });
                 }
@@ -986,7 +925,6 @@ export class BlueskyClient {
                 return new BskyRateLimitError(message, {
                     originalMessage: err.message,
                     error:           err.error,
-                    // Stryker disable next-line ConditionalExpression,EqualityOperator: retryAfterMs spreading — undefined omits the key; 0 is a valid retry-after (retry immediately)
                     ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
                 });
             }
@@ -1010,9 +948,7 @@ export class BlueskyClient {
         view: AppBskyFeedDefs.PostView | AppBskyFeedDefs.NotFoundPost | AppBskyFeedDefs.BlockedPost | { $type: string }
     ): view is AppBskyFeedDefs.PostView {
         const v = view as Record<string, unknown>;
-        // Stryker disable ConditionalExpression,LogicalOperator: combined structural type guard — each condition tests a distinct required PostView field; changing operator or flipping truthy breaks all-or-nothing semantics
         return typeof v.uri === 'string' && typeof v.cid === 'string' && typeof v.author === 'object' && v.author !== null;
-        // Stryker restore ConditionalExpression,LogicalOperator
     }
 
     private isKnownNotificationReason(reason: string): reason is BskyNotification['reason'] {

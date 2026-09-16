@@ -59,10 +59,8 @@ export type WakeTurnDelivery = (envelope: Envelope, result: TurnResult) => Promi
 
 /** First line of `text`, for the default `task` fallback prefix's summary excerpt. */
 function firstLine(text: string): string {
-    // Stryker disable next-line StringLiteral: unreachable by construction — `String.split` never
-    // returns an empty array, so index 0 of its result is always defined for any string input;
-    // the `?? ''` fallback can never be observed regardless of what it's mutated to.
-    return text.split('\n')[0] ?? '';
+    // String#split always returns at least one element, including for an empty string.
+    return text.split('\n')[0]!;
 }
 
 /** Default {@link CreateWakeTurnDeliveryParams.fallbackPrefix}: distinct wording for a `notification` bridge reply vs. an unrouted `task` wake-turn reply. */

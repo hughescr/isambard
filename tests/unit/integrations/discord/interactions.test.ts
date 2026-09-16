@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
+import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction, type Message, type User } from 'discord.js';
 import { QuestionRegistry } from '@/agent/question-registry/registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
@@ -17,6 +18,7 @@ describe('createInteractionHandler', () => {
 
     afterEach(() => {
         registry.stop();
+        jest.restoreAllMocks();
         jest.useRealTimers();
     });
 
@@ -112,6 +114,35 @@ describe('createInteractionHandler', () => {
         });
     });
 
+    it('should not update or resolve a registry entry that is no longer waiting', async () => {
+        const inactiveQuestion: PendingQuestion = {
+            questionId:      'q-inactive',
+            channelId:       'ch1' as ChannelId,
+            originMessageId: 'msg1',
+            triggerUserId:   'user1' as UserId,
+            questionText:    'Already answered',
+            createdAt:       Date.now() - 1000,
+            expiresAt:       Date.now() + 5000,
+            options:         [{ label: 'Yes', value: 'yes' }],
+            state:           'answered',
+        };
+        const inactiveRegistry = {
+            getQuestion:       mock(() => inactiveQuestion),
+            resolveWithAnswer: mock(),
+        } as unknown as QuestionRegistry;
+        const inactiveHandler = createInteractionHandler({ questionRegistry: inactiveRegistry });
+        const interaction = createMockButtonInteraction('question:q-inactive:yes', 'user2', 'msg2');
+
+        await inactiveHandler.handleButtonInteraction(interaction);
+
+        expect(interaction.reply).toHaveBeenCalledWith({
+            content: 'This question has expired or is no longer valid.',
+            flags:   MessageFlags.Ephemeral,
+        });
+        expect(interaction.update).not.toHaveBeenCalled();
+        expect(inactiveRegistry.resolveWithAnswer).not.toHaveBeenCalled();
+    });
+
     it('should reply ephemeral when question has expired (expiresAt < now)', async () => {
         // Set system time to a known value using vi.useFakeTimers
         const baseTime = new Date('2024-01-01T12:00:00Z').getTime();
@@ -149,6 +180,31 @@ describe('createInteractionHandler', () => {
         });
     });
 
+    it('should accept a question at its exact expiration timestamp', async () => {
+        const now = new Date('2024-01-01T12:00:00Z').getTime();
+        jest.useRealTimers();
+        jest.useFakeTimers({ now });
+        const question: Omit<PendingQuestion, 'state'> = {
+            questionId:      'q-expiry-boundary',
+            channelId:       'ch1' as ChannelId,
+            originMessageId: 'msg1',
+            triggerUserId:   'user1' as UserId,
+            questionText:    'Choose an option',
+            createdAt:       now - 1000,
+            expiresAt:       now,
+            options:         [{ label: 'Option 1', value: 'opt1' }],
+        };
+        const resultPromise = registry.register(question);
+        const interaction = createMockButtonInteraction('question:q-expiry-boundary:opt1', 'user1', 'msg1');
+
+        await handler.handleButtonInteraction(interaction);
+
+        expect(interaction.reply).not.toHaveBeenCalled();
+        expect(interaction.update).toHaveBeenCalledWith({ components: [] });
+        const result = await resultPromise;
+        expect(result.answer?.selectedOption).toBe('opt1');
+    });
+
     it('should resolve question with answer on button click', async () => {
         const now = Date.now();
         const question: Omit<PendingQuestion, 'state'> = {
@@ -177,6 +233,33 @@ describe('createInteractionHandler', () => {
         expect(result.answer?.responderId).toBe(createUserId('user2'));
         expect(result.answer?.messageId).toBe('msg2');
         expect(result.timedOut).toBe(false);
+    });
+
+    it('should log the selected button-answer context', async () => {
+        const now = Date.now();
+        const question: Omit<PendingQuestion, 'state'> = {
+            questionId:      'q-log',
+            channelId:       'ch1' as ChannelId,
+            originMessageId: 'msg1',
+            triggerUserId:   'user1' as UserId,
+            questionText:    'Choose an option',
+            createdAt:       now,
+            expiresAt:       now + 5000,
+            options:         [{ label: 'Yes', value: 'yes' }],
+        };
+        const resultPromise = registry.register(question);
+        const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => logger);
+        const interaction = createMockButtonInteraction('question:q-log:yes', 'user2', 'msg2');
+
+        await handler.handleButtonInteraction(interaction);
+
+        expect(infoSpy).toHaveBeenCalledWith({
+            questionId:    'q-log',
+            userId:        'user2',
+            selectedValue: 'yes',
+            msg:           'Button answer received',
+        });
+        await resultPromise;
     });
 
     it('should remove buttons after click', async () => {

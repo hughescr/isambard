@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { mockLogger } from '../../../setup';
 import { EmailHistoryProvider } from '@/integrations/email/history-provider';
 import type { WildDuckSearchResult, WildDuckSearchParams } from '@/integrations/email/wildduck-client';
 
@@ -36,6 +37,7 @@ describe('EmailHistoryProvider', () => {
 
     beforeEach(() => {
         mockSearch.mockClear();
+        mockLogger.warn.mockClear();
 
         provider = new EmailHistoryProvider('bot@isambard.ai', mockClient);
     });
@@ -101,10 +103,10 @@ describe('EmailHistoryProvider', () => {
     });
 
     test('sets direction to outbound for Sent Mail messages even when from is external sender', async () => {
-        // This verifies the folder-name check fires independently of the from-address check.
-        // If ':' is mutated away in extractFolderName, folderName != 'Sent Mail' and
-        // the external from does not match the bot address — direction would be 'inbound'.
-        // Also verifies the BlockStatement mutant on the folderName==='Sent Mail' branch:
+        // This verifies the Sent Mail predicate independently of the from-address check.
+        // If its delimiter or prefix check is removed, the external sender does not
+        // match the bot address and the result would be inbound.
+        // Also verifies the BlockStatement mutant on the Sent Mail return branch:
         // if the return is removed, the from check runs and returns 'inbound' since
         // 'alice@example.com' does not contain 'bot@isambard.ai'.
         const searchResult = makeSearchResult({
@@ -118,6 +120,29 @@ describe('EmailHistoryProvider', () => {
         const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].direction).toBe('outbound');
+    });
+
+    test('does not treat a message without a folder delimiter as Sent Mail', async () => {
+        mockSearch.mockResolvedValueOnce([
+            makeSearchResult({
+                message: 'Sent MailX',
+                from:    'alice@example.com',
+            }),
+            makeSearchResult({
+                message: 'Sent Mail:17',
+                from:    'alice@example.com',
+            }),
+            makeSearchResult({
+                message: 'Sent Mail:archive:17',
+                from:    'alice@example.com',
+            }),
+        ]);
+
+        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+
+        expect(result[0].direction).toBe('inbound');
+        expect(result[1].direction).toBe('outbound');
+        expect(result[2].direction).toBe('inbound');
     });
 
     test('sets direction to outbound when from address matches bot address', async () => {
@@ -174,6 +199,10 @@ describe('EmailHistoryProvider', () => {
         const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result).toEqual([]);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            { err: expect.any(Error), identifier: 'alice@example.com' },
+            'EmailHistoryProvider: search failed'
+        );
     });
 
     test('truncates long subjects in summary', async () => {
@@ -183,8 +212,19 @@ describe('EmailHistoryProvider', () => {
 
         const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
+        expect(result[0].summary).toContain('A'.repeat(97));
+        expect(result[0].summary).toContain('...');
         expect(result[0].summary).not.toContain('A'.repeat(101));
         expect(result[0].summary.length).toBeLessThan(400);
+    });
+
+    test('preserves the first character when truncating a subject', async () => {
+        const longSubject = `Z${'A'.repeat(149)}`;
+        mockSearch.mockResolvedValueOnce([makeSearchResult({ subject: longSubject })]);
+
+        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+
+        expect(result[0].summary).toContain(`Z${'A'.repeat(99)}...`);
     });
 
     test('does not truncate subject at exactly the max length (100 chars)', async () => {

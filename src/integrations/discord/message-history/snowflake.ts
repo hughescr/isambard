@@ -15,12 +15,10 @@ export const DISCORD_EPOCH = DiscordSnowflake.epoch;
  * Zod schema for validating Discord snowflake strings.
  * A valid snowflake is a non-empty string containing only digits (non-negative integer).
  */
-// Stryker disable all: Schema validation error messages are not behavioral
 export const snowflakeSchema = z
     .string()
     .min(1, 'Snowflake cannot be empty')
     .regex(/^\d+$/, 'Snowflake must contain only digits');
-// Stryker restore all
 
 /**
  * Converts a Discord snowflake ID to a Date timestamp.
@@ -73,7 +71,6 @@ export function timestampToSnowflake(date: Date): string {
     const timestampOffset = unixTimestamp - DISCORD_EPOCH;
 
     if(timestampOffset < 0n) {
-        // Stryker disable next-line StringLiteral: Error message text is not behavior
         throw new InvariantViolationError('timestampToSnowflake', 'Date is before Discord epoch (January 1, 2015)');
     }
 

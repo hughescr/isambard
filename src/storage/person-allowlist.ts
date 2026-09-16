@@ -5,12 +5,14 @@ import {
     QueryCommand
 } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import pLimit from 'p-limit';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from './client-holder';
 import { type Contact, type ContactBackend, type ContactId, type PlatformType, createContactId } from '@/storage/contacts';
 
 const PK = 'PERSON#ALLOWLIST';
 const SK_INDEX  = 'INDEX';
 const SK_PREFIX = 'PERSON#';
+const ALLOWLIST_READ_CONCURRENCY = 8;
 
 export interface PersonAllowlistEntry {
     personId: ContactId
@@ -38,7 +40,6 @@ export class PersonAllowlist {
 
     /** Normalize an identifier value for consistent lookup */
     private normalizeValue(value: string): string {
-        // Stryker disable next-line MethodExpression: toLowerCase/toUpperCase are equivalent mutants — normalization is applied symmetrically in both store and lookup paths
         return value.toLowerCase().trim();
     }
 
@@ -79,26 +80,48 @@ export class PersonAllowlist {
         this.personIds  = new Set<string>(rawSet);
         this.reverseMap = new Map<string, ContactId>();
 
-        for(const personIdStr of this.personIds) {
+        const limit = pLimit(ALLOWLIST_READ_CONCURRENCY);
+        const outstanding: Promise<unknown>[] = [];
+        const reads = [...this.personIds].map((personIdStr) => {
             let personId: ContactId;
             try {
                 personId = createContactId(personIdStr);
             } catch (error) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
-                logger.warn({ personIdStr, error, msg: 'PersonAllowlist: invalid personId format in INDEX — skipping' });
-                continue;
+                return { kind: 'invalid', personIdStr, error } as const;
             }
-            // eslint-disable-next-line no-await-in-loop -- sequential: building reverse map from contacts one-by-one
-            const contact = await this.contactBackend.getContact(personId);
-            if(!contact) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
-                logger.warn({ personId, msg: 'PersonAllowlist: orphaned personId — no contact found, skipping' });
-                continue;
+
+            // Each outcome resolves even on a read error, so later completions cannot reject unobserved.
+            const outcome = limit(() => this.contactBackend.getContact(personId))
+                .then(contact => ({ status: 'fulfilled', contact } as const))
+                .catch((error: unknown) => ({ status: 'rejected', error } as const));
+            outstanding.push(outcome);
+            return { kind: 'read', personId, outcome } as const;
+        });
+
+        try {
+            for(const read of reads) {
+                if(read.kind === 'invalid') {
+                    logger.warn({ personIdStr: read.personIdStr, error: read.error, msg: 'PersonAllowlist: invalid personId format in INDEX — skipping' });
+                    continue;
+                }
+
+                // eslint-disable-next-line no-await-in-loop -- Publish completed reads in INDEX order while remote reads overlap; collisions remain last-wins.
+                const outcome = await read.outcome;
+                if(outcome.status === 'rejected') {
+                    throw outcome.error;
+                }
+                if(!outcome.contact) {
+                    logger.warn({ personId: read.personId, msg: 'PersonAllowlist: orphaned personId — no contact found, skipping' });
+                    continue;
+                }
+                this.indexContact(outcome.contact, read.personId);
             }
-            this.indexContact(contact, personId);
+        } catch (error) {
+            // A failed prefix must not publish later entries, but all queued reads finish before load returns.
+            await Promise.all(outstanding);
+            throw error;
         }
 
-        // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
         logger.info({ count: this.personIds.size, msg: 'PersonAllowlist loaded' });
     }
 
@@ -138,7 +161,6 @@ export class PersonAllowlist {
             item.notes = opts.notes;
         }
 
-        // Stryker disable StringLiteral,ObjectLiteral,ArrayDeclaration: DynamoDB expression strings, attribute maps, and Set initializers are configuration
         await this.getDocClient().send(new TransactWriteCommand({
             TransactItems: [
                 {
@@ -158,7 +180,6 @@ export class PersonAllowlist {
                 },
             ],
         }));
-        // Stryker restore StringLiteral,ObjectLiteral,ArrayDeclaration
 
         // Update in-memory state
         this.personIds.add(personId);
@@ -168,7 +189,6 @@ export class PersonAllowlist {
             this.indexContact(contact, personId);
         }
 
-        // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
         logger.info({ personId, msg: 'PersonAllowlist: person added' });
     }
 
@@ -177,7 +197,6 @@ export class PersonAllowlist {
      * Deletes metadata + updates INDEX StringSet, then purges in-memory state.
      */
     async removePerson(personId: ContactId): Promise<void> {
-        // Stryker disable StringLiteral,ObjectLiteral,ArrayDeclaration: DynamoDB expression strings, attribute maps, and Set initializers are configuration
         await this.getDocClient().send(new TransactWriteCommand({
             TransactItems: [
                 {
@@ -197,13 +216,11 @@ export class PersonAllowlist {
                 },
             ],
         }));
-        // Stryker restore StringLiteral,ObjectLiteral,ArrayDeclaration
 
         // Update in-memory state
         this.personIds.delete(personId);
         this.purgeReverseMapEntries(personId);
 
-        // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
         logger.info({ personId, msg: 'PersonAllowlist: person removed' });
     }
 
@@ -236,14 +253,12 @@ export class PersonAllowlist {
             // eslint-disable-next-line no-await-in-loop -- sequential pagination required by DynamoDB
             const result = await this.getDocClient().send(new QueryCommand({
                 TableName:                 this.tableName,
-                // Stryker disable StringLiteral,ObjectLiteral: DynamoDB expression strings and attribute maps are configuration
                 KeyConditionExpression:    '#pk = :pk AND begins_with(#sk, :prefix)',
                 ExpressionAttributeNames:  { '#pk': 'PK', '#sk': 'SK' },
                 ExpressionAttributeValues: {
                     ':pk':     PK,
                     ':prefix': SK_PREFIX,
                 },
-                // Stryker restore StringLiteral,ObjectLiteral
                 ExclusiveStartKey: lastEvaluatedKey,
             }));
             items.push(...(result.Items ?? []));
@@ -256,7 +271,6 @@ export class PersonAllowlist {
             try {
                 personId = createContactId(item.personId as string);
             } catch (error) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
                 logger.warn({ personIdStr: item.personId, tableName: this.tableName, error, msg: 'PersonAllowlist.list(): invalid personId format in row — skipping' });
                 continue;
             }

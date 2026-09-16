@@ -34,9 +34,7 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
         logger,
     } = deps;
 
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: default value fallback — undefined branch never reached when caller provides value
     const batchSize      = deps.batchSize      ?? DEFAULT_BATCH_SIZE;
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: default value fallback — undefined branch never reached when caller provides value
     const drainIntervalMs = deps.drainIntervalMs ?? DEFAULT_DRAIN_INTERVAL;
 
     let stopped       = false;
@@ -49,7 +47,6 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
         if(draining || stopped) {
             return result;
         }
-        // Stryker disable next-line BooleanLiteral: draining guard — concurrent drain blocks until first completes (tested via dequeue call count)
         draining = true;
 
         try {
@@ -63,7 +60,6 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
             for(const item of items) {
                 // Re-check availability after each item
                 if(!registry.isAvailable(service)) {
-                    // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                     logger.info({ service }, 'Service went offline mid-drain, stopping');
                     // Stryker restore ObjectLiteral,StringLiteral
                     break;
@@ -72,7 +68,6 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                 // Defensive check: items from a future epoch shouldn't exist; delete and skip them
                 if(item.epoch > currentEpoch) {
                     result.skipped += 1;
-                    // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                     logger.warn({ service, itemId: item.id, itemEpoch: item.epoch, currentEpoch }, 'Deleting outbox item from future epoch');
                     // Stryker restore ObjectLiteral,StringLiteral
                     // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
@@ -88,7 +83,6 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                     result.delivered += 1;
                 } catch (err: unknown) {
                     const message = err instanceof Error ? err.message : String(err);
-                    // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                     logger.error({ service, itemId: item.id, error: message }, 'Failed to deliver outbox item');
                     // Stryker restore ObjectLiteral,StringLiteral
                     // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
@@ -102,10 +96,7 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
             if(items.length === batchSize && registry.isAvailable(service) && !stopped) {
                 pendingTimer = setTimeout(() => {
                     pendingTimer = undefined;
-                    // Stryker disable next-line ConditionalExpression: stopped guard prevents draining after stop(); inner check is unreachable when clearTimeout fires after stop()
-                    if(!stopped) {
-                        void drain(service);
-                    }
+                    void drain(service);
                 }, drainIntervalMs);
             }
 
@@ -121,11 +112,8 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
 
         stop(): void {
             stopped = true;
-            // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op so →true mutation is equivalent
-            if(pendingTimer !== undefined) {
-                clearTimeout(pendingTimer);
-                pendingTimer = undefined;
-            }
+            clearTimeout(pendingTimer);
+            pendingTimer = undefined;
         },
     };
 }

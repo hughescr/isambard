@@ -1,5 +1,8 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { CallToolResultSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import { createCaldavMCPServer, type UserResolveResult } from '../../../src/agent/caldav-mcp-server';
 import type { CalDAVClient, CalendarRegistryBackend, CalendarEvent, CalendarEventsResult } from '../../../src/integrations/caldav';
 import type { CalendarServerEntry } from '../../../src/integrations/caldav/calendar-registry/types';
@@ -8,7 +11,7 @@ import { textContent } from '../../setup';
 interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<CallToolResult>
     description: string
-    inputSchema: { shape: Record<string, unknown> }
+    inputSchema: { shape: z.ZodRawShape }
     annotations: Record<string, boolean>
 }
 interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool>, server: { _serverInfo: { version: string } } }
@@ -61,8 +64,10 @@ describe.concurrent('createCaldavMCPServer', () => {
     });
 
     // Helper to get tool handler from server instance
-    const getToolHandler = (server: ReturnType<typeof createCaldavMCPServer>, toolName: string): ((...args: unknown[]) => Promise<CallToolResult>) => {
-        return (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName].handler;
+    const getToolHandler = (server: ReturnType<typeof createCaldavMCPServer>, toolName: string): ((args: Record<string, unknown>) => Promise<CallToolResult>) => {
+        const registered = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
+        // The SDK parses tool inputs before invoking a handler, including Zod defaults.
+        return async args => registered.handler(z.object(registered.inputSchema.shape).parse(args));
     };
 
     describe('createCaldavMCPServer function', () => {
@@ -111,6 +116,17 @@ describe.concurrent('createCaldavMCPServer', () => {
             expect(registeredTool.annotations.readOnlyHint).toBe(true);
             expect(registeredTool.annotations.idempotentHint).toBe(true);
         });
+
+        test('accepts one-character user lookups but rejects empty names for every calendar tool', () => {
+            const tools = (createCaldavMCPServer({ client: mockClient, registry: mockRegistry }).instance as unknown as RegisteredToolInstance)._registeredTools;
+
+            for(const toolName of ['getCalendarEvents', 'getUpcomingEvents', 'listUserCalendars']) {
+                const tool = tools[toolName];
+                const user = tool.inputSchema.shape.user as z.ZodString;
+                expect(user.safeParse('a').success).toBe(true);
+                expect(user.safeParse('').success).toBe(false);
+            }
+        });
     });
 
     describe('getCalendarEvents tool', () => {
@@ -122,10 +138,11 @@ describe.concurrent('createCaldavMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             const text   = textContent(result.content[0]);
-            const parsed = JSON.parse(text) as { events: unknown[], count: number, failedCount?: number };
+            const parsed = JSON.parse(text) as { events: unknown[], count: number, failedCount?: number, failedEvents?: string[] };
             expect(parsed.events).toHaveLength(1);
             expect(parsed.count).toBe(1);
             expect(parsed.failedCount).toBeUndefined();
+            expect(parsed.failedEvents).toBeUndefined();
         });
 
         test('should pass servers and parsed dates to client.getEvents', async () => {
@@ -173,6 +190,28 @@ describe.concurrent('createCaldavMCPServer', () => {
             expect(parsed.events[0].end).toBe('2026-03-18T09:30:00.000Z');
         });
 
+        test('preserves event identity and calendar metadata while serializing dates', async () => {
+            (mockClient.getEvents as ReturnType<typeof mock>).mockResolvedValueOnce({
+                events: [mockEvent({ uid: 'uid-preserved', summary: 'Calendar identity', calendarLabel: 'Shared', location: 'Room 4', timezone: 'America/Los_Angeles' })],
+                failed: [],
+            });
+            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const handler = getToolHandler(server, 'getCalendarEvents');
+
+            const result = await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
+            const parsed = JSON.parse(textContent(result.content[0])) as { events: Record<string, unknown>[] };
+
+            expect(parsed.events[0]).toMatchObject({
+                uid:           'uid-preserved',
+                summary:       'Calendar identity',
+                calendarLabel: 'Shared',
+                location:      'Room 4',
+                timezone:      'America/Los_Angeles',
+                start:         '2026-03-18T09:00:00.000Z',
+                end:           '2026-03-18T09:30:00.000Z',
+            });
+        });
+
         test('should return empty events with message when no calendars configured', async () => {
             (mockRegistry.getAllCalendars as ReturnType<typeof mock>).mockImplementation(async () => []);
             const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
@@ -204,6 +243,36 @@ describe.concurrent('createCaldavMCPServer', () => {
     });
 
     describe('getUpcomingEvents tool', () => {
+        test('MCP call applies the seven-day default when days is omitted', async () => {
+            const getEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [mockEvent()], failed: [] }));
+            const client = { getEvents } as unknown as CalDAVClient;
+            const registry = { getAllCalendars: mock(async () => [mockServerEntry()]) } as unknown as CalendarRegistryBackend;
+            const server = createCaldavMCPServer({ client, registry });
+            const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+            const mcpClient = new Client({ name: 'caldav-contract-test', version: '1.0.0' });
+
+            try {
+                await Promise.all([server.instance.connect(serverTransport), mcpClient.connect(clientTransport)]);
+                const result = CallToolResultSchema.parse(await mcpClient.callTool({ name: 'getUpcomingEvents', arguments: { user: 'user-123' } }));
+                const content = result.content[0];
+
+                expect(result.isError).toBeFalsy();
+                expect(content.type).toBe('text');
+                if(content.type !== 'text') {
+                    throw new Error('Expected a text MCP result');
+                }
+                const parsed = JSON.parse(content.text) as { daysAhead: number, count: number };
+                expect(parsed.daysAhead).toBe(7);
+                expect(parsed.count).toBe(1);
+                expect(getEvents).toHaveBeenCalledTimes(1);
+                const [, start, end] = (getEvents as ReturnType<typeof mock>).mock.calls[0] as [unknown, Date, Date];
+                expect(end.getTime() - start.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+            } finally {
+                await mcpClient.close();
+                await server.instance.close();
+            }
+        });
+
         test('should return upcoming events with default 7 days', async () => {
             const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getUpcomingEvents');
@@ -212,11 +281,12 @@ describe.concurrent('createCaldavMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             const text   = textContent(result.content[0]);
-            const parsed = JSON.parse(text) as { events: unknown[], count: number, daysAhead: number, failedCount?: number };
+            const parsed = JSON.parse(text) as { events: unknown[], count: number, daysAhead: number, failedCount?: number, failedEvents?: string[] };
             expect(parsed.events).toHaveLength(1);
             expect(parsed.count).toBe(1);
             expect(parsed.daysAhead).toBe(7);
             expect(parsed.failedCount).toBeUndefined();
+            expect(parsed.failedEvents).toBeUndefined();
         });
 
         test('should include failedCount and failedEvents in getUpcomingEvents when expansion failures occur', async () => {
@@ -297,6 +367,22 @@ describe.concurrent('createCaldavMCPServer', () => {
             const parsed = JSON.parse(text) as { events: { start: string, end: string }[] };
             expect(parsed.events[0].start).toBe('2026-03-18T09:00:00.000Z');
             expect(parsed.events[0].end).toBe('2026-03-18T09:30:00.000Z');
+        });
+
+        test('preserves event identity and reports exactly one failed expansion', async () => {
+            (mockClient.getEvents as ReturnType<typeof mock>).mockResolvedValueOnce({
+                events: [mockEvent({ uid: 'upcoming-uid', summary: 'Upcoming identity', calendarLabel: 'Work' })],
+                failed: [{ uid: 'one-failed-event', reason: 'Malformed RRULE' }],
+            });
+            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const handler = getToolHandler(server, 'getUpcomingEvents');
+
+            const result = await handler({ user: 'user-123' });
+            const parsed = JSON.parse(textContent(result.content[0])) as { events: Record<string, unknown>[], failedCount: number, failedEvents: string[] };
+
+            expect(parsed.events[0]).toMatchObject({ uid: 'upcoming-uid', summary: 'Upcoming identity', calendarLabel: 'Work' });
+            expect(parsed.failedCount).toBe(1);
+            expect(parsed.failedEvents).toEqual(['one-failed-event']);
         });
     });
 
@@ -403,8 +489,9 @@ describe.concurrent('createCaldavMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             const text   = textContent(result.content[0]);
-            const parsed = JSON.parse(text) as { error: string, matches: unknown[] };
+            const parsed = JSON.parse(text) as { error: string, message: string, matches: unknown[] };
             expect(parsed.error).toBe('ambiguous_user');
+            expect(parsed.message).toBe('Multiple users match "Craig". Please be more specific.');
             expect(parsed.matches).toHaveLength(2);
             expect(mockRegistry.getAllCalendars).not.toHaveBeenCalled();
         });
@@ -419,8 +506,9 @@ describe.concurrent('createCaldavMCPServer', () => {
             const result = await handler({ user: 'Unknown' });
 
             const text   = textContent(result.content[0]);
-            const parsed = JSON.parse(text) as { error: string };
+            const parsed = JSON.parse(text) as { error: string, message: string };
             expect(parsed.error).toBe('user_not_found');
+            expect(parsed.message).toBe('No user found matching "Unknown".');
             expect(mockRegistry.getAllCalendars).not.toHaveBeenCalled();
         });
 

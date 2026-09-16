@@ -4,6 +4,7 @@ import { createContextBuilder, type CalendarService } from '../../../src/agent/c
 import type { BlueskyClient } from '../../../src/integrations/bsky';
 import type { BskyRejectionBackend } from '../../../src/integrations/bsky/rejection-backend';
 import type { CalDAVClient, CalendarRegistryBackend, CalendarEventsResult, CalendarServerEntry } from '../../../src/integrations/caldav';
+import type { ServiceHealthRegistry } from '../../../src/services';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { ListResult } from '../../../src/storage/memory-tool/backend-query';
 import { createMemoryPath, type MemoryToolItemData } from '../../../src/storage/memory-tool/types';
@@ -129,6 +130,43 @@ describe('createContextBuilder loading methods', () => {
             await contextBuilder.recordAccess([path1, path2]);
 
             expect(backend.update).toHaveBeenCalledTimes(2);
+        });
+
+        test('re-reads a duplicate path after its first metadata update', async () => {
+            const path = createMemoryPath('/state/repeated.md');
+            const sequence: string[] = [];
+            let accessCount = 0;
+            backend.get = mock(async () => {
+                sequence.push('get');
+                return {
+                    path,
+                    content:     'Repeated',
+                    contentType: 'text/markdown' as const,
+                    metadata:    { accessCount },
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                };
+            });
+            backend.update = mock(async (_path, input) => {
+                sequence.push('update');
+                const nextCount = input.metadata?.accessCount;
+                if(typeof nextCount !== 'number') {
+                    throw new TypeError('recordAccess must write a numeric access count');
+                }
+                accessCount = nextCount;
+                return {
+                    path,
+                    content:     'Repeated',
+                    contentType: 'text/markdown' as const,
+                    metadata:    { accessCount },
+                    createdAt:   '2025-01-01T00:00:00Z',
+                    updatedAt:   '2025-01-01T00:00:00Z',
+                };
+            });
+
+            await createContextBuilder({ backend }).recordAccess([path, path]);
+            expect(sequence).toEqual(['get', 'update', 'get', 'update']);
+            expect(accessCount).toBe(2);
         });
 
         test('should handle empty path array', async () => {
@@ -547,7 +585,9 @@ describe('createContextBuilder loading methods', () => {
             // Should have 2 full content items + 1 preview
             const fullTierItems = (result.match(/\/state\/task\d+\.md:\n/g) ?? []).length;
             expect(fullTierItems).toBe(2);
+            expect(result).toContain('/state/task0.md:');
             expect(result).toContain('- /state/task2.md (2h ago):');
+            expect(result.indexOf('/state/task0.md:')).toBeLessThan(result.indexOf('- /state/task2.md (2h ago):'));
         });
 
         test('should respect maxStatePreviewItems count', async () => {
@@ -580,6 +620,8 @@ describe('createContextBuilder loading methods', () => {
             expect(previewItems).toBe(5);
             // And overflow indicator
             expect(result).toContain('...and 35 more state memories');
+            expect(result).toContain('- /state/task4.md (2h ago):');
+            expect(result.indexOf('- /state/task4.md (2h ago):')).toBeLessThan(result.indexOf('...and 35 more state memories'));
         });
 
         test('should truncate items exceeding maxStateItemMaxChars', async () => {
@@ -615,7 +657,7 @@ describe('createContextBuilder loading methods', () => {
 
         test('should not truncate items within maxStateItemMaxChars', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const content = 'x'.repeat(500);
+            const content = 'x'.repeat(2000);
 
             backend.getStateItemsScored = mock(async () => [
                 {
@@ -704,6 +746,31 @@ describe('createContextBuilder loading methods', () => {
             expect(fullTierItems).toBe(8);
             expect(result).not.toContain('- /state/task');
             expect(result).not.toContain('...and');
+        });
+
+        test('should render full items when preview tier is disabled', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            backend.getStateItemsScored = mock(async () => [{
+                item: {
+                    path:        createMemoryPath('/state/only.md'),
+                    content:     'Full content',
+                    contentType: 'text/markdown' as const,
+                    metadata:    {},
+                    version:     1,
+                    createdAt:   '2025-01-15T10:00:00.000Z',
+                    updatedAt:   '2025-01-15T10:00:00.000Z',
+                },
+                score: 1,
+            }]);
+
+            const contextBuilder = createContextBuilder({
+                backend,
+                maxStateFullItems:    1,
+                maxStatePreviewItems: 0,
+            });
+            const result = await contextBuilder.loadHotState(now);
+
+            expect(result).toBe('/state/only.md:\nFull content');
         });
 
         test('should order items by sigmoid score (highest first)', async () => {
@@ -1203,12 +1270,14 @@ describe('createContextBuilder loading methods', () => {
 
             const contextBuilder = createContextBuilder({
                 backend,
-                maxUserTokens: 50, // Very small
+                maxUserTokens: 100, // Includes at least one preview, but not all 100
             });
             const result = await contextBuilder.loadUserMemories('user123', now);
 
             expect(result).toContain('...and ');
             expect(result).toContain('more user memories (use \'list /users/user123\' to see all)');
+            expect(result).toContain('- /users/user123/memory0');
+            expect(result.indexOf('- /users/user123/memory0')).toBeLessThan(result.indexOf('more user memories'));
         });
 
         test('should call backend.list with correct path', async () => {
@@ -1806,6 +1875,34 @@ describe('createContextBuilder loading methods', () => {
     });
 
     describe('buildUserMessagePrefix', () => {
+        test('includes a degraded service-health summary in the composed prefix', async () => {
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+            const healthRegistry = {
+                buildStatusSummary: mock(() => '- discord: offline'),
+            } as unknown as ServiceHealthRegistry;
+
+            const contextBuilder = createContextBuilder({ backend, healthRegistry });
+            const result = await contextBuilder.buildUserMessagePrefix('user-health');
+
+            expect(result).toContain('## Service Status');
+            expect(result).toContain('- discord: offline');
+            expect(result).toContain('\n\n## Service Status\n');
+        });
+
+        test('omits service status when every service is healthy', async () => {
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+            const healthRegistry = { buildStatusSummary: mock(() => undefined) } as unknown as ServiceHealthRegistry;
+            const result = await createContextBuilder({ backend, healthRegistry }).buildUserMessagePrefix('user-health');
+            expect(result).not.toContain('## Service Status');
+            expect(result.trim().split('\n\n')).toHaveLength(1);
+        });
+
         test('should include time header as first section', async () => {
             backend.list = mock(async () => ({ items: [] }));
             backend.getStateItemsScored = mock(async () => []);
@@ -1847,6 +1944,10 @@ describe('createContextBuilder loading methods', () => {
             // Time header is always included even with no other context
             expect(result).toContain('## Current Time');
             expect(result).toMatch(/\n\n$/);
+            expect(result.trim().split('\n\n')).toHaveLength(1);
+            expect(backend.searchByTimeRange).toHaveBeenCalledWith(
+                expect.any(String), expect.any(String), 'events', { limit: 50 }
+            );
         });
 
         test('should not include [About this user] section when no user memories exist', async () => {
@@ -2089,6 +2190,8 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('[About this user]');
             expect(result).toContain('[Current state]');
             expect(result).toContain('[Recent events]');
+            expect(result.indexOf('[About this user]')).toBeLessThan(result.indexOf('[Current state]'));
+            expect(result.indexOf('[Current state]')).toBeLessThan(result.indexOf('[Recent events]'));
             // Should end with \n\n
             expect(result).toMatch(/\n\n$/);
         });
@@ -2122,24 +2225,26 @@ describe('createContextBuilder loading methods', () => {
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => []); // No recent events
             backend.listByLayer = mock(async () => ({
-                items: [{
-                    path:        createMemoryPath('/events/old-event'),
-                    content:     'Old fallback event',
-                    contentType: 'text/plain' as const,
-                    tags:        new Set<string>(),
-                    metadata:    {},
-                    version:     1,
-                    createdAt:   '2024-12-01T10:00:00.000Z',
-                    updatedAt:   '2024-12-01T10:00:00.000Z',
-                }],
+                items: Array.from({ length: 11 }, (_, index) => ({
+                    path:           createMemoryPath(`/events/old-event-${index}`),
+                    content:        `Old fallback event ${index}`,
+                    contentPreview: `Old fallback event ${index}`,
+                    contentType:    'text/plain' as const,
+                    tags:           new Set<string>(),
+                    metadata:       {},
+                    version:        1,
+                    createdAt:      new Date(Date.UTC(2024, 11, 1, index)).toISOString(),
+                    updatedAt:      new Date(Date.UTC(2024, 11, 1, index)).toISOString(),
+                })),
             })); // Fallback to old events
 
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.buildUserMessagePrefix('user123');
 
-            // Should contain fallback warning
-            expect(result).toContain('⚠️ No activity in the last 14 days. Showing older events:');
-            expect(result).toContain('Old fallback event');
+            const warningIndex = result.indexOf('⚠️ No activity in the last 14 days. Showing older events:');
+            const olderEventIndex = result.indexOf('- /events/old-event-0');
+            expect(warningIndex).toBeGreaterThanOrEqual(0);
+            expect(olderEventIndex).toBeGreaterThan(warningIndex);
         });
 
         test('should NOT include fallback warning when isFallback is false', async () => {
@@ -2439,7 +2544,8 @@ describe('createContextBuilder loading methods', () => {
         });
 
         test('should truncate event content when it exceeds maxEventItemMaxChars', async () => {
-            const longContent = 'A'.repeat(3000); // Longer than default 2000
+            const retainedPrefix = 'EVENT-FULL-PREFIX-7x3';
+            const longContent = `${retainedPrefix}${'A'.repeat(3000)}`; // Longer than default 2000
             backend.list = mock(async () => ({ items: [] }));
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => [
@@ -2459,7 +2565,9 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.buildUserMessagePrefix('user123');
 
-            // Should contain truncation message
+            // The full-event view must preserve the leading content as well as its retrieval marker.
+            // A reversed String#slice(max, 0) keeps the marker but drops this prefix.
+            expect(result).toContain(retainedPrefix);
             expect(result).toContain('[truncated — use \'memory view /events/long-event\' for full content]');
             // Content should be truncated to ~2000 chars (plus truncation message)
             const eventSectionMatch = /\/events\/long-event[\s\S]*?\n\n/.exec(result);
@@ -2492,9 +2600,94 @@ describe('createContextBuilder loading methods', () => {
             // Should be truncated at custom limit
             expect(result).toContain('[truncated — use \'memory view /events/custom-event\' for full content]');
         });
+
+        test('keeps event content at the exact character limit in user and perch contexts', async () => {
+            const content = 'E'.repeat(100);
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => [{
+                path:        createMemoryPath('/events/exact-limit'),
+                content,
+                contentType: 'text/plain' as const,
+                tags:        new Set<string>(),
+                metadata:    {},
+                createdAt:   '2025-01-15T10:00:00.000Z',
+                updatedAt:   '2025-01-15T10:00:00.000Z',
+            }]);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+            const builder = createContextBuilder({ backend, maxEventItemMaxChars: 100 });
+            const user = await builder.buildUserMessagePrefix('user123');
+            const perch = await builder.buildPerchContext();
+            expect(user).toContain('/events/exact-limit (');
+            expect(user).toContain(`:\n${content}`);
+            expect(perch).toContain(`:\n${content}`);
+            expect(user).not.toContain('[truncated');
+            expect(perch).not.toContain('[truncated');
+        });
     });
 
     describe('buildPerchContext', () => {
+        test('orders every populated documented section after its predecessor', async () => {
+            const now = new Date('2026-03-18T10:00:00.000Z');
+            backend.getStateItemsScored = mock(async () => [{
+                item: {
+                    path:        createMemoryPath('/state/order.md'), content:     'State order marker', contentType: 'text/markdown' as const, metadata:    {}, version:     1,
+                    createdAt:   '2026-03-18T08:00:00.000Z', updatedAt:   '2026-03-18T08:00:00.000Z',
+                },
+                score: 1,
+            }]);
+            backend.searchByTimeRange = mock(async () => [{
+                path:        createMemoryPath('/events/order.md'), content:     'Event order marker', contentType: 'text/markdown' as const, metadata:    {}, version:     1,
+                createdAt:   '2026-03-18T09:00:00.000Z', updatedAt:   '2026-03-18T09:00:00.000Z',
+            }]);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const calendarService = {
+                registry: {
+                    listRegisteredUserIds: mock(async () => ['order-user']),
+                    getAllCalendars:       mock(async () => [{ serverId: 'server', description: 'Order', serverUrl: 'https://calendar.example', username: 'user', password: 'pass', calendars: [{ calendarPath: '/order', label: 'Order' }] }]),
+                },
+                client: {
+                    getContextEvents: mock(async () => ({ events: [{ uid: 'calendar-order', summary: 'Calendar order marker', start: new Date('2026-03-18T11:00:00.000Z'), end: new Date('2026-03-18T12:00:00.000Z'), isAllDay: false, calendarLabel: 'Order', status: 'confirmed' as const }], failed: [] })),
+                },
+            } as unknown as CalendarService;
+            const emailService = {
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 1, unseen: 1 })),
+                    listMessages:     mock(async () => [{ id: 1, from: { address: 'order@example.com' }, subject: 'Inbox order marker', date: '2026-03-18T09:00:00.000Z' }]),
+                    searchByKeyword:  mock(async (_folder: string, keyword: string) => (keyword === 'SendRejectedByAdmin' ? [2] : [])),
+                    getMessage:       mock(async () => ({ id: 2, subject: 'Rejected order marker', to: [{ address: 'recipient@example.com' }], metaData: { rejectedAt: '2026-03-18T09:30:00.000Z', reason: 'Order test' } })),
+                },
+            };
+            const bskyDMService = { client: {
+                ownHandle:         'izzy.bsky.social',
+                listConversations: mock(async () => ({ conversations: [{ id: 'order-convo', rev: '1', members: [{ did: 'did:plc:izzy', handle: 'izzy.bsky.social' }, { did: 'did:plc:other', handle: 'other.bsky.social' }], muted: false, unreadCount: 1 }], cursor: undefined })),
+            } as unknown as BlueskyClient };
+            const bskyRejectionBackend = { listRejections: mock(async () => [{ type: 'dm' as const, uuid: 'order-rejection', text: 'Rejected Bluesky order marker', recipientHandles: ['other.bsky.social'], convoId: 'order-convo', reason: 'Order test', rejectedAt: '2026-03-18T09:45:00.000Z' }]) } as unknown as BskyRejectionBackend;
+
+            const result = await createContextBuilder({ backend, calendarService, emailService, bskyDMService, bskyRejectionBackend }).buildPerchContext(now);
+            const orderedHeadings = ['## Current Time', '## Recent Focus', '## Recent Events', '## Calendar', '## Inbox', '## Messages You Attempted to Send (Rejected by Admin)', '## Bluesky DMs', '## Rejected Bluesky Posts/DMs'];
+            for(let index = 1; index < orderedHeadings.length; index++) {
+                expect(result.indexOf(orderedHeadings[index])).toBeGreaterThan(result.indexOf(orderedHeadings[index - 1]));
+            }
+        });
+
+        test('includes a degraded service-health summary in perch context', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+            const healthRegistry = {
+                buildStatusSummary: mock(() => '- email: degraded'),
+            } as unknown as ServiceHealthRegistry;
+
+            const contextBuilder = createContextBuilder({ backend, healthRegistry });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toContain('## Service Status');
+            expect(result).toContain('- email: degraded');
+            expect(result).toContain('\n\n## Service Status\n');
+        });
+
         test('should include time header', async () => {
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => []);
@@ -2572,6 +2765,8 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('Focused and curious');
             expect(result).toContain('/state/creative.md');
             expect(result).toContain('Exploring consciousness-as-process thesis');
+            expect(result).toContain('## Recent Focus\n/state/project.md:\nWorking on memory system redesign\n\n/state/mood.md:\nFocused and curious');
+            expect(backend.getStateItemsScored).toHaveBeenCalledWith({ now });
             // Fourth item should NOT be included (only top 3)
             expect(result).not.toContain('/state/fourth.md');
             expect(result).not.toContain('This should NOT appear');
@@ -2610,6 +2805,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('Event 1 content');
             expect(result).toContain('/events/e2.md');
             expect(result).toContain('Event 2 content');
+            expect(result).toContain('## Recent Events\n/events/e1.md (2h ago):\nEvent 1 content\n\n/events/e2.md (1h ago):\nEvent 2 content');
         });
 
         test('should not include Recent Focus when no state items exist', async () => {
@@ -2636,7 +2832,8 @@ describe('createContextBuilder loading methods', () => {
 
         test('should truncate state items exceeding maxStateItemMaxChars', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const longContent = 'x'.repeat(3000);
+            const retainedPrefix = 'PERCH-STATE-PREFIX-7x3';
+            const longContent = `${retainedPrefix}${'x'.repeat(3000)}`;
 
             backend.getStateItemsScored = mock(async () => [
                 {
@@ -2658,7 +2855,10 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.buildPerchContext(now);
 
-            expect(result).toContain('[truncated');
+            // Perch state must keep the leading content before its full-memory marker.
+            // A reversed String#slice(max, 0) leaves only the marker.
+            expect(result).toContain(retainedPrefix);
+            expect(result).toContain('[truncated — use \'memory view /state/long.md\' for full content]');
             expect(result).not.toContain('x'.repeat(3000));
         });
 
@@ -2771,7 +2971,8 @@ describe('createContextBuilder loading methods', () => {
 
         test('should truncate event content exceeding maxEventItemMaxChars', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const longContent = 'y'.repeat(3000);
+            const retainedPrefix = 'PERCH-EVENT-PREFIX-7x3';
+            const longContent = `${retainedPrefix}${'y'.repeat(3000)}`;
 
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => [
@@ -2790,7 +2991,10 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.buildPerchContext(now);
 
-            expect(result).toContain('[truncated');
+            // Perch events must preserve the leading event content before the retrieval marker.
+            // A reversed String#slice(max, 0) leaves only the marker.
+            expect(result).toContain(retainedPrefix);
+            expect(result).toContain('[truncated — use \'memory view /events/long-event.md\' for full content]');
             expect(result).not.toContain('y'.repeat(3000));
         });
 
@@ -2867,6 +3071,8 @@ describe('createContextBuilder loading methods', () => {
             // UIDs must appear in CleanInbox:UID format for agent to reference them
             expect(result).toContain('CleanInbox:1');
             expect(result).toContain('CleanInbox:2');
+            expect(result).toContain('## Inbox\nYou have mail (2 unread):\n- [CleanInbox:1]');
+            expect(result).toContain('- [CleanInbox:1] From: Alice <alice@example.com> | Subject: Hello | 2h ago\n- [CleanInbox:2] From: bob@example.com | Subject: World | 1h ago');
         });
 
         test('should skip inbox section when emailService provided but unread === 0', async () => {
@@ -2913,7 +3119,10 @@ describe('createContextBuilder loading methods', () => {
             // Inbox section is skipped silently
             expect(result).not.toContain('## Inbox');
             // Warning is logged
-            expect(mockLogger.warn).toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                error: expect.objectContaining({ message: 'WildDuck timeout' }),
+                msg:   'Email inbox fetch failed, skipping inbox section',
+            });
         });
 
         test('should call listMessages with CleanInbox when unread > 0', async () => {
@@ -3002,6 +3211,8 @@ describe('createContextBuilder loading methods', () => {
             // Verify subject appears in rejection line: Subject: "Hi there" (not just anywhere)
             expect(result).toContain('Subject: "Hi there"');
             expect(result).toContain('Inappropriate content');
+            expect(emailService.wildDuckClient.searchByKeyword).toHaveBeenCalledWith('Drafts', 'SendRejectedByAdmin');
+            expect(emailService.wildDuckClient.searchByKeyword).toHaveBeenCalledWith('Drafts', 'DiscordNotifyGaveUp');
         });
 
         test('should skip rejected drafts section when no rejected UIDs', async () => {
@@ -3022,6 +3233,7 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.buildPerchContext();
 
             expect(result).not.toContain('Messages You Attempted to Send');
+            expect(result.trim().split('\n\n')).toHaveLength(1);
         });
 
         test('should skip drafts without rejectedAt in metaData', async () => {
@@ -3073,7 +3285,10 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.buildPerchContext();
 
             expect(result).not.toContain('Messages You Attempted to Send');
-            expect(mockLogger.warn).toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                err: expect.objectContaining({ message: 'WildDuck keyword search failed' }),
+                msg: 'Failed to load rejected draft context',
+            });
         });
 
         // DiscordNotifyGaveUp escalation section
@@ -3419,6 +3634,8 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('You have 3 DMs');
             expect(result).toContain('1 in the conversation with craig.rungie.com');
             expect(result).toContain('2 in the conversation with fred.bsky.social, craig.rungie.com');
+            expect(result).toContain('1 in the conversation with craig.rungie.com; 2 in the conversation with fred.bsky.social, craig.rungie.com');
+            expect(mockBskyClient.listConversations).toHaveBeenCalledWith(undefined, undefined, 'unread');
         });
 
         test('should show N+ count and hint when listConversations returns a cursor, and only call once', async () => {
@@ -3507,7 +3724,10 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.buildPerchContext();
 
             expect(result).not.toContain('## Bluesky DMs');
-            expect(mockLogger.warn).toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                error: expect.objectContaining({ message: 'Bluesky API error' }),
+                msg:   'Bluesky DM fetch failed, skipping DM section',
+            });
         });
 
         test('should include DM section in buildPerchContext output when unread DMs exist', async () => {
@@ -3576,6 +3796,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('Too generic');
             expect(result).toContain('someone.bsky.social');
             expect(result).toContain('at://parent');
+            expect(result).toContain('- **Reply rejected** (2026-03-22T15:30:00.000Z) uuid: test-uuid-reply-1\n  Reason: Too generic\n  To: @someone.bsky.social\n  parentUri: at://parent\n  parentCid: bafyreparent\n  Text: Great post!');
         });
 
         test('should omit rejected Bluesky section when no rejections', async () => {
@@ -3626,6 +3847,10 @@ describe('createContextBuilder loading methods', () => {
             const result = await builder.buildPerchContext();
 
             expect(result).not.toContain('Rejected Bluesky');
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                err: expect.any(Error),
+                msg: 'Failed to load rejected Bluesky posts context',
+            });
         });
 
         test('should include DM rejection with recipients and convoId', async () => {
@@ -3655,6 +3880,21 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('DM rejected');
             expect(result).toContain('alice.bsky.social');
             expect(result).toContain('convo-123');
+            expect(result).toContain('- **DM rejected** (2026-03-22T16:00:00.000Z) uuid: test-uuid-dm-1\n  Reason: Not appropriate\n  Recipients: ["alice.bsky.social"]\n  convoId: convo-123\n  Text: Hey there');
+        });
+
+        test('separates distinct rejected posts so each reason stays with its post', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+            const bskyRejectionBackend = {
+                listRejections: mock(async () => [
+                    { type: 'dm', uuid: 'first', text: 'First text', recipientHandles: ['alice'], convoId: 'one', reason: 'First reason', rejectedAt: '2026-03-22T16:00:00.000Z' },
+                    { type: 'dm', uuid: 'second', text: 'Second text', recipientHandles: ['bob'], convoId: 'two', reason: 'Second reason', rejectedAt: '2026-03-22T17:00:00.000Z' },
+                ]),
+            } as unknown as BskyRejectionBackend;
+            const result = await createContextBuilder({ backend, bskyRejectionBackend }).buildPerchContext();
+            expect(result).toContain('  Text: First text\n\n- **DM rejected** (2026-03-22T17:00:00.000Z) uuid: second');
         });
 
         test('should include rootUri and rootCid when present in reply rejection', async () => {

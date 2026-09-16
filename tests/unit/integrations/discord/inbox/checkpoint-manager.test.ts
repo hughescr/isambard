@@ -1,6 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
 import { mockLogger } from '../../../../setup';
-import { InvariantViolationError } from '@/errors';
 import { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
 import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
@@ -414,6 +413,25 @@ describe('CheckpointManager', () => {
             expect(result.lastSeenMessageId).toBe(existing.lastSeenMessageId);
             expect(result.guildId).toBe(existing.guildId);
             expect(mockBackend.update).toHaveBeenCalledTimes(1);
+            const updatePatch = (mockBackend.update as ReturnType<typeof mock>).mock.calls[0]?.[1] as { content: string };
+            expect(JSON.parse(updatePatch.content)).toEqual(result);
+        });
+
+        test('should advance an existing handled watermark when the new snowflake is greater', async () => {
+            const existing: DiscordChannelCheckpoint = {
+                service:    'discord', channelId, guildId, lastSeenAt: now, updatedAt:  now,
+                handled:    { messageId: '111111111', at: '2025-01-24T09:00:00.000Z' },
+            };
+            mockBackend.get = mock(async () => ({
+                path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
+                content:     JSON.stringify(existing), contentType: 'application/json' as ContentType,
+                metadata:    {}, createdAt:   now, updatedAt:   now,
+            }));
+
+            const result = await manager.updateHandled(channelId, '222222222', '2025-01-24T10:05:00.000Z');
+
+            expect(result.handled).toEqual({ messageId: '222222222', at: '2025-01-24T10:05:00.000Z' });
+            expect(mockBackend.update).toHaveBeenCalledTimes(1);
         });
 
         test('should no-op when the existing watermark messageId is already >= the new one (snowflake compare)', async () => {
@@ -472,7 +490,9 @@ describe('CheckpointManager', () => {
         test('should throw InvariantViolationError when no checkpoint item exists', async () => {
             mockBackend.get = mock(async () => undefined);
 
-            await expect(manager.updateHandled(channelId, '111222333', now)).rejects.toThrow(InvariantViolationError);
+            await expect(manager.updateHandled(channelId, '111222333', now)).rejects.toThrow(
+                'Invariant violated in updateHandled: no checkpoint exists for channel 123456789; receipt must initialise it first'
+            );
         });
 
         test('should throw InvariantViolationError when the existing checkpoint item is corrupt (invalid JSON)', async () => {
@@ -485,7 +505,9 @@ describe('CheckpointManager', () => {
                 updatedAt:   now,
             }));
 
-            await expect(manager.updateHandled(channelId, '111222333', now)).rejects.toThrow(InvariantViolationError);
+            await expect(manager.updateHandled(channelId, '111222333', now)).rejects.toThrow(
+                'Invariant violated in updateHandled: checkpoint for channel 123456789 is corrupt'
+            );
         });
 
         test('should throw InvariantViolationError when the existing checkpoint item fails schema validation', async () => {
@@ -498,7 +520,9 @@ describe('CheckpointManager', () => {
                 updatedAt:   now,
             }));
 
-            await expect(manager.updateHandled(channelId, '111222333', now)).rejects.toThrow(InvariantViolationError);
+            await expect(manager.updateHandled(channelId, '111222333', now)).rejects.toThrow(
+                'Invariant violated in updateHandled: checkpoint for channel 123456789 is corrupt'
+            );
         });
 
         test('should not lose either field when updateLastSeen and updateHandled interleave for the same channel', async () => {

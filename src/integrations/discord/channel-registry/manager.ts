@@ -7,16 +7,8 @@ import { InvariantViolationError } from '@/errors';
 import type { ReconnectionLoop } from '@/services';
 
 /** Type guard: check if a Channel has a 'recipient' property (DMChannel). */
-// Stryker disable ConditionalExpression: Equivalent — guard result irrelevant; callers always pair with secondary truthiness check (e.g. && discordChannel.recipient)
 function isDMChannelWithRecipient(channel: unknown): channel is DMChannel {
     return typeof channel === 'object' && channel !== null && 'recipient' in channel;
-}
-// Stryker restore ConditionalExpression
-
-/** Type guard: check if a Channel has a 'name' property (guild-based channel). */
-// Stryker disable ConditionalExpression: Equivalent — guard result irrelevant; callers always pair with secondary truthiness check (e.g. && discordChannel.name)
-function hasChannelName(channel: unknown): channel is Extract<Channel, { name: string }> {
-    return typeof channel === 'object' && channel !== null && 'name' in channel;
 }
 // Stryker restore ConditionalExpression
 
@@ -92,7 +84,6 @@ export class ChannelRegistryManager {
             this.resolveReady = resolve;
         });
         // Re-attach all registered callbacks so they fire on the next hydration cycle.
-        // Stryker disable BlockStatement,ArrowFunction,ConditionalExpression: re-attach loop — only exercised in stop()→startHydration() cycle with pre-registered callbacks
         for(const entry of this.readyCallbacks) {
             void promise.then(() => {
                 if(entry.cancelled) {
@@ -100,7 +91,6 @@ export class ChannelRegistryManager {
                 }
                 return entry.fn();
             }).catch((err: unknown) => {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: logger call — observational
                 logger.error({ err, msg: 'onReady callback rejected' });
             });
         }
@@ -119,7 +109,6 @@ export class ChannelRegistryManager {
      *
      * @param callback - Called (without arguments) each time hydration succeeds
      */
-    // Stryker disable BlockStatement,ArrowFunction: onReady registration — tested via bot.test.ts and event-handler-setup.test.ts which call the callback; body is always exercised but ArrowFunction/BlockStatement mutants are not distinguishable by test assertions
     onReady(callback: () => void | Promise<void>): void {
         const entry = { fn: callback, cancelled: false };
         this.readyCallbacks.push(entry);
@@ -132,7 +121,6 @@ export class ChannelRegistryManager {
             }
             return entry.fn();
         }).catch((err: unknown) => {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: logger call — observational
             logger.error({ err, msg: 'onReady callback rejected' });
         });
     }
@@ -147,14 +135,10 @@ export class ChannelRegistryManager {
      *
      * @param callback - The callback function to remove
      */
-    // Stryker disable BlockStatement,ConditionalExpression,UnaryOperator: offReady removal — tested by 'offReady removes a registered callback'
     offReady(callback: () => void | Promise<void>): void {
         const idx = this.readyCallbacks.findIndex(e => e.fn === callback);
         if(idx !== -1) {
-            const entry = this.readyCallbacks[idx];
-            if(entry !== undefined) {
-                entry.cancelled = true;
-            }
+            this.readyCallbacks[idx]!.cancelled = true;
             this.readyCallbacks.splice(idx, 1);
         }
     }
@@ -181,7 +165,6 @@ export class ChannelRegistryManager {
      */
     startHydration(loop: ReconnectionLoop): void {
         if(this.hydrationLoop !== undefined) {
-            // Stryker disable next-line StringLiteral: invariant detail string is debug-only metadata
             throw new InvariantViolationError('startHydration', 'ChannelRegistryManager: hydration loop already started — call stop() first');
         }
         this.hydrationLoop = loop;
@@ -215,24 +198,15 @@ export class ChannelRegistryManager {
             this.backend.getChannelsByGuild(dmGuildId),
         ]);
 
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.info({ guildChannels: guildRecords.length, dmChannels: dmRecords.length, msg: 'Warming channel cache...' });
 
         const allRecords = [...guildRecords, ...dmRecords];
-        for(let i = 0; i < allRecords.length; i++) {
-            const record = allRecords[i];
-            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — loop bounds guarantee i < allRecords.length; unreachable in practice
-            if(record === undefined) {
-                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
-                throw new InvariantViolationError('warmCache', 'allRecords[i] undefined despite i < allRecords.length');
-            }
-            // Stryker disable next-line ObjectLiteral,StringLiteral,ArithmeticOperator: Logging for observability
+        for(const [i, record] of allRecords.entries()) {
             logger.debug({ index: i + 1, total: allRecords.length, channelId: record.channelId, msg: 'Warming channel...' });
-            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
+            // eslint-disable-next-line no-await-in-loop -- ordered hydration preserves record-order cache writes and last-record-wins well-known mapping
             await this.fetchAndCacheChannel(record);
         }
 
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.info({ channelCount: allRecords.length, msg: 'Channel cache warmed' });
 
         // Mark ready only on successful completion — if anything above throws, ready stays pending
@@ -293,7 +267,6 @@ export class ChannelRegistryManager {
             const discordChannel = await this.fetchDiscordChannel(channelId);
             if(!discordChannel) {
                 // Channel was deleted on Discord
-                // Stryker disable next-line all: Logging for observability
                 logger.warn({ channelId, msg: 'Channel not found on Discord (possibly deleted)' });
                 return null;
             }
@@ -306,7 +279,6 @@ export class ChannelRegistryManager {
         } catch (error) {
             // Discord API failure - channel might be deleted or inaccessible
             const errorMsg = error instanceof Error ? error.message : String(error);
-            // Stryker disable next-line all: Logging for observability
             logger.warn({ channelId, error: errorMsg, msg: 'Failed to fetch channel from Discord API' });
             return null;
         }
@@ -372,16 +344,13 @@ export class ChannelRegistryManager {
         // Fallback to backend
         const storedRecords = await this.backend.getChannelsByGuild(guildId);
         const results: ChannelMetadata[] = [];
-
-        // Fetch channel info from Discord for each record
         for(const record of storedRecords) {
-            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
+            // eslint-disable-next-line no-await-in-loop -- ordered cache writes preserve last-record-wins well-known channel mappings
             const metadata = await this.fetchAndCacheChannel(record);
             if(metadata) {
                 results.push(metadata);
             }
         }
-
         return results;
     }
 
@@ -405,17 +374,13 @@ export class ChannelRegistryManager {
         // Fallback to backend
         const storedRecords = await this.backend.getChannelsByGuild(this.homeGuildId);
         const results: ChannelMetadata[] = [];
-
-        // Fetch channel info from Discord for each record
         for(const record of storedRecords) {
-            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
+            // eslint-disable-next-line no-await-in-loop -- ordered cache writes preserve last-record-wins well-known channel mappings
             const metadata = await this.fetchAndCacheChannel(record);
-            // Only include unmuted channels
             if(metadata && !metadata.isMuted) {
                 results.push(metadata);
             }
         }
-
         return results;
     }
 
@@ -453,7 +418,6 @@ export class ChannelRegistryManager {
             const discordChannel = await this.fetchDiscordChannel(storedRecord.channelId);
             if(!discordChannel) {
                 // Channel was deleted on Discord
-                // Stryker disable next-line all: Logging for observability
                 logger.warn({ channelId: storedRecord.channelId, wellKnownType: type, msg: 'Well-known channel not found on Discord (possibly deleted)' });
                 return null;
             }
@@ -466,7 +430,6 @@ export class ChannelRegistryManager {
         } catch (error) {
             // Discord API failure - channel might be deleted or inaccessible
             const errorMsg = error instanceof Error ? error.message : String(error);
-            // Stryker disable next-line all: Logging for observability
             logger.warn({ channelId: storedRecord.channelId, wellKnownType: type, error: errorMsg, msg: 'Failed to fetch well-known channel from Discord API' });
             return null;
         }
@@ -616,28 +579,30 @@ export class ChannelRegistryManager {
         discordChannel: Channel
     ): ChannelMetadata {
         let channelName: string;
+        // boundary cast: Discord Channel lacks a shared name property; channel-specific variants expose it at runtime.
+        const discordChannelName = (discordChannel as unknown as { name?: unknown } | null)?.name;
 
         // For DM channels, format as @username
         if(record.guildId === 'DM') {
             // Try to get username from Discord DMChannel recipient
             if(isDMChannelWithRecipient(discordChannel) && discordChannel.recipient) {
                 channelName = `@${discordChannel.recipient.username}`;
-            } else if(hasChannelName(discordChannel) && discordChannel.name) {
+            } else if(typeof discordChannelName === 'string' && discordChannelName) {
                 // Fallback: if already in "DM - username" format, convert to @username
-                if(discordChannel.name.startsWith('DM - ')) {
-                    channelName = `@${discordChannel.name.slice(5)}`;
-                } else if(discordChannel.name.startsWith('@')) {
+                if(discordChannelName.startsWith('DM - ')) {
+                    channelName = `@${discordChannelName.slice(5)}`;
+                } else if(discordChannelName.startsWith('@')) {
                     // Already in @username format
-                    channelName = discordChannel.name;
+                    channelName = discordChannelName;
                 } else {
-                    channelName = `@${discordChannel.name}`;
+                    channelName = `@${discordChannelName}`;
                 }
             } else {
                 channelName = '@Unknown';
             }
         } else {
             // Regular channels - use existing logic
-            channelName = (hasChannelName(discordChannel) ? discordChannel.name : null) ?? 'Unknown';
+            channelName = typeof discordChannelName === 'string' ? discordChannelName : 'Unknown';
         }
 
         return {
@@ -686,7 +651,6 @@ export class ChannelRegistryManager {
         try {
             const discordChannel = await this.fetchDiscordChannel(record.channelId);
             if(!discordChannel) {
-                // Stryker disable next-line all: Logging for observability
                 logger.warn({ channelId: record.channelId, msg: 'Skipping channel: not found on Discord (possibly deleted)' });
                 return null;
             }
@@ -696,7 +660,6 @@ export class ChannelRegistryManager {
             return metadata;
         } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
-            // Stryker disable next-line all: Logging for observability
             logger.warn({ channelId: record.channelId, error: errorMsg, msg: 'Skipping channel: Discord API error' });
             return null;
         }

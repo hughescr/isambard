@@ -87,6 +87,14 @@ describe.concurrent('contactIdSchema', () => {
         const result = contactIdSchema.safeParse('Craig-Hughes');
         expect(result.success).toBe(false);
     });
+
+    test('explains the required contact id format', () => {
+        const result = contactIdSchema.safeParse('bad id');
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toBe('ContactId must be lowercase alphanumeric with hyphens (kebab-case)');
+        }
+    });
 });
 
 describe.concurrent('createContactId', () => {

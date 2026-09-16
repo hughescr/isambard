@@ -118,12 +118,14 @@ export function openSession(params: OpenSessionParams): SessionHandle {
             }
             state = 'closed';
             interrupting.value = false;
+            // Stryker disable next-line BooleanLiteral: the reader has ended normally, so this private frame-clearing latch is never read again
             awaitingResultToClearInterrupt = false;
             log.info({ msg: 'Session closed' });
             onClosed();
         } catch (error) {
             state = 'failed';
             interrupting.value = false;
+            // Stryker disable next-line BooleanLiteral: the reader has terminated on this throw, so this private frame-clearing latch is never read again
             awaitingResultToClearInterrupt = false;
             log.error({ error, msg: 'Session failed' });
             onClosed(error);

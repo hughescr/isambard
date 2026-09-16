@@ -121,6 +121,18 @@ describe('mcpServiceUnavailableResult', () => {
         expect(text).toContain('reconnection attempt is in progress');
     });
 
+    test('nextRetryAt exactly now is already due', () => {
+        const now = Date.now();
+        const dateNow = Date.now;
+        Date.now = () => now;
+        try {
+            const result = mcpServiceUnavailableResult('email', makeEntry({ state: 'offline', nextRetryAt: new Date(now) }));
+            expect((result.content[0] as { text: string }).text).toContain('reconnection attempt is in progress');
+        } finally {
+            Date.now = dateNow;
+        }
+    });
+
     test('without nextRetryAt → message says "reconnection attempt is in progress"', () => {
         const entry = makeEntry({ state: 'offline' });
         const result = mcpServiceUnavailableResult('email', entry);

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
 import { describe, it, expect, beforeEach, afterEach, mock, jest, spyOn } from 'bun:test';
 import { type Client, type ActivitiesOptions, ActivityType  } from 'discord.js';
 import { mockWithDiscordRetry, originalWithDiscordRetry } from '../../../../setup';
@@ -167,6 +166,22 @@ describe('PresenceManager', () => {
             // Should have called idle generator
             expect(mockIdleGenerator.generate).toHaveBeenCalled();
             expect(mockClient.user.setActivity).toHaveBeenCalled();
+        });
+
+        it('defers idle refresh while a non-idle presence display mode is active', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+            manager.transitionPresenceDisplayMode('perching');
+
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+
+            expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
+            expect(mockClient.user.setActivity).not.toHaveBeenCalled();
         });
 
         it('should stop idle refresh when transitioning from idle', async () => {
@@ -469,7 +484,7 @@ describe('PresenceManager', () => {
                 return originalWithDiscordRetry(operation, {
                     ...options,
                     deps: {
-                        ...options?.deps,
+                        ...options.deps,
                         sleep: async () => {},
                     },
                 });
@@ -1161,6 +1176,7 @@ describe('PresenceManager', () => {
             });
 
             // Idle refresh loop was stopped: advancing time triggers no further idle generation
+            expect(jest.getTimerCount()).toBe(0);
             jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
             await Promise.resolve();
             expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCount);
@@ -1214,6 +1230,32 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             expect(mockIdleGenerator.generate).toHaveBeenLastCalledWith({ prefix: '💤', compacting: false });
+        });
+
+        it('isolates recomposed state and stale-result checks from generator input mutation', async () => {
+            const recomposed = { prefix: '💤 • stable', compacting: false };
+            mockIdleGenerator.generate = mock(async (options) => {
+                if(options) {
+                    options.prefix = 'mutated by generator';
+                    options.compacting = true;
+                }
+                return { name: 'Stable idle status', type: ActivityType.Custom };
+            });
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+                recomposeIdlePrefix:   () => recomposed,
+            });
+
+            await manager.applyView(idleView);
+
+            expect(recomposed).toEqual({ prefix: '💤 • stable', compacting: false });
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({
+                name: 'Stable idle status', type: ActivityType.Custom,
+            });
         });
 
         it('without recomposeIdlePrefix, periodic idle refresh keeps rendering the last composed prefix (legacy behaviour unchanged)', async () => {
@@ -1278,6 +1320,79 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: 'Fresh idle status', type: ActivityType.Custom });
+        });
+
+        it('keeps the newer in-flight refresh registered when an older prefix generation settles', async () => {
+            const idleGeneratePromises: { resolve: (value: ActivitiesOptions) => void }[] = [];
+            mockIdleGenerator.generate = mock(() => new Promise<ActivitiesOptions>((resolve) => {
+                idleGeneratePromises.push({ resolve });
+            }));
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+            const oldView: PresenceView = { ...idleView, prefix: 'old' };
+            const newView: PresenceView = { ...idleView, prefix: 'new' };
+
+            void manager.applyView(oldView);
+            await Promise.resolve();
+            void manager.applyView(newView);
+            await Promise.resolve();
+            expect(idleGeneratePromises).toHaveLength(2);
+
+            idleGeneratePromises[0].resolve({ name: 'old status', type: ActivityType.Custom });
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            void manager.applyView(newView);
+            await Promise.resolve();
+
+            expect(idleGeneratePromises).toHaveLength(2);
+            idleGeneratePromises[1].resolve({ name: 'new status', type: ActivityType.Custom });
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        it('discards a legacy idle generation when the display mode changes before it resolves', async () => {
+            let resolveIdle!: (value: ActivitiesOptions) => void;
+            mockIdleGenerator.generate = mock(() => new Promise<ActivitiesOptions>((resolve) => {
+                resolveIdle = resolve;
+            }));
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            void manager.updatePhase({ type: 'idle', since: new Date(0) });
+            await Promise.resolve();
+            manager.transitionPresenceDisplayMode('processing_message');
+            (mockClient.user.setActivity as ReturnType<typeof mock>).mockClear();
+            resolveIdle({ name: 'stale legacy idle', type: ActivityType.Custom });
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockClient.user.setActivity).not.toHaveBeenCalled();
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                { modeAtStart: 'none', currentMode: 'processing_message' },
+                'Discarding stale idle status (mode changed during generation)'
+            );
         });
 
         it('discards an idle status whose generation was still in flight when an active view arrived (interrupt-then-new-turn gap)', async () => {

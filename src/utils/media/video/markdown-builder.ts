@@ -8,6 +8,7 @@ export function formatDuration(totalSeconds: number): string {
 
     const parts: string[] = [];
     if(hours > 0) {
+        // Stryker disable next-line ArrayMethodSwap: parts is empty, so push and unshift place the first duration component identically.
         parts.push(`${hours}h`);
     }
     if(minutes > 0) {
@@ -38,18 +39,15 @@ function formatSegmentTime(seconds: number): string {
 /** Build the audio details parenthetical if channel/sample-rate info is present. */
 function buildAudioDetails(metadata: VideoMetadata): string {
     if(metadata.audioChannels === undefined) {
-        // Stryker disable next-line StringLiteral: empty string return for missing audioChannels — covered by unit tests of buildMetadataMarkdown with audioChannels undefined
         return '';
     }
     const channelLabel = formatChannels(metadata.audioChannels);
-    // Stryker disable next-line StringLiteral: separator and Hz label are informational
     const rateLabel    = metadata.audioSampleRate === undefined ? '' : `, ${metadata.audioSampleRate} Hz`;
     return ` (${channelLabel}${rateLabel})`;
 }
 
 /** Build the technical-details section lines. */
 function buildTechnicalLines(metadata: VideoMetadata): string[] {
-    // Stryker disable StringLiteral: section headings and field labels are informational markdown structure
     const lines: string[] = [
         '## Technical Details',
         `- **Duration**: ${formatDuration(metadata.duration)}`,
@@ -60,17 +58,14 @@ function buildTechnicalLines(metadata: VideoMetadata): string[] {
     // Stryker restore StringLiteral
 
     if(metadata.videoBitrate !== undefined) {
-        // Stryker disable next-line StringLiteral: field label is informational
         lines.push(`- **Video Bitrate**: ${Math.round(metadata.videoBitrate / 1000)} kbps`);
     }
 
     if(metadata.audioCodec !== undefined) {
-        // Stryker disable next-line StringLiteral: field label is informational
         lines.push(`- **Audio Codec**: ${metadata.audioCodec}${buildAudioDetails(metadata)}`);
     }
 
     if(metadata.subtitleTracks.length > 0) {
-        // Stryker disable StringLiteral,ArrayDeclaration: subtitle track list formatting strings are structural
         const trackList = metadata.subtitleTracks.map((t) => {
             const parts: string[] = [`Track ${t.index}`];
             if(t.language !== undefined) {
@@ -82,7 +77,6 @@ function buildTechnicalLines(metadata: VideoMetadata): string[] {
             return parts.join(' — ');
         }).join(', ');
         // Stryker restore StringLiteral,ArrayDeclaration
-        // Stryker disable next-line StringLiteral: field label is informational
         lines.push(`- **Subtitle Tracks**: ${trackList}`);
     }
 
@@ -91,7 +85,6 @@ function buildTechnicalLines(metadata: VideoMetadata): string[] {
 
 /** Build the transcription section lines. */
 function buildTranscriptionLines(transcription: TranscriptionResult): string[] {
-    // Stryker disable next-line ArrayDeclaration,StringLiteral: section heading array and string values are structural
     const lines = ['', '## Transcription', ''];
     if(transcription.segments.length === 0) {
         lines.push(transcription.fullText);
@@ -99,9 +92,7 @@ function buildTranscriptionLines(transcription: TranscriptionResult): string[] {
     }
     for(const seg of transcription.segments) {
         const timeLabel = formatSegmentTime(seg.startTime);
-        // Stryker disable next-line StringLiteral: speaker label format is structural
         const speaker   = seg.speaker === undefined ? '' : `**${seg.speaker}**: `;
-        // Stryker disable next-line StringLiteral: timestamp format is structural
         lines.push(`[${timeLabel}] ${speaker}${seg.text}`);
     }
     return lines;
@@ -117,16 +108,13 @@ export function buildMetadataMarkdown(
     transcription?: TranscriptionResult,
     alt?:           string
 ): string {
-    // Stryker disable next-line StringLiteral: top-level heading is structural
     const lines: string[] = ['# Video Metadata', '', ...buildTechnicalLines(metadata)];
 
     if(alt !== undefined) {
-        // Stryker disable next-line StringLiteral,ArrayDeclaration: description section heading and separator are structural
         lines.push('', '## Description', '', alt);
     }
 
     if(subtitles !== undefined) {
-        // Stryker disable next-line ArrayDeclaration,StringLiteral,MethodExpression: section heading strings and .trim() are structural
         lines.push('', '## Subtitles', '', subtitles.trim());
     }
 
@@ -134,6 +122,5 @@ export function buildMetadataMarkdown(
         lines.push(...buildTranscriptionLines(transcription));
     }
 
-    // Stryker disable next-line StringLiteral: newline join separator is structural
     return lines.join('\n');
 }

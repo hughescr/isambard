@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, mock, type Mock } from 'bun:test';
 import { MessageFlags, type ButtonInteraction, type ChatInputCommandInteraction, type EmbedBuilder } from 'discord.js';
+import { z } from 'zod';
 import {
     buildContactCommand,
     buildContactApprovalEmbed,
@@ -16,7 +17,6 @@ import type { Contact, ContactBackend, PersonAllowlist } from '@/storage';
 // Test constants
 // ---------------------------------------------------------------------------
 
-// Stryker disable next-line StringLiteral: Test admin user ID is a test configuration constant
 const ADMIN_USER_ID = '423276934781468692';
 
 const SAMPLE_CONTACT: Contact = {
@@ -107,6 +107,17 @@ function makeButtonInteraction(customId: string): {
     return { interaction, deferUpdate, editReply };
 }
 
+function controlledPromise<T>(): { promise: Promise<T>, start: () => void, started: Promise<void>, resolve: (value: T) => void } {
+    const gate = Promise.withResolvers<T>();
+    const signal = Promise.withResolvers<void>();
+    return {
+        promise: gate.promise,
+        start:   () => signal.resolve(),
+        started: signal.promise,
+        resolve: gate.resolve,
+    };
+}
+
 // ---------------------------------------------------------------------------
 // buildContactCommand tests
 // ---------------------------------------------------------------------------
@@ -136,6 +147,21 @@ describe('buildContactCommand()', () => {
         expect(names).toContain('show');
         expect(names).toContain('edit');
         expect(names).toContain('delete');
+    });
+
+    test('preserves the required and optional fields in each contact command form', () => {
+        const options = buildContactCommand().toJSON().options as { name: string, options?: { name: string, required?: boolean }[] }[];
+        const command = (name: string) => options.find(option => option.name === name)!;
+        const required = (subcommand: string, option: string) => command(subcommand).options!.find(entry => entry.name === option)!.required;
+
+        expect(required('add', 'name')).toBe(true);
+        expect(required('add', 'discord')).toBe(false);
+        expect(required('link', 'person')).toBe(true);
+        expect(required('link', 'platform')).toBe(true);
+        expect(required('link', 'id')).toBe(true);
+        expect(required('unlink', 'person')).toBe(true);
+        expect(required('unlink', 'platform')).toBe(true);
+        expect(required('unlink', 'id')).toBe(true);
     });
 
     test('edit subcommand has required person option and optional name and notes options', () => {
@@ -324,6 +350,24 @@ describe('buildContactApprovalEmbed()', () => {
         const field = json.fields?.find((f: { name: string }) => f.name === 'Notes');
         expect(field).toBeDefined();
         expect(field?.value).toBe('Test note');
+    });
+
+    test('uses compact fields only for the identity metadata', () => {
+        const { embed } = buildContactApprovalEmbed({
+            action:            'update',
+            displayName:       'Eve',
+            personId:          'eve-example',
+            addIdentifiers:    [{ platform: 'email', value: 'eve@example.com' }],
+            removeIdentifiers: [{ platform: 'bsky', value: 'eve.bsky.social' }],
+            notes:             'A note',
+        });
+        const fields = Object.fromEntries((embed.toJSON().fields ?? []).map(field => [field.name, field]));
+
+        expect(fields['Display Name'].inline).toBe(true);
+        expect(fields['Person ID'].inline).toBe(true);
+        expect(fields['Add Identifiers'].inline).toBe(false);
+        expect(fields['Remove Identifiers'].inline).toBe(false);
+        expect(fields.Notes.inline).toBe(false);
     });
 
     test('omits optional fields when not present', () => {
@@ -541,6 +585,10 @@ describe('ContactCommandHandler - add subcommand', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('Failed to create contact') as unknown as string })
         );
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            displayName: 'Fail Case',
+            msg:         'Failed to create contact',
+        }));
     });
 
     test('replies with error when display name produces empty personId (all special characters)', async () => {
@@ -637,6 +685,10 @@ describe('ContactCommandHandler - link subcommand', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('not found') as unknown as string })
         );
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            personRaw: 'no-such-person',
+            msg:       'Failed to link identifier',
+        }));
     });
 
     test('replies with generic error message on other errors', async () => {
@@ -654,6 +706,10 @@ describe('ContactCommandHandler - link subcommand', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('Failed to link') as unknown as string })
         );
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            personRaw: 'alice-wonderland',
+            msg:       'Failed to link identifier',
+        }));
     });
 
     test('calls refreshPerson after successful addIdentifier', async () => {
@@ -690,7 +746,10 @@ describe('ContactCommandHandler - link subcommand', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('Added') as unknown as string })
         );
-        expect(mockLogger.warn).toHaveBeenCalled();
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+            personId: expect.stringContaining('alice-wonderland'),
+            msg:      'Failed to refresh allowlist cache after link',
+        }));
     });
 
     test('does not crash when personAllowlist is undefined', async () => {
@@ -771,6 +830,10 @@ describe('ContactCommandHandler - unlink subcommand', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('Failed to remove') as unknown as string })
         );
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            personRaw: 'alice-wonderland',
+            msg:       'Failed to unlink identifier',
+        }));
     });
 
     test('calls refreshPerson after successful removeIdentifier', async () => {
@@ -808,6 +871,10 @@ describe('ContactCommandHandler - unlink subcommand', () => {
             expect.objectContaining({ content: expect.stringContaining('Removed') as unknown as string })
         );
         expect(mockLogger.warn).toHaveBeenCalled();
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+            personId: expect.stringContaining('alice-wonderland'),
+            msg:      'Failed to refresh allowlist cache after unlink',
+        }));
     });
 });
 
@@ -837,10 +904,17 @@ describe('ContactCommandHandler - list subcommand', () => {
     });
 
     test('replies with formatted contact list', async () => {
-        backend.listContacts.mockImplementation(async () => [SAMPLE_CONTACT]);
+        backend.listContacts.mockImplementation(async () => [
+            SAMPLE_CONTACT,
+            { ...SAMPLE_CONTACT, personId: 'bob-smith' as Contact['personId'], displayName: 'Bob Smith', identifiers: [{ platform: 'discord', value: 'bob' }] },
+        ]);
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'list');
 
         await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith({
+            content: '**Alice Wonderland** (`alice-wonderland`) — name, email\n**Bob Smith** (`bob-smith`) — discord',
+        });
 
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('Alice Wonderland') as unknown as string })
@@ -858,6 +932,9 @@ describe('ContactCommandHandler - list subcommand', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: 'Failed to list contacts.' })
         );
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            msg: 'Failed to list contacts',
+        }));
     });
 });
 
@@ -946,6 +1023,11 @@ describe('ContactCommandHandler - show subcommand', () => {
         expect(fieldNames).toContain('Person ID');
         expect(fieldNames).toContain('Identifiers');
         expect(fieldNames).toContain('Updated');
+        const fields = Object.fromEntries((embedJson.fields ?? []).map(field => [field.name, field]));
+        expect(fields['Person ID'].inline).toBe(true);
+        expect(fields.Identifiers.inline).toBe(false);
+        expect(fields.Notes.inline).toBe(false);
+        expect(fields.Updated.inline).toBe(true);
     });
 
     test('embed omits Notes field for contact without notes', async () => {
@@ -967,6 +1049,23 @@ describe('ContactCommandHandler - show subcommand', () => {
         const embedJson = callArgs.embeds[0].toJSON();
         const fieldNames = (embedJson.fields ?? []).map((f: { name: string }) => f.name);
         expect(fieldNames).not.toContain('Notes');
+    });
+
+    test('embed omits Identifiers field for a contact without identifiers', async () => {
+        const contactWithoutIdentifiers: Contact = {
+            ...SAMPLE_CONTACT,
+            identifiers: [],
+        };
+        backend.getContact.mockResolvedValue(contactWithoutIdentifiers);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'show', {
+            person: 'alice-wonderland',
+        });
+
+        await handler.handle(asChatInput);
+
+        const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const fieldNames = (callArgs.embeds[0].toJSON().fields ?? []).map(field => field.name);
+        expect(fieldNames).not.toContain('Identifiers');
     });
 
     test('embed includes Notes field for contact with notes', async () => {
@@ -996,6 +1095,36 @@ describe('ContactCommandHandler - show subcommand', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('Failed to show contact') as unknown as string })
         );
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            personRaw: 'alice-wonderland',
+            msg:       'Failed to show contact',
+        }));
+    });
+
+    test('uses fuzzy lookup for malformed IDs, including a trailing separator and mixed case', async () => {
+        backend.fuzzyLookup.mockResolvedValue([SAMPLE_CONTACT]);
+
+        const trailingSeparator = createMockInteraction(ADMIN_USER_ID, 'show', { person: 'alice-' });
+        const mixedCase = createMockInteraction(ADMIN_USER_ID, 'show', { person: 'Alice' });
+
+        await handler.handle(trailingSeparator.asChatInput);
+        await handler.handle(mixedCase.asChatInput);
+
+        expect(backend.getContact).not.toHaveBeenCalled();
+        expect(backend.fuzzyLookup).toHaveBeenCalledWith('alice-');
+        expect(backend.fuzzyLookup).toHaveBeenCalledWith('Alice');
+    });
+
+    test('falls back to fuzzy lookup when exact lookup rejects an ID validation error', async () => {
+        backend.getContact.mockImplementation(async () => {
+            throw z.string().parse(1);
+        });
+        backend.fuzzyLookup.mockResolvedValue([SAMPLE_CONTACT]);
+        const { asChatInput } = createMockInteraction(ADMIN_USER_ID, 'show', { person: 'a' });
+
+        await handler.handle(asChatInput);
+
+        expect(backend.fuzzyLookup).toHaveBeenCalledWith('a');
     });
 });
 
@@ -1060,6 +1189,41 @@ describe('ContactApprovalHandler - handleButton()', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ embeds: expect.arrayContaining([expect.anything()]) as unknown as unknown[] })
         );
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            personId:    'bob-smith',
+            displayName: 'Bob Smith',
+            msg:         'Contact created via admin approval',
+        });
+    });
+
+    test('approve — creates a contact with Unknown and a name identifier when both optional fields are absent', async () => {
+        const uuid = 'test-uuid-missing-name-and-identifiers';
+        const request: ContactApprovalRequest = { action: 'create' };
+        handler.storePendingRequest(uuid, request);
+
+        const { interaction } = makeButtonInteraction(`contact-approve:${uuid}`);
+        await handler.handleButton(interaction);
+
+        expect(backend.putContact).toHaveBeenCalledTimes(1);
+        expect(backend.putContact).toHaveBeenCalledWith(expect.objectContaining({
+            displayName: 'Unknown',
+            identifiers: [{ platform: 'name', value: 'Unknown' }],
+        }));
+    });
+
+    test('approve — creates a name identifier from the supplied display name when identifiers are absent', async () => {
+        const uuid = 'test-uuid-missing-identifiers';
+        const request: ContactApprovalRequest = { action: 'create', displayName: 'Alice Example' };
+        handler.storePendingRequest(uuid, request);
+
+        const { interaction } = makeButtonInteraction(`contact-approve:${uuid}`);
+        await handler.handleButton(interaction);
+
+        expect(backend.putContact).toHaveBeenCalledTimes(1);
+        expect(backend.putContact).toHaveBeenCalledWith(expect.objectContaining({
+            displayName: 'Alice Example',
+            identifiers: [{ platform: 'name', value: 'Alice Example' }],
+        }));
     });
 
     test('approve — shows not-found embed when uuid not in pending requests', async () => {
@@ -1071,6 +1235,10 @@ describe('ContactApprovalHandler - handleButton()', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ embeds: expect.arrayContaining([expect.anything()]) as unknown as unknown[] })
         );
+        expect(mockLogger.warn).toHaveBeenCalledWith({
+            uuid: 'nonexistent-uuid',
+            msg:  'Contact approval: no pending request found for uuid',
+        });
     });
 
     test('approve — update action calls addIdentifier for each addIdentifier', async () => {
@@ -1090,6 +1258,24 @@ describe('ContactApprovalHandler - handleButton()', () => {
         await handler.handleButton(interaction);
 
         expect(backend.addIdentifier).toHaveBeenCalledTimes(2);
+    });
+
+    test('approve — update request without personId reports the invariant error', async () => {
+        const uuid = 'test-uuid-missing-person';
+        handler.storePendingRequest(uuid, { action: 'update' });
+        const { interaction, editReply } = makeButtonInteraction(`contact-approve:${uuid}`);
+
+        await handler.handleButton(interaction);
+
+        expect(editReply).toHaveBeenCalledWith(expect.objectContaining({
+            content: 'An error occurred processing your request. Please try again.',
+        }));
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            prefix: 'contact-approve',
+            err:    expect.objectContaining({
+                message: 'Invariant violated in applyContactUpdate: Contact update request is missing personId',
+            }) as unknown,
+        }));
     });
 
     test('approve — update action calls removeIdentifier for each removeIdentifier', async () => {
@@ -1149,6 +1335,51 @@ describe('ContactApprovalHandler - handleButton()', () => {
         expect(contact.notes).toBe('Updated notes');
     });
 
+    test('approve — update action without notes does not overwrite the contact', async () => {
+        const uuid = 'test-uuid-no-notes';
+        handler.storePendingRequest(uuid, { action: 'update', personId: 'alice-wonderland' });
+        const { interaction } = makeButtonInteraction(`contact-approve:${uuid}`);
+
+        await handler.handleButton(interaction);
+
+        expect(backend.getContact).not.toHaveBeenCalled();
+        expect(backend.putContact).not.toHaveBeenCalled();
+    });
+
+    test('approve — update refreshes the allowlist after a successful update', async () => {
+        const allowlist = {
+            refreshPerson: mock(async (): Promise<void> => {}),
+            removePerson:  mock(async (): Promise<void> => {}),
+        } as unknown as PersonAllowlist;
+        const allowlistedHandler = new ContactApprovalHandler(backend as unknown as ContactBackend, allowlist);
+        const uuid = 'test-uuid-update-allowlist';
+        allowlistedHandler.storePendingRequest(uuid, {
+            action: 'update', personId: 'alice-wonderland', addIdentifiers: [{ platform: 'email', value: 'new@example.com' }],
+        });
+
+        await allowlistedHandler.handleButton(makeButtonInteraction(`contact-approve:${uuid}`).interaction);
+
+        expect((allowlist.refreshPerson as Mock<(...args: unknown[]) => Promise<void>>)).toHaveBeenCalledWith('alice-wonderland');
+        expect(mockLogger.info).toHaveBeenCalledWith({ personId: 'alice-wonderland', msg: 'Contact updated via admin approval' });
+    });
+
+    test('approve — update logs but succeeds when allowlist refresh fails', async () => {
+        const allowlist = {
+            refreshPerson: mock(async (): Promise<void> => { throw new Error('refresh failed'); }),
+            removePerson:  mock(async (): Promise<void> => {}),
+        } as unknown as PersonAllowlist;
+        const allowlistedHandler = new ContactApprovalHandler(backend as unknown as ContactBackend, allowlist);
+        const uuid = 'test-uuid-update-allowlist-failure';
+        allowlistedHandler.storePendingRequest(uuid, { action: 'update', personId: 'alice-wonderland' });
+
+        await allowlistedHandler.handleButton(makeButtonInteraction(`contact-approve:${uuid}`).interaction);
+
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+            personId: 'alice-wonderland',
+            msg:      'Failed to refresh allowlist cache after contact update',
+        }));
+    });
+
     test('approve — removes pending request after approval', async () => {
         const uuid    = 'test-uuid-remove';
         const request: ContactApprovalRequest = {
@@ -1189,6 +1420,19 @@ describe('ContactApprovalHandler - handleButton()', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ embeds: expect.arrayContaining([expect.anything()]) as unknown as unknown[] })
         );
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            action:      'create',
+            personId:    undefined,
+            displayName: 'Dave',
+            msg:         'Contact change request rejected by admin',
+        });
+
+        const { interaction: secondPress } = makeButtonInteraction(`contact-reject:${uuid}`);
+        await handler.handleButton(secondPress);
+        expect(mockLogger.warn).toHaveBeenCalledWith({
+            uuid,
+            msg: 'Contact rejection: no pending request found for uuid',
+        });
     });
 
     test('reject — shows not-found embed when uuid not in pending requests', async () => {
@@ -1199,6 +1443,10 @@ describe('ContactApprovalHandler - handleButton()', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ embeds: expect.arrayContaining([expect.anything()]) as unknown as unknown[] })
         );
+        expect(mockLogger.warn).toHaveBeenCalledWith({
+            uuid: 'nonexistent-uuid',
+            msg:  'Contact rejection: no pending request found for uuid',
+        });
     });
 
     test('shows error embed when approve throws', async () => {
@@ -1220,6 +1468,30 @@ describe('ContactApprovalHandler - handleButton()', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('error occurred') as unknown as string })
         );
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            uuid,
+            prefix: 'contact-approve',
+            msg:    'Contact approval button handler failed',
+        }));
+    });
+
+    test('logs the secondary error when the failure reply cannot be sent', async () => {
+        const uuid = 'test-uuid-error-reply';
+        handler.storePendingRequest(uuid, { action: 'create', displayName: 'Error Case' });
+        backend.putContact.mockImplementation(async () => {
+            throw new Error('DynamoDB failure');
+        });
+        const { interaction } = makeButtonInteraction(`contact-approve:${uuid}`);
+        const editReply = interaction.editReply as unknown as Mock<(...args: unknown[]) => Promise<void>>;
+        editReply.mockImplementation(async () => {
+            throw new Error('Discord unavailable');
+        });
+
+        await handler.handleButton(interaction);
+
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            msg: 'Failed to send error editReply for contact approval',
+        }));
     });
 
     test('approve create — appends -2 suffix when personId from request is already taken', async () => {
@@ -1424,6 +1696,10 @@ describe('ContactCommandHandler - delete subcommand', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('Failed') as unknown as string })
         );
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            personRaw: 'alice-wonderland',
+            msg:       'Failed to delete contact',
+        }));
     });
 });
 
@@ -1482,6 +1758,10 @@ describe('ContactApprovalHandler - delete confirmation', () => {
         const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
         const title    = callArgs.embeds[0].toJSON().title;
         expect(title).toBe('Request Not Found');
+        expect(mockLogger.warn).toHaveBeenCalledWith({
+            uuid: 'nonexistent-uuid',
+            msg:  'Contact delete confirm: no pending deletion found for uuid',
+        });
     });
 
     test('cancel with unknown UUID shows Request Not Found', async () => {
@@ -1493,6 +1773,10 @@ describe('ContactApprovalHandler - delete confirmation', () => {
         const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
         const title    = callArgs.embeds[0].toJSON().title;
         expect(title).toBe('Request Not Found');
+        expect(mockLogger.warn).toHaveBeenCalledWith({
+            uuid: 'nonexistent-uuid',
+            msg:  'Contact delete cancel: no pending deletion found for uuid',
+        });
     });
 
     test('confirm removes pending deletion from map', async () => {
@@ -1577,7 +1861,10 @@ describe('ContactApprovalHandler - delete confirmation', () => {
         const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
         const title    = callArgs.embeds[0].toJSON().title;
         expect(title).toContain('Deleted');
-        expect(mockLogger.warn).toHaveBeenCalled();
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+            personId: SAMPLE_CONTACT.personId,
+            msg:      'Failed to remove person from allowlist after contact deletion',
+        }));
     });
 
     test('does not crash when personAllowlist is undefined in ContactApprovalHandler', async () => {
@@ -1727,7 +2014,10 @@ describe('ContactCommandHandler - edit subcommand', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('Failed to edit contact') as unknown as string })
         );
-        expect(mockLogger.error).toHaveBeenCalled();
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            personRaw: 'alice-wonderland',
+            msg:       'Failed to edit contact',
+        }));
     });
 
     test('rejects non-admin users', async () => {
@@ -1742,5 +2032,412 @@ describe('ContactCommandHandler - edit subcommand', () => {
             expect.objectContaining({ content: expect.stringContaining('Only the admin') as unknown as string })
         );
         expect(backend.putContact).not.toHaveBeenCalled();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Mutation regression contracts
+// ---------------------------------------------------------------------------
+
+describe('Contact command public response contracts', () => {
+    test('uses distinct, correctly styled approve and reject buttons', () => {
+        const { embed, actionRow } = buildContactApprovalEmbed({ action: 'create' }, 'approval-contract');
+        const buttons = actionRow.toJSON().components as unknown as { type: number, custom_id: string, label: string, style: number }[];
+
+        expect(embed.toJSON().color).toBe(0xFF_AA_00);
+        expect(buttons).toEqual([
+            { type: 2, custom_id: 'contact-approve:approval-contract', label: 'Approve', style: 3 },
+            { type: 2, custom_id: 'contact-reject:approval-contract', label: 'Reject', style: 4 },
+        ]);
+    });
+
+    test('preserves name-first identifier order and stores ISO timestamps on add', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        const { asChatInput } = createMockInteraction(ADMIN_USER_ID, 'add', {
+            name:     'Alice Wonderland',
+            discord:  'alice',
+            email:    'alice@example.com',
+            bsky:     'alice.bsky.social',
+            nickname: 'Ali',
+        });
+
+        await handler.handle(asChatInput);
+
+        const contact = (backend.putContact.mock.calls[0] as [Contact])[0];
+        expect(contact.identifiers).toEqual([
+            { platform: 'name', value: 'Alice Wonderland' },
+            { platform: 'discord', value: 'alice' },
+            { platform: 'email', value: 'alice@example.com' },
+            { platform: 'bsky', value: 'alice.bsky.social' },
+            { platform: 'nickname', value: 'Ali' },
+        ]);
+        expect(contact.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+        expect(contact.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    });
+
+    test('shows the first fuzzy match, rather than a later candidate', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        const first = {
+            ...SAMPLE_CONTACT,
+            identifiers: [{ platform: 'email' as const, value: 'alice@example.com' }],
+        };
+        const second = { ...SAMPLE_CONTACT, personId: 'alice-second' as Contact['personId'], displayName: 'Alice Second' };
+        backend.fuzzyLookup.mockResolvedValue([first, second]);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'show', { person: 'Alice' });
+
+        await handler.handle(asChatInput);
+
+        const reply = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        expect(reply.embeds[0].toJSON().title).toBe('Alice Wonderland');
+        expect(reply.embeds[0].toJSON().fields).toContainEqual({
+            name:   'Identifiers',
+            value:  'email: alice@example.com',
+            inline: false,
+        });
+    });
+
+    test('includes an Error message, not Error.toString(), in a failed create response', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        backend.putContact.mockImplementation(async () => {
+            throw new Error('storage rejected contact');
+        });
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'add', { name: 'Alice' });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith({ content: 'Failed to create contact: storage rejected contact' });
+    });
+
+    test('does not complete an unauthorized command until Discord accepts the reply', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        const replyGate = controlledPromise<void>();
+        const { asChatInput, reply } = createMockInteraction('not-admin', 'list');
+        reply.mockImplementation(() => {
+            replyGate.start();
+            return replyGate.promise;
+        });
+
+        let completed = false;
+        const completion = handler.handle(asChatInput).finally(() => {
+            completed = true;
+        });
+        try {
+            await replyGate.started;
+            expect(completed).toBe(false);
+            replyGate.resolve();
+            await completion;
+        } finally {
+            replyGate.resolve();
+            await completion;
+        }
+    });
+
+    test('does not dispatch a command until Discord accepts the deferred reply', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        const deferGate = controlledPromise<void>();
+        const { asChatInput, deferReply } = createMockInteraction(ADMIN_USER_ID, 'list');
+        deferReply.mockImplementation(() => {
+            deferGate.start();
+            return deferGate.promise;
+        });
+
+        const completion = handler.handle(asChatInput);
+        try {
+            await deferGate.started;
+            expect(backend.listContacts).not.toHaveBeenCalled();
+            deferGate.resolve();
+            await completion;
+            expect(backend.listContacts).toHaveBeenCalledTimes(1);
+        } finally {
+            deferGate.resolve();
+            await completion;
+        }
+    });
+
+    test('does not complete list handling until the public list response is accepted', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        const editGate = controlledPromise<void>();
+        backend.listContacts.mockResolvedValue([SAMPLE_CONTACT]);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'list');
+        editReply.mockImplementation(() => {
+            editGate.start();
+            return editGate.promise;
+        });
+
+        let completed = false;
+        const completion = handler.handle(asChatInput).finally(() => {
+            completed = true;
+        });
+        try {
+            await editGate.started;
+            expect(completed).toBe(false);
+            editGate.resolve();
+            await completion;
+        } finally {
+            editGate.resolve();
+            await completion;
+        }
+    });
+
+    test('does not complete a button cancellation until its acknowledgement and public reply finish', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactApprovalHandler(backend as unknown as ContactBackend);
+        handler.storePendingDeletion('deferred-cancel', SAMPLE_CONTACT.personId);
+        const deferGate = controlledPromise<void>();
+        const editGate = controlledPromise<void>();
+        const { interaction, deferUpdate, editReply } = makeButtonInteraction('contact-delete-cancel:deferred-cancel');
+        deferUpdate.mockImplementation(() => {
+            deferGate.start();
+            return deferGate.promise;
+        });
+        editReply.mockImplementation(() => {
+            editGate.start();
+            return editGate.promise;
+        });
+
+        let completed = false;
+        const completion = handler.handleButton(interaction).finally(() => {
+            completed = true;
+        });
+        try {
+            await deferGate.started;
+            expect(editReply).not.toHaveBeenCalled();
+            deferGate.resolve();
+            await editGate.started;
+            await Bun.sleep(0);
+            expect(completed).toBe(false);
+            editGate.resolve();
+            await completion;
+        } finally {
+            deferGate.resolve();
+            editGate.resolve();
+            await completion;
+        }
+    });
+
+    test('waits for every command response before reporting the command complete', async () => {
+        const cases: {
+            name:       string
+            subcommand: string
+            options?:   Record<string, string | null>
+            arrange:    (backend: ReturnType<typeof createMockBackend>) => ContactApprovalHandler | undefined
+        }[] = [
+            { name: 'add invalid name', subcommand: 'add', options: { name: '!!!' }, arrange: () => undefined },
+            { name: 'add success', subcommand: 'add', options: { name: 'Alice' }, arrange: () => undefined },
+            { name:       'add failure', subcommand: 'add', options:    { name: 'Alice' }, arrange:    (backend) => {
+                backend.putContact.mockRejectedValue(new Error('write failed'));
+                return undefined;
+            } },
+            { name: 'link success', subcommand: 'link', options: { person: 'alice', platform: 'email', id: 'a@example.com' }, arrange: () => undefined },
+            { name:       'link failure', subcommand: 'link', options:    { person: 'alice', platform: 'email', id: 'a@example.com' }, arrange:    (backend) => {
+                backend.addIdentifier.mockRejectedValue(new Error('link failed'));
+                return undefined;
+            } },
+            { name: 'unlink success', subcommand: 'unlink', options: { person: 'alice', platform: 'email', id: 'a@example.com' }, arrange: () => undefined },
+            { name:       'unlink failure', subcommand: 'unlink', options:    { person: 'alice', platform: 'email', id: 'a@example.com' }, arrange:    (backend) => {
+                backend.removeIdentifier.mockRejectedValue(new Error('unlink failed'));
+                return undefined;
+            } },
+            { name: 'empty list', subcommand: 'list', arrange: () => undefined },
+            { name:       'populated list', subcommand: 'list', arrange:    (backend) => {
+                backend.listContacts.mockResolvedValue([SAMPLE_CONTACT]);
+                return undefined;
+            } },
+            { name:       'list failure', subcommand: 'list', arrange:    (backend) => {
+                backend.listContacts.mockRejectedValue(new Error('list failed'));
+                return undefined;
+            } },
+            { name: 'show not found', subcommand: 'show', options: { person: 'missing' }, arrange: () => undefined },
+            { name:       'show success', subcommand: 'show', options:    { person: 'alice' }, arrange:    (backend) => {
+                backend.getContact.mockResolvedValue(SAMPLE_CONTACT);
+                return undefined;
+            } },
+            { name:       'show failure', subcommand: 'show', options:    { person: 'alice' }, arrange:    (backend) => {
+                backend.getContact.mockRejectedValue(new Error('show failed'));
+                return undefined;
+            } },
+            { name: 'edit with no changes', subcommand: 'edit', options: { person: 'alice' }, arrange: () => undefined },
+            { name:       'edit success', subcommand: 'edit', options:    { person: 'alice', notes: 'updated' }, arrange:    (backend) => {
+                backend.getContact.mockResolvedValue(SAMPLE_CONTACT);
+                return undefined;
+            } },
+            { name:       'edit failure', subcommand: 'edit', options:    { person: 'alice', notes: 'updated' }, arrange:    (backend) => {
+                backend.getContact.mockRejectedValue(new Error('edit failed'));
+                return undefined;
+            } },
+            { name:       'delete unavailable', subcommand: 'delete', options:    { person: 'alice' }, arrange:    (backend) => {
+                backend.getContact.mockResolvedValue(SAMPLE_CONTACT);
+                return undefined;
+            } },
+            { name:       'delete confirmation', subcommand: 'delete', options:    { person: 'alice' }, arrange:    (backend) => {
+                backend.getContact.mockResolvedValue(SAMPLE_CONTACT);
+                return new ContactApprovalHandler(backend as unknown as ContactBackend);
+            } },
+            { name:       'delete failure', subcommand: 'delete', options:    { person: 'alice' }, arrange:    (backend) => {
+                backend.getContact.mockRejectedValue(new Error('delete failed'));
+                return undefined;
+            } },
+        ];
+
+        await Promise.all(cases.map(async (entry) => {
+            const backend = createMockBackend();
+            const approvalHandler = entry.arrange(backend);
+            const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID, approvalHandler);
+            const replyGate = controlledPromise<void>();
+            const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, entry.subcommand, entry.options);
+            editReply.mockImplementation(() => {
+                replyGate.start();
+                return replyGate.promise;
+            });
+
+            let completed = false;
+            const completion = handler.handle(asChatInput).finally(() => {
+                completed = true;
+            });
+            try {
+                await replyGate.started;
+                await Bun.sleep(0);
+                expect(completed, entry.name).toBe(false);
+                replyGate.resolve();
+                await completion;
+            } finally {
+                replyGate.resolve();
+                await completion;
+            }
+        }));
+    });
+
+    test('handles a rejected success response by sending the command failure response', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'add', { name: 'Alice' });
+        const rejectedReply = Promise.reject(new Error('Discord rejected success response'));
+        void rejectedReply.catch(() => {});
+        editReply
+            .mockImplementationOnce(() => rejectedReply)
+            .mockResolvedValueOnce();
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledTimes(2);
+        expect(editReply).toHaveBeenLastCalledWith({ content: 'Failed to create contact: Discord rejected success response' });
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+            displayName: 'Alice',
+            msg:         'Failed to create contact',
+        }));
+    });
+
+    test('waits for every approval response before reporting the button complete', async () => {
+        const cases: { name: string, customId: string, arrange: (handler: ContactApprovalHandler) => void }[] = [
+            { name: 'approve missing request', customId: 'contact-approve:missing', arrange: () => {} },
+            { name:     'approve success', customId: 'contact-approve:approve', arrange:  (handler) => {
+                handler.storePendingRequest('approve', { action: 'create', displayName: 'Alice' });
+            } },
+            { name: 'reject missing request', customId: 'contact-reject:missing', arrange: () => {} },
+            { name:     'reject success', customId: 'contact-reject:reject', arrange:  (handler) => {
+                handler.storePendingRequest('reject', { action: 'create', displayName: 'Alice' });
+            } },
+            { name: 'delete confirm missing request', customId: 'contact-delete-confirm:missing', arrange: () => {} },
+            { name:     'delete confirm success', customId: 'contact-delete-confirm:confirm', arrange:  (handler) => {
+                handler.storePendingDeletion('confirm', SAMPLE_CONTACT.personId);
+            } },
+            { name: 'delete cancel missing request', customId: 'contact-delete-cancel:missing', arrange: () => {} },
+        ];
+
+        await Promise.all(cases.map(async (entry) => {
+            const backend = createMockBackend();
+            const handler = new ContactApprovalHandler(backend as unknown as ContactBackend);
+            entry.arrange(handler);
+            const replyGate = controlledPromise<void>();
+            const { interaction, editReply } = makeButtonInteraction(entry.customId);
+            editReply.mockImplementation(() => {
+                replyGate.start();
+                return replyGate.promise;
+            });
+
+            let completed = false;
+            const completion = handler.handleButton(interaction).finally(() => {
+                completed = true;
+            });
+            try {
+                await replyGate.started;
+                await Bun.sleep(0);
+                expect(completed, entry.name).toBe(false);
+                replyGate.resolve();
+                await completion;
+            } finally {
+                replyGate.resolve();
+                await completion;
+            }
+        }));
+    });
+
+    test('waits for each approval update write and reports a rejected write through the public error response', async () => {
+        const cases: {
+            name:      string
+            request:   ContactApprovalRequest
+            operation: 'addIdentifier' | 'removeIdentifier' | 'putContact'
+            arrange?:  (backend: ReturnType<typeof createMockBackend>) => void
+        }[] = [
+            {
+                name:      'add identifier',
+                operation: 'addIdentifier',
+                request:   { action: 'update', personId: 'alice', addIdentifiers: [{ platform: 'email', value: 'a@example.com' }] },
+            },
+            {
+                name:      'remove identifier',
+                operation: 'removeIdentifier',
+                request:   { action: 'update', personId: 'alice', removeIdentifiers: [{ platform: 'email', value: 'a@example.com' }] },
+            },
+            {
+                name:      'put updated notes',
+                operation: 'putContact',
+                request:   { action: 'update', personId: 'alice', notes: 'updated' },
+                arrange:   backend => backend.getContact.mockResolvedValue(SAMPLE_CONTACT),
+            },
+        ];
+
+        await Promise.all(cases.map(async (entry) => {
+            const backend = createMockBackend();
+            entry.arrange?.(backend);
+            const operationGate = controlledPromise<void>();
+            backend[entry.operation].mockImplementation(() => {
+                operationGate.start();
+                return operationGate.promise;
+            });
+            const handler = new ContactApprovalHandler(backend as unknown as ContactBackend);
+            handler.storePendingRequest(entry.name, entry.request);
+            const { interaction, editReply } = makeButtonInteraction(`contact-approve:${entry.name}`);
+
+            let completed = false;
+            const completion = handler.handleButton(interaction).finally(() => {
+                completed = true;
+            });
+            try {
+                await operationGate.started;
+                await Bun.sleep(0);
+                expect(completed, entry.name).toBe(false);
+                operationGate.resolve();
+                await completion;
+                expect(editReply).toHaveBeenCalledWith(expect.objectContaining({ embeds: expect.any(Array) as unknown as unknown[] }));
+            } finally {
+                operationGate.resolve();
+                await completion;
+            }
+
+            backend[entry.operation].mockRejectedValue(new Error(`${entry.name} failed`));
+            handler.storePendingRequest(`${entry.name}-failure`, entry.request);
+            const failed = makeButtonInteraction(`contact-approve:${entry.name}-failure`);
+            await handler.handleButton(failed.interaction);
+            expect(failed.editReply).toHaveBeenCalledWith(expect.objectContaining({
+                content: 'An error occurred processing your request. Please try again.',
+            }));
+        }));
     });
 });

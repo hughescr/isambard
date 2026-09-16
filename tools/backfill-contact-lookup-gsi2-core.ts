@@ -9,6 +9,7 @@
 
 import { UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import pLimit from 'p-limit';
 import type { createDynamoDBClient } from '@/storage';
 import { ContactKeyGenerator } from '@/storage/contacts/key-generator';
 import { contactSchema, type ContactId, type ContactIdentifier } from '@/storage/contacts/types';
@@ -31,26 +32,22 @@ export interface ContactProfileItem {
 }
 
 export function parseArgs(argv: string[]): BackfillOptions {
-    // Stryker disable BooleanLiteral: Bun V8 inspector does not map per-test coverage to variable-initializer lines inside functions in tools/ files; tests DO verify these defaults (parseArgs tests assert dryRun===false, showHelp===false)
     // Start with both flags disabled; set them below as we find the relevant CLI args.
     let dryRun = false;
     let showHelp = false;
     // Stryker restore BooleanLiteral
 
-    // Stryker disable next-line MethodExpression: same Bun coverage-mapping limitation; argv.slice(2) test passes ['--help','script.ts'] and expects showHelp===false (which would fail if slice is removed)
     // Strip argv[0] (runtime) and argv[1] (script path); only process user-provided args.
     const args = argv.slice(2);
-    // Stryker disable OptionalChaining: arg is never undefined in for-of over string[]; the optional chain is required for runtime correctness under noUncheckedIndexedAccess but cannot be killed by tests
     for(const arg of args) {
         if(arg === '--help' || arg === '-h') {
             showHelp = true;
         } else if(arg === '--dry-run') {
             dryRun = true;
-        } else if(arg?.startsWith('--')) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- arg is 'string | undefined' under noUncheckedIndexedAccess; optional chain required for runtime correctness
+        } else if(arg.startsWith('--')) {
             throw new Error(`Unknown option: ${arg}`);
         }
     }
-    // Stryker restore OptionalChaining
     return { dryRun, showHelp };
 }
 
@@ -60,30 +57,64 @@ export interface PageStats {
     errors:  number
 }
 
+const MAX_CONCURRENT_UPDATES = 4;
+const UPDATE_INTERVAL_MS = 250;
+
+/** Space actual request starts; share this pacer across pages and retries. */
+export function createUpdateRateLimiter(
+    now:   () => number = Date.now,
+    sleep: (ms: number) => Promise<void> = ms => new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+    })
+): () => Promise<void> {
+    let nextStart = 0;
+    let tail: Promise<void> = Promise.resolve();
+    function recordStart(): void {
+        // Rebase after the timer actually wakes. Stalled timers must not release
+        // queued requests in a burst using reservations made before the stall.
+        nextStart = now() + UPDATE_INTERVAL_MS;
+    }
+    return () => {
+        const ticket = tail.then(async () => {
+            const waitMs = Math.max(0, nextStart - now());
+            if(waitMs > 0) {
+                await sleep(waitMs);
+            }
+            recordStart();
+            return undefined;
+        });
+        tail = ticket.catch(() => undefined);
+        return ticket;
+    };
+}
+
 /**
  * Update a single CONTACT_LOOKUP row with GSI2 keys.
  *
  * Returns 'updated' on success, 'skipped' if condition failed (already backfilled/stale),
  * or 'error' on any other failure.
  */
-// Stryker disable all -- Bun V8 inspector does not map per-test coverage to async function bodies in tools/ files; processContacts tests exercise this indirectly
 async function updateLookupRow(
     tableName: string,
     docClient: ReturnType<typeof createDynamoDBClient>['docClient'],
-    keys: { PK: string, SK: string, GSI2PK: string, GSI2SK: string }
+    keys: { PK: string, SK: string, GSI2PK: string, GSI2SK: string },
+    pace: () => Promise<void>
 ): Promise<'updated' | 'skipped' | 'error'> {
     try {
-        await retryAsync(() => docClient.send(new UpdateCommand({
-            TableName:                 tableName,
-            Key:                       { PK: keys.PK, SK: keys.SK },
-            UpdateExpression:          'SET GSI2PK = :gsi2pk, GSI2SK = :gsi2sk, createdAt = if_not_exists(createdAt, :createdAt)',
-            ConditionExpression:       'attribute_exists(PK) AND attribute_not_exists(GSI2PK)',
-            ExpressionAttributeValues: {
-                ':gsi2pk':    keys.GSI2PK,
-                ':gsi2sk':    keys.GSI2SK,
-                ':createdAt': new Date().toISOString(),
-            },
-        })));
+        await retryAsync(async () => {
+            await pace();
+            return docClient.send(new UpdateCommand({
+                TableName:                 tableName,
+                Key:                       { PK: keys.PK, SK: keys.SK },
+                UpdateExpression:          'SET GSI2PK = :gsi2pk, GSI2SK = :gsi2sk, createdAt = if_not_exists(createdAt, :createdAt)',
+                ConditionExpression:       'attribute_exists(PK) AND attribute_not_exists(GSI2PK)',
+                ExpressionAttributeValues: {
+                    ':gsi2pk':    keys.GSI2PK,
+                    ':gsi2sk':    keys.GSI2SK,
+                    ':createdAt': new Date().toISOString(),
+                },
+            }));
+        });
         logger.debug({ pk: keys.PK, sk: keys.SK, gsi2sk: keys.GSI2SK, msg: 'Updated CONTACT_LOOKUP row with GSI2 keys' });
         return 'updated';
     } catch (error) {
@@ -105,16 +136,17 @@ async function updateLookupRow(
  * Uses ConditionalCheckFailedException to detect rows that are already
  * backfilled (condition: attribute_exists(PK) AND attribute_not_exists(GSI2PK)).
  */
-// Stryker disable all -- Bun V8 inspector does not map per-test coverage to async function bodies in tools/ files; direct unit tests exist for all paths (zero identifiers/already-backfilled/dry-run/success/error) and kill all mutants when coverage is mapped
 export async function processContacts(
     items: ContactProfileItem[],
     tableName: string,
     docClient: ReturnType<typeof createDynamoDBClient>['docClient'],
-    dryRun: boolean
+    dryRun: boolean,
+    pace: () => Promise<void> = createUpdateRateLimiter()
 ): Promise<PageStats> {
     let updated = 0;
     let skipped = 0;
     let errors  = 0;
+    const pending: ReturnType<typeof ContactKeyGenerator.createLookupKeys>[] = [];
 
     for(const item of items) {
         // Parse the contact to get identifiers — use contactSchema.pick to avoid full validation
@@ -141,15 +173,19 @@ export async function processContacts(
                 continue;
             }
 
-            // eslint-disable-next-line no-await-in-loop -- sequential: each update is independent; retry handles throttle
-            const outcome = await updateLookupRow(tableName, docClient, keys);
-            if(outcome === 'updated') {
-                updated++;
-            } else if(outcome === 'skipped') {
-                skipped++;
-            } else {
-                errors++;
-            }
+            pending.push(keys);
+        }
+    }
+
+    const limit = pLimit(MAX_CONCURRENT_UPDATES);
+    const outcomes = await Promise.all(pending.map(keys => limit(() => updateLookupRow(tableName, docClient, keys, pace))));
+    for(const outcome of outcomes) {
+        if(outcome === 'updated') {
+            updated++;
+        } else if(outcome === 'skipped') {
+            skipped++;
+        } else {
+            errors++;
         }
     }
 
@@ -207,7 +243,6 @@ export async function runBackfillLoop(
     let consecutiveFailures = 0;
 
     try {
-        // Stryker disable BlockStatement: no-op body of while(true) produces identical behavior to `break` when loop is empty
         while(true) {
             try {
                 const pageStartKey = exclusiveStartKey;
@@ -220,7 +255,6 @@ export async function runBackfillLoop(
                 const pageStats = await processOnePage(items);
                 stats.totalUpdated += pageStats.updated;
                 stats.totalSkipped += pageStats.skipped;
-                // Stryker disable next-line AssignmentOperator: Bun V8 inspector does not map per-test coverage to these lines in tools/ async functions; test 'processContacts errors are accumulated in totalErrors' verifies this (errors:2 → totalErrors===2 would detect -=)
                 stats.totalErrors  += pageStats.errors;
 
                 // Success: advance cursor and reset failure counter.
@@ -228,7 +262,6 @@ export async function runBackfillLoop(
                 consecutiveFailures = 0;
 
                 // Break when the query returns no continuation cursor (last page).
-                // Stryker disable next-line ConditionalExpression,BooleanLiteral: mutating to `false` causes an infinite loop (Timeout); the test correctly asserts loop termination but Stryker classifies the timeout as undetected rather than Killed
                 if(!exclusiveStartKey) {
                     break;
                 }
@@ -238,10 +271,8 @@ export async function runBackfillLoop(
                 consecutiveFailures++;
                 stats.totalErrors++;
 
-                // Stryker disable next-line ObjectLiteral,StringLiteral: logger.warn call in catch block — observational only, untestable error path
                 logger.warn({ err, exclusiveStartKey, consecutiveFailures, msg: 'Failed to query page; will retry same page' });
 
-                // Stryker disable StringLiteral,ObjectLiteral: error message and cause object are informational — what matters is that it throws; untestable circuit-breaker path (would require maxConsecutiveFailures consecutive query failures)
                 if(consecutiveFailures >= maxConsecutiveFailures) {
                     throw new Error(
                         `Backfill aborted: ${maxConsecutiveFailures} consecutive query failures at cursor ${JSON.stringify(exclusiveStartKey)}`,
@@ -251,7 +282,6 @@ export async function runBackfillLoop(
                 // Stryker restore StringLiteral,ObjectLiteral
 
                 // Exponential backoff before retrying the failed page.
-                // Stryker disable next-line ArithmeticOperator: backoff formula
                 const backoffMs = baseBackoffMs * (2 ** (consecutiveFailures - 1));
                 // eslint-disable-next-line no-await-in-loop -- sequential: backoff between consecutive failure retries
                 await sleep(backoffMs);

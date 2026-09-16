@@ -143,10 +143,12 @@ export function attachTurnSynopsis(deps: AttachTurnSynopsisDeps): () => void {
     // No id comparison: the conductor runs one turn at a time, so whatever frame it reports
     // belongs to whatever turn is open. `reducePhaseSynopsis`'s own id guard is the backstop —
     // if that invariant is ever weakened this degrades to a silently dropped digest, never a
-    // wrong status. Same boundary cast, for the same reason, as conductor-processor.ts's.
-    const unsubscribeFrames = conductor.subscribeTurn((_turnId: string, frame: SDKMessage) => {
+    // wrong status.
+    function forwardFrame(_turnId: string, frame: SDKMessage): void {
+        // boundary cast: the synopsis handler reads only observability fields shared by the broader SDKMessage union and AgentStreamEvent
         handler?.onStreamEvent(frame as unknown as AgentStreamEvent);
-    });
+    }
+    const unsubscribeFrames = conductor.subscribeTurn(forwardFrame);
 
     return (): void => {
         unsubscribeFrames();

@@ -449,6 +449,12 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         });
 
         expect(createBrowserMcpServerSpy).toHaveBeenCalledTimes(1);
+        expect(createBrowserMcpServerSpy).toHaveBeenCalledWith(expect.objectContaining({
+            adapter: fakeBrowserAdapter,
+            policy:  { allowlist: undefined },
+        }));
+        const browserArgs = createBrowserMcpServerSpy.mock.calls[0][0];
+        expect(Object.hasOwn(browserArgs.policy, 'allowlist')).toBe(true);
         expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('browserPolicy'));
         expect(result.browserMcpServer).toBeDefined();
     });

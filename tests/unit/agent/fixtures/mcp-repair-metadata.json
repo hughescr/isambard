@@ -1,0 +1,565 @@
+{
+  "caldav": {
+    "name": "caldav",
+    "version": "1.0.0",
+    "tools": {
+      "getCalendarEvents": {
+        "description": "Get calendar events for a user in a specific date range. Returns events from all calendars associated with the user plus shared/public calendars.",
+        "annotations": {
+          "title": "Get Calendar Events",
+          "readOnlyHint": true,
+          "idempotentHint": true
+        },
+        "input": {
+          "user": {
+            "description": "Person's name to look up calendars for (e.g., 'Craig')"
+          },
+          "startDate": {
+            "description": "Start date in ISO 8601 format (e.g., 2026-03-18)"
+          },
+          "endDate": {
+            "description": "End date in ISO 8601 format (e.g., 2026-03-25)"
+          }
+        }
+      },
+      "getUpcomingEvents": {
+        "description": "Get upcoming calendar events for a user over the next N days. Convenience wrapper that defaults to 7 days.",
+        "annotations": {
+          "title": "Get Upcoming Events",
+          "readOnlyHint": true,
+          "idempotentHint": true
+        },
+        "input": {
+          "user": {
+            "description": "Person's name to look up calendars for (e.g., 'Craig')"
+          },
+          "days": {
+            "description": "Number of days to look ahead (default: 7)"
+          }
+        }
+      },
+      "listUserCalendars": {
+        "description": "List all calendar labels configured for a user. Shows calendar names grouped by server, without exposing URLs or credentials.",
+        "annotations": {
+          "title": "List User Calendars",
+          "readOnlyHint": true,
+          "idempotentHint": true
+        },
+        "input": {
+          "user": {
+            "description": "Person's name to list calendars for (e.g., 'Craig')"
+          }
+        }
+      }
+    }
+  },
+  "contacts": {
+    "name": "contacts",
+    "version": "1.0.0",
+    "tools": {
+      "lookupContact": {
+        "description": "Look up contacts by any identifier: name, email, handle, nickname, etc. Returns ranked results.",
+        "annotations": {
+          "title": "Look Up Contact",
+          "readOnlyHint": true,
+          "idempotentHint": true
+        },
+        "input": {
+          "query": {
+            "description": "Name, email address, Bluesky handle, Discord name, or any other identifier to search for"
+          }
+        }
+      },
+      "lookupContactId": {
+        "description": "Get the identifier value(s) for a specific contact on a given platform (e.g., their email address or Bluesky handle).",
+        "annotations": {
+          "title": "Look Up Contact ID",
+          "readOnlyHint": true,
+          "idempotentHint": true
+        },
+        "input": {
+          "personId": {
+            "description": "The personId of the contact (e.g., \"craig-hughes\")"
+          },
+          "platform": {
+            "description": "Platform to look up: 'name', 'nickname', 'discord', 'email', or 'bsky'"
+          }
+        }
+      },
+      "requestContactCreate": {
+        "description": "Request creation of a new contact. Requires admin approval before the contact is saved.",
+        "annotations": {
+          "title": "Request Contact Create",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false
+        },
+        "input": {
+          "displayName": {
+            "description": "The contact's display name (e.g., 'Alice Wonderland')"
+          },
+          "identifiers": {
+            "description": "At least one identifier for the contact",
+            "element": {
+              "shape": {
+                "platform": {},
+                "value": {}
+              }
+            }
+          },
+          "notes": {
+            "description": "Optional notes about the contact"
+          }
+        }
+      },
+      "requestContactUpdate": {
+        "description": "Request an update to an existing contact. Requires admin approval before changes are saved.",
+        "annotations": {
+          "title": "Request Contact Update",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false
+        },
+        "input": {
+          "personId": {
+            "description": "The personId of the contact to update (e.g., \"craig-hughes\")"
+          },
+          "addIdentifiers": {
+            "description": "New identifiers to add to the contact",
+            "element": {
+              "shape": {
+                "platform": {},
+                "value": {}
+              }
+            }
+          },
+          "removeIdentifiers": {
+            "description": "Identifiers to remove from the contact",
+            "element": {
+              "shape": {
+                "platform": {
+                  "description": "Platform type: 'name', 'nickname', 'discord', 'email', or 'bsky'"
+                },
+                "value": {
+                  "description": "The identifier value to remove"
+                }
+              }
+            }
+          },
+          "notes": {
+            "description": "New notes for the contact (replaces existing notes)"
+          }
+        }
+      },
+      "listContacts": {
+        "description": "List all known contacts in the address book.",
+        "annotations": {
+          "title": "List Contacts",
+          "readOnlyHint": true,
+          "idempotentHint": true
+        },
+        "input": {}
+      }
+    }
+  },
+  "inbox": {
+    "name": "inbox",
+    "version": "1.0.0",
+    "tools": {
+      "getUnreadOverview": {
+        "description": "Get a high-level overview of unread messages across all channels. Returns counts only, no message content.",
+        "input": {}
+      },
+      "getChannelSummary": {
+        "description": "Get an AI-generated summary of unread messages in a channel, plus message metadata for selective reading. Accepts channel ID or #channel-name format.",
+        "input": {
+          "channelId": {
+            "description": "Discord channel ID or #channel-name (e.g., #general)"
+          }
+        }
+      },
+      "fetchMessages": {
+        "description": "Fetch full content of specific messages by ID. Use after reviewing channel summary to get details. Accepts channel ID or #channel-name format.",
+        "input": {
+          "channelId": {
+            "description": "Discord channel ID or #channel-name (e.g., #general)"
+          },
+          "messageIds": {
+            "description": "Array of message IDs to fetch",
+            "element": {}
+          }
+        }
+      },
+      "markAsRead": {
+        "description": "Mark specific messages as read. Updates the checkpoint for the channel. Accepts channel ID or #channel-name format.",
+        "input": {
+          "channelId": {
+            "description": "Discord channel ID or #channel-name (e.g., #general)"
+          },
+          "messageIds": {
+            "description": "Array of message IDs to mark as read",
+            "element": {}
+          }
+        }
+      },
+      "markChannelRead": {
+        "description": "Mark all messages in a channel as read. Updates the checkpoint to the latest message. Accepts channel ID or #channel-name format.",
+        "input": {
+          "channelId": {
+            "description": "Discord channel ID or #channel-name (e.g., #general)"
+          }
+        }
+      }
+    }
+  },
+  "media": {
+    "name": "media",
+    "version": "1.0.0",
+    "tools": {
+      "analyzeVideoFromUrl": {
+        "description": "Download and analyze a video from a URL. Extracts scene-based frames, metadata, and subtitles/transcription.",
+        "annotations": {
+          "title": "Analyze Video From URL",
+          "readOnlyHint": false,
+          "idempotentHint": false
+        },
+        "input": {
+          "url": {
+            "description": "Video URL or HLS playlist URL"
+          },
+          "outputDir": {
+            "description": "Directory to save video files and frames"
+          },
+          "alt": {
+            "description": "Alt text for the video"
+          }
+        }
+      },
+      "analyzeLocalVideo": {
+        "description": "Analyze a video file already saved to disk. Extracts scene-based frames, metadata, and subtitles/transcription.",
+        "annotations": {
+          "title": "Analyze Local Video",
+          "readOnlyHint": false,
+          "idempotentHint": false
+        },
+        "input": {
+          "videoPath": {
+            "description": "Path to the local video file"
+          },
+          "outputDir": {
+            "description": "Directory to save analysis output (frames, metadata)"
+          },
+          "alt": {
+            "description": "Alt text description of the video"
+          }
+        }
+      },
+      "getVideoFrames": {
+        "description": "Extract additional frames from a previously downloaded video. Use to focus on specific time ranges.",
+        "annotations": {
+          "title": "Get Video Frames",
+          "readOnlyHint": true,
+          "idempotentHint": true
+        },
+        "input": {
+          "videoPath": {
+            "description": "Path to the local video file"
+          },
+          "startTime": {
+            "description": "Start time in seconds"
+          },
+          "endTime": {
+            "description": "End time in seconds"
+          },
+          "count": {
+            "description": "Number of frames to extract (max 20)"
+          }
+        }
+      },
+      "generateSpectrogramFromAudio": {
+        "description": "Generate an audio spectrogram image from a video or audio file. Useful for identifying speech patterns and audio content.",
+        "annotations": {
+          "title": "Generate Spectrogram From Audio",
+          "readOnlyHint": true,
+          "idempotentHint": true
+        },
+        "input": {
+          "filePath": {
+            "description": "Path to the local video or audio file"
+          }
+        }
+      }
+    }
+  },
+  "memory": {
+    "name": "memory",
+    "version": "1.0.0",
+    "tools": {
+      "view": {
+        "description": "View memory by path",
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false
+        },
+        "input": {
+          "path": {
+            "description": "Memory path (e.g., /identity/core-values, /users/{userId}/name, /events/{type}/{timestamp})"
+          }
+        }
+      },
+      "storeSelf": {
+        "description": "Store self-knowledge in identity or state layer. Saving with the same name will replace existing content.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": false,
+          "openWorldHint": false
+        },
+        "input": {
+          "layer": {
+            "description": "Layer: identity (core beliefs/values) or state (current context)"
+          },
+          "name": {
+            "description": "Memory name (e.g., core-values, current-goals)"
+          },
+          "content": {
+            "description": "Memory content to store"
+          },
+          "tags": {
+            "description": "Optional tags for categorization",
+            "element": {}
+          }
+        }
+      },
+      "storeUserMemory": {
+        "description": "Store user-specific memory. Saving with the same userId and name will replace existing content.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": false,
+          "openWorldHint": false
+        },
+        "input": {
+          "userId": {
+            "description": "User identifier"
+          },
+          "name": {
+            "description": "Memory name (e.g., preferences, history)"
+          },
+          "content": {
+            "description": "Memory content to store"
+          },
+          "tags": {
+            "description": "Optional tags for categorization",
+            "element": {}
+          }
+        }
+      },
+      "logEvent": {
+        "description": "Log an event to the events layer",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false
+        },
+        "input": {
+          "eventType": {
+            "description": "Type of event (e.g., conversation, decision, learning)"
+          },
+          "summary": {
+            "description": "Brief summary of the event"
+          },
+          "details": {
+            "description": "Optional detailed content"
+          },
+          "tags": {
+            "description": "Optional tags for categorization",
+            "element": {}
+          }
+        }
+      },
+      "search": {
+        "description": "Search memories by tag with optional filters",
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "input": {
+          "tags": {
+            "description": "Tags to search for (AND semantics — items must have all tags)",
+            "element": {}
+          },
+          "layer": {
+            "description": "Optional layer filter"
+          },
+          "limit": {
+            "description": "Optional result limit"
+          },
+          "cursor": {
+            "description": "Pagination cursor from previous response"
+          },
+          "startDate": {
+            "description": "Filter: items updated on or after this ISO8601 datetime"
+          },
+          "endDate": {
+            "description": "Filter: items updated on or before this ISO8601 datetime"
+          }
+        }
+      },
+      "list": {
+        "description": "List memories in a directory",
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "input": {
+          "path": {
+            "description": "Directory path (e.g., /, /identity, /users). Defaults to root /"
+          },
+          "limit": {
+            "description": "Maximum number of results to return"
+          },
+          "cursor": {
+            "description": "Pagination cursor from previous response"
+          },
+          "startDate": {
+            "description": "Filter: items updated on or after this ISO8601 datetime"
+          },
+          "endDate": {
+            "description": "Filter: items updated on or before this ISO8601 datetime"
+          }
+        }
+      },
+      "listTags": {
+        "description": "List all tags with their usage counts",
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "input": {}
+      },
+      "deleteMemory": {
+        "description": "Delete a memory at the specified path. Returns the deleted content as confirmation.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "input": {
+          "path": {
+            "description": "Memory path to delete (e.g., /identity/old-values, /state/outdated)"
+          }
+        }
+      },
+      "updateTags": {
+        "description": "Add or remove tags on an existing memory without changing its content.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "input": {
+          "path": {
+            "description": "Memory path to update tags on"
+          },
+          "addTags": {
+            "description": "Tags to add to the memory",
+            "element": {}
+          },
+          "removeTags": {
+            "description": "Tags to remove from the memory",
+            "element": {}
+          }
+        }
+      }
+    }
+  },
+  "memorySemantic": {
+    "description": "Semantic search over memories by content similarity. Use the `search` tool for tag-based filtering instead. The query is embedded the same way memory content is, so phrase it in the form a matching memory would take — declarative statements rather than questions.",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "input": {
+      "query": {
+        "description": "Natural language query to search for semantically similar memories"
+      },
+      "layer": {
+        "description": "Optional layer filter"
+      },
+      "limit": {
+        "description": "Maximum number of results to return (default: 5)"
+      }
+    }
+  },
+  "userContext": {
+    "name": "user-context",
+    "version": "1.0.0",
+    "tools": {
+      "getPersonContext": {
+        "description": "Fetch cross-platform interaction history for a person. Returns recent messages, emails, and social interactions.",
+        "annotations": {
+          "title": "Get Person Context",
+          "readOnlyHint": true,
+          "idempotentHint": true
+        },
+        "input": {
+          "identifier": {
+            "description": "Name, email, handle, or any identifier for the person"
+          },
+          "timeRange": {
+            "shape": {
+              "startTime": {
+                "description": "ISO 8601 start (default: 7 days ago)"
+              },
+              "endTime": {
+                "description": "ISO 8601 end (default: now)"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "wikipedia": {
+    "name": "wikipedia",
+    "version": "1.0.0",
+    "tools": {
+      "getRandomArticle": {
+        "description": "Fetch a random Wikipedia article summary. Returns structured JSON with title, extract, description, thumbnail URL, and full article URL.",
+        "annotations": {
+          "title": "Get Random Article",
+          "readOnlyHint": true,
+          "idempotentHint": false
+        },
+        "input": {}
+      },
+      "getArticle": {
+        "description": "Fetch a Wikipedia article's full source content by title. Returns JSON with title, source (wikitext), and metadata.",
+        "annotations": {
+          "title": "Get Article",
+          "readOnlyHint": true,
+          "idempotentHint": true
+        },
+        "input": {
+          "title": {
+            "description": "The Wikipedia article title (e.g. \"Albert Einstein\", \"Quantum_mechanics\")"
+          }
+        }
+      }
+    }
+  }
+}

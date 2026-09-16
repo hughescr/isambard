@@ -241,12 +241,7 @@ export function createContextPolicy(params: CreateContextPolicyParams): ContextP
     return {
         shouldInjectUserMemory(userId: string, block: string): boolean {
             const mark = userMarks.get(userId);
-            // Stryker disable next-line ConditionalExpression: `mark === undefined` is subsumed by
-            // `mark !== contentFingerprint(block)` — contentFingerprint always returns a defined
-            // string (Bun.hash(...).toString()), so `undefined !== <string>` is already true;
-            // forcing this sub-expression to `false` cannot change the result. Kept for readability
-            // (states the "no mark yet" case explicitly) rather than removed.
-            return mark === undefined || mark !== contentFingerprint(block);
+            return mark !== contentFingerprint(block);
         },
 
         markInjected(userId: string, block: string): void {
@@ -367,10 +362,6 @@ export function createContextPolicy(params: CreateContextPolicyParams): ContextP
         },
 
         markHealthSeen(): void {
-            // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent guard -- lastHealthStateKey/pendingHealthStateKey are only ever read or written behind this same `!healthRegistry` check (see healthNote() above), so without a healthRegistry both stay undefined whether or not this guard runs, and with one the guard is always false anyway; removing it changes no observable behavior.
-            if(!healthRegistry) {
-                return;
-            }
             lastHealthStateKey = pendingHealthStateKey;
         },
     };

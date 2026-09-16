@@ -11,7 +11,6 @@ import removeMarkdown from 'remove-markdown';
  * In tests, the first call to getTmpDir() populates this and subsequent calls
  * return the same path (so mockFsPromises.mkdtemp is only called once per test suite).
  */
-// Stryker disable next-line AssignmentOperator: Initial null is required — lazy-init pattern
 let tmpDirPromise: Promise<string> | null = null;
 
 /**
@@ -24,7 +23,6 @@ let tmpDirPromise: Promise<string> | null = null;
  * On failure, the cached promise is cleared so the next call will retry.
  */
 function getTmpDir(): Promise<string> {
-    // Stryker disable next-line AssignmentOperator: nullish assign — lazy-init sentinel
     tmpDirPromise ??= mkdtemp(path.join(tmpdir(), 'isambard-textgen-')).catch((err: unknown) => {
         tmpDirPromise = null;
         throw err;
@@ -42,7 +40,6 @@ export function resetTmpDirForTesting(): void {
 }
 
 // Default timeout for text generation calls
-// Stryker disable next-line AssignmentOperator: Default timeout constant is configuration
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 /**
@@ -59,7 +56,6 @@ interface TextGeneratorOptions {
      * Model to use for text generation.
      * @default 'haiku'
      */
-    // Stryker disable next-line StringLiteral: default model name is SDK configuration constant
     model?:           string
     /**
      * Fallback model to use when primary model is unavailable (rate limit, overload, 5xx).
@@ -118,45 +114,52 @@ interface QueryEvent {
  * Extracts accumulated text from a query assistant event.
  */
 function extractTextFromEvent(event: { type: string, message?: unknown }): string {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant — non-assistant events have no message.content, so filter returns [] and we return '' either way
     if(event.type !== 'assistant') {
         return '';
     }
     const content = (event.message as { content?: unknown } | undefined)?.content as ContentBlock[] | undefined;
-    // Stryker disable next-line ArrayDeclaration,ConditionalExpression,LogicalOperator,MethodExpression: Equivalent mutant — filter on non-text blocks or without text field produces empty result either way
     const textBlocks = (content ?? []).filter(block => block.type === 'text' && block.text);
-    // Stryker disable next-line StringLiteral: ?? '' fallback is defensive — filter guarantees block.text is truthy, so '' default is never reached
-    return textBlocks.map(block => block.text ?? '').join('');
+    return textBlocks.map(block => block.text).join('');
 }
 
 /**
  * Builds an internal AbortController wired to the caller's signal and a timeout.
  * We never mutate the caller's controller — all abort sources are forwarded to our own.
  */
-function buildAbortController(options?: TextGeneratorOptions): AbortController {
+function buildAbortController(options?: TextGeneratorOptions): { controller: AbortController, cleanup: () => void } {
     const controller = new AbortController();
     const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const sources: AbortSignal[] = [];
+    const forwardAbort = (): void => controller.abort();
 
     // Wire caller's abort signal to our internal controller (never mutate caller's)
     if(options?.abortController) {
         if(options.abortController.signal.aborted) {
             controller.abort(); // Already aborted — short-circuit
         } else {
-            // Stryker disable BlockStatement,ArrowFunction: abort signal wiring — mutating causes test timeout (abort never propagates to controller)
-            // Stryker disable next-line ObjectLiteral,BooleanLiteral: { once: true } is defensive — abort signals only fire once anyway; mutation to {} or false doesn't change observable behavior
-            options.abortController.signal.addEventListener('abort', () => controller.abort(), { once: true });
-            // Stryker restore BlockStatement,ArrowFunction
+            // The caller's signal is one-shot; cleanup also removes the listener on completion.
+            options.abortController.signal.addEventListener('abort', forwardAbort);
+            // Stryker disable next-line ArrayMethodSwap: sources is used only to remove the same listener from every signal; cleanup order is unobservable.
+            sources.push(options.abortController.signal);
         }
     }
 
     // Wire timeout to our internal controller using AbortSignal.timeout (auto-cleanup)
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: timeout guard — 0 means disabled; tests use timeoutMs=0 so block is never entered
     if(timeoutMs > 0) {
-        // Stryker disable next-line ObjectLiteral,BooleanLiteral,ArrowFunction,StringLiteral: { once: true } is defensive — abort signals only fire once anyway; mutation to {} or false doesn't change observable behavior; abort callback is fire-and-forget; 'abort' event name is configuration
-        AbortSignal.timeout(timeoutMs).addEventListener('abort', () => controller.abort(), { once: true });
+        const timeoutSignal = AbortSignal.timeout(timeoutMs);
+        timeoutSignal.addEventListener('abort', forwardAbort);
+        // Stryker disable next-line ArrayMethodSwap: sources is used only to remove the same listener from every signal; cleanup order is unobservable.
+        sources.push(timeoutSignal);
     }
 
-    return controller;
+    return {
+        controller,
+        cleanup: () => {
+            for(const source of sources) {
+                source.removeEventListener('abort', forwardAbort);
+            }
+        },
+    };
 }
 
 /**
@@ -208,7 +211,7 @@ async function executePrompt(
     prompt: string,
     options?: TextGeneratorOptions
 ): Promise<string> {
-    const controller = buildAbortController(options);
+    const { controller, cleanup } = buildAbortController(options);
     const callerSignal = options?.abortController?.signal;
     const startedAt = Date.now();
 
@@ -221,20 +224,16 @@ async function executePrompt(
         const events = query({
             prompt,
             options: {
-                // Stryker disable next-line StringLiteral: default model name is SDK configuration constant
                 model:           options?.model ?? 'haiku',
                 fallbackModel:   options?.fallbackModel,
-                // Stryker disable next-line StringLiteral: executable name is configuration
                 executable:      'bun',
                 cwd:             tmpDir,
                 persistSession:  false,
                 tools:           [],
                 thinking:        { type: 'disabled' },
-                // Stryker disable next-line StringLiteral: effort level is configuration
                 effort:          'low',
                 maxTurns:        1,
                 abortController: controller,
-                // Stryker disable next-line ConditionalExpression,LogicalOperator: undefined passthrough — systemPrompt is only included when the caller provides it
                 ...(options?.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
             },
         }) as unknown as AsyncIterable<QueryEvent>;
@@ -246,7 +245,6 @@ async function executePrompt(
                     return ''; // Non-success result — discard any partial text
                 }
                 // Capture canonical result text as fallback in case no assistant events were streamed
-                // Stryker disable next-line AssignmentOperator,ConditionalExpression: successResult fallback — only used when resultText is empty (e.g. haiku returns via result.result instead of streaming)
                 successResult = event.result;
                 break; // Success — return accumulated text below
             }
@@ -259,10 +257,8 @@ async function executePrompt(
         }
 
         // Use successResult as fallback if no assistant events were streamed
-        // Stryker disable next-line ConditionalExpression,StringLiteral: fallback — successResult is only used when resultText is empty string
         let text = (resultText.length > 0 ? resultText : (successResult ?? '')).trim();
         if(options?.stripMarkdown) {
-            // Stryker disable next-line MethodExpression: trim() after removeMarkdown is defensive — markdown stripping may leave trailing whitespace but test inputs don't exercise this
             text = removeMarkdown(text).trim();
         }
         return text;
@@ -273,6 +269,8 @@ async function executePrompt(
             return '';
         }
         throw error;
+    } finally {
+        cleanup();
     }
 }
 
@@ -318,7 +316,6 @@ export async function generateTextWithSystemPrompt(
     userPrompt: string,
     options?: TextGeneratorOptions
 ): Promise<string> {
-    // Stryker disable next-line ConditionalExpression: array check — string arrays are passed to SDK as-is for caching; strings are passed directly
     const flatPrompt = Array.isArray(systemPrompt)
         ? systemPrompt.filter(s => s !== SYSTEM_PROMPT_DYNAMIC_BOUNDARY).join('\n\n')
         : systemPrompt;

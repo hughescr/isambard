@@ -1,4 +1,3 @@
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import boundariesPlugin from 'eslint-plugin-boundaries';
 
 /**

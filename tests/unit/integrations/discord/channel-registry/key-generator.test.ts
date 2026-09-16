@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'bun:test';
+import { InvariantViolationError } from '@/errors';
 import { ChannelRegistryKeyGenerator } from '@/integrations/discord/channel-registry/key-generator';
 
 describe('ChannelRegistryKeyGenerator', () => {
@@ -97,6 +98,12 @@ describe('ChannelRegistryKeyGenerator', () => {
     });
 
     describe('parseChannelId', () => {
+        it('rejects a key whose channel prefix appears only in the value', () => {
+            expect(() => ChannelRegistryKeyGenerator.parseChannelId('OTHER#CHANNEL#123')).toThrow(
+                expect.objectContaining({ context: expect.objectContaining({ location: 'parseChannelId' }) })
+            );
+        });
+
         it('should parse valid PK correctly', () => {
             const channelId = ChannelRegistryKeyGenerator.parseChannelId('CHANNEL#123456');
 
@@ -116,9 +123,13 @@ describe('ChannelRegistryKeyGenerator', () => {
         });
 
         it('should throw error for invalid PK prefix', () => {
-            expect(() => {
+            expect(() => ChannelRegistryKeyGenerator.parseChannelId('INVALID#123')).toThrow('Invalid PK format: expected CHANNEL#..., got INVALID#123');
+            try {
                 ChannelRegistryKeyGenerator.parseChannelId('INVALID#123');
-            }).toThrow('Invalid PK format: expected CHANNEL#..., got INVALID#123');
+            } catch (error) {
+                expect(error).toBeInstanceOf(InvariantViolationError);
+                expect((error as InvariantViolationError).context.location).toBe('parseChannelId');
+            }
         });
 
         it('should throw error for missing prefix', () => {
@@ -141,6 +152,15 @@ describe('ChannelRegistryKeyGenerator', () => {
     });
 
     describe('parseGuildKeys', () => {
+        it.each([
+            ['guild PK', 'OTHER#GUILD#789', 'CHANNEL#123'],
+            ['channel SK', 'GUILD#789', 'OTHER#CHANNEL#123'],
+        ])('rejects an interior prefix in the %s', (_case, pk, sk) => {
+            expect(() => ChannelRegistryKeyGenerator.parseGuildKeys(pk, sk)).toThrow(
+                expect.objectContaining({ context: expect.objectContaining({ location: 'parseGuildKeys' }) })
+            );
+        });
+
         it('should parse valid GSI1 keys correctly', () => {
             const result = ChannelRegistryKeyGenerator.parseGuildKeys(
                 'GUILD#789012',
@@ -184,21 +204,29 @@ describe('ChannelRegistryKeyGenerator', () => {
         });
 
         it('should throw error for invalid GSI1PK prefix', () => {
-            expect(() => {
-                ChannelRegistryKeyGenerator.parseGuildKeys(
-                    'INVALID#123',
-                    'CHANNEL#test'
-                );
-            }).toThrow('Invalid GSI1PK format: expected GUILD#..., got INVALID#123');
+            expect(() => ChannelRegistryKeyGenerator.parseGuildKeys(
+                'INVALID#123',
+                'CHANNEL#test'
+            )).toThrow('Invalid GSI1PK format: expected GUILD#..., got INVALID#123');
+            try {
+                ChannelRegistryKeyGenerator.parseGuildKeys('INVALID#123', 'CHANNEL#test');
+            } catch (error) {
+                expect(error).toBeInstanceOf(InvariantViolationError);
+                expect((error as InvariantViolationError).context.location).toBe('parseGuildKeys');
+            }
         });
 
         it('should throw error for invalid GSI1SK prefix', () => {
-            expect(() => {
-                ChannelRegistryKeyGenerator.parseGuildKeys(
-                    'GUILD#123',
-                    'INVALID#test'
-                );
-            }).toThrow('Invalid GSI1SK format: expected CHANNEL#..., got INVALID#test');
+            expect(() => ChannelRegistryKeyGenerator.parseGuildKeys(
+                'GUILD#123',
+                'INVALID#test'
+            )).toThrow('Invalid GSI1SK format: expected CHANNEL#..., got INVALID#test');
+            try {
+                ChannelRegistryKeyGenerator.parseGuildKeys('GUILD#123', 'INVALID#test');
+            } catch (error) {
+                expect(error).toBeInstanceOf(InvariantViolationError);
+                expect((error as InvariantViolationError).context.location).toBe('parseGuildKeys');
+            }
         });
 
         it('should throw error for missing GSI1PK prefix', () => {

@@ -111,7 +111,6 @@ const RECENT_AUTHORS_LIMIT = 10;
  * (perch's boot-bundle hook still calls this directly — perch has no merged Discord catch-up
  * envelope to defer to).
  */
-// Stryker disable next-line ArithmeticOperator: module-level constant — evaluated at load, before the mutant switch is set, so the runner cannot observe the mutation; the 24h value is pinned by tests/unit/app/sessions.test.ts
 const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -123,7 +122,6 @@ const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
  * `sessionConfigSchema`'s own `bootEventsWindowMs` default and `catchup-setup.ts`'s identically-named
  * constant.
  */
-// Stryker disable next-line ArithmeticOperator: module-level constant — evaluated at load, before the mutant switch is set, so the runner cannot observe the mutation; the 24h value is pinned by tests/unit/app/sessions.test.ts
 const DEFAULT_BOOT_EVENTS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** The Agent SDK's SessionStart sources a boot bundle is actually built for — mirrors `hooks/boot-bundle.ts`'s own (unexported) `BootBundleSource`. */
@@ -481,19 +479,11 @@ export async function createConversationConductor(params: CreateConversationCond
         return text;
     }
 
-    // Late-bound: the compaction telemetry (built before the conductor exists, since it feeds into
-    // buildOptions -> createConductor) reads the live threshold from the conductor. Assigned once,
-    // right after createConductor returns, below — eslint's prefer-const cannot see that the
-    // assignment below must happen after this closure is already captured.
-    // eslint-disable-next-line prefer-const -- assigned exactly once, but necessarily after compactionSink/hooks/buildOptions close over it (circular build order: buildOptions -> createConductor needs hooks -> compactionSink needs the Conductor this call produces)
-    let conductorRef: Conductor | undefined;
-
-    // Q4: structured per-compaction telemetry, fed only from this role's ledgerStore. Reads the
-    // threshold fresh from the live conductor on every compaction_started (falling back to the
-    // static config value for the narrow window before conductorRef is assigned below) so a
-    // later setCompactionThresholdPercent() call is reflected in each subsequent record.
+    // Q4: structured per-compaction telemetry, fed only from this role's ledgerStore. The getter
+    // runs after construction, so it can capture the conductor declared below and read its live
+    // threshold after a later setCompactionThresholdPercent() call.
     const compactionTelemetry = createCompactionTelemetry({
-        getThresholdPercent: () => conductorRef?.getCompactionThresholdPercent() ?? config.compactThresholdPercent,
+        getThresholdPercent: () => getInnerConductor().getCompactionThresholdPercent(),
     });
     ledgerStore.subscribe((_ledger, event) => compactionTelemetry.record(event));
 
@@ -510,21 +500,16 @@ export async function createConversationConductor(params: CreateConversationCond
         },
     };
 
-    // R2: the same late-bound-conductor pattern as compactionTelemetry above — createTaskLaunchHooks
-    // needs a live Conductor's `status`/`adoptWakeTurn`, but hooks are built before createConductor
-    // returns one. The `status()` fallback below can only be observed in the narrow window before
-    // conductorRef is assigned (a few lines down, still before this function returns) — no hook
-    // ever fires that early, since firing requires a live turn, which requires open().
+    // R2: hooks store these callbacks during construction and invoke them only after open().
+    // They can therefore capture the conductor declared below directly.
     const taskLaunchConductor: Pick<Conductor, 'status' | 'adoptWakeTurn'> = {
-        // Stryker disable next-line ObjectLiteral,OptionalChaining,StringLiteral,BooleanLiteral: the `?? {...}` fallback is unreachable by construction — see the comment above: conductorRef is assigned synchronously below, with no `await` in between, and no hook (the only caller of this `status()`) can fire before this function has already returned that assignment complete.
-        status:        () => conductorRef?.status() ?? { role: 'conversation', sessionId: undefined, opened: false, shuttingDown: false, queueLength: 0, turn: null },
-        adoptWakeTurn: (input) => { conductorRef?.adoptWakeTurn(input); },
+        status:        () => getInnerConductor().status(),
+        adoptWakeTurn: (input) => { getInnerConductor().adoptWakeTurn(input); },
     };
 
-    // Session-peers block 2: the same late-bound-conductor pattern, for the UserPromptSubmit hook
-    // that adopts an inbound `<cross-session-message>` as a `peer`-kind turn.
+    // Session-peers block 2: the UserPromptSubmit hook adopts inbound peer turns after open().
     const peerMessageConductor: Pick<Conductor, 'adoptPeerTurn'> = {
-        adoptPeerTurn: (envelope) => { conductorRef?.adoptPeerTurn(envelope); },
+        adoptPeerTurn: (envelope) => { getInnerConductor().adoptPeerTurn(envelope); },
     };
 
     // R2: late-bound the same way — the Discord client/responseRouter a delivery function needs
@@ -593,7 +578,9 @@ export async function createConversationConductor(params: CreateConversationCond
         taskLaunches: taskLaunchRegistry,
         onWakeTurnSettled,
     });
-    conductorRef = innerConductor;
+    function getInnerConductor(): Conductor {
+        return innerConductor;
+    }
 
     /**
      * Serialized chain of identity refreshes: two writes in quick succession reload in order, so
@@ -841,19 +828,15 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
             kind,
             lostTasks,
             undelivered,
+            // Stryker disable next-line ArrayDeclaration: the shared input requires this field, but every perch formatter branch ignores recentUsers by design
             recentUsers: [],
             activeTasks: ledgerStore.get().tasks.map(task => task.description),
         });
     }
 
-    // Late-bound for the same reason as createConversationConductor's own conductorRef — see
-    // that function's comment for the circular build order this resolves.
-    // eslint-disable-next-line prefer-const -- assigned exactly once, but necessarily after compactionSink/hooks/buildOptions close over it
-    let conductorRef: Conductor | undefined;
-
-    // Q4: see createConversationConductor's identical comment for why the fallback exists.
+    // Q4: the telemetry getter runs after construction and reads the live threshold.
     const compactionTelemetry = createCompactionTelemetry({
-        getThresholdPercent: () => conductorRef?.getCompactionThresholdPercent() ?? config.compactThresholdPercent,
+        getThresholdPercent: () => getConductor().getCompactionThresholdPercent(),
     });
     ledgerStore.subscribe((_ledger, event) => compactionTelemetry.record(event));
 
@@ -867,16 +850,15 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         },
     };
 
-    // R2: see createConversationConductor's identical comment for why this pass-through exists.
+    // R2: hooks store these callbacks during construction and invoke them only after open().
     const taskLaunchConductor: Pick<Conductor, 'status' | 'adoptWakeTurn'> = {
-        // Stryker disable next-line ObjectLiteral,OptionalChaining,StringLiteral,BooleanLiteral: the `?? {...}` fallback is unreachable by construction — see createConversationConductor's identical comment/disable above: conductorRef is assigned synchronously below with no `await` in between, and no hook can fire before that assignment completes.
-        status:        () => conductorRef?.status() ?? { role: 'perch', sessionId: undefined, opened: false, shuttingDown: false, queueLength: 0, turn: null },
-        adoptWakeTurn: (input) => { conductorRef?.adoptWakeTurn(input); },
+        status:        () => getConductor().status(),
+        adoptWakeTurn: (input) => { getConductor().adoptWakeTurn(input); },
     };
 
     // Session-peers block 2: see createConversationConductor's identical pass-through.
     const peerMessageConductor: Pick<Conductor, 'adoptPeerTurn'> = {
-        adoptPeerTurn: (envelope) => { conductorRef?.adoptPeerTurn(envelope); },
+        adoptPeerTurn: (envelope) => { getConductor().adoptPeerTurn(envelope); },
     };
 
     // R2: late-bound the same way as createConversationConductor's own onWakeTurnSettled, with
@@ -944,7 +926,9 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         taskLaunches: taskLaunchRegistry,
         onWakeTurnSettled,
     });
-    conductorRef = conductor;
+    function getConductor(): Conductor {
+        return conductor;
+    }
 
     /** True between `onSlotStart` and `onSlotEnd` — i.e. while a perch slot turn is live. */
     let slotActive = false;

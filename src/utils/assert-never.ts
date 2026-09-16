@@ -23,6 +23,5 @@ import { InvariantViolationError } from '@/errors';
  */
 export function assertNever(x: never, message?: string): never {
     const msg = message ?? `Unexpected value: ${String(x)}`;
-    // Stryker disable next-line StringLiteral: invariant location label is informational only
     throw new InvariantViolationError('assertNever', msg);
 }

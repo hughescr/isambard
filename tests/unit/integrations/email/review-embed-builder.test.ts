@@ -199,6 +199,14 @@ describe('buildUnsafeAlert', () => {
         expect(fieldNames).toContain('Date');
     });
 
+    test('keeps every unsafe-alert metadata field inline', () => {
+        const data = buildUnsafeAlert(makeEmail(), makeVerdict(), 'Quarantine').embed.toJSON();
+
+        for(const field of data.fields ?? []) {
+            expect(field.inline).toBe(true);
+        }
+    });
+
     test('includes verdict reason in description', () => {
         const email   = makeEmail({ bodyText: 'Some body text.' });
         const verdict = makeVerdict({ reason: 'Contains phishing link' });
@@ -298,6 +306,19 @@ describe('buildOutboundApprovalEmbed', () => {
         expect(field?.value).toBe('Test Subject');
     });
 
+    test('keeps every outbound metadata field inline, including Cc when present', () => {
+        const data = buildOutboundApprovalEmbed({
+            to:       'a@b.com',
+            subject:  'Test Subject',
+            draftUid: 99,
+            cc:       ['cc@b.com'],
+        }).embed.toJSON();
+
+        for(const field of data.fields ?? []) {
+            expect(field.inline).toBe(true);
+        }
+    });
+
     test('actionRow has Approve button with correct customId', () => {
         const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
         const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
@@ -373,6 +394,14 @@ describe('buildRestrictedAccessEmbed', () => {
         const data = embed.toJSON();
         const refField = (data.fields ?? []).find(f => f.name === 'Reference');
         expect(refField?.value).toBe('Quarantine:42');
+    });
+
+    test('keeps every restricted-access metadata field inline', () => {
+        const data = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42').embed.toJSON();
+
+        for(const field of data.fields ?? []) {
+            expect(field.inline).toBe(true);
+        }
     });
 
     test('should create action row with Move to CleanInbox button', () => {

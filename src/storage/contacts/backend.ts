@@ -1,4 +1,5 @@
-import { BatchWriteCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { type BatchWriteCommandInput, type BatchWriteCommandOutput, BatchWriteCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import pLimit from 'p-limit';
 import { ContactKeyGenerator } from './key-generator';
 import {
     contactSchema,
@@ -11,15 +12,9 @@ import {
 import { BatchWriteExhaustedError, ContactLastIdentifierError, ContactNoIdentifiersError, ContactNotFoundError } from '@/errors';
 import { BaseRepository } from '@/storage';
 
-/** BatchWrite request shape matching lib-dynamodb's BatchWriteCommand input */
-interface BatchWriteRequest {
-    PutRequest?: {
-        Item: Record<string, unknown>
-    }
-    DeleteRequest?: {
-        Key: Record<string, unknown>
-    }
-}
+/** Native SDK request and retry response shapes. */
+type BatchWriteRequest = NonNullable<NonNullable<BatchWriteCommandInput['RequestItems']>[string]>[number];
+type BatchWriteItems = NonNullable<BatchWriteCommandInput['RequestItems']>;
 
 /**
  * Optional dependency injection for batchWriteWithRetry and callers.
@@ -44,7 +39,9 @@ const BATCH_WRITE_MAX_RETRIES = 3;
  */
 const BATCH_WRITE_BASE_DELAY_MS = 100;
 
-// Stryker disable all: Default sleep is untestable I/O
+/** Bound independent writes and contact fetches to avoid overwhelming DynamoDB. */
+const CONTACT_IO_CONCURRENCY = 4;
+
 const DEFAULT_SLEEP = (ms: number): Promise<void> =>
     new Promise((resolve) => { setTimeout(resolve, ms); });
 // Stryker restore all
@@ -54,7 +51,6 @@ const DEFAULT_SLEEP = (ms: number): Promise<void> =>
  * Matches the normalization applied in ContactKeyGenerator.createLookupKeys().
  */
 function identifierKey(id: ContactIdentifier): string {
-    // Stryker disable next-line MethodExpression: toLowerCase and toUpperCase are equivalent here — both normalize case for equality comparison; only the direction differs
     return `${id.platform}#${id.value.toLowerCase().trim()}`;
 }
 
@@ -85,41 +81,38 @@ export class ContactBackend extends BaseRepository<Contact> {
         deps?: ContactBackendDeps
     ): Promise<void> {
         const sleep = deps?.sleep ?? DEFAULT_SLEEP;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- UnprocessedItems type is complex and not worth matching exactly
-        let pending: any = { [this.tableName]: requests };
+        let pending: BatchWriteItems = { [this.tableName]: requests };
 
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,UpdateOperator,BlockStatement: for-loop — UpdateOperator attempt-- would infinite-loop; condition mutations tested via batch behavior
         for(let attempt = 0; attempt < BATCH_WRITE_MAX_RETRIES; attempt++) {
             // eslint-disable-next-line no-await-in-loop -- sequential: retry loop for unprocessed items
-            const result = await this.docClient.send(new BatchWriteCommand({
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- complex type
+            const result: BatchWriteCommandOutput = await this.docClient.send(new BatchWriteCommand({
                 RequestItems: pending,
             }));
 
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,OptionalChaining: unprocessed items check — all branches tested via batch write tests
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: DynamoDB SDK result typed non-nullable but checking defensively
-            const hasUnprocessed = result?.UnprocessedItems && Object.keys(result.UnprocessedItems).length > 0;
+            const hasUnprocessed = result.UnprocessedItems && Object.keys(result.UnprocessedItems).length > 0;
 
-            // Stryker disable next-line ConditionalExpression,BlockStatement,BooleanLiteral: Early return on success
             if(!hasUnprocessed) {
                 return;
             }
 
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,ArithmeticOperator,BlockStatement: Retry boundary — last attempt falls through to throw; -1 vs +1 both exit the loop (attempt never reaches BATCH_WRITE_MAX_RETRIES+1)
             if(attempt < BATCH_WRITE_MAX_RETRIES - 1) {
-                // Stryker disable next-line ArithmeticOperator: Backoff formula; * vs / indistinguishable at attempt 0 (2^0=1)
                 const delay = BATCH_WRITE_BASE_DELAY_MS * 2 ** attempt;
                 // eslint-disable-next-line no-await-in-loop -- sequential: retry backoff delay between batch write attempts
                 await sleep(delay);
             }
 
-            pending = result.UnprocessedItems;
+            const nextPending: BatchWriteItems = {};
+            for(const table of Object.keys(result.UnprocessedItems ?? {})) {
+                const unprocessed = result.UnprocessedItems?.[table];
+                if(unprocessed !== undefined) {
+                    nextPending[table] = unprocessed;
+                }
+            }
+            pending = nextPending;
         }
 
         // Budget exhausted — throw so the caller knows the write is incomplete
-        const pendingTyped = pending as Record<string, BatchWriteRequest[]>;
-        const remainingCount = Object.values(pendingTyped).flat().length;
-        // Stryker disable next-line StringLiteral: operation name string is debug-only metadata — the throw itself is tested
+        const remainingCount = Object.values(pending).reduce((count, items) => count + items.length, 0);
         throw new BatchWriteExhaustedError('ContactBackend.batchWriteWithRetry', remainingCount, BATCH_WRITE_MAX_RETRIES);
     }
 
@@ -138,15 +131,17 @@ export class ContactBackend extends BaseRepository<Contact> {
         return contactSchema.parse(rest);
     }
 
-    /**
-     * Writes all batches for a list of requests sequentially.
-     * Splits into DYNAMO_BATCH_WRITE_LIMIT-sized batches and retries each.
-     */
+    /** Splits requests at DynamoDB's hard limit and writes independent batches with bounded concurrency. */
     private async batchWriteAll(requests: BatchWriteRequest[], deps?: ContactBackendDeps): Promise<void> {
         const batches = splitIntoBatches(requests, DYNAMO_BATCH_WRITE_LIMIT);
-        for(const batch of batches) {
-            // eslint-disable-next-line no-await-in-loop -- sequential: each batch depends on independent DynamoDB capacity
-            await this.batchWriteWithRetry(batch, deps);
+        const limit = pLimit(CONTACT_IO_CONCURRENCY);
+        const outcomes = await Promise.allSettled(batches.map(batch =>
+            limit(async () => this.batchWriteWithRetry(batch, deps))
+        ));
+        for(const outcome of outcomes) {
+            if(outcome.status === 'rejected') {
+                throw outcome.reason;
+            }
         }
     }
 
@@ -162,9 +157,7 @@ export class ContactBackend extends BaseRepository<Contact> {
                     identifier.value,
                     contact.personId
                 );
-                // Stryker disable next-line StringLiteral: new Date().toISOString() is intentional non-determinism — captures write time for age-threshold protection in reconciler
                 const lookupItem = { ...lookupKeys, personId: contact.personId, createdAt: new Date().toISOString() };
-                // Stryker disable next-line ObjectLiteral: DynamoDB BatchWrite put request structure
                 requests.push({ PutRequest: { Item: lookupItem } });
             }
         }
@@ -184,7 +177,6 @@ export class ContactBackend extends BaseRepository<Contact> {
                     existing.personId
                 );
                 // DeleteRequest.Key must only contain the primary key attributes (PK + SK); GSI keys are not allowed
-                // Stryker disable next-line ObjectLiteral: DynamoDB BatchWrite delete request structure
                 requests.push({ DeleteRequest: { Key: { PK, SK } } });
             }
         }
@@ -235,10 +227,7 @@ export class ContactBackend extends BaseRepository<Contact> {
         // Must be written before the profile so new identifiers are resolvable
         // even if the profile write fails.
         const newLookupRequests = this.buildNewLookupRequests(contact, oldSet);
-        // Stryker disable next-line EqualityOperator,ConditionalExpression: optimization guard — batchWriteAll([]) is a no-op; both paths produce the same result for an empty array
-        if(newLookupRequests.length > 0) {
-            await this.batchWriteAll(newLookupRequests, deps);
-        }
+        await this.batchWriteAll(newLookupRequests, deps);
 
         // ── Step 2: Write the profile ──────────────────────────────────────────────
         const collectionKeys = ContactKeyGenerator.createCollectionKeys(contact.personId);
@@ -247,9 +236,7 @@ export class ContactBackend extends BaseRepository<Contact> {
             ...profileKeys,
             ...collectionKeys,
         };
-        // Stryker disable next-line ObjectLiteral: DynamoDB BatchWrite put request structure
-        // boundary cast: aws-sdk lib-dynamodb BatchWriteCommand requires Record<string,AttributeValue> but ContactProfileItem carries branded types (ContactId, MemoryPath); runtime shapes are compatible
-        await this.batchWriteWithRetry([{ PutRequest: { Item: profileItem as unknown as Record<string, unknown> } }], deps);
+        await this.batchWriteWithRetry([{ PutRequest: { Item: { ...profileItem } } }], deps);
 
         // ── Step 3: Delete removed lookup rows ────────────────────────────────────
         // Delete only lookup items that were removed (exist in old but not in new).
@@ -257,10 +244,7 @@ export class ContactBackend extends BaseRepository<Contact> {
         // contact record, and the reconciler will clean them up eventually.
         if(existing) {
             const deleteRequests = this.buildDeleteRequests(existing, newSet);
-            // Stryker disable next-line EqualityOperator,ConditionalExpression: optimization guard — batchWriteAll([]) is a no-op; both paths produce the same result for an empty array
-            if(deleteRequests.length > 0) {
-                await this.batchWriteAll(deleteRequests, deps);
-            }
+            await this.batchWriteAll(deleteRequests, deps);
         }
     }
 
@@ -289,9 +273,7 @@ export class ContactBackend extends BaseRepository<Contact> {
         // Delete the profile first so partial failures leave orphan lookups rather than
         // a contact with phantom-deleted identifiers
         const profileKeys = ContactKeyGenerator.createProfileKeys(personId);
-        // Stryker disable next-line ObjectLiteral: DynamoDB BatchWrite delete request structure
-        // boundary cast: aws-sdk lib-dynamodb BatchWriteCommand requires Record<string,AttributeValue> but ContactProfileItem keys carry branded types; runtime shapes are compatible
-        await this.batchWriteWithRetry([{ DeleteRequest: { Key: profileKeys as unknown as Record<string, unknown> } }], deps);
+        await this.batchWriteWithRetry([{ DeleteRequest: { Key: { ...profileKeys } } }], deps);
 
         // Delete all lookup items in batches
         const lookupDeleteRequests: BatchWriteRequest[] = existing.identifiers.map((identifier) => {
@@ -301,14 +283,8 @@ export class ContactBackend extends BaseRepository<Contact> {
                 personId
             );
             // DeleteRequest.Key must only contain the primary key attributes (PK + SK); GSI keys are not allowed
-            // Stryker disable next-line ObjectLiteral: DynamoDB BatchWrite delete request structure
             return { DeleteRequest: { Key: { PK, SK } } };
         });
-
-        // Stryker disable next-line EqualityOperator,ConditionalExpression,BlockStatement: optimization guard — batchWriteAll([]) is a no-op; both paths produce the same result for an empty array
-        if(lookupDeleteRequests.length === 0) {
-            return;
-        }
 
         await this.batchWriteAll(lookupDeleteRequests, deps);
     }
@@ -319,7 +295,6 @@ export class ContactBackend extends BaseRepository<Contact> {
      */
     async resolveIdentifier(platform: PlatformType, value: string): Promise<Contact[]> {
         const normalizedValue = value.toLowerCase().trim();
-        // Stryker disable StringLiteral,ObjectLiteral: DynamoDB expression strings and attribute maps are configuration
         const lookupItems = await this.query<{ SK: string }>({
             KeyConditionExpression:    '#pk = :pk',
             ExpressionAttributeNames:  { '#pk': 'PK' },
@@ -329,16 +304,12 @@ export class ContactBackend extends BaseRepository<Contact> {
         });
         // Stryker restore StringLiteral,ObjectLiteral
 
-        const contacts: Contact[] = [];
-        for(const item of lookupItems) {
-            const itemPersonId = ContactKeyGenerator.parsePersonIdFromLookupSK(item.SK);
-            // eslint-disable-next-line no-await-in-loop -- sequential: each lookup depends on the prior SK parse
-            const contact = await this.getContact(itemPersonId);
-            if(contact) {
-                contacts.push(contact);
-            }
-        }
-        return contacts;
+        const limit = pLimit(CONTACT_IO_CONCURRENCY);
+        const contacts = await Promise.all(lookupItems.map((item) => {
+            const personId = ContactKeyGenerator.parsePersonIdFromLookupSK(item.SK);
+            return limit(async () => this.getContact(personId));
+        }));
+        return contacts.filter((contact): contact is Contact => contact !== undefined);
     }
 
     /**
@@ -399,7 +370,6 @@ export class ContactBackend extends BaseRepository<Contact> {
         const allItems: Record<string, unknown>[] = [];
         let lastKey: Record<string, unknown> | undefined;
         do {
-            // Stryker disable StringLiteral,ObjectLiteral: DynamoDB expression strings and attribute maps are configuration
             // eslint-disable-next-line no-await-in-loop -- sequential pagination: each page depends on LastEvaluatedKey from the prior page
             const result = await this.docClient.send(new QueryCommand({
                 TableName:                 this.tableName,
@@ -425,11 +395,6 @@ export class ContactBackend extends BaseRepository<Contact> {
      */
     async fuzzyLookup(query: string): Promise<Contact[]> {
         const all = await this.listContacts();
-        // Stryker disable next-line ConditionalExpression,BlockStatement: optimization guard — empty list produces same result
-        if(all.length === 0) {
-            return [];
-        }
-
         const q = query.toLowerCase().trim();
 
         /**
@@ -444,13 +409,11 @@ export class ContactBackend extends BaseRepository<Contact> {
             let best = 0;
             for(const candidate of candidates) {
                 const c = candidate.toLowerCase();
-                // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent — exact match is also a startsWith, so score 3 vs 2 is indistinguishable when the only other match is also a prefix
                 if(c === q) {
                     return 3;
                 }
                 if(c.startsWith(q)) {
                     best = Math.max(best, 2);
-                // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent — removing else sets best=Math.max(2,1)=2 for prefix match, same result
                 } else if(c.includes(q)) {
                     best = Math.max(best, 1);
                 }
@@ -462,7 +425,6 @@ export class ContactBackend extends BaseRepository<Contact> {
             .map(contact => ({ contact, score: scoreContact(contact) }))
             .filter(({ score }) => score > 0);
 
-        // Stryker disable next-line ConditionalExpression,StringLiteral: sort comparison is ordered by score descending
         scored.sort((a, b) => b.score - a.score);
 
         return scored.map(({ contact }) => contact);

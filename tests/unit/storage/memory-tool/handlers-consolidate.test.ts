@@ -81,6 +81,37 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             expect(mockBackend.delete).toHaveBeenCalledTimes(2);
         });
 
+        it('attempts duplicate source deletions in order after each prior delete settles', async () => {
+            let releaseFirst!: () => void;
+            const firstDelete = new Promise<void>((resolve) => {
+                releaseFirst = resolve;
+            });
+            const events: string[] = [];
+            let calls = 0;
+            mockBackend.delete = mock(async (): Promise<undefined> => {
+                calls++;
+                events.push(`start:${calls}`);
+                if(calls === 1) {
+                    await firstDelete;
+                }
+                events.push(`finish:${calls}`);
+                return undefined;
+            });
+
+            const pending = consolidateHandler(mockBackend, {
+                source_paths: ['/test/source.md', '/test/source.md'],
+                target_path:  '/test/target.md',
+                summary:      'Summary',
+            });
+            await Bun.sleep(0);
+            expect(events).toEqual(['start:1']);
+
+            releaseFirst();
+            await pending;
+            expect(events).toEqual(['start:1', 'finish:1', 'start:2', 'finish:2']);
+            expect(mockBackend.delete).toHaveBeenCalledTimes(2);
+        });
+
         it('should keep sources when keep_sources is true', async () => {
             mockBackend.get = mock(async () => undefined);
             mockBackend.create = mock(async () => ({

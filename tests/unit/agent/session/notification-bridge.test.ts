@@ -168,6 +168,17 @@ describe('createNotificationBridge', () => {
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(5);
     });
 
+    test('dedupeCapacity zero retains no keys, so an accepted key is delivered again', () => {
+        const zeroCapacityBridge = createNotificationBridge({
+            clock, timezone: 'America/Los_Angeles', timeHeader: () => 'H', dedupeCapacity: 0, logger,
+        });
+        zeroCapacityBridge.attachConductor(conductor);
+
+        expect(zeroCapacityBridge.notify(baseParams({ dedupeKey: 'repeat' }))).toBe(true);
+        expect(zeroCapacityBridge.notify(baseParams({ dedupeKey: 'repeat' }))).toBe(true);
+        expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(2);
+    });
+
     test('the default dedupe capacity constant is a positive number', () => {
         expect(DEFAULT_NOTIFICATION_DEDUPE_CAPACITY).toBeGreaterThan(0);
     });
@@ -210,8 +221,9 @@ describe('createNotificationBridge', () => {
     });
 
     test('a throwing conductor.appendWithoutTurn is caught and logged, never thrown out of notify(), and returns false without burning the dedupe key', () => {
+        const appendError = new Error('append boom');
         conductor.appendWithoutTurn.mockImplementationOnce(() => {
-            throw new Error('append boom');
+            throw appendError;
         });
 
         let delivered: boolean | undefined;
@@ -219,7 +231,10 @@ describe('createNotificationBridge', () => {
             delivered = bridge.notify(baseParams({ wake: false, dedupeKey: 'throw-key' }));
         }).not.toThrow();
         expect(delivered).toBe(false);
-        expect(logger.warn).toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+            { err: appendError, source: 'test-source', dedupeKey: 'throw-key' },
+            'Failed to append accumulate notification'
+        );
 
         // The dedupe key must not have been burned: a retry with the same key tries again.
         bridge.notify(baseParams({ wake: false, dedupeKey: 'throw-key' }));
@@ -236,7 +251,10 @@ describe('createNotificationBridge', () => {
         expect(delivered).toBe(false);
         expect(conductor.submit).not.toHaveBeenCalled();
         expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
-        expect(logger.debug).toHaveBeenCalled();
+        expect(logger.debug).toHaveBeenCalledWith(
+            { source: 'test-source', dedupeKey: 'unattached-key' },
+            'Notification bridge not attached to an open conductor; dropping notify'
+        );
     });
 
     test('detach() reverts to the unattached no-op drop behaviour', () => {

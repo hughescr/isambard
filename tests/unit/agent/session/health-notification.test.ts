@@ -166,6 +166,28 @@ describe('createHealthOutageCoalescer', () => {
         expect(notify).toHaveBeenCalledTimes(4);
     });
 
+    test('capacity zero retains no reported keys, so the same outage is delivered again', () => {
+        const coalescer = createHealthOutageCoalescer({ clock, notify, alreadyReportedCapacity: 0 });
+
+        coalescer.report(change({ service: 'discord', epoch: 1 }));
+        clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
+        coalescer.report(change({ service: 'discord', epoch: 1 }));
+        clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
+
+        expect(notify).toHaveBeenCalledTimes(2);
+    });
+
+    test('a key remains remembered when the FIFO is exactly at capacity', () => {
+        const coalescer = createHealthOutageCoalescer({ clock, notify, alreadyReportedCapacity: 1 });
+
+        coalescer.report(change({ service: 'discord', epoch: 1 }));
+        clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
+        coalescer.report(change({ service: 'discord', epoch: 1 }));
+        clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
+
+        expect(notify).toHaveBeenCalledTimes(1);
+    });
+
     test('a batch that fails to deliver (notify() returns false — e.g. the conductor is not open yet) is NOT remembered: the next report for the same (service, epoch) retries rather than being silently dropped for the epoch (review finding)', () => {
         notify.mockReturnValueOnce(false);
         const coalescer = createHealthOutageCoalescer({ clock, notify });

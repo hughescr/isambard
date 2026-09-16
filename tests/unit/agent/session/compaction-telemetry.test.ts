@@ -156,6 +156,17 @@ describe('createCompactionTelemetry', () => {
         expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60 }]);
     });
 
+    it('a non-boundary system sdk_frame does not close the open record', () => {
+        telemetry.record(started(T1));
+        telemetry.record({
+            type:  'sdk_frame',
+            frame: frames.init('session-id'),
+            at:    T2,
+        });
+
+        expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60 }]);
+    });
+
     it('does not close an open record on compaction_finished -- never dispatched in production, a harmless no-op', () => {
         telemetry.record(started(T1));
         telemetry.record(finished(T2));

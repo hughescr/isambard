@@ -1,12 +1,25 @@
 import { describe, test, expect, mock, spyOn, jest, beforeEach, afterEach } from 'bun:test';
+import type { DynamoDBClient, ServiceInputTypes, ServiceOutputTypes } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
-import { NodeHttpHandler } from '@smithy/node-http-handler';
+import { NodeHttpHandler, type NodeHttpHandlerOptions } from '@smithy/node-http-handler';
+import type { InitializeHandler, InitializeHandlerArguments, InitializeHandlerOutput } from '@smithy/types';
 import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../setup';
 import type { DynamoDBConfig } from '@/config/schemas';
-import { createDynamoDBClient, buildClientConfig, probeDynamoDB, buildTimingMiddleware, SLOW_READ_MS } from '@/storage/client';
+import { createDynamoDBClient, buildClientConfig, probeDynamoDB, buildTimingMiddleware, registerTimingMiddleware, SLOW_READ_MS } from '@/storage/client';
 
 // AWS SDK is mocked globally in tests/setup.ts
+
+type TimingHandler = InitializeHandler<ServiceInputTypes, ServiceOutputTypes>;
+type TimingHandlerArguments = InitializeHandlerArguments<ServiceInputTypes>;
+type TimingHandlerOutput = InitializeHandlerOutput<ServiceOutputTypes>;
+interface NodeHttpHandlerWithConfigProvider {
+    configProvider: Promise<NodeHttpHandlerOptions>
+}
+
+function getConfiguredHandlerOptions(handler: NodeHttpHandler): Promise<NodeHttpHandlerOptions> {
+    return (handler as unknown as NodeHttpHandlerWithConfigProvider).configProvider;
+}
 
 describe.concurrent('buildClientConfig', () => {
     test('should set maxAttempts to 3', () => {
@@ -31,30 +44,39 @@ describe.concurrent('buildClientConfig', () => {
 
     test('should configure connectionTimeout to 5000ms', async () => {
         const clientConfig = buildClientConfig();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accessing private configProvider for test verification
-        const handlerConfig = await (clientConfig.requestHandler as any).configProvider;
+        const handlerConfig = await getConfiguredHandlerOptions(clientConfig.requestHandler);
 
         expect(handlerConfig.connectionTimeout).toBe(5000);
     });
 
     test('should configure requestTimeout to 30000ms', async () => {
         const clientConfig = buildClientConfig();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accessing private configProvider for test verification
-        const handlerConfig = await (clientConfig.requestHandler as any).configProvider;
+        const handlerConfig = await getConfiguredHandlerOptions(clientConfig.requestHandler);
 
         expect(handlerConfig.requestTimeout).toBe(30_000);
     });
 
     test('should configure throwOnRequestTimeout to true', async () => {
         const clientConfig = buildClientConfig();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accessing private configProvider for test verification
-        const handlerConfig = await (clientConfig.requestHandler as any).configProvider;
+        const handlerConfig = await getConfiguredHandlerOptions(clientConfig.requestHandler);
 
         expect(handlerConfig.throwOnRequestTimeout).toBe(true);
     });
 });
 
 describe.concurrent('createDynamoDBClient', () => {
+    test('registers timing middleware with the AWS client stack', () => {
+        const add = mock(() => undefined);
+        const client = { middlewareStack: { add } } as unknown as DynamoDBClient;
+
+        expect(registerTimingMiddleware(client)).toBe(client);
+        expect(add).toHaveBeenCalledTimes(1);
+        expect(add).toHaveBeenCalledWith(expect.any(Function), {
+            step: 'initialize',
+            name: 'timingMiddleware',
+        });
+    });
+
     test('should create DynamoDBClient and DocumentClient', () => {
         // Spy on DynamoDBDocumentClient.from to verify it's called
         const fromSpy = spyOn(DynamoDBDocumentClient, 'from');
@@ -262,9 +284,8 @@ describe('buildTimingMiddleware', () => {
         jest.useFakeTimers();
         try {
             const middleware = buildTimingMiddleware();
-            const fakeResult = { output: {} };
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only: mock satisfies InitializeHandler call signature at runtime
-            const next: any = mock(async (_args: unknown) => fakeResult);
+            const fakeResult: TimingHandlerOutput = { response: {}, output: { $metadata: {} } };
+            const next = mock<TimingHandler>(async (_args: TimingHandlerArguments) => fakeResult);
             const handler = middleware(next, { commandName });
 
             const callPromise = handler({ input: {} });
@@ -282,8 +303,7 @@ describe('buildTimingMiddleware', () => {
         jest.useFakeTimers();
         try {
             const middleware = buildTimingMiddleware();
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only: mock satisfies InitializeHandler call signature at runtime
-            const next: any = mock(async (_args: unknown) => {
+            const next = mock<TimingHandler>(async (_args: TimingHandlerArguments) => {
                 throw error;
             });
             const handler = middleware(next, { commandName });
@@ -469,8 +489,7 @@ describe('buildTimingMiddleware', () => {
             jest.useFakeTimers();
             try {
                 const middleware = buildTimingMiddleware();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only: mock satisfies InitializeHandler call signature at runtime
-                const next: any = mock(async (_args: unknown) => {
+                const next = mock<TimingHandler>(async (_args: TimingHandlerArguments) => {
                     throw 'string-error';
                 });
                 const handler = middleware(next, { commandName: 'GetItemCommand' });
@@ -493,12 +512,9 @@ describe('buildTimingMiddleware', () => {
             jest.useFakeTimers();
             try {
                 const middleware = buildTimingMiddleware();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stub: args and result satisfy handler shapes at runtime
-                const sentArgs: any = { input: { TableName: 'TestTable' } };
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stub: satisfies InitializeHandlerOutput shape at runtime
-                const expectedResult: any = { output: {}, response: {} };
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only: mock satisfies InitializeHandler call signature at runtime
-                const next: any = mock(async (args: unknown) => {
+                const sentArgs: TimingHandlerArguments = { input: { TableName: 'TestTable' } };
+                const expectedResult: TimingHandlerOutput = { response: {}, output: { $metadata: {} } };
+                const next = mock<TimingHandler>(async (args: TimingHandlerArguments) => {
                     expect(args).toBe(sentArgs);
                     return expectedResult;
                 });
@@ -516,8 +532,7 @@ describe('buildTimingMiddleware', () => {
             jest.useFakeTimers();
             try {
                 const middleware = buildTimingMiddleware();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only: mock satisfies InitializeHandler call signature at runtime
-                const next: any = mock(async (_args: unknown) => ({ output: {}, response: {} }));
+                const next = mock<TimingHandler>(async (_args: TimingHandlerArguments) => ({ response: {}, output: { $metadata: {} } }));
                 const handler = middleware(next, { commandName: 'PutItemCommand' });
                 const resultPromise = handler({ input: {} });
                 jest.advanceTimersByTime(123);
@@ -534,9 +549,9 @@ describe('buildTimingMiddleware', () => {
 describe('probeDynamoDB', () => {
     test('should resolve when DescribeTable succeeds', async () => {
         const mockSend = mock(async () => ({ Table: { TableName: 'TestTable' } }));
-        const stubClient = { send: mockSend } as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- mock object for testing
+        const stubClient = { send: mockSend } as unknown as Pick<DynamoDBClient, 'send'>;
 
-        await probeDynamoDB(stubClient, 'TestTable');
+        await probeDynamoDB(stubClient as DynamoDBClient, 'TestTable');
         expect(mockSend).toHaveBeenCalledTimes(1);
     });
 
@@ -544,16 +559,16 @@ describe('probeDynamoDB', () => {
         const mockSend = mock(async () => {
             throw new Error('FailedToOpenSocket');
         });
-        const stubClient = { send: mockSend } as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- mock object for testing
+        const stubClient = { send: mockSend } as unknown as Pick<DynamoDBClient, 'send'>;
 
-        expect(probeDynamoDB(stubClient, 'TestTable')).rejects.toThrow('FailedToOpenSocket');
+        expect(probeDynamoDB(stubClient as DynamoDBClient, 'TestTable')).rejects.toThrow('FailedToOpenSocket');
     });
 
     test('should call DescribeTable with correct TableName', async () => {
         const mockSend = mock(async () => ({}));
-        const stubDdbClient = { send: mockSend } as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- mock object for testing
+        const stubDdbClient = { send: mockSend } as unknown as Pick<DynamoDBClient, 'send'>;
 
-        await probeDynamoDB(stubDdbClient, 'MySpecialTable');
+        await probeDynamoDB(stubDdbClient as DynamoDBClient, 'MySpecialTable');
 
         expect(mockSend).toHaveBeenCalledTimes(1);
         const sentCommand = (mockSend.mock.calls as unknown[][])[0]?.[0];

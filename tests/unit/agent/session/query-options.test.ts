@@ -292,6 +292,24 @@ describe('buildSessionQueryOptions', () => {
         expect(opts.env.ENABLE_TOOL_SEARCH).toBe('auto');
     });
 
+    test('inherits the parent environment while preserving Izzy session overrides', () => {
+        const key = 'ISAMBARD_QUERY_OPTIONS_ENV_SENTINEL';
+        const previous = process.env[key];
+        process.env[key] = 'inherited-by-child';
+        try {
+            const opts = buildSessionQueryOptions(baseParams({ role: 'perch' }));
+            expect((opts.env as NodeJS.ProcessEnv)[key]).toBe('inherited-by-child');
+            expect(opts.env.CLAUDE_CODE_SESSION_NAME).toBe('Izzy-perch');
+            expect(opts.env.ENABLE_TOOL_SEARCH).toBe('auto');
+        } finally {
+            if(previous === undefined) {
+                delete process.env[key];
+            } else {
+                process.env[key] = previous;
+            }
+        }
+    });
+
     test('has no abortController key', () => {
         const opts = buildSessionQueryOptions(baseParams());
         expect('abortController' in opts).toBe(false);
@@ -321,6 +339,20 @@ describe('buildSessionQueryOptions', () => {
 
     test('requires the SDK to use only the explicitly configured MCP servers', () => {
         expect(buildSessionQueryOptions(baseParams()).strictMcpConfig).toBe(true);
+    });
+
+    test('sandboxes commands while keeping git outside automatic sandbox approval', () => {
+        expect(buildSessionQueryOptions(baseParams()).sandbox).toEqual({
+            enabled:                  true,
+            autoAllowBashIfSandboxed: true,
+            excludedCommands:         ['git'],
+        });
+    });
+
+    test('offers a stop affordance and progress summaries for each task', () => {
+        const opts = buildSessionQueryOptions(baseParams());
+        expect(opts.perTaskStopAffordance).toBe(true);
+        expect(opts.agentProgressSummaries).toBe(true);
     });
 
     test('satisfies Options', () => {
@@ -375,6 +407,19 @@ describe('buildSessionQueryOptions', () => {
             const stderr = buildSessionQueryOptions(baseParams({ role: 'perch', isInterrupting: () => false })).stderr;
             stderr('some other stderr noise');
             expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({ role: 'perch' }), expect.any(String));
+        });
+
+        test('logs the exact stderr payload and classification for each branch', () => {
+            const stderr = stderrOf(() => true);
+            stderr('Operation aborted\nstack trace');
+            stderr('Error in hook callback: Stream closed');
+            stderr('unknown stderr');
+            expect(mockLogger.debug).toHaveBeenNthCalledWith(1,
+                { role: 'conversation', stderr: 'Operation aborted\nstack trace' }, 'Agent SDK stderr (abort)');
+            expect(mockLogger.debug).toHaveBeenNthCalledWith(2,
+                { role: 'conversation', stderr: 'Error in hook callback: Stream closed' }, 'Agent SDK stderr (hook-close race)');
+            expect(mockLogger.error).toHaveBeenCalledWith(
+                { role: 'conversation', stderr: 'unknown stderr' }, 'Agent SDK stderr');
         });
 
         test('isInterrupting is re-checked per call, not captured once', () => {

@@ -178,6 +178,43 @@ describe('createSagaExecutor', () => {
             expect(result).toEqual({ executed: 2, failed: 1 });
         });
 
+        test('persists each outcome before starting the next external action', async () => {
+            const first = makeSaga({ id: 'aaaaaaaa-1111-4222-8333-000000000001', params: { label: 'first' } });
+            const second = makeSaga({ id: 'aaaaaaaa-1111-4222-8333-000000000002', params: { label: 'second' } });
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [first, second]);
+            const events: string[] = [];
+            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(async (params: Record<string, unknown>) => {
+                events.push(`execute:${String(params.label)}`);
+            });
+            (backend.updateState as ReturnType<typeof mock>).mockImplementation(async (id: string) => {
+                events.push(`persist:${id}`);
+            });
+
+            const result = await createSagaExecutor({ backend, registry, executors, logger }).executeOnce();
+            expect(result).toEqual({ executed: 2, failed: 0 });
+            expect(events).toEqual([
+                'execute:first', `persist:${first.id}`,
+                'execute:second', `persist:${second.id}`,
+            ]);
+        });
+
+        test('never mislabels an action or starts a later action when the executed-state write fails', async () => {
+            const first = makeSaga({ id: 'aaaaaaaa-1111-4222-8333-000000000001', type: 'bsky_reply' });
+            const second = makeSaga({ id: 'aaaaaaaa-1111-4222-8333-000000000002', type: 'email_send' });
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [first, second]);
+            (backend.updateState as ReturnType<typeof mock>).mockImplementation(async (id: string, state: string) => {
+                if(id === first.id && state === 'executed') {
+                    throw new Error('state write failed');
+                }
+            });
+            await expect(createSagaExecutor({ backend, registry, executors, logger }).executeOnce()).rejects.toThrow('state write failed');
+            expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
+            expect(executors.email_send).not.toHaveBeenCalled();
+            expect(backend.updateState).toHaveBeenCalledTimes(1);
+            expect(backend.updateState).toHaveBeenCalledWith(first.id, 'executed');
+            expect(backend.updateState).not.toHaveBeenCalledWith(first.id, 'failed', expect.anything());
+        });
+
         test('logs info on successful saga execution', async () => {
             const saga = makeSaga({ type: 'bsky_reply' });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
@@ -261,9 +298,9 @@ describe('createSagaExecutor', () => {
         });
 
         test('redundant start() while mid-flight tick does not kill the poll loop', async () => {
-            // Regression test: generation counter must NOT be bumped when start() is a no-op.
-            // If generation is bumped before the idempotency guard, the in-flight tick's trailing
-            // scheduleNextTick() sees generation !== myGen and silently drops the loop.
+            // Regression test: generation identity must NOT be replaced when start() is a no-op.
+            // If generation is replaced before the idempotency guard, the in-flight tick's trailing
+            // scheduleNextTick() sees the captured identity is stale and silently drops the loop.
             //
             // Uses a deferred listByState to hold T1's IIFE suspended while we inject a redundant
             // start(). After resolving, T1 must still reschedule (T2), proving the loop is alive.
@@ -285,8 +322,8 @@ describe('createSagaExecutor', () => {
             expect(jest.getTimerCount()).toBe(0);
 
             // Inject redundant start() while T1 is mid-flight:
-            // timeoutId (T1) !== undefined → idempotency guard must fire BEFORE generation bump.
-            // Buggy code: generation bumped first → T1's trailing scheduleNextTick() suppressed.
+            // timeoutId (T1) !== undefined → idempotency guard must fire BEFORE generation replacement.
+            // Buggy code: generation replaced first → T1's trailing scheduleNextTick() suppressed.
             // Fixed code: guard fires first → generation unchanged → T1 reschedules normally.
             executor.start();
 
@@ -355,7 +392,7 @@ describe('createSagaExecutor', () => {
             // resolved) promise for listByState — this keeps the async IIFE suspended while we
             // call stop()+start(), then we resolve to let the IIFE complete.
             //
-            // Without the generation-counter fix, the in-flight IIFE's trailing scheduleNextTick
+            // Without generation invalidation, the in-flight IIFE's trailing scheduleNextTick
             // runs after start() has already scheduled T2, producing two pending timers (T2+T3).
             // With the fix, the IIFE detects its generation is stale and skips rescheduling.
             let resolveListByState!: (value: ApprovalSaga[]) => void;
@@ -376,7 +413,7 @@ describe('createSagaExecutor', () => {
 
             // Race: stop+start while T1's IIFE is mid-flight
             executor.stop();   // stopped=true, clears timeoutId (T1 already fired, no-op)
-            executor.start();  // stopped=false, bumps generation, schedules T2 → timerCount=1
+            executor.start();  // stopped=false, replaces generation, schedules T2 → timerCount=1
             expect(jest.getTimerCount()).toBe(1);
 
             // Now resolve listByState → T1's IIFE can complete
@@ -389,6 +426,53 @@ describe('createSagaExecutor', () => {
             expect(jest.getTimerCount()).toBe(1);
 
             executor.stop();
+        });
+
+        test('successive stop/start cycles discard every overlapping stale tick', async () => {
+            const first = Promise.withResolvers<ApprovalSaga[]>();
+            const second = Promise.withResolvers<ApprovalSaga[]>();
+            let callCount = 0;
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(() => {
+                callCount++;
+                if(callCount === 1) {
+                    return first.promise;
+                }
+                if(callCount === 2) {
+                    return second.promise;
+                }
+                return Promise.resolve([]);
+            });
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+
+            try {
+                executor.start();
+                jest.advanceTimersByTime(1000); // first tick remains in flight
+                executor.stop();
+                executor.start();
+                jest.advanceTimersByTime(1000); // second tick remains in flight
+                executor.stop();
+                executor.start();               // only the third generation owns a timer
+                expect(jest.getTimerCount()).toBe(1);
+
+                first.resolve([]);
+                second.resolve([]);
+                await Promise.resolve();
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(jest.getTimerCount()).toBe(1);
+
+                jest.advanceTimersByTime(1000);
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(backend.listByState).toHaveBeenCalledTimes(3);
+                expect(jest.getTimerCount()).toBe(1);
+            } finally {
+                first.resolve([]);
+                second.resolve([]);
+                await Promise.resolve();
+                await Promise.resolve();
+                executor.stop();
+            }
         });
 
         test('stop alone (no restart) leaves zero pending timers after mid-flight tick', async () => {
@@ -592,7 +676,6 @@ describe('createSagaExecutor', () => {
             jest.advanceTimersByTime(1);
             await Promise.resolve();
             expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
-
             executor.stop();
         });
 
@@ -628,6 +711,11 @@ describe('createSagaExecutor', () => {
             jest.advanceTimersByTime(1);
             await Promise.resolve();
             expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
+            expect(logger.debug).toHaveBeenCalledWith(
+                { intervalMs: 300_000 },
+                'Saga poll interval extended'
+            );
+            expect(logger.debug).toHaveBeenCalledTimes(1);
 
             executor.stop();
         });
@@ -658,6 +746,10 @@ describe('createSagaExecutor', () => {
             await Promise.resolve();
             await Promise.resolve();
             expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
+            expect(logger.debug).toHaveBeenCalledWith(
+                { intervalMs: 1000 },
+                'Saga poll interval reset to base'
+            );
 
             // Third tick should fire at 1000ms after (not 2000ms), i.e. 4000ms total
             jest.advanceTimersByTime(999);
@@ -668,6 +760,19 @@ describe('createSagaExecutor', () => {
             await Promise.resolve();
             expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
 
+            executor.stop();
+        });
+
+        test('non-empty first tick does not emit a redundant base-reset log', async () => {
+            (backend.listByState as ReturnType<typeof mock>).mockResolvedValue([makeSaga()]);
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(logger.debug).not.toHaveBeenCalled();
             executor.stop();
         });
 

@@ -61,23 +61,18 @@ export function createMemoryMCPServer(
 ) {
     // Build semantic_search tool only when both vector deps are present.
     // When absent, the tool is not registered at all (not even as a stub that errors).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- conditional tool array requires any[] to allow mixed ZodRawShape generics across different tool() calls; no-unsafe-assignment is intentional here
-    const semanticSearchTools: any[] = options?.vectorIndex && options.embedder
+    const semanticSearchTools: NonNullable<Parameters<typeof createSdkMcpServer>[0]['tools']> = options?.vectorIndex && options.embedder
         ? [
-            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
                 'semantic_search',
                 'Semantic search over memories by content similarity. Use the `search` tool for tag-based filtering instead. The query is embedded the same way memory content is, so phrase it in the form a matching memory would take — declarative statements rather than questions.',
                 // Stryker restore StringLiteral
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     query: z.string().describe('Natural language query to search for semantically similar memories'),
-                    // Stryker disable next-line StringLiteral,ArrayDeclaration: z.enum values and describe() are schema configuration
                     layer: z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit: z.number().int().positive().default(5).describe('Maximum number of results to return (default: 5)'),
                 },
-                // eslint-disable-next-line @stylistic/no-extra-parens -- Babel 8 (Stryker's instrumenter) cannot parse a typed async arrow directly inside a ternary branch; the parens make it parse
+                // eslint-disable-next-line @stylistic/no-extra-parens -- Babel 8 needs this disambiguation in Stryker's ternary array parser.
                 (async (args): Promise<CallToolResult> => {
                     // At this point options.vectorIndex and options.embedder are guaranteed non-null
                     // because this tool is only registered when both are present.
@@ -92,11 +87,6 @@ export function createMemoryMCPServer(
                         const layerFilter = args.layer ? createLayerName(args.layer) : undefined;
                         const queryResults = vectorIndex.query(queryVec, args.limit, layerFilter);
 
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: early-return guard for empty results — removing body is equivalent because empty results produce '' string which hits the second guard below
-                        if(queryResults.length === 0) {
-                            return mcpTextResult('No semantically similar memories found');
-                        }
-
                         // Resolve paths from PK/SK and fetch full items in parallel
                         const itemPromises = queryResults.map(async (r) => {
                             const pathStr = MemoryToolKeyGenerator.parsePath(r.pk, r.sk);
@@ -107,18 +97,15 @@ export function createMemoryMCPServer(
                         const resolvedItems = await Promise.all(itemPromises);
 
                         // Fire-and-forget: record access for state-layer memories (scoring)
-                        // Stryker disable next-line ConditionalExpression: recordAccess is fire-and-forget optimization
                         if(options.recordAccess) {
                             const statePaths = resolvedItems
                                 .filter(({ item }) => item?.path.startsWith('/state/'))
                                 .map(({ item }) => item!.path);
-                            // Stryker disable BlockStatement: recordAccess catch is fire-and-forget
                             if(statePaths.length > 0) {
                                 options.recordAccess(statePaths).catch((error: unknown) => {
                                     logger.warn({ error, paths: statePaths, msg: 'Failed to record memory access from semantic_search' });
                                 });
                             }
-                            // Stryker restore BlockStatement
                         }
 
                         // Format results: 200-char preview with '...' suffix for longer content, joined by blank lines
@@ -139,7 +126,6 @@ export function createMemoryMCPServer(
                             })
                             .join(RESULT_SEPARATOR);
 
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator: guard for case where all looked-up items were deleted
                         if(!formatted) {
                             return mcpTextResult('No semantically similar memories found');
                         }
@@ -153,7 +139,6 @@ export function createMemoryMCPServer(
                     }
                 }),
                 // Tool annotations: semantic_search is read-only, non-destructive, non-idempotent (results vary by index state), closed-world
-                // Stryker disable next-line ObjectLiteral: Tool annotations outer object is MCP server configuration
                 {
                     annotations: {
                         readOnlyHint:    true,
@@ -176,7 +161,6 @@ export function createMemoryMCPServer(
                 'view',
                 'View memory by path',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     path: z.string().describe('Memory path (e.g., /identity/core-values, /users/{userId}/name, /events/{type}/{timestamp})'),
                 },
                 async (args): Promise<CallToolResult> => {
@@ -190,9 +174,7 @@ export function createMemoryMCPServer(
                             };
                         }
                         // Fire-and-forget: record access for state-layer memories (scoring)
-                        // Stryker disable next-line ConditionalExpression: recordAccess is fire-and-forget optimization
                         if(args.path.startsWith('/state/') && options?.recordAccess) {
-                            // Stryker disable BlockStatement: recordAccess catch is fire-and-forget
                             options.recordAccess([memoryPath]).catch((error: unknown) => {
                                 logger.warn({ error, path: args.path, msg: 'Failed to record memory access' });
                             });
@@ -207,7 +189,6 @@ export function createMemoryMCPServer(
                         };
                     }
                 },
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
             ),
 
@@ -215,13 +196,9 @@ export function createMemoryMCPServer(
                 'storeSelf',
                 'Store self-knowledge in identity or state layer. Saving with the same name will replace existing content.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     layer:   z.enum(['identity', 'state']).describe('Layer: identity (core beliefs/values) or state (current context)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     name:    z.string().describe('Memory name (e.g., core-values, current-goals)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     content: z.string().describe('Memory content to store'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     tags:    z.array(z.string()).optional().describe('Optional tags for categorization'),
                 },
                 async (args): Promise<CallToolResult> => {
@@ -237,7 +214,6 @@ export function createMemoryMCPServer(
                         };
                     }
                 },
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } }
             ),
 
@@ -245,13 +221,9 @@ export function createMemoryMCPServer(
                 'storeUserMemory',
                 'Store user-specific memory. Saving with the same userId and name will replace existing content.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     userId:  z.string().describe('User identifier'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     name:    z.string().describe('Memory name (e.g., preferences, history)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     content: z.string().describe('Memory content to store'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     tags:    z.array(z.string()).optional().describe('Optional tags for categorization'),
                 },
                 async (args): Promise<CallToolResult> => {
@@ -267,7 +239,6 @@ export function createMemoryMCPServer(
                         };
                     }
                 },
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } }
             ),
 
@@ -275,13 +246,9 @@ export function createMemoryMCPServer(
                 'logEvent',
                 'Log an event to the events layer',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     eventType: z.string().describe('Type of event (e.g., conversation, decision, learning)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     summary:   z.string().describe('Brief summary of the event'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     details:   z.string().optional().describe('Optional detailed content'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     tags:      z.array(z.string()).optional().describe('Optional tags for categorization'),
                 },
                 async (args): Promise<CallToolResult> => {
@@ -306,7 +273,6 @@ export function createMemoryMCPServer(
                         };
                     }
                 },
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
             ),
 
@@ -314,17 +280,11 @@ export function createMemoryMCPServer(
                 'search',
                 'Search memories by tag with optional filters',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     tags:      z.array(z.string()).min(1).describe('Tags to search for (AND semantics — items must have all tags)'),
-                    // Stryker disable next-line StringLiteral: z.enum values and describe() are schema configuration
                     layer:     z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().optional().describe('Optional result limit'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     cursor:    z.string().optional().describe('Pagination cursor from previous response'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     startDate: z.iso.datetime().optional().describe('Filter: items updated on or after this ISO8601 datetime'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     endDate:   z.iso.datetime().optional().describe('Filter: items updated on or before this ISO8601 datetime'),
                 },
                 async (args): Promise<CallToolResult> => {
@@ -342,7 +302,6 @@ export function createMemoryMCPServer(
                             return mcpTextResult('No memories found matching tags');
                         }
                         const formatted = results.items.map((r) => {
-                            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- TagIndexItem types contentPreview as string but it may be absent in legacy DynamoDB items missing the field
                             const preview = r.contentPreview ?? 'No content';
                             return `${r.memoryPath}: ${preview.slice(0, 200)}${preview.length > 200 ? '...' : ''}`;
                         }).join('\n\n');
@@ -355,39 +314,29 @@ export function createMemoryMCPServer(
                         };
                     }
                 },
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
 
             // semantic_search tool is conditionally included above (see semanticSearchTools).
             // It is only registered when both vectorIndex and embedder are present.
-            ...(semanticSearchTools as []),
+            ...semanticSearchTools,
 
-            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
                 'list',
                 'List memories in a directory',
                 // Stryker restore StringLiteral
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     path:      z.string().optional().describe('Directory path (e.g., /, /identity, /users). Defaults to root /'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().optional().describe('Maximum number of results to return'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     cursor:    z.string().optional().describe('Pagination cursor from previous response'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     startDate: z.iso.datetime().optional().describe('Filter: items updated on or after this ISO8601 datetime'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     endDate:   z.iso.datetime().optional().describe('Filter: items updated on or before this ISO8601 datetime'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        // Stryker disable next-line StringLiteral: Default path for root directory
                         const rawPath = args.path ?? '/';
                         // Normalize: strip trailing slash (except for root)
-                        // Stryker disable next-line StringLiteral: ''.trimEnd() is equivalent - paths work via prefix-based list query
                         let dirPath = rawPath;
-                        // Stryker disable ConditionalExpression,MethodExpression,UnaryOperator,LogicalOperator,BlockStatement: trailing-slash normalization — loop is defensive; mutations here cause infinite loops or over-strip paths (untestable via existing normalized test paths)
                         while(dirPath !== '/' && dirPath.endsWith('/')) {
                             dirPath = dirPath.slice(0, -1);
                         }
@@ -406,11 +355,9 @@ export function createMemoryMCPServer(
                         };
                         const layer = layerPaths[dirPath];
 
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger debug objects - content not behavior-affecting
                         const results = layer
                             ? (logger.debug({ layer, dirPath, msg: 'Using GSI1 listByLayer for layer path' }), await backend.listByLayer(layer, queryOptions))
                             : (logger.debug({ dirPath, msg: 'Using directory list for non-layer path' }), await backend.list(dirPath, queryOptions));
-                        // Stryker restore ObjectLiteral,StringLiteral
 
                         if(results.items.length === 0) {
                             return mcpTextResult('Directory is empty');
@@ -425,11 +372,9 @@ export function createMemoryMCPServer(
                         };
                     }
                 },
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
 
-            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
                 'listTags',
                 'List all tags with their usage counts',
@@ -453,17 +398,14 @@ export function createMemoryMCPServer(
                         };
                     }
                 },
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
 
-            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
                 'deleteMemory',
                 'Delete a memory at the specified path. Returns the deleted content as confirmation.',
                 // Stryker restore StringLiteral
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     path: z.string().describe('Memory path to delete (e.g., /identity/old-values, /state/outdated)'),
                 },
                 async (args): Promise<CallToolResult> => {
@@ -485,20 +427,15 @@ export function createMemoryMCPServer(
                         };
                     }
                 },
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } }
             ),
-            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
                 'updateTags',
                 'Add or remove tags on an existing memory without changing its content.',
                 // Stryker restore StringLiteral
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     path:       z.string().describe('Memory path to update tags on'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     addTags:    z.array(z.string()).optional().describe('Tags to add to the memory'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
                     removeTags: z.array(z.string()).optional().describe('Tags to remove from the memory'),
                 },
                 async (args): Promise<CallToolResult> => {
@@ -543,7 +480,6 @@ export function createMemoryMCPServer(
                         };
                     }
                 },
-                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
         ],

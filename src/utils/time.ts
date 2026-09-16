@@ -10,7 +10,6 @@ const SECONDS_THRESHOLD = 60;  // < 60 seconds = "just now"
 const MINUTES_THRESHOLD = 60;  // < 60 minutes = show minutes
 const HOURS_THRESHOLD = 24;    // < 24 hours = show hours
 const DAYS_THRESHOLD = 7;      // < 7 days = show days
-const WEEKS_THRESHOLD = 5;     // < 5 weeks (and < 1 month) = show weeks
 const MONTHS_THRESHOLD = 12;   // < 12 months = show months
 
 /**
@@ -95,8 +94,7 @@ function formatRelativeTimeCore(date: Date, now: Date, fmt: RelativeTimeFormat):
 
     const weeks = Math.floor(dtNow.diff(dtDate, 'weeks').weeks);
     const months = Math.floor(dtNow.diff(dtDate, 'months').months);
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: Complex time boundary check, both conditions needed for correct bucketing, <= boundary is equivalent
-    if(weeks < WEEKS_THRESHOLD && months < 1) {
+    if(months < 1) {
         return fmt.weeks(weeks);
     }
 
@@ -148,7 +146,6 @@ export function resolveTimezone(userTimezone?: string): string {
         if(IANAZone.isValidZone(userTimezone)) {
             return userTimezone;
         } else {
-            // Stryker disable next-line StringLiteral: log message string is observability-only configuration
             logger.warn({ userTimezone }, 'Invalid timezone provided, falling back to server timezone');
         }
     }
@@ -224,7 +221,6 @@ export function getCurrentTimeContext(userTimezone?: string): TimeContext {
         dayOfWeek:     getDayOfWeek(now, resolvedTimezone),
         timeOfDay:     getTimeOfDay(now, resolvedTimezone),
         utcDayOfWeek:  getDayOfWeek(now, 'UTC'),
-        // Stryker disable next-line StringLiteral: 'UTC' → '' is equivalent when server timezone is UTC (test environment)
         utcTimeOfDay:  getTimeOfDay(now, 'UTC'),
         userTimezone:  resolvedTimezone,
         userLocalTime: formatLocalDateTime(now.toISOString(), resolvedTimezone),

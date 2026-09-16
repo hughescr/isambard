@@ -100,6 +100,10 @@ describe('resolveChannelId', () => {
             const result = resolveChannelId('123abc', mockRegistry);
             expect(result).toBe(createChannelId('123abc'));
         });
+
+        test('passes through an accepted channel ID containing an interior hash', () => {
+            expect(resolveChannelId('123#abc', mockRegistry)).toBe(createChannelId('123#abc'));
+        });
     });
 
     describe('edge cases', () => {

@@ -84,12 +84,56 @@ describe('InboxManager', () => {
         jest.useRealTimers();
     });
 
+    function makeSearchMessage(id: string, timestamp: string) {
+        return {
+            id,
+            channelId,
+            guildId:     null,
+            author:      { id: createUserId(`user-${id}`), username: `user-${id}`, displayName: `User ${id}` },
+            content:     `message-${id}`,
+            timestamp,
+            attachments: [],
+            embeds:      [],
+            reactions:   [],
+        };
+    }
+
+    function managerForLoadedMessages(messages: ReturnType<typeof makeSearchMessage>[], config?: { minGapDurationMs?: number }) {
+        const registry = {
+            getUnmutedChannels: mock(async () => [{ channelId, channelName: '#test-channel', guildId, isMuted: false }]),
+        } as unknown as ChannelRegistryManager;
+        const loadedManager = new InboxManager({
+            checkpointManager:    mockCheckpointManager,
+            messageSearchService: mockMessageSearchService,
+            channelRegistry:      registry,
+            config,
+        });
+        mockCheckpointManager.load = mock(async () => ({
+            service:    'discord' as const,
+            channelId,
+            guildId,
+            lastSeenAt: new Date(Date.now() - 60_000).toISOString(),
+            updatedAt:  nowIso,
+        }));
+        mockMessageSearchService.searchMessages = mock(async () => ({
+            messages,
+            metadata: { totalFound: messages.length, timeRange: { start: nowIso, end: nowIso } },
+        }));
+        return loadedManager;
+    }
+
     describe('updateChannelMetadata', () => {
         test('should update channel metadata cache', () => {
             manager.updateChannelMetadata(channelId, 'general', guildId);
 
             // Verify metadata is cached by checking getChannelName
             expect(manager.getChannelName(channelId)).toBe('general');
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                channelId,
+                channelName: 'general',
+                guildId,
+                msg:         'Channel metadata updated',
+            });
         });
 
         test('should handle DM channel', () => {
@@ -156,6 +200,37 @@ describe('InboxManager', () => {
 
             expect(total).toBe(0);
             expect(mockMessageSearchService.searchMessages).not.toHaveBeenCalled();
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                channelId,
+                msg: 'Skipping channel - gap too small',
+            }));
+        });
+
+        test('should warn when checkpoint initialization does not produce a checkpoint', async () => {
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                channelRegistry:      mockRegistryWithChannel,
+            });
+            mockCheckpointManager.load = mock(async () => undefined);
+            mockCheckpointManager.initializeIfMissing = mock(async () => undefined as never);
+
+            const total = await managerWithChannel.loadUnread();
+
+            expect(total).toBe(0);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                channelId,
+                msg: 'Checkpoint missing after initialization',
+            }));
+            expect(mockMessageSearchService.searchMessages).not.toHaveBeenCalled();
         });
 
         test('should load messages for channels with sufficient gap', async () => {
@@ -213,6 +288,15 @@ describe('InboxManager', () => {
 
             expect(total).toBe(1);
             expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(1);
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                channelId,
+                messageCount: 1,
+                msg:          'Loaded 1 unread messages for channel',
+            }));
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                totalLoaded: 1,
+                msg:         'Inbox loaded: 1 unread messages across 1 channels',
+            }));
         });
 
         test('should limit catch-up age to maxCatchUpAgeDays', async () => {
@@ -493,6 +577,10 @@ describe('InboxManager', () => {
 
             expect(total).toBe(1);
             expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(2);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                channelId: channel1Id,
+                msg:       expect.stringContaining('Failed to load unread messages for channel'),
+            }));
         });
 
         test('should log summary with success and fail counts', async () => {
@@ -597,6 +685,10 @@ describe('InboxManager', () => {
 
             // Set bot user ID after construction (like the real bot does after clientReady)
             managerWithChannel.setBotUserId(botUserId);
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                botUserId,
+                msg: 'Bot user ID set for inbox filtering',
+            });
 
             const checkpoint: DiscordChannelCheckpoint = {
                 service:    'discord',
@@ -1296,6 +1388,11 @@ describe('InboxManager', () => {
 
             const messages = managerWithChannel.getChannelMessages(channelId);
             expect(messages).toHaveLength(0);
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                channelId,
+                messageCount: 1,
+                msg:          'Marked 1 messages as read',
+            }));
         });
 
         test('should update checkpoint to latest marked message', async () => {
@@ -1592,6 +1689,11 @@ describe('InboxManager', () => {
 
             const messages = managerWithChannel.getChannelMessages(channelId);
             expect(messages).toHaveLength(0);
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                channelId,
+                messageCount: 2,
+                msg:          'Channel marked as read',
+            }));
         });
 
         test('should use highest-timestamp message as checkpoint when messages arrive in reverse chronological order', async () => {
@@ -1684,6 +1786,11 @@ describe('InboxManager', () => {
                 nowIso,
                 '111'
             );
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                channelId,
+                messageId: '111',
+                msg:       'Channel activity recorded',
+            }));
         });
 
         test('should handle DM guild ID', async () => {
@@ -1964,6 +2071,11 @@ describe('InboxManager', () => {
 
             expect(mockCheckpointManager.updateHandled).toHaveBeenCalledTimes(1);
             expect(mockCheckpointManager.updateHandled).toHaveBeenCalledWith(channelId, '555666777', '2025-01-25T13:00:00.000Z');
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
+                channelId,
+                messageId: '555666777',
+                msg:       'Channel handled watermark recorded',
+            }));
         });
     });
 
@@ -2021,6 +2133,7 @@ describe('InboxManager', () => {
 
             expect(result).toHaveLength(1);
             expect(result[0].id).toBe('300');
+            expect(result[0].isRead).toBe(false);
         });
 
         test('should skip channels without a handled field (first boot after upgrade)', async () => {
@@ -2095,6 +2208,21 @@ describe('InboxManager', () => {
             expect(result.map(m => m.id)).toEqual(['150', '301', '200']);
         });
 
+        test('should not search later channels after a replay search fails', async () => {
+            const handled = { messageId: '100', at: '2025-01-25T12:00:00.000Z' };
+            mockCheckpointManager.listAll = mock(async () => [
+                makeCheckpoint({ channelId, handled, lastSeenAt: '2025-01-25T13:00:00.000Z' }),
+                makeCheckpoint({ channelId: otherChannelId, handled, lastSeenAt: '2025-01-25T13:00:00.000Z' }),
+            ]);
+            mockMessageSearchService.searchMessages = mock(async () => {
+                throw new Error('Discord unavailable');
+            });
+
+            await expect(manager.replayUnhandled()).rejects.toThrow('Discord unavailable');
+            expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(1);
+            expect(mockMessageSearchService.searchMessages).toHaveBeenCalledWith(expect.objectContaining({ channelId }));
+        });
+
         test('should carry the real Discord author id (a snowflake), not just the display name, so downstream envelope attribution never keys on a display name', async () => {
             const checkpoint = makeCheckpoint({
                 lastSeenAt: '2025-01-25T13:00:00.000Z',
@@ -2132,6 +2260,89 @@ describe('InboxManager', () => {
             expect(manager.hasUnread).toBe(false);
             expect(manager.totalUnread).toBe(0);
             expect(manager.getChannelMessages(channelId)).toEqual([]);
+        });
+    });
+
+    describe('mutation boundary contracts', () => {
+        test('loads a channel when its gap is exactly the configured minimum', async () => {
+            const managerWithChannel = managerForLoadedMessages([], { minGapDurationMs: 60_000 });
+
+            await managerWithChannel.loadUnread();
+
+            expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(1);
+        });
+
+        test('starts the search one millisecond after the checkpoint', async () => {
+            const managerWithChannel = managerForLoadedMessages([]);
+
+            await managerWithChannel.loadUnread();
+
+            expect(mockMessageSearchService.searchMessages).toHaveBeenCalledWith(expect.objectContaining({
+                startTime: new Date(Date.now() - 59_999),
+            }));
+        });
+
+        test('does not log or retain a channel whose only fetched message is the bot', async () => {
+            const managerWithChannel = managerForLoadedMessages([makeSearchMessage('111', nowIso)]);
+            managerWithChannel.setBotUserId(createUserId('user-111'));
+
+            await managerWithChannel.loadUnread();
+
+            expect(managerWithChannel.getUnreadOverview()).toEqual({ totalUnread: 0, channels: [] });
+            expect(mockLogger.info).not.toHaveBeenCalledWith(expect.objectContaining({
+                channelId,
+                messageCount: 0,
+            }));
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                totalLoaded:  0,
+                channelCount: 0,
+            }));
+        });
+
+        test('reports elapsed time as a duration after search work completes', async () => {
+            const managerWithChannel = managerForLoadedMessages([]);
+            mockMessageSearchService.searchMessages = mock(async () => {
+                jest.advanceTimersByTime(25);
+                return { messages: [], metadata: { totalFound: 0, timeRange: { start: nowIso, end: nowIso } } };
+            });
+
+            await managerWithChannel.loadUnread();
+
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                elapsedMs: 25,
+                msg:       'Loaded unread messages summary',
+            }));
+        });
+
+        test('does not return an unrelated loaded message for an unknown ID', async () => {
+            const managerWithChannel = managerForLoadedMessages([makeSearchMessage('111', nowIso)]);
+            await managerWithChannel.loadUnread();
+
+            expect(managerWithChannel.getMessage(channelId, 'missing')).toBeUndefined();
+        });
+
+        test('keeps the first matching timestamp as the mark-as-read checkpoint', async () => {
+            const managerWithChannel = managerForLoadedMessages([
+                makeSearchMessage('first', nowIso),
+                makeSearchMessage('second', nowIso),
+            ]);
+            await managerWithChannel.loadUnread();
+
+            await managerWithChannel.markAsRead(channelId, ['first', 'second']);
+
+            expect(mockCheckpointManager.updateLastSeen).toHaveBeenCalledWith(channelId, 'DM', nowIso, 'first');
+        });
+
+        test('keeps the first matching timestamp as the mark-channel-read checkpoint', async () => {
+            const managerWithChannel = managerForLoadedMessages([
+                makeSearchMessage('first', nowIso),
+                makeSearchMessage('second', nowIso),
+            ]);
+            await managerWithChannel.loadUnread();
+
+            await managerWithChannel.markChannelRead(channelId);
+
+            expect(mockCheckpointManager.updateLastSeen).toHaveBeenCalledWith(channelId, 'DM', nowIso, 'first');
         });
     });
 });

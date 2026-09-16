@@ -68,6 +68,15 @@ describe('ServiceHealthRegistryImpl', () => {
         });
     });
 
+    describe('stop()', () => {
+        test('stops actors so later events cannot change their state', () => {
+            registry.stop();
+            registry.sendEvent('discord', 'CONFIGURE');
+
+            expect(registry.getState('discord')).toBe('disabled');
+        });
+    });
+
     describe('getEntry()', () => {
         test('should return entry with disabled state initially', () => {
             const entry = registry.getEntry('discord');
@@ -378,7 +387,10 @@ describe('ServiceHealthRegistryImpl', () => {
 
             registry.sendEvent('discord', 'CONNECT_SUCCESS'); // starting → online
 
-            expect(mockLogger.error).toHaveBeenCalledTimes(1);
+            expect(mockLogger.error).toHaveBeenCalledWith(
+                { error: thrownError },
+                'Error in health change listener'
+            );
         });
 
         test('should not call listener when same state is re-emitted (no actual transition)', () => {
@@ -621,6 +633,30 @@ describe('ServiceHealthRegistryImpl', () => {
     });
 
     describe('handleStateChange() optimization — zero listeners', () => {
+        test('does not allocate a change timestamp when there are no listeners', () => {
+            registry.sendEvent('discord', 'CONFIGURE');
+
+            const RealDate = globalThis.Date;
+            let constructedDates = 0;
+            function CountingDate(...args: ConstructorParameters<DateConstructor>): Date {
+                constructedDates += 1;
+                return new RealDate(...args);
+            }
+            Object.setPrototypeOf(CountingDate, RealDate);
+            CountingDate.prototype = RealDate.prototype;
+            globalThis.Date = CountingDate as unknown as DateConstructor;
+
+            try {
+                registry.sendEvent('discord', 'CONNECT_SUCCESS');
+            } finally {
+                globalThis.Date = RealDate;
+            }
+
+            // XState constructs one transition timestamp. The registry must not allocate a
+            // second notification timestamp when nobody can receive that notification.
+            expect(constructedDates).toBe(1);
+        });
+
         test('should not throw when state changes and there are no subscribers', () => {
             // Prime first transition (sets previousStates)
             registry.sendEvent('discord', 'CONFIGURE');

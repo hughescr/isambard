@@ -1,10 +1,6 @@
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import config from '@hughescr/eslint-config-default';
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import moduleBoundariesPlugin from '@hughescr/eslint-plugin-module-boundaries';
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import testHygienePlugin from '@hughescr/eslint-plugin-test-hygiene';
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import jestPlugin from 'eslint-plugin-jest';
 import { boundariesConfig, boundaryElements } from './eslint-boundaries.config.mjs';
 
@@ -38,6 +34,9 @@ const eslintConfig = [
             'dist/',
             'node_modules/',
 
+            // Byte-frozen evidence from the 22dfa9b audit; the historical validator checks its hash.
+            'docs/audits/suppressions/evidence/probe-babel-parens.ts',
+
             '.stryker-tmp/',
             'reports/',
 
@@ -56,6 +55,14 @@ const eslintConfig = [
             'n/no-missing-import':     'off',
             'n/no-unpublished-import': 'off',
         }
+    },
+    {
+        files: ['eslint.config.mjs', 'eslint-boundaries.config.mjs', 'stryker.conf.mjs'],
+        rules: {
+            'import-x/no-extraneous-dependencies': ['error', {
+                devDependencies: ['eslint.config.mjs', 'eslint-boundaries.config.mjs', 'stryker.conf.mjs'],
+            }],
+        },
     },
     boundariesConfig,
     {
@@ -233,6 +240,21 @@ const eslintConfig = [
             }],
             // Every spyOn() must be paired with restoreAllMocks() or mockRestore() in afterEach
             '@hughescr/test-hygiene/require-mock-cleanup': 'error',
+        },
+    },
+    {
+        // This maintained audit scanner uses TypeScript as a development tool.
+        files: ['docs/audits/suppressions/resolution-comment-inventory.ts'],
+        rules: {
+            'import-x/no-extraneous-dependencies': ['error', {
+                devDependencies: [
+                    '**/*.test.*',
+                    '**/*.spec.*',
+                    '**/test/**',
+                    '**/scripts/**',
+                    'docs/audits/suppressions/resolution-comment-inventory.ts',
+                ],
+            }],
         },
     }
 ];

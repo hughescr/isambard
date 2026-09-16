@@ -11,7 +11,6 @@ export const MAX_PROCESSED_URIS = 500;
  * Bluesky feed checkpoint schema.
  * Tracks the last-seen state for a feed to avoid re-processing posts.
  */
-// Stryker disable StringLiteral: All .describe() calls and literal schema values are documentation/configuration
 export const bskyFeedCheckpointSchema = z.object({
     /** Service identifier (always 'bsky') */
     service:       z.literal('bsky'),
@@ -34,7 +33,6 @@ export type BskyFeedCheckpoint = z.infer<typeof bskyFeedCheckpointSchema>;
  * Bluesky notification checkpoint schema.
  * Tracks the last-seen state for notifications.
  */
-// Stryker disable StringLiteral: All .describe() calls and literal schema values are documentation/configuration
 export const bskyNotificationCheckpointSchema = z.object({
     /** Service identifier (always 'bsky') */
     service:       z.literal('bsky'),
@@ -57,7 +55,6 @@ export type BskyNotificationCheckpoint = z.infer<typeof bskyNotificationCheckpoi
  * values (not AT URIs) — the field name is kept for reuse with the existing generic
  * save/FIFO helpers, which only know about a `processedUris: string[]` shape.
  */
-// Stryker disable StringLiteral: All .describe() calls and literal schema values are documentation/configuration
 export const bskyDmCheckpointSchema = z.object({
     /** Service identifier (always 'bsky') */
     service:        z.literal('bsky'),

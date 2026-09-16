@@ -12,7 +12,7 @@
  * Supports graceful cancellation via AbortSignal (passed in ReconcilerOptions).
  */
 
-import { type DynamoDBDocumentClient, type QueryCommandOutput, QueryCommand, GetCommand, DeleteCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { type BatchWriteCommandInput, type BatchWriteCommandOutput, type DynamoDBDocumentClient, type QueryCommandOutput, QueryCommand, GetCommand, DeleteCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../../client-holder';
 import { ContactKeyGenerator } from '../key-generator';
@@ -40,44 +40,41 @@ async function batchWriteWithRetry(
     docClient: DynamoDBDocumentClient,
     tableName: string,
     sleep:     (ms: number, signal?: AbortSignal) => Promise<void>,
-    requests:  { PutRequest?: { Item: Record<string, unknown> } }[],
+    requests:  NonNullable<NonNullable<BatchWriteCommandInput['RequestItems']>[string]>,
     signal?:   AbortSignal
 ): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- UnprocessedItems type is complex
-    let pending: any = { [tableName]: requests };
+    let pending: NonNullable<BatchWriteCommandInput['RequestItems']> = { [tableName]: requests };
 
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,UpdateOperator,BlockStatement: for-loop — UpdateOperator attempt-- would infinite-loop; retry behavior tested via UnprocessedItems test
     for(let attempt = 0; attempt < RECONCILER_BATCH_WRITE_MAX_RETRIES; attempt++) {
-        // Stryker disable next-line ConditionalExpression,ObjectLiteral: abortSignal option — ternary passes signal through or nothing; mock clients ignore it entirely
         const batchWriteSignalOpts = signal ? { abortSignal: signal } : undefined;
         // eslint-disable-next-line no-await-in-loop -- sequential: retry loop for unprocessed items
-        const result = await docClient.send(new BatchWriteCommand({
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- complex type
+        const result: BatchWriteCommandOutput = await docClient.send(new BatchWriteCommand({
             RequestItems: pending,
         }), batchWriteSignalOpts);
 
-        // Stryker disable next-line ConditionalExpression,LogicalOperator,OptionalChaining,EqualityOperator: unprocessed items check
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: DynamoDB SDK result typed non-nullable but checking defensively
-        const hasUnprocessed = result?.UnprocessedItems && Object.keys(result.UnprocessedItems).length > 0;
+        const hasUnprocessed = result.UnprocessedItems && Object.keys(result.UnprocessedItems).length > 0;
 
-        // Stryker disable next-line ConditionalExpression,BlockStatement,BooleanLiteral: early return on success
         if(!hasUnprocessed) {
             return;
         }
 
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,ArithmeticOperator,BlockStatement: retry boundary
         if(attempt < RECONCILER_BATCH_WRITE_MAX_RETRIES - 1) {
-            // Stryker disable next-line ArithmeticOperator: backoff formula
             const delay = RECONCILER_BATCH_WRITE_BASE_DELAY_MS * 2 ** attempt;
             // eslint-disable-next-line no-await-in-loop -- sequential: retry backoff delay
             await sleepWithOptionalSignal(sleep, delay, signal);
         }
 
-        pending = result.UnprocessedItems;
+        const nextPending: NonNullable<BatchWriteCommandInput['RequestItems']> = {};
+        for(const table of Object.keys(result.UnprocessedItems ?? {})) {
+            const unprocessed = result.UnprocessedItems?.[table];
+            if(unprocessed !== undefined) {
+                nextPending[table] = unprocessed;
+            }
+        }
+        pending = nextPending;
     }
 
-    const remainingCount = Object.values(pending as Record<string, unknown[]>).flat().length;
-    // Stryker disable next-line StringLiteral: operation name string is debug-only metadata — the throw itself is tested
+    const remainingCount = Object.values(pending).reduce((count, items) => count + items.length, 0);
     throw new BatchWriteExhaustedError('ContactReconciler.batchWriteWithRetry', remainingCount, RECONCILER_BATCH_WRITE_MAX_RETRIES);
 }
 
@@ -184,7 +181,6 @@ function sleepWithOptionalSignal(
     ms:     number,
     signal: AbortSignal | undefined
 ): Promise<void> {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: conditional pass-through — both branches call sleep; signal branch is tested by abort tests
     return signal ? sleep(ms, signal) : sleep(ms);
 }
 
@@ -193,10 +189,9 @@ function sleepWithOptionalSignal(
  * Matches DOMException with name='AbortError' and plain Error objects with name='AbortError'.
  */
 function isAbortError(err: unknown): boolean {
-    // Stryker disable ConditionalExpression,LogicalOperator,BlockStatement,EqualityOperator,StringLiteral: abort detection — paired instanceof+name checks are inseparable; tested by 'AbortError during sleep is not counted as an error'
-    return (err instanceof Error && err.name === 'AbortError')
-      || (typeof DOMException !== 'undefined' && err instanceof DOMException && err.name === 'AbortError');
-    // Stryker restore ConditionalExpression,LogicalOperator,BlockStatement,EqualityOperator,StringLiteral
+    // DOMException is an Error subclass in the Bun runtime, so the same check covers
+    // both abort sources without a duplicate branch.
+    return err instanceof Error && err.name === 'AbortError';
 }
 
 /**
@@ -208,21 +203,17 @@ async function sleepAndCheckAbort(
     deps:    ResolvedContactReconcilerDeps,
     options: ContactReconcilerOptions
 ): Promise<boolean> {
-    // Stryker disable ConditionalExpression,BlockStatement,BooleanLiteral: pre-sleep abort guard — avoids calling sleep at all when signal is already aborted; tested by 'pre-aborted signal returns true immediately'
     if(options.signal?.aborted) {
         return true;
     }
     // Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral
-    // Stryker disable ConditionalExpression,EqualityOperator,BlockStatement,BooleanLiteral: rate-limiting guard — 0ms delay is equivalent to no delay; both branches observable only via side effects in tests using operationDelayMs>0
     if(options.operationDelayMs === 0) {
         return false;
     }
     // Stryker restore ConditionalExpression,EqualityOperator,BlockStatement,BooleanLiteral
-    // Stryker disable BlockStatement: outer try/catch wraps sleep — catch body must not be replaced with {} or AbortError propagates uncaught; tested by 'AbortError during sleep is not counted as an error'
     try {
         await sleepWithOptionalSignal(deps.sleep, options.operationDelayMs, options.signal);
     } catch (error) {
-        // Stryker disable ConditionalExpression,BooleanLiteral: abort-from-sleep guard — true/false return values are the caller's break signal; tested by 'AbortError during sleep is not counted as an error'
         if(isAbortError(error)) {
             return true; // Graceful abort — caller must break without counting error
         }
@@ -230,7 +221,6 @@ async function sleepAndCheckAbort(
         throw error; // Re-throw unexpected errors
     }
     // Stryker restore BlockStatement
-    // Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator,BooleanLiteral: post-sleep abort guard — signal may have been set during sleep; === true forces boolean coercion; equivalent when no signal is provided
     return options.signal?.aborted === true;
 }
 
@@ -262,7 +252,6 @@ function isLookupOrphanOrStray(
         // True orphan: profile is missing.
         // Apply the same age guard as stray lookups to protect in-flight putContact writes:
         // step 1 (write lookup) may complete before step 2 (write profile) during a concurrent write.
-        // Stryker disable ConditionalExpression,BlockStatement,LogicalOperator,EqualityOperator: age threshold for true orphan — mirrors stray-lookup guard; young rows must not be deleted; both branches tested by 'young true-orphan' and 'old true-orphan' tests
         if(lookupCreatedAt !== undefined) {
             const ageMs = Date.now() - new Date(lookupCreatedAt).getTime();
             if(ageMs < strayLookupAgeThresholdMs) {
@@ -274,13 +263,10 @@ function isLookupOrphanOrStray(
     }
     // Fix 2: stray check — profile exists but may no longer claim this identifier
     const rawIdentifiers: unknown = profileItem.identifiers; // raw from DynamoDB
-    // Stryker disable next-line ConditionalExpression,BlockStatement: conservative guard — profiles without identifiers array are treated as valid; tested by 'does not delete lookup when profile has no identifiers field'
     if(!Array.isArray(rawIdentifiers)) {
         return false; // No identifiers array — treat as valid (conservative)
     }
-    // Stryker disable next-line MethodExpression: trim on normalizedValue — value from PK is already normalized at write time; redundant but defensive
     const normalizedValue = value.toLowerCase().trim(); // normalize for comparison
-    // Stryker disable ConditionalExpression,BlockStatement,LogicalOperator,MethodExpression: stray lookup check — comparing normalized values; all branches tested by case-insensitive and trim tests
     const profileClaims = (rawIdentifiers as { platform: unknown, value: unknown }[])
         .some(id => id.platform === platform && typeof id.value === 'string' && id.value.toLowerCase().trim() === normalizedValue);
     // Stryker restore ConditionalExpression,BlockStatement,LogicalOperator,MethodExpression
@@ -289,7 +275,6 @@ function isLookupOrphanOrStray(
     }
     // Stray lookup: profile exists but no longer claims this identifier.
     // Only delete if the lookup is old enough (protects in-flight writes).
-    // Stryker disable ConditionalExpression,BlockStatement,LogicalOperator,EqualityOperator: age threshold guard — young lookups must not be deleted; both tested by 'young' and 'old' stray tests
     if(lookupCreatedAt !== undefined) {
         const ageMs = Date.now() - new Date(lookupCreatedAt).getTime();
         if(ageMs < strayLookupAgeThresholdMs) {
@@ -321,12 +306,10 @@ async function processPhaseAPage(
                 orphansDeleted++;
             }
         } catch (error) {
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ error, item, msg: 'ContactReconciler Phase A: error processing lookup item' });
             errors++;
         }
 
-        // Stryker disable next-line BlockStatement,ConditionalExpression: abort-after-page guard — break exits loop when signal aborted; body cannot be removed without losing the loop exit; tested by 'Fix 7: Phase A abort check fires immediately after processPhaseAPage returns'
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limiting delay between operations
         if(await sleepAndCheckAbort(deps, options)) {
             break;
@@ -352,23 +335,19 @@ async function processPhaseAItem(
     const profileKeys = ContactKeyGenerator.createProfileKeys(personId);
 
     // GetCommand (consistent read) for the referenced profile
-    // Stryker disable next-line ConditionalExpression,ObjectLiteral: abortSignal option — ternary passes signal through or nothing; mock clients ignore it entirely
     const phaseAGetSignalOpts = options.signal ? { abortSignal: options.signal } : undefined;
     const profileResult = await deps.docClient.send(new GetCommand({
         TableName:      deps.tableName,
         Key:            profileKeys,
-        // Stryker disable next-line BooleanLiteral: ConsistentRead flag — DynamoDB mock ignores it; only the returned Item is observable
         ConsistentRead: true,
     }), phaseAGetSignalOpts);
 
     // Fix 4: check abort after the read, before the write
-    // Stryker disable ConditionalExpression,BlockStatement,BooleanLiteral: post-read abort guard — only reachable when signal fires between read and write
     if(options.signal?.aborted) {
         return false;
     }
     // Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral
 
-    // Stryker disable next-line ConditionalExpression,BlockStatement: orphan check
     const { platform, value } = ContactKeyGenerator.parseLookupPK(item.PK);
     const shouldDelete = isLookupOrphanOrStray(
         profileResult.Item,
@@ -378,16 +357,13 @@ async function processPhaseAItem(
         options.strayLookupAgeThresholdMs
     );
 
-    // Stryker disable next-line ConditionalExpression,BlockStatement: orphan/stray delete check
     if(shouldDelete) {
         // Orphan or stray: delete the lookup row
-        // Stryker disable next-line ConditionalExpression,ObjectLiteral: abortSignal option — ternary passes signal through or nothing; mock clients ignore it entirely
         const phaseADeleteSignalOpts = options.signal ? { abortSignal: options.signal } : undefined;
         await deps.docClient.send(new DeleteCommand({
             TableName: deps.tableName,
             Key:       { PK: item.PK, SK: item.SK },
         }), phaseADeleteSignalOpts);
-        /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
         logger.debug({ pk: item.PK, sk: item.SK, msg: 'ContactReconciler Phase A: deleted orphan/stray lookup' });
     }
 
@@ -420,7 +396,6 @@ async function runPhaseA(
     let lastKey: Record<string, unknown> | undefined;
 
     do {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: pre-page abort guard — equivalent when mock returns empty items and do-while terminates naturally
         if(options.signal?.aborted) {
             break;
         }
@@ -429,13 +404,11 @@ async function runPhaseA(
         let result: QueryCommandOutput;
 
         try {
-            // Stryker disable next-line ConditionalExpression,ObjectLiteral: abortSignal option — ternary passes signal through or nothing; mock clients ignore it entirely
             const phaseAQuerySignalOpts = options.signal ? { abortSignal: options.signal } : undefined;
             // Query all CONTACT_LOOKUP rows via GSI2PK=CONTACT_LOOKUPS
             // eslint-disable-next-line no-await-in-loop -- sequential: pagination depends on prior response cursor
             result = await deps.docClient.send(new QueryCommand({
                 TableName:                 deps.tableName,
-                // Stryker disable StringLiteral,ObjectLiteral: DynamoDB configuration strings — mocks ignore exact values
                 IndexName:                 'GSI2',
                 KeyConditionExpression:    'GSI2PK = :gsi2pk',
                 ExpressionAttributeValues: { ':gsi2pk': 'CONTACT_LOOKUPS' },
@@ -444,7 +417,6 @@ async function runPhaseA(
                 ExclusiveStartKey:         currentKey,
             }), phaseAQuerySignalOpts);
         } catch (error) {
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ error, msg: 'ContactReconciler Phase A: failed to query lookup rows' });
             progress.errors++;
             break;
@@ -460,13 +432,7 @@ async function runPhaseA(
         progress.orphanLookupsDeleted += pageResult.orphansDeleted;
         progress.errors += pageResult.errors;
 
-        // Stryker disable next-line ConditionalExpression,BlockStatement: post-page abort guard — checked immediately after processPhaseAPage returns; breaks before updating lastKey/continuing loop
-        if(options.signal?.aborted) {
-            break;
-        }
-
         lastKey = result.LastEvaluatedKey;
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Loop termination
     } while(lastKey);
 
     return progress;
@@ -494,9 +460,7 @@ async function repairIdentifierLookup(
     const lookupKeys = ContactKeyGenerator.createLookupKeys(platform, value, personId);
 
     // Use GetCommand with ConsistentRead instead of QueryCommand
-    // Stryker disable next-line ConditionalExpression,ObjectLiteral: abortSignal option — ternary passes signal through or nothing; mock clients ignore it entirely
     const phaseBGetSignalOpts = options.signal ? { abortSignal: options.signal } : undefined;
-    // Stryker disable ObjectLiteral,BooleanLiteral: GetCommand Key and ConsistentRead are DynamoDB configuration — mock client ignores exact values; only the returned Item is observable
     const lookupResult = await deps.docClient.send(new GetCommand({
         TableName:      deps.tableName,
         Key:            { PK: lookupKeys.PK, SK: lookupKeys.SK },
@@ -505,26 +469,21 @@ async function repairIdentifierLookup(
     // Stryker restore ObjectLiteral,BooleanLiteral
 
     // Fix 4: check abort after the read, before the write
-    // Stryker disable ConditionalExpression,BlockStatement,BooleanLiteral: post-read abort guard — only reachable when signal fires between read and write
     if(options.signal?.aborted) {
         return false;
     }
     // Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral
 
-    // Stryker disable next-line ConditionalExpression,BlockStatement: missing lookup check
     if(!lookupResult.Item) {
         // Missing lookup: create it with all keys including GSI2
-        // Stryker disable ObjectLiteral: DynamoDB BatchWrite payload — mock client ignores exact Item/RequestItems structure; only the function return value is observable
         const lookupItem = {
             ...lookupKeys,
             personId,
-            // Stryker disable next-line StringLiteral: new Date().toISOString() is intentional non-determinism — captures write time for age-threshold protection
             createdAt: new Date().toISOString(),
         };
         // Fix 3 + Fix 5: use batchWriteWithRetry (handles UnprocessedItems) and pass signal for abort propagation
         await batchWriteWithRetry(deps.docClient, deps.tableName, deps.sleep, [{ PutRequest: { Item: lookupItem } }], options.signal);
         // Stryker restore ObjectLiteral
-        /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
         logger.debug({ pk: lookupKeys.PK, sk: lookupKeys.SK, personId, msg: 'ContactReconciler Phase B: created missing lookup' });
         return true;
     }
@@ -556,11 +515,6 @@ async function repairProfileLookups(
     let errors = 0;
 
     for(const identifier of contact.identifiers) {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: per-identifier abort guard — equivalent when tests use single-identifier profiles (single iteration always runs regardless of abort)
-        if(options.signal?.aborted) {
-            break;
-        }
-
         try {
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB op
             const wasCreated = await repairIdentifierLookup(deps, options, contact.personId, identifier.platform, identifier.value);
@@ -568,12 +522,10 @@ async function repairProfileLookups(
                 lookupsCreated++;
             }
         } catch (error) {
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ error, identifier, personId: contact.personId, msg: 'ContactReconciler Phase B: error processing identifier' });
             errors++;
         }
 
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Phase B per-identifier sleep — when abort fires during Phase A, signal.aborted is true before Phase B runs, so this break is never reached in abort tests; equivalent paths covered by Phase A abort test
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limiting delay
         if(await sleepAndCheckAbort(deps, options)) {
             break;
@@ -597,7 +549,6 @@ async function processPhaseBPage(
     let errors = 0;
 
     for(const rawItem of rawItems) {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: per-profile abort guard — equivalent when tests have single-item pages (abort after first item completes)
         if(options.signal?.aborted) {
             break;
         }
@@ -608,13 +559,11 @@ async function processPhaseBPage(
             lookupsCreated += repairResult.lookupsCreated;
             errors += repairResult.errors;
         } catch (error) {
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ error, item: rawItem, msg: 'ContactReconciler Phase B: error processing profile' });
             errors += 1;
         }
 
         // Fix 11: inter-profile sleep in Phase B outer loop
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Phase B inter-profile sleep — when abort fires during Phase A, signal.aborted is true before Phase B runs, so this break is never reached in abort tests; equivalent paths covered by Phase A abort test
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limiting delay between profiles
         if(await sleepAndCheckAbort(deps, options)) {
             break;
@@ -640,9 +589,7 @@ async function runPhaseB(
 
     let lastKey: Record<string, unknown> | undefined;
 
-    // Stryker disable ConditionalExpression,EqualityOperator: do-while termination — Bun perTest coverage limitation causes static classification; pagination is tested by 'paginates through multiple pages of profiles in phase B'
     do {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: pre-page abort guard — equivalent when mock returns empty items and do-while terminates naturally
         if(options.signal?.aborted) {
             break;
         }
@@ -652,12 +599,10 @@ async function runPhaseB(
 
         try {
             // Query all contact profiles via GSI2PK=CONTACTS
-            // Stryker disable next-line ConditionalExpression,ObjectLiteral: abortSignal option — ternary passes signal through or nothing; mock clients ignore it entirely
             const phaseBQuerySignalOpts = options.signal ? { abortSignal: options.signal } : undefined;
             // eslint-disable-next-line no-await-in-loop -- sequential: pagination depends on prior response cursor
             result = await deps.docClient.send(new QueryCommand({
                 TableName:                 deps.tableName,
-                // Stryker disable StringLiteral,ObjectLiteral: DynamoDB configuration strings — mocks ignore exact values
                 IndexName:                 'GSI2',
                 KeyConditionExpression:    'GSI2PK = :gsi2pk',
                 ExpressionAttributeValues: { ':gsi2pk': 'CONTACTS' },
@@ -666,7 +611,6 @@ async function runPhaseB(
                 ExclusiveStartKey:         currentKey,
             }), phaseBQuerySignalOpts);
         } catch (error) {
-            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ error, msg: 'ContactReconciler Phase B: failed to scan profiles' });
             progress.errors++;
             break;
@@ -719,13 +663,11 @@ export async function runContactReconciliation(
         docClient: resolveDocClientGetter(deps.docClient)(),
     };
 
-    /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({ msg: 'Starting contact reconciliation' });
     /* Stryker restore StringLiteral,ObjectLiteral */
 
     const phaseA = await runPhaseA(resolvedDeps, options);
 
-    /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
         phase:                'A',
         itemsScanned:         phaseA.itemsScanned,
@@ -737,7 +679,6 @@ export async function runContactReconciliation(
 
     const phaseB = await runPhaseB(resolvedDeps, options);
 
-    /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
         phase:                 'B',
         itemsScanned:          phaseB.itemsScanned,
@@ -749,11 +690,9 @@ export async function runContactReconciliation(
 
     const endTime = Date.now();
     const totalDurationMs = endTime - startTime;
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: wasAborted check — === true forces boolean coercion from optional boolean; tested by 'AbortError during sleep is not counted as an error'
     const wasAborted = options.signal?.aborted === true;
     const success = phaseA.errors === 0 && phaseB.errors === 0;
 
-    /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
         success,
         totalDurationMs,
@@ -761,7 +700,6 @@ export async function runContactReconciliation(
     });
     /* Stryker restore StringLiteral,ObjectLiteral */
 
-    // Stryker disable ConditionalExpression,BlockStatement,BooleanLiteral,ObjectLiteral: aborted flag — wasAborted is set when signal.aborted is true; tested by 'AbortError during sleep is not counted as an error'
     if(wasAborted) {
         return {
             success: true,

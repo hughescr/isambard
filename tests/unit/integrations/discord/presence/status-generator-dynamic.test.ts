@@ -1747,11 +1747,90 @@ describe('DynamicStatusGenerator', () => {
                 expect(first).toBeNull();
             });
 
+            it('does not cache a stale response from a provider that ignores abort', async () => {
+                let releaseFirst!: () => void;
+                mockGenerateTextWithSystemPrompt.mockImplementationOnce(async () => {
+                    await new Promise<void>((resolve) => {
+                        releaseFirst = resolve;
+                    });
+                    return 'Stale call';
+                });
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Fresh call');
+
+                const generator = createDynamicStatusGenerator({ identityContext: 'Test identity' });
+                const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
+                const stale = generator.generateSynopsis(context);
+                expect(await generator.generateSynopsis(context)).toBe('Fresh call');
+                releaseFirst();
+                expect(await stale).toBeNull();
+                expect(await generator.generateSynopsis(context)).toBe('Fresh call');
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2);
+            });
+
+            it('returns an aborted provider rejection silently', async () => {
+                let firstController!: AbortController;
+                mockGenerateTextWithSystemPrompt.mockImplementationOnce(
+                    async (_system: string | string[], _user: string, options?: { abortController?: AbortController }) => {
+                        firstController = options?.abortController ?? new AbortController();
+                        await new Promise<void>((resolve) => {
+                            firstController.signal.addEventListener('abort', () => resolve(), { once: true });
+                        });
+                        throw new Error('provider rejected after cancellation');
+                    }
+                );
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Fresh call');
+
+                const generator = createDynamicStatusGenerator({ identityContext: 'Test identity' });
+                const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
+                const stale = generator.generateSynopsis(context);
+
+                expect(await generator.generateSynopsis(context)).toBe('Fresh call');
+                expect(await stale).toBeNull();
+                expect(mockLogger.error).not.toHaveBeenCalled();
+            });
+
+            it('keeps the newer controller until its own call settles', async () => {
+                let releaseFirst!: () => void;
+                let releaseSecond!: () => void;
+                let secondController!: AbortController;
+                mockGenerateTextWithSystemPrompt.mockImplementationOnce(async () => {
+                    await new Promise<void>((resolve) => {
+                        releaseFirst = resolve;
+                    });
+                    return 'stale';
+                });
+                mockGenerateTextWithSystemPrompt.mockImplementationOnce(
+                    async (_system: string | string[], _user: string, options?: { abortController?: AbortController }) => {
+                        secondController = options?.abortController ?? new AbortController();
+                        await new Promise<void>((resolve) => {
+                            releaseSecond = resolve;
+                        });
+                        return 'second';
+                    }
+                );
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('third');
+
+                const generator = createDynamicStatusGenerator({ identityContext: 'Test identity' });
+                const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
+                const first = generator.generateSynopsis(context);
+                const second = generator.generateSynopsis(context);
+                await Promise.resolve();
+                releaseFirst();
+                expect(await first).toBeNull();
+
+                const third = generator.generateSynopsis(context);
+                expect(secondController.signal.aborted).toBe(true);
+                releaseSecond();
+
+                expect(await second).toBeNull();
+                expect(await third).toBe('third');
+            });
+
             it('should pass abortController to generateTextWithSystemPrompt so cancel-and-replace works', async () => {
-                let capturedController: AbortController | undefined;
+                let capturedOptions: { abortController?: AbortController, stripMarkdown?: boolean } | undefined;
                 mockGenerateTextWithSystemPrompt.mockImplementationOnce(
                     async (_system: string | string[], _user: string, opts?: { abortController?: AbortController }) => {
-                        capturedController = opts?.abortController;
+                        capturedOptions = opts;
                         return 'result';
                     }
                 );
@@ -1768,7 +1847,8 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 // abortController should have been passed to generateTextWithSystemPrompt
-                expect(capturedController).toBeInstanceOf(AbortController);
+                expect(capturedOptions?.abortController).toBeInstanceOf(AbortController);
+                expect(capturedOptions?.stripMarkdown).toBe(true);
             });
 
             it('should clear inFlightController after call completes so next call starts fresh', async () => {

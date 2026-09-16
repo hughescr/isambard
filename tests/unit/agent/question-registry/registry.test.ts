@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from 'bun:test';
+import { mockLogger } from '../../../setup';
 import { QuestionRegistry } from '@/agent/question-registry/registry';
 import type { PendingQuestion, QuestionAnswer } from '@/agent/question-registry/types';
 import type { ChannelId, UserId } from '@/integrations/discord/types';
@@ -30,6 +31,13 @@ describe('QuestionRegistry', () => {
 
             const resultPromise = registry.register(question);
             expect(resultPromise).toBeInstanceOf(Promise);
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                questionId: 'q1',
+                channelId:  'ch1',
+                threadId:   undefined,
+                expiresIn:  5000,
+                msg:        'Question registered',
+            });
 
             // Should be findable
             const found = registry.findPendingQuestion('ch1' as ChannelId);
@@ -122,6 +130,12 @@ describe('QuestionRegistry', () => {
             };
 
             const resultPromise2 = registry.register(question2);
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                oldQuestionId: 'q1',
+                newQuestionId: 'q2',
+                channelId:     'ch1',
+                msg:           'Replacing existing pending question',
+            });
 
             // First promise should resolve with null (cancelled)
             const result1 = await resultPromise1;
@@ -129,6 +143,7 @@ describe('QuestionRegistry', () => {
             expect(result1.channelId).toBe('ch1' as ChannelId);
             expect(result1.answer).toBeNull();
             expect(result1.timedOut).toBe(false);
+            expect(registry.getQuestion('q1')).toBeNull();
 
             // Second question should be active
             const found = registry.findPendingQuestion('ch1' as ChannelId);
@@ -141,6 +156,28 @@ describe('QuestionRegistry', () => {
     });
 
     describe('findPendingQuestion', () => {
+        it('rejects expired and non-waiting records while keeping the exact expiry instant eligible', async () => {
+            const now = Date.now();
+            const question = {
+                questionId:      'boundary', channelId:       'boundary-channel' as ChannelId,
+                originMessageId: 'message', triggerUserId:   'user' as UserId,
+                questionText:    'Boundary?', createdAt:       now, expiresAt:       now + 5000,
+            };
+            const resultPromise = registry.register(question);
+            const stored = registry.getQuestion('boundary');
+            expect(stored).not.toBeNull();
+            stored!.expiresAt = now;
+            expect(registry.findPendingQuestion('boundary-channel' as ChannelId)?.questionId).toBe('boundary');
+            stored!.expiresAt = now - 1;
+            expect(registry.findPendingQuestion('boundary-channel' as ChannelId)).toBeNull();
+            stored!.expiresAt = now + 5000;
+            stored!.state = 'answered';
+            expect(registry.findPendingQuestion('boundary-channel' as ChannelId)).toBeNull();
+            stored!.state = 'waiting';
+            registry.cancel('boundary');
+            await resultPromise;
+        });
+
         it('should return pending question for matching channel', () => {
             const now = Date.now();
             const question: Omit<PendingQuestion, 'state'> = {
@@ -255,6 +292,46 @@ describe('QuestionRegistry', () => {
             registry.cancel('q1');
             registry.cancel('q2');
         });
+    });
+
+    it('keeps the main location, empty thread, and named threads distinct', async () => {
+        const now = Date.now();
+        const base = {
+            channelId:       'collision' as ChannelId, originMessageId: 'message',
+            triggerUserId:   'user' as UserId, questionText:    'Location?',
+            createdAt:       now, expiresAt:       now + 5000,
+        };
+        const promises = [
+            registry.register({ ...base, questionId: 'main' }),
+            registry.register({ ...base, questionId: 'empty', threadId: '' }),
+            registry.register({ ...base, questionId: 'named-a', threadId: 'thread-a' }),
+            registry.register({ ...base, questionId: 'named-b', threadId: 'thread-b' }),
+        ];
+        expect(registry.findPendingQuestion('collision' as ChannelId)?.questionId).toBe('main');
+        expect(registry.findPendingQuestion('collision' as ChannelId, '')?.questionId).toBe('empty');
+        expect(registry.findPendingQuestion('collision' as ChannelId, 'thread-a')?.questionId).toBe('named-a');
+        expect(registry.findPendingQuestion('collision' as ChannelId, 'thread-b')?.questionId).toBe('named-b');
+        for(const id of ['main', 'empty', 'named-a', 'named-b']) {
+            registry.cancel(id);
+        }
+        await Promise.all(promises);
+    });
+
+    it('removes a cancelled location before its next question is registered', async () => {
+        const now = Date.now();
+        const base = {
+            channelId:       'reuse' as ChannelId, originMessageId: 'message',
+            triggerUserId:   'user' as UserId, questionText:    'Reuse?',
+            createdAt:       now, expiresAt:       now + 5000,
+        };
+        const first = registry.register({ ...base, questionId: 'old' });
+        registry.cancel('old');
+        await first;
+        mockLogger.warn.mockClear();
+        const second = registry.register({ ...base, questionId: 'new' });
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+        registry.cancel('new');
+        await second;
     });
 
     describe('resolveWithAnswer', () => {
@@ -419,6 +496,24 @@ describe('QuestionRegistry', () => {
     });
 
     describe('stop', () => {
+        it('does not resolve a record whose exposed state is no longer waiting', async () => {
+            const now = Date.now();
+            const pending = registry.register({
+                questionId:      'finished', channelId:       'finished-channel' as ChannelId,
+                originMessageId: 'message', triggerUserId:   'user' as UserId,
+                questionText:    'Already settled?', createdAt:       now, expiresAt:       now + 5000,
+            });
+            registry.getQuestion('finished')!.state = 'answered';
+            let resolved = false;
+            void pending.then(() => {
+                resolved = true;
+                return undefined;
+            });
+            registry.stop();
+            await Promise.resolve();
+            expect(resolved).toBe(false);
+        });
+
         it('should clear all timers and cancel pending questions', async () => {
             const now = Date.now();
             const question1: Omit<PendingQuestion, 'state'> = {
@@ -462,6 +557,15 @@ describe('QuestionRegistry', () => {
             // Neither should be findable
             expect(registry.findPendingQuestion('ch1' as ChannelId)).toBeNull();
             expect(registry.findPendingQuestion('ch2' as ChannelId)).toBeNull();
+            expect(registry.getQuestion('q1')).toBeNull();
+            expect(registry.getQuestion('q2')).toBeNull();
+            expect(jest.getTimerCount()).toBe(0);
+
+            mockLogger.warn.mockClear();
+            const replacement = registry.register({ ...question1, questionId: 'replacement' });
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+            registry.cancel('replacement');
+            await replacement;
         });
     });
 
@@ -508,6 +612,7 @@ describe('QuestionRegistry', () => {
             // Should no longer be findable
             const found = registry.findPendingQuestion('ch1' as ChannelId);
             expect(found).toBeNull();
+            expect(registry.getQuestion('q1')).toBeNull();
         });
 
         it('should not timeout if answered before expiry', async () => {
@@ -538,6 +643,7 @@ describe('QuestionRegistry', () => {
             const result = await resultPromise;
             expect(result.answer).toEqual(answer);
             expect(result.timedOut).toBe(false);
+            expect(jest.getTimerCount()).toBe(0);
 
             // Advancing further should not trigger timeout
             jest.advanceTimersByTime(5000);

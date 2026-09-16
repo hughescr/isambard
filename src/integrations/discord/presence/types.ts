@@ -106,7 +106,6 @@ export interface StatusUpdate {
  * Maps tool names to human-readable status text.
  * Extensible - add new tools here as they're integrated.
  */
-// Stryker disable all: Display strings for Discord presence - not behavioral
 export const ToolStatusMap: Record<string, string> = {
     mcp__memory__view:            'Remembering...',
     mcp__memory__storeSelf:       'Recording self-knowledge...',
@@ -156,7 +155,6 @@ export const ToolDescriptions: Record<string, string> = {
  * ```
  */
 export function getToolDescription(toolName: string | undefined): string | undefined {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive guard clause - ToolDescriptions[undefined] returns undefined anyway
     if(!toolName) {
         return undefined;
     }

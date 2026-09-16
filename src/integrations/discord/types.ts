@@ -14,7 +14,6 @@ export { guildIdSchema, type GuildId } from '@/config';
 export const messageIdSchema = z
     .string()
     .min(1, 'MessageId cannot be empty')
-    // Stryker disable next-line StringLiteral: brand name is not behavior-affecting
     .brand<'MessageId'>();
 
 type MessageId = z.infer<typeof messageIdSchema>;

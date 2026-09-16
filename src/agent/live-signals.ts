@@ -74,8 +74,15 @@ export interface RecentChannel {
 }
 
 /** Initial bootstrap fetch timeout (ms): wait at most this long on the very first call. */
-// Stryker disable next-line ArithmeticOperator: 2-second bootstrap timeout is an operational constant
 const BOOTSTRAP_TIMEOUT_MS = 2000;
+
+/** Give a cold signal fetch one short chance to finish without delaying idle status indefinitely. */
+async function waitForBootstrap(refresh: Promise<void>): Promise<void> {
+    await Promise.race([
+        refresh,
+        new Promise<void>((resolve) => { setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS); }),
+    ]);
+}
 
 /**
  * Dependencies injected into the LiveSignals aggregator.
@@ -153,11 +160,9 @@ function timeOfDayBucket(hour: number): string {
     if(hour <= 13) {
         return 'midday';
     }
-    // Stryker disable next-line EqualityOperator,StringLiteral: EqualityOperator mutants timeout under concurrent test runner; string is display-only
     if(hour <= 15) {
         return 'early afternoon';
     }
-    // Stryker disable next-line EqualityOperator,StringLiteral: EqualityOperator mutants timeout under concurrent test runner; string is display-only
     if(hour <= 17) {
         return 'late afternoon';
     }
@@ -173,7 +178,6 @@ function timeOfDayBucket(hour: number): string {
 /**
  * Day-of-week names (Luxon uses 1=Monday … 7=Sunday).
  */
-// Stryker disable StringLiteral,ArrayDeclaration: day name strings are display-only — mutations produce wrong words, not wrong logic
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
 // Stryker restore StringLiteral,ArrayDeclaration
 
@@ -199,7 +203,6 @@ function relativeTime(ms: number): string {
 // ============================================================================
 
 /** Maximum character length for a bsky post snippet in a signal. */
-// Stryker disable next-line ArithmeticOperator: 120-char cap is an aesthetic constant
 const BSKY_SNIPPET_MAX_CHARS = 120;
 
 /**
@@ -207,7 +210,6 @@ const BSKY_SNIPPET_MAX_CHARS = 120;
  * Strips newlines, truncates to BSKY_SNIPPET_MAX_CHARS, appends author handle.
  */
 function formatFeedItemContent(item: BskyFeedItem): string {
-    // Stryker disable all -- direct unit tests exist; Bun inspector static-mutant limitation prevents per-test coverage tracking for module-scope functions
     const text = item.post.text.replaceAll('\n', ' ').trim();
     const snippet = text.length > BSKY_SNIPPET_MAX_CHARS
         ? `${text.slice(0, BSKY_SNIPPET_MAX_CHARS)}…`
@@ -222,11 +224,6 @@ function formatFeedItemContent(item: BskyFeedItem): string {
  * Returns undefined when there are no notifications.
  */
 function summariseNotifications(notifications: BskyNotification[]): string | undefined {
-    // Stryker disable all -- direct unit tests exist; Bun inspector static-mutant limitation prevents per-test coverage tracking for module-scope functions
-    if(notifications.length === 0) {
-        return undefined;
-    }
-
     // Count by reason; mention/reply/quote are grouped as "mentions" in the summary
     const mentionCount = notifications.filter(n => n.reason === 'mention' || n.reason === 'reply' || n.reason === 'quote').length;
     const likeCount    = notifications.filter(n => n.reason === 'like').length;
@@ -235,6 +232,7 @@ function summariseNotifications(notifications: BskyNotification[]): string | und
 
     const parts: string[] = [];
     if(mentionCount > 0) {
+        // Stryker disable next-line ArrayMethodSwap: mention is the first possible part, so push and unshift both insert at index 0.
         parts.push(`${mentionCount} mention${mentionCount === 1 ? '' : 's'}`);
     }
     if(likeCount > 0) {
@@ -253,10 +251,7 @@ function summariseNotifications(notifications: BskyNotification[]): string | und
 
     // Most recent notification author, if any
     const sorted = notifications.toSorted((a, b) => b.indexedAt.localeCompare(a.indexedAt));
-    const latest = sorted[0];
-    if(!latest) {
-        return parts.join(', ');
-    }
+    const latest = sorted[0]!;
     return `${parts.join(', ')} — latest from @${latest.author.handle}`;
     // Stryker restore all
 }
@@ -382,12 +377,10 @@ export class LiveSignals {
 
     private getNow(): DateTime {
         const { now, timezone } = this.deps;
-        // Stryker disable next-line ConditionalExpression: injectable clock — now() injected in tests; production always uses DateTime.now()
         return now ? now() : DateTime.now().setZone(timezone);
     }
 
     private getNowMs(): number {
-        // Stryker disable next-line ConditionalExpression: injectable clock for TTL math — injected in tests; production uses Date.now()
         return this.deps.nowMs ? this.deps.nowMs() : Date.now();
     }
 
@@ -412,14 +405,8 @@ export class LiveSignals {
         }
 
         // Compute hours until next slot starts
-        let hoursUntil = nextConfig.startHour - dt.hour;
-        // Stryker disable next-line EqualityOperator: hoursUntil === 0 is unreachable since the next slot always starts at a different hour than the current slot; <= 0 and < 0 are equivalent in practice
-        if(hoursUntil <= 0) {
-            hoursUntil += 24;
-        }
-
-        // Stryker disable next-line ConditionalExpression: hoursUntil===1 ? 'next slot in 1h:' and `next slot in ${1}h:` both produce "next slot in 1h:" — equivalent mutant
-        const prefix = hoursUntil === 1 ? 'next slot in 1h:' : `next slot in ${hoursUntil}h:`;
+        const hoursUntil = ((nextConfig.startHour - dt.hour + 23) % 24) + 1;
+        const prefix = `next slot in ${hoursUntil}h:`;
         return {
             kind:    'perch-next',
             label:   'perch-next',
@@ -440,7 +427,6 @@ export class LiveSignals {
         const dt = this.getNow();
         // Luxon weekday: 1=Monday … 7=Sunday
         const dayIndex = dt.weekday - 1;
-        // Stryker disable next-line StringLiteral: 'Monday' fallback is never reached since Luxon weekday is always 1–7 making dayIndex always 0–6
         const dayName = DAY_NAMES[dayIndex] ?? 'Monday';
         const timeBucket = timeOfDayBucket(dt.hour);
         return {
@@ -451,13 +437,9 @@ export class LiveSignals {
     }
 
     private toolSignal(): Signal | undefined {
+        // Stryker disable next-line llm: the dependency contract requires an array, and the runtime producer always returns its array buffer, so `|| []` is inert.
         const tools = this.deps.getRecentTools();
-        // Stryker disable next-line ConditionalExpression,BlockStatement: when array is empty and guard mutated to false/body removed, tools[-1] is undefined, ??tools[0] is also undefined, !latest guard returns undefined — same result
-        if(tools.length === 0) {
-            return undefined;
-        }
         const latest = tools[tools.length - 1] ?? tools[0];
-        // Stryker disable next-line ConditionalExpression,BlockStatement: latest is always defined when length>0 since tools[length-1] is a valid element; !latest is a defensive guard for noUncheckedIndexedAccess
         if(!latest) {
             return undefined;
         }
@@ -471,12 +453,7 @@ export class LiveSignals {
 
     private channelSignal(): Signal | undefined {
         const channels = this.deps.getRecentChannels();
-        // Stryker disable next-line ConditionalExpression,BlockStatement: when array is empty and guard mutated to false/body removed, channels[-1] is undefined, ??channels[0] is also undefined, !latest guard returns undefined — same result
-        if(channels.length === 0) {
-            return undefined;
-        }
         const latest = channels[channels.length - 1] ?? channels[0];
-        // Stryker disable next-line ConditionalExpression,BlockStatement: latest is always defined when length>0 since channels[length-1] is a valid element; !latest is a defensive guard for noUncheckedIndexedAccess
         if(!latest) {
             return undefined;
         }
@@ -522,7 +499,6 @@ export class LiveSignals {
         if(cache === undefined) {
             return undefined;
         }
-        // Stryker disable next-line ArithmeticOperator,EqualityOperator: TTL staleness check — subtraction is correct; > not >= so cache is still valid at exact TTL boundary (tested)
         if(nowMs - cache.fetchedAt > ttlMs) {
             return undefined;   // stale
         }
@@ -549,7 +525,6 @@ export class LiveSignals {
 
         if(cached !== undefined) {
             // Fresh cache hit — no refresh needed
-            // Stryker disable next-line StringLiteral: kind/label are constant signal identifiers — tested via s.kind === 'bsky-discover' assertions; Bun inspector cannot map per-test coverage for class methods
             return cached.map(item => ({
                 kind:    'bsky-discover',
                 label:   'bsky-discover',
@@ -557,11 +532,9 @@ export class LiveSignals {
             }));
         }
 
-        // Stryker disable next-line ConditionalExpression,BlockStatement: stale-vs-cold branch — stale returns existing data + kicks background refresh; cold awaits with timeout
         if(this.discoverCache !== undefined) {
             // Stale: kick background refresh and return the stale data immediately
             void (this.discoverInFlight ?? this.startDiscoverRefresh(bskyClient));
-            // Stryker disable next-line StringLiteral: kind/label are constant signal identifiers — tested via s.kind === 'bsky-discover' assertions; Bun inspector cannot map per-test coverage for class methods
             return this.discoverCache.items.map(item => ({
                 kind:    'bsky-discover',
                 label:   'bsky-discover',
@@ -570,17 +543,9 @@ export class LiveSignals {
         }
 
         // Cold start: await first fetch with timeout
-        await Promise.race([
-            this.discoverInFlight ?? this.startDiscoverRefresh(bskyClient),
-            new Promise<void>((resolve) => {
-                // Stryker disable all: setTimeout is forbidden in production tests; bootstrap timer is tested via injected clock
-                setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS);
-                // Stryker restore all
-            }),
-        ]);
+        await waitForBootstrap(this.discoverInFlight ?? this.startDiscoverRefresh(bskyClient));
 
         const afterWait = this.readCache<BskyFeedItem>(this.discoverCache, ttlMs, this.getNowMs());
-        // Stryker disable next-line ConditionalExpression,BlockStatement: defensive check — afterWait may still be undefined if timeout fired before fetch completed
         if(afterWait === undefined) {
             return [];
         }
@@ -631,7 +596,6 @@ export class LiveSignals {
             }));
         }
 
-        // Stryker disable next-line ConditionalExpression,BlockStatement: stale-vs-cold branch — stale returns existing data + kicks background refresh; cold awaits with timeout
         if(this.forYouCache !== undefined) {
             void (this.forYouInFlight ?? this.startForYouRefresh(bskyClient));
             return this.forYouCache.items.map(item => ({
@@ -641,17 +605,9 @@ export class LiveSignals {
             }));
         }
 
-        await Promise.race([
-            this.forYouInFlight ?? this.startForYouRefresh(bskyClient),
-            new Promise<void>((resolve) => {
-                // Stryker disable all: setTimeout is forbidden in production tests; bootstrap timer is tested via injected clock
-                setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS);
-                // Stryker restore all
-            }),
-        ]);
+        await waitForBootstrap(this.forYouInFlight ?? this.startForYouRefresh(bskyClient));
 
         const afterWait = this.readCache<BskyFeedItem>(this.forYouCache, ttlMs, this.getNowMs());
-        // Stryker disable next-line ConditionalExpression,BlockStatement: defensive check — afterWait may still be undefined if timeout fired before fetch completed
         if(afterWait === undefined) {
             return [];
         }
@@ -696,40 +652,28 @@ export class LiveSignals {
 
         if(cached !== undefined) {
             const summary = summariseNotifications(cached);
-            // Stryker disable next-line ConditionalExpression,BlockStatement: summary is undefined when no notifications — correct to omit signal
             if(summary === undefined) {
                 return undefined;
             }
             return { kind: 'bsky-notifications', label: 'bsky-notifications', content: summary };
         }
 
-        // Stryker disable next-line ConditionalExpression,BlockStatement: stale-vs-cold branch — stale returns existing data + kicks background refresh; cold awaits with timeout
         if(this.notificationsCache !== undefined) {
             void (this.notificationsInFlight ?? this.startNotificationsRefresh(bskyClient));
             const summary = summariseNotifications(this.notificationsCache.items);
-            // Stryker disable next-line ConditionalExpression,BlockStatement: summary is undefined when no notifications — correct to omit signal
             if(summary === undefined) {
                 return undefined;
             }
             return { kind: 'bsky-notifications', label: 'bsky-notifications', content: summary };
         }
 
-        await Promise.race([
-            this.notificationsInFlight ?? this.startNotificationsRefresh(bskyClient),
-            new Promise<void>((resolve) => {
-                // Stryker disable all: setTimeout is forbidden in production tests; bootstrap timer is tested via injected clock
-                setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS);
-                // Stryker restore all
-            }),
-        ]);
+        await waitForBootstrap(this.notificationsInFlight ?? this.startNotificationsRefresh(bskyClient));
 
         const afterWait = this.readCache<BskyNotification>(this.notificationsCache, ttlMs, this.getNowMs());
-        // Stryker disable next-line ConditionalExpression,BlockStatement: defensive check — afterWait may still be undefined if timeout fired before fetch completed
         if(afterWait === undefined) {
             return undefined;
         }
         const summary = summariseNotifications(afterWait);
-        // Stryker disable next-line ConditionalExpression,BlockStatement: summary is undefined when no notifications — correct to omit signal
         if(summary === undefined) {
             return undefined;
         }
@@ -773,23 +717,14 @@ export class LiveSignals {
             return this.buildActivitySignals(cached);
         }
 
-        // Stryker disable next-line ConditionalExpression,BlockStatement: stale-vs-cold branch — stale returns existing data + kicks background refresh; cold awaits with timeout
         if(this.activityCache !== undefined) {
             void (this.activityInFlight ?? this.startActivityRefresh(loadRecentActivityLog));
             return this.buildActivitySignals(this.activityCache.items);
         }
 
-        await Promise.race([
-            this.activityInFlight ?? this.startActivityRefresh(loadRecentActivityLog),
-            new Promise<void>((resolve) => {
-                // Stryker disable all: setTimeout is forbidden in production tests; bootstrap timer is tested via injected clock
-                setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS);
-                // Stryker restore all
-            }),
-        ]);
+        await waitForBootstrap(this.activityInFlight ?? this.startActivityRefresh(loadRecentActivityLog));
 
         const afterWait = this.readCache<MemoryToolItemData>(this.activityCache, ttlMs, this.getNowMs());
-        // Stryker disable next-line ConditionalExpression,BlockStatement: defensive check — afterWait may still be undefined if timeout fired before fetch completed
         if(afterWait === undefined) {
             return [];
         }
@@ -804,20 +739,18 @@ export class LiveSignals {
         const recent = items.slice(-3);
         const signals: Signal[] = [];
         for(const item of recent) {
-            // Detect path shape:
-            //   auto-logged: /events/activity/{type}/{ts}  → 5 parts, type at index 3
-            //   manual:      /events/{type}/{ts}           → 4 parts, type at index 2
             const pathParts = item.path.split('/');
-            // Detect path shape by part count, not just name match:
-            //   auto-logged: /events/activity/{type}/{ts} → 5 parts → type at index 3
-            //   manual:      /events/{type}/{ts}          → 4 parts → type at index 2
-            // Using length===5 prevents a manual logEvent({eventType:'activity'}) at
-            // /events/activity/{ts} (4 parts) from rendering the timestamp as the type.
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: length===5 is the unambiguous structural discriminator between auto-logged (5 parts) and manual (4 parts) paths
-            const activityType = pathParts.length === 5 && pathParts[2] === 'activity'
-                // Stryker disable next-line ArithmeticOperator: index 3 is correct for /events/activity/{type}/{ts}
-                ? (pathParts[3] ?? 'activity')
-                : (pathParts[2] ?? 'event');
+            // Auto-logged activity uses the established exact five-part namespace.
+            // A five-part manual eventType beginning "activity/" is inherently
+            // ambiguous and retains that pre-existing auto interpretation.
+            const isAutoLoggedActivity = pathParts.length === 5 && pathParts[2] === 'activity';
+            const isManualEvent = pathParts.length >= 4 && pathParts[1] === 'events';
+            let activityType = pathParts[2] ?? 'event';
+            if(isAutoLoggedActivity) {
+                activityType = pathParts[3]!;
+            } else if(isManualEvent) {
+                activityType = pathParts.slice(2, -1).join('/') || 'event';
+            }
             const updatedMs = new Date(item.updatedAt).getTime();
             const ago = relativeTime(nowMs - updatedMs);
             signals.push({

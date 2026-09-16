@@ -1,6 +1,5 @@
 import type { SpawnResult, SpawnRunner, BinarySpawnResult, BinarySpawnRunner } from './types';
 
-// Stryker disable next-line ArithmeticOperator: default timeout is configuration
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /** Subset of Bun subprocess with piped stdout/stderr streams. */
@@ -11,7 +10,6 @@ interface PipedProc {
     kill(): void
 }
 
-// Stryker disable all: real subprocess I/O — not unit-testable without integration test harness
 async function runTextProcess(
     cmd:     string[],
     options?: { timeout?: number, cwd?: string }

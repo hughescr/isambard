@@ -375,6 +375,7 @@ export function buildCatchupEnvelope(params: BuildCatchupEnvelopeParams): Envelo
     // The seed is exactly the body — header and time header stripped — so `text` and
     // `synopsisSeed` read from one expression rather than drifting apart.
     const body = joinSections([
+        // Stryker disable next-line NumberLiteralValue: hasUnread proves unreadCount is present and positive before this branch evaluates its fallback.
         hasUnread ? buildCatchupText({ unreadCount: unreadCount ?? 0, channelCount }) : undefined,
         renderCatchupListSection('Events while you were away', eventsDelta),
         renderCatchupListSection('Background tasks lost at restart', lostTasks),

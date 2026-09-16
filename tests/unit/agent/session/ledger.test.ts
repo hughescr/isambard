@@ -34,9 +34,9 @@ afterEach(() => {
 /** Recursively freezes an object graph so mutation shows up as a thrown TypeError in strict mode. */
 function deepFreeze<T>(value: T): T {
     if(value !== null && (typeof value === 'object')) {
+        const objectValue = value as Record<string, unknown>;
         for(const key of Object.getOwnPropertyNames(value)) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- generic recursive freeze walks arbitrary object graphs
-            deepFreeze((value as any)[key]);
+            deepFreeze(objectValue[key]);
         }
         Object.freeze(value);
     }
@@ -106,6 +106,24 @@ describe('reduceLedger: turn_submitted', () => {
         });
     });
 
+    it('consumes exactly one of two queued human envelopes when the first one starts', () => {
+        const onceQueued = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'discord', at: T1 }));
+        const twiceQueued = reduceLedger(onceQueued, frozenEvent({ type: 'envelope_queued', kind: 'discord', at: T2 }));
+
+        const started = reduceLedger(twiceQueued, frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T3 }));
+
+        expect(started.queued).toEqual({ human: 1, other: 0 });
+    });
+
+    it('consumes exactly one of two queued non-human envelopes when the first one starts', () => {
+        const onceQueued = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'notification', at: T1 }));
+        const twiceQueued = reduceLedger(onceQueued, frozenEvent({ type: 'envelope_queued', kind: 'notification', at: T2 }));
+
+        const started = reduceLedger(twiceQueued, frozenEvent({ type: 'turn_submitted', envelope: envelope({ kind: 'notification' }), at: T3 }));
+
+        expect(started.queued).toEqual({ human: 0, other: 1 });
+    });
+
     it('stamps turn.id from the envelope id', () => {
         const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope({ id: 'env-42' }), at: T2 }));
 
@@ -171,6 +189,18 @@ describe('reduceLedger: sdk_frame assistant + latency', () => {
         expect(ledger.turn?.firstTokenAt).toEqual(T3);
         expect(ledger.latency.bySource.discord).toBe(T3.getTime() - T1.getTime());
         expect(ledger.turn?.phase).toEqual({ type: 'responding', startedAt: T3 });
+    });
+
+    it('records a new source latency without losing latency already measured for another source', () => {
+        const perchQueued = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope({ kind: 'perch' }), at: T1 }));
+        const perchResponded = reduceLedger(perchQueued, frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('perch response'), at: T2 }));
+        const perchFinished = reduceLedger(perchResponded, frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess(), at: T3 }));
+        const discordQueued = reduceLedger(perchFinished, frozenEvent({ type: 'turn_submitted', envelope: envelope({ id: 'env-2', kind: 'discord' }), at: T3 }));
+        const at = new Date('2026-09-04T12:00:03Z');
+
+        const ledger = reduceLedger(discordQueued, frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('discord response'), at }));
+
+        expect(ledger.latency.bySource).toEqual({ perch: T2.getTime() - T1.getTime(), discord: at.getTime() - T1.getTime() });
     });
 
     it('leaves firstTokenAt unchanged on a second assistant frame', () => {
@@ -1366,6 +1396,18 @@ describe('reduceLedger: context, process, phase, session', () => {
         expect(ledger.context).toEqual({ used: 1000, window: 200_000, percentage: 0.5 });
     });
 
+    it('keeps the compaction timestamp when a later context usage reading changes', () => {
+        const compacting = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'compaction_started', at: T1 }));
+        const compacted = reduceLedger(compacting, frozenEvent({ type: 'compaction_finished', at: T2 }));
+
+        const ledger = reduceLedger(compacted, frozenEvent({
+            type:  'context_usage_polled', at:    T3,
+            usage: { totalTokens: 1000, maxTokens: 200_000, percentage: 0.5 },
+        }));
+
+        expect(ledger.context).toEqual({ used: 1000, window: 200_000, percentage: 0.5, lastCompactionAt: T2 });
+    });
+
     it('context_usage_polled is a no-op (same reference) when the usage is unchanged', () => {
         const usage = { totalTokens: 1000, maxTokens: 200_000, percentage: 0.5 };
         const polled = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'context_usage_polled', at: T1, usage }));
@@ -1373,6 +1415,24 @@ describe('reduceLedger: context, process, phase, session', () => {
         const next = reduceLedger(polled, frozenEvent({ type: 'context_usage_polled', at: T2, usage: { ...usage } }));
 
         expect(next).toBe(polled);
+    });
+
+    it.each([
+        ['used', { totalTokens: 1001, maxTokens: 200_000, percentage: 0.5 }],
+        ['window', { totalTokens: 1000, maxTokens: 199_999, percentage: 0.5 }],
+        ['percentage', { totalTokens: 1000, maxTokens: 200_000, percentage: 0.6 }],
+    ] as const)('context_usage_polled updates when only %s changes', (_field, changedUsage) => {
+        const usage = { totalTokens: 1000, maxTokens: 200_000, percentage: 0.5 };
+        const polled = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'context_usage_polled', at: T1, usage }));
+
+        const next = reduceLedger(polled, frozenEvent({ type: 'context_usage_polled', at: T2, usage: changedUsage }));
+
+        expect(next).not.toBe(polled);
+        expect(next.context).toEqual({
+            used:       changedUsage.totalTokens,
+            window:     changedUsage.maxTokens,
+            percentage: changedUsage.percentage,
+        });
     });
 
     it('tick sets process.rssBytes', () => {

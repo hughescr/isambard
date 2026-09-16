@@ -12,7 +12,6 @@ import { CronExpressionParser } from 'cron-parser';
 import { DateTime } from 'luxon';
 import { getSlotForHour } from './schedule';
 import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
-import { InvariantViolationError } from '@/errors';
 
 /**
  * Dependencies for the perch scheduler.
@@ -65,7 +64,6 @@ export interface PerchScheduler {
  * Get current hour in local timezone.
  * Default implementation using Luxon.
  */
-// Stryker disable next-line BlockStatement: Config values for timezone API - not testable with fake timers
 function getDefaultLocalHour(timezone: string): number {
     return DateTime.now().setZone(timezone).hour;
 }
@@ -105,7 +103,6 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
      */
     function doTrigger(slot: PerchSlot): void {
         if(isPerchTurnRunning?.()) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.debug({ slot }, 'Perch trigger deferred - a perch turn is already running');
             state = {
                 perchPending:       true,
@@ -116,7 +113,6 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         }
 
         state = { perchPending: false };
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({ slot }, 'Triggering perch time');
         onPerchTrigger(slot);
     }
@@ -127,7 +123,6 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
     function onScheduledTrigger(): void {
         schedulerTimeout = null;
 
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Tested via behavior - scheduler reschedules when disabled
         if(!config.enabled) {
             // Reschedule even if disabled to allow enabling later
             scheduleNextTrigger();
@@ -162,26 +157,21 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         // currentDate uses new Date() (respects jest.setSystemTime) so cron-parser starts from
         // the correct time in tests instead of Luxon.DateTime.local() which bypasses fake timers.
         const now = new Date();
-        // Stryker disable next-line StringLiteral,ObjectLiteral: Cron expression format and config
         const expression = CronExpressionParser.parse('H * * * *', {
             tz:          config.timezone,
             currentDate: now,
-            // Stryker disable next-line ArithmeticOperator: hour-bucketed seed — division is intentional to group by hour; any numeric seed is valid (static NoCoverage)
             hashSeed:    Math.floor(now.getTime() / 3_600_000).toString(),
         });
         let nextTime = expression.next().toDate();
         // Skip past the previously scheduled hour to avoid double-fires:
         // a fresh parser picks a random minute that may land in the same hour
         // as the previous trigger (H is re-randomised per parser instance).
-        // Stryker disable all: Defensive guard against non-deterministic H minute; only triggers when random value collides with previous hour
         if(lastScheduledTime) {
             const lastHourStart = Math.floor(lastScheduledTime.getTime() / 3_600_000) * 3_600_000;
             while(nextTime.getTime() < lastHourStart + 3_600_000) {
                 nextTime = expression.next().toDate();
             }
         }
-        // Stryker restore all
-        // Stryker disable next-line ArithmeticOperator: subtraction computes ms until next fire; + mutation yields enormous delay (untestable via timer assertions without real scheduling)
         const delayMs = Math.max(0, nextTime.getTime() - Date.now());
         return { delayMs, nextTime };
     }
@@ -190,7 +180,6 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
      * Format a Date as ISO 8601 with UTC offset for the configured timezone.
      * e.g., "2026-02-08T18:18:00-08:00"
      */
-    // Stryker disable next-line BlockStatement: Date formatting helper for log output
     function formatISOWithOffset(date: Date): string {
         return DateTime.fromJSDate(date).setZone(config.timezone)
             .toISO({ suppressMilliseconds: true })!;
@@ -199,15 +188,12 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
     /**
      * Schedule the next trigger using cron-parser's H option.
      */
-    // Stryker disable next-line BlockStatement: Internal scheduling function - tested via behavior
     function scheduleNextTrigger(): void {
-        // Stryker disable ConditionalExpression,BlockStatement: Cleanup guard — timer null check; behavior identical if no timer pending
         // Clear any existing timeout
         if(schedulerTimeout) {
             clearTimeout(schedulerTimeout);
             schedulerTimeout = null;
         }
-        // Stryker restore ConditionalExpression,BlockStatement
 
         const { delayMs, nextTime } = getNextTriggerDelay();
         lastScheduledTime = nextTime;
@@ -222,17 +208,14 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
     return {
         start(): void {
             if(!config.enabled) {
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Perch scheduler disabled');
                 return;
             }
 
             // Skip cron scheduling if test mode is enabled
             if(config.testMode?.triggerOnStartup) {
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Perch scheduler in test mode - cron scheduling disabled');
 
-                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Test mode: triggering perch on startup');
                 // Small delay to ensure bot is fully initialized
                 setTimeout(() => this.triggerTestPerch(), 1000);
@@ -242,14 +225,12 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             // Schedule first trigger using cron-parser's H option
             scheduleNextTrigger();
 
-            // Stryker disable next-line ObjectLiteral: Log message content is not behavior-affecting
             logger.info({
                 timezone:        config.timezone,
                 intervalMinutes: config.intervalMinutes,
             }, 'Perch scheduler started with randomized hourly triggers');
         },
 
-        // Stryker disable next-line BlockStatement: Cleanup function tested via behavior
         stop(): void {
             // Clear scheduler timeout
             if(schedulerTimeout) {
@@ -261,7 +242,6 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             state = { perchPending: false };
             lastScheduledTime = null;
 
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Perch scheduler stopped');
         },
 
@@ -284,19 +264,11 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             if(config.testMode?.forceSlot) {
                 // Use forced slot
                 slot = config.testMode.forceSlot;
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.info({ slot }, 'Triggering test perch with forced slot');
             } else {
                 // Cycle through slots
-                const nextSlot = TEST_SLOTS[nextTestSlotIndex];
-                // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — nextTestSlotIndex is always modulo-bounded to TEST_SLOTS.length; unreachable in practice
-                if(nextSlot === undefined) {
-                    // Stryker disable next-line StringLiteral: invariant violation message — debug context only
-                    throw new InvariantViolationError('triggerTestPerch', 'TEST_SLOTS[nextTestSlotIndex] undefined despite modulo bound');
-                }
-                slot = nextSlot;
+                slot = TEST_SLOTS[nextTestSlotIndex]!;
                 nextTestSlotIndex = (nextTestSlotIndex + 1) % TEST_SLOTS.length;
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.info({ slot, nextIndex: nextTestSlotIndex }, 'Triggering test perch with cycling slot');
             }
 

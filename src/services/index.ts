@@ -23,7 +23,7 @@ export type { ApprovalSagaType, SagaExecutor, SagaWriter } from './approval-saga
 export { ApprovalSagaBackend, createSagaExecutor } from './approval-saga';
 
 // Allowlist saga
-export type { SagaStepResult, AllowlistSagaStarter } from './allowlist-saga';
+export type { SagaStepResult, SagaInteractionResult, AllowlistSagaStarter } from './allowlist-saga';
 export { AllowlistSagaBackend, AllowlistSagaExecutor } from './allowlist-saga';
 
 // Outbound approval handler base

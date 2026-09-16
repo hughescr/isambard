@@ -24,6 +24,14 @@ function makeFailingRunner(): BinarySpawnRunner {
     });
 }
 
+function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void } {
+    let resolveFn!: (value: T) => void;
+    const promise = new Promise<T>((resolve) => {
+        resolveFn = resolve;
+    });
+    return { promise, resolve: resolveFn };
+}
+
 /** Returns a runner that captures the -ss timestamp from the ffmpeg command. */
 function makeTrackingRunner(capturedTimestamps: number[]): BinarySpawnRunner {
     return async (cmd: string[]): Promise<{ stdout: Buffer, stderr: string, exitCode: number }> => {
@@ -53,6 +61,13 @@ const TWO_SCENES: SceneInfo[] = [
 ];
 
 describe('extractSceneFrames', () => {
+    it('does not seek before a scene for zero or negative frame rate', async () => {
+        await Promise.all([0, -5].map(async (frameRate) => {
+            const captured: number[] = [];
+            await extractSceneFrames('/test/video.mp4', [{ index: 0, startTime: 5, endTime: 15 }], frameRate, makeTrackingRunner(captured));
+            expect(captured).toEqual([5, 10, 15]);
+        }));
+    });
     it('extracts 3 frames per scene (begin/mid/end)', async () => {
         const frames = await extractSceneFrames('/test/video.mp4', TWO_SCENES, 30, makeSuccessRunner());
         // 2 scenes × 3 frames = 6 frames
@@ -86,6 +101,20 @@ describe('extractSceneFrames', () => {
 });
 
 describe('extractFramesAtTimestamps', () => {
+    it('uses the ffmpeg PNG pipe protocol and returns a timestamped filename', async () => {
+        const commands: string[][] = [];
+        const runner: BinarySpawnRunner = async (command) => {
+            commands.push(command);
+            return { stdout: FAKE_PNG_BUFFER, stderr: '', exitCode: 0 };
+        };
+        const frames = await extractFramesAtTimestamps('/test/video.mp4', [1.25], runner);
+        expect(commands).toEqual([[
+            'ffmpeg', '-ss', '1.25', '-i', '/test/video.mp4',
+            '-vframes', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1',
+        ]]);
+        expect(frames[0]?.filename).toBe('frame-1.250s.png');
+    });
+
     it('returns frames for all successful timestamps', async () => {
         const frames = await extractFramesAtTimestamps('/test/video.mp4', [1, 5, 9], makeSuccessRunner());
         expect(frames).toHaveLength(3);
@@ -104,11 +133,95 @@ describe('extractFramesAtTimestamps', () => {
         for(const ts of inputTimestamps) {
             expect(capturedTimestamps).toContain(ts);
         }
+        expect(frames.map(frame => frame.filename)).toEqual(inputTimestamps.map(ts => `frame-${ts.toFixed(3)}s.png`));
+    });
+
+    it('runs no more than four ffmpeg jobs at a time', async () => {
+        let inFlight = 0;
+        let maximum = 0;
+        const releases: (() => void)[] = [];
+        const runner: BinarySpawnRunner = async () => {
+            inFlight++;
+            maximum = Math.max(maximum, inFlight);
+            await new Promise<void>((resolve) => {
+                releases.push(resolve);
+            });
+            inFlight--;
+            return { stdout: FAKE_PNG_BUFFER, stderr: '', exitCode: 0 };
+        };
+        const task = extractFramesAtTimestamps('/test/video.mp4', [1, 2, 3, 4, 5, 6], runner);
+        await Promise.resolve();
+        expect(maximum).toBe(4);
+        async function releasePending(): Promise<void> {
+            releases.shift()?.();
+            await Promise.resolve();
+            if(releases.length > 0) {
+                await releasePending();
+            }
+        }
+        await releasePending();
+        expect(await task).toHaveLength(6);
+        expect(maximum).toBe(4);
+    });
+
+    it('waits for every concurrent ffmpeg worker before returning', async () => {
+        const pending = [deferred<void>(), deferred<void>(), deferred<void>(), deferred<void>()];
+        let nextCall = 0;
+        const runner: BinarySpawnRunner = async () => {
+            const completion = pending[nextCall++];
+            await completion.promise;
+            return { stdout: FAKE_PNG_BUFFER, stderr: '', exitCode: 0 };
+        };
+        let settled = false;
+        const task = extractFramesAtTimestamps('/test/video.mp4', [1, 2, 3, 4], runner);
+        void task.then(() => {
+            settled = true;
+            return undefined;
+        });
+
+        await Promise.resolve();
+        try {
+            pending[0].resolve();
+            for(let i = 0; i < 20; i += 1) {
+                // eslint-disable-next-line no-await-in-loop -- deterministic microtask drain for the promise-combinator witness
+                await Promise.resolve();
+            }
+
+            expect(settled).toBe(false);
+        } finally {
+            for(const completion of pending) {
+                completion.resolve();
+            }
+        }
+
+        expect(await task).toHaveLength(4);
     });
 
     it('skips null results from failing ffmpeg calls', async () => {
         const frames = await extractFramesAtTimestamps('/test/video.mp4', [1, 5, 9], makeFailingRunner());
         expect(frames).toHaveLength(0);
+    });
+
+    it('skips output from ffmpeg when the process failed', async () => {
+        const runner: BinarySpawnRunner = async () => ({ stdout: FAKE_PNG_BUFFER, stderr: 'decode error', exitCode: 1 });
+        expect(await extractFramesAtTimestamps('/test/video.mp4', [1], runner)).toEqual([]);
+    });
+
+    it('rejects a sparse timestamp array at the public boundary', async () => {
+        const timestamps = [undefined] as unknown as number[];
+
+        await expect(extractFramesAtTimestamps('/test/video.mp4', timestamps, makeSuccessRunner())).rejects.toThrow(
+            'items[i] undefined despite i < items.length'
+        );
+    });
+
+    it('attributes sparse-array failure to the concurrency mapper', async () => {
+        try {
+            await extractFramesAtTimestamps('/test/video.mp4', [undefined] as unknown as number[], makeSuccessRunner());
+            throw new Error('expected sparse array to fail');
+        } catch (error) {
+            expect(error).toMatchObject({ context: { location: 'mapWithConcurrency' } });
+        }
     });
 
     it('returns null for ffmpeg success but empty stdout (no frame data)', async () => {

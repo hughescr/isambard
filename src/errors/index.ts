@@ -46,6 +46,7 @@ export {
 } from './discord';
 
 export { PathSecurityError, MediaProcessingError } from './utils';
+export type { PathSecurityReason } from './utils';
 
 export { BrowserError, BrowserNavigateTimeoutError } from './browser';
 

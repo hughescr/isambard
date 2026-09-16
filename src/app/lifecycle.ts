@@ -55,6 +55,7 @@ export function registerSignalHandlers(params: RegisterSignalHandlersParams): ()
             hardExitTimer = clock.setTimer(() => resolve('timed-out'), deadlineMs + HARD_EXIT_GRACE_MS);
         });
 
+        // Stryker disable next-line ArrowFunction: the mapper's microtask boundary is required, while returning undefined still takes the same non-timeout exit path as 'stopped'
         Promise.race([stop().then((): 'stopped' => 'stopped'), hardExitDeadline])
             .then((outcome) => {
                 if(hardExitTimer !== undefined) {

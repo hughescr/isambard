@@ -3,6 +3,7 @@ import { DynamoDBDocumentClient, PutCommand, GetCommand, ScanCommand } from '@aw
 import { mockClient } from 'aws-sdk-client-mock';
 import { CalendarRegistryBackend } from '@/integrations/caldav/calendar-registry/backend';
 import { createCalendarServerId, type CalendarRegistryRecord, type CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
+import { type DynamoTimeoutOptions } from '@/storage/dynamo-retry';
 import * as dynamoRetry from '@/storage/dynamo-retry';
 
 const VALID_UUID_1 = createCalendarServerId('550e8400-e29b-41d4-a716-446655440001');
@@ -36,8 +37,7 @@ describe('CalendarRegistryBackend', () => {
         ddbMock.reset();
 
         withDynamoTimeoutSpy = spyOn(dynamoRetry, 'withDynamoTimeout').mockImplementation(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypass generic type mismatch in test spy
-            async (operation: () => Promise<any>) => operation()
+            async <T>(operation: () => Promise<T>): Promise<T> => operation()
         );
 
         backend = new CalendarRegistryBackend(
@@ -205,6 +205,36 @@ describe('CalendarRegistryBackend', () => {
     });
 
     describe('addServer', () => {
+        test('does not report completion until the registry write completes', async () => {
+            const writeStarted = Promise.withResolvers<void>();
+            const writeGate = Promise.withResolvers<void>();
+            ddbMock.on(GetCommand).resolves({});
+            ddbMock.on(PutCommand).resolves({});
+            withDynamoTimeoutSpy.mockImplementation(async <T>(operation: () => Promise<T>, options: DynamoTimeoutOptions): Promise<T> => {
+                if(options.operation === 'CalendarRegistry.putRecord') {
+                    writeStarted.resolve();
+                    await writeGate.promise;
+                }
+                return operation();
+            });
+
+            const operation = backend.addServer('user-123', makeServer());
+            let completed = false;
+            void operation.then(() => {
+                completed = true;
+                return undefined;
+            });
+
+            try {
+                await writeStarted.promise;
+                await Bun.sleep(0);
+                expect(completed).toBe(false);
+            } finally {
+                writeGate.resolve();
+                await operation;
+            }
+        });
+
         test('should create new record when none exists', async () => {
             ddbMock.on(GetCommand).resolves({});
             ddbMock.on(PutCommand).resolves({});
@@ -261,6 +291,39 @@ describe('CalendarRegistryBackend', () => {
     });
 
     describe('removeServer', () => {
+        test('returns only after the removal has been persisted', async () => {
+            const writeStarted = Promise.withResolvers<void>();
+            const writeGate = Promise.withResolvers<void>();
+            const record = makeRecord('user-123', [makeServer()]);
+            ddbMock.on(GetCommand).resolves({
+                Item: { ...record, PK: 'CALCAL#user-123', SK: 'CALENDARS' },
+            });
+            ddbMock.on(PutCommand).resolves({});
+            withDynamoTimeoutSpy.mockImplementation(async <T>(operation: () => Promise<T>, options: DynamoTimeoutOptions): Promise<T> => {
+                if(options.operation === 'CalendarRegistry.putRecord') {
+                    writeStarted.resolve();
+                    await writeGate.promise;
+                }
+                return operation();
+            });
+
+            const operation = backend.removeServer('user-123', VALID_UUID_1);
+            let completed = false;
+            void operation.then(() => {
+                completed = true;
+                return undefined;
+            });
+
+            try {
+                await writeStarted.promise;
+                await Bun.sleep(0);
+                expect(completed).toBe(false);
+            } finally {
+                writeGate.resolve();
+                await operation;
+            }
+        });
+
         test('should remove matching server and return true', async () => {
             const server1 = makeServer({ serverId: VALID_UUID_1, description: 'Server 1' });
             const server2 = makeServer({ serverId: VALID_UUID_2, description: 'Server 2' });
@@ -302,6 +365,39 @@ describe('CalendarRegistryBackend', () => {
     });
 
     describe('removeCalendar', () => {
+        test('returns only after the calendar removal has been persisted', async () => {
+            const writeStarted = Promise.withResolvers<void>();
+            const writeGate = Promise.withResolvers<void>();
+            const record = makeRecord('user-123', [makeServer()]);
+            ddbMock.on(GetCommand).resolves({
+                Item: { ...record, PK: 'CALCAL#user-123', SK: 'CALENDARS' },
+            });
+            ddbMock.on(PutCommand).resolves({});
+            withDynamoTimeoutSpy.mockImplementation(async <T>(operation: () => Promise<T>, options: DynamoTimeoutOptions): Promise<T> => {
+                if(options.operation === 'CalendarRegistry.putRecord') {
+                    writeStarted.resolve();
+                    await writeGate.promise;
+                }
+                return operation();
+            });
+
+            const operation = backend.removeCalendar('user-123', VALID_UUID_1, '/calendars/alice/personal/');
+            let completed = false;
+            void operation.then(() => {
+                completed = true;
+                return undefined;
+            });
+
+            try {
+                await writeStarted.promise;
+                await Bun.sleep(0);
+                expect(completed).toBe(false);
+            } finally {
+                writeGate.resolve();
+                await operation;
+            }
+        });
+
         test('should remove matching calendar and return true', async () => {
             const server = makeServer({
                 calendars: [
@@ -431,6 +527,36 @@ describe('CalendarRegistryBackend', () => {
     });
 
     describe('addSharedServer', () => {
+        test('does not report completion until the shared registry write completes', async () => {
+            const writeStarted = Promise.withResolvers<void>();
+            const writeGate = Promise.withResolvers<void>();
+            ddbMock.on(GetCommand).resolves({});
+            ddbMock.on(PutCommand).resolves({});
+            withDynamoTimeoutSpy.mockImplementation(async <T>(operation: () => Promise<T>, options: DynamoTimeoutOptions): Promise<T> => {
+                if(options.operation === 'CalendarRegistry.putRecord') {
+                    writeStarted.resolve();
+                    await writeGate.promise;
+                }
+                return operation();
+            });
+
+            const operation = backend.addSharedServer(makeServer());
+            let completed = false;
+            void operation.then(() => {
+                completed = true;
+                return undefined;
+            });
+
+            try {
+                await writeStarted.promise;
+                await Bun.sleep(0);
+                expect(completed).toBe(false);
+            } finally {
+                writeGate.resolve();
+                await operation;
+            }
+        });
+
         test('should create new shared record when none exists', async () => {
             ddbMock.on(GetCommand).resolves({});
             ddbMock.on(PutCommand).resolves({});
@@ -623,8 +749,14 @@ describe('CalendarRegistryBackend', () => {
 
             const scanCalls = ddbMock.commandCalls(ScanCommand);
             const input = scanCalls[0].args[0].input;
-            expect(input.FilterExpression).toBeDefined();
-            expect(input.ExpressionAttributeValues).toBeDefined();
+            expect(input).toMatchObject({
+                FilterExpression:          'begins_with(PK, :prefix) AND SK = :sk',
+                ExpressionAttributeValues: {
+                    ':prefix': 'CALCAL#',
+                    ':sk':     'CALENDARS',
+                },
+                ProjectionExpression: 'PK',
+            });
         });
     });
 

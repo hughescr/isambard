@@ -135,7 +135,9 @@ describe('createPerchDriver', () => {
     let deps: PerchDriverDeps;
 
     beforeEach(() => {
-        clock = new FakeClock(0);
+        // A non-zero epoch distinguishes delay = fireAt - now from the + mutant while all
+        // advance() assertions remain relative to this start.
+        clock = new FakeClock(Date.parse('2026-09-05T12:00:00.000Z'));
         conductor = createFakeConductor();
         activityLogger = createMockActivityLogger();
         logger = createMockLogger();
@@ -164,7 +166,11 @@ describe('createPerchDriver', () => {
         const { envelope, options } = conductor.submissions[0];
         expect(envelope.kind).toBe('perch');
         expect(options.priority).toBe('other');
-        expect(activityLogger.log).toHaveBeenCalledWith(expect.objectContaining({ type: 'perch-start' }));
+        expect(activityLogger.log).toHaveBeenCalledWith({
+            type:    'perch-start',
+            summary: 'Perch session started (slot: afternoon)',
+        });
+        expect(envelope.text.endsWith('Deliberate breadth protects against attractor-capture, and convergence rarely notices itself from the inside.')).toBe(true);
     });
 
     test('renders the slot envelope\'s time header with formatTimeHeader and the perch timezone by default', () => {
@@ -275,6 +281,29 @@ describe('createPerchDriver', () => {
         expect(conductor.interruptCurrent).not.toHaveBeenCalled();
     });
 
+    test('does not interrupt a non-perch turn even if it reports the slot envelope id', () => {
+        const driver = createPerchDriver(deps);
+        driver.runSlot('afternoon');
+        const slotEnvelopeId = conductor.submissions[0].envelope.id;
+        conductor.setActiveTurn({ kind: 'discord', envelopeId: slotEnvelopeId, channelId: 'chan-1' });
+
+        const interruptAt = (MAX_SESSION_MINUTES + INTERRUPT_GRACE_MINUTES) * MINUTE_MS;
+        clock.advance(interruptAt);
+
+        expect(conductor.interruptCurrent).not.toHaveBeenCalled();
+    });
+
+    test('does not interrupt a different perch turn', () => {
+        const driver = createPerchDriver(deps);
+        driver.runSlot('afternoon');
+        conductor.setActiveTurn({ kind: 'perch', envelopeId: 'different-perch-envelope' });
+
+        const interruptAt = (MAX_SESSION_MINUTES + INTERRUPT_GRACE_MINUTES) * MINUTE_MS;
+        clock.advance(interruptAt);
+
+        expect(conductor.interruptCurrent).not.toHaveBeenCalled();
+    });
+
     test('interrupts the slot turn once it becomes the conductor\'s active turn, even though it started out queued behind another', () => {
         conductor.setActiveTurn({ kind: 'discord', envelopeId: 'live-discord-1', channelId: 'chan-1' });
         const driver = createPerchDriver(deps);
@@ -339,6 +368,10 @@ describe('createPerchDriver', () => {
         expect(conductor.submissions[1].envelope.kind).toBe('perch');
         expect(conductor.submissions[1].envelope.text).toContain('Unscheduled');
         expect(conductor.submissions.every(s => s.envelope.kind === 'perch')).toBe(true);
+
+        conductor.submissions[1].resolve(makeTurnResult());
+        await flush();
+        expect(conductor.submit).toHaveBeenCalledTimes(2);
     });
 
     test('perch-end is logged once the slot turn settles', async () => {
@@ -348,7 +381,10 @@ describe('createPerchDriver', () => {
         conductor.submissions[0].resolve(makeTurnResult());
         await Promise.resolve();
 
-        expect(activityLogger.log).toHaveBeenCalledWith(expect.objectContaining({ type: 'perch-end' }));
+        expect(activityLogger.log).toHaveBeenCalledWith({
+            type:    'perch-end',
+            summary: 'Perch session completed',
+        });
     });
 
     describe('slot hooks', () => {

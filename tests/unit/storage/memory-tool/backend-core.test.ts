@@ -79,6 +79,17 @@ describe('MemoryToolBackendCore', () => {
             contentPreview: 'Original content for testing',
         };
 
+        test('does not add an undefined preview to a legacy row without one', async () => {
+            const legacy = { ...existingItem };
+            delete legacy.contentPreview;
+            ddbMock.on(GetCommand).resolves({ Item: legacy });
+            ddbMock.on(PutCommand).resolves({});
+            const updated = await backend.update(legacy.path, { tags: new Set(['new-tag']) });
+            expect(Object.hasOwn(updated, 'contentPreview')).toBe(false);
+            const written = ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item;
+            expect(Object.hasOwn(written ?? {}, 'contentPreview')).toBe(false);
+        });
+
         test('should preserve existing contentPreview when only tags are updated', async () => {
             // Setup: item exists with contentPreview
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
@@ -190,6 +201,17 @@ describe('MemoryToolBackendCore', () => {
     });
 
     describe('basic operations', () => {
+        test('retains caller metadata on create', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            const result = await backend.create({
+                path:        '/identity/preferences.md' as MemoryPath,
+                content:     'Tea',
+                contentType: 'text/markdown',
+                metadata:    { source: 'conversation', confidence: 0.8 },
+            });
+            expect(result.metadata).toEqual({ source: 'conversation', confidence: 0.8 });
+            expect(ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.metadata).toEqual(result.metadata);
+        });
         test('should create item with contentPreview', async () => {
             ddbMock.on(PutCommand).resolves({});
 
@@ -221,6 +243,55 @@ describe('MemoryToolBackendCore', () => {
 
             expect(result).toBeDefined();
             expect(result?.path).toBe('/test/file.md' as MemoryPath);
+        });
+
+        test('normalizes only missing metadata on a legacy DynamoDB row before get and update', async () => {
+            const legacyItem = {
+                PK:          'DIR#/state',
+                SK:          'FILE#legacy.md',
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/state/legacy.md' as MemoryPath,
+                content:     'Legacy content',
+                contentType: 'text/markdown' as const,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+            ddbMock.on(GetCommand).resolves({ Item: legacyItem });
+            ddbMock.on(PutCommand).resolves({});
+
+            const read = await backend.get(legacyItem.path);
+            expect(read?.metadata).toEqual({});
+            expect(read).not.toHaveProperty('PK');
+            expect(legacyItem).not.toHaveProperty('metadata');
+
+            const updated = await backend.update(legacyItem.path, { metadata: { accessCount: 1 } });
+            expect(updated.metadata).toEqual({ accessCount: 1 });
+            const written = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item;
+            expect(written).toMatchObject({ metadata: { accessCount: 1 }, content: 'Legacy content' });
+        });
+
+        test('normalizes null legacy metadata so an access update can self-heal the row', async () => {
+            const legacy = {
+                PK:          'DIR#/state',
+                SK:          'FILE#null-metadata.md',
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/state/null-metadata.md' as MemoryPath,
+                content:     'Legacy',
+                contentType: 'text/markdown',
+                metadata:    null,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+            ddbMock.on(GetCommand).resolves({ Item: legacy });
+            ddbMock.on(PutCommand).resolves({});
+
+            const read = await backend.get(legacy.path);
+            expect(read?.metadata).toEqual({});
+            const updated = await backend.update(legacy.path, { metadata: { accessCount: 1 } });
+            expect(updated.metadata).toEqual({ accessCount: 1 });
+            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toMatchObject({ metadata: { accessCount: 1 } });
         });
 
         test('should delete item', async () => {

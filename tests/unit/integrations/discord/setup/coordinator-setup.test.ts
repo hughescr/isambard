@@ -7,13 +7,14 @@
  */
 import { describe, test, expect, mock, jest, afterEach, spyOn } from 'bun:test';
 import type { Client, Message } from 'discord.js';
-import { mockGenerateText } from '../../../../setup';
+import { mockGenerateText, mockLogger } from '../../../../setup';
 import type { StreamTracker } from '@/agent';
+import * as attachmentsModule from '@/integrations/discord/attachments';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
 import type { MessageCoordinatorConfig, MessageProcessor } from '@/integrations/discord/message-coordinator';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
-import { setupCoordinatorIntegration } from '@/integrations/discord/setup/coordinator-setup';
+import { processAttachments, setupCoordinatorIntegration } from '@/integrations/discord/setup/coordinator-setup';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext } from '@/integrations/discord/types';
 
 // ---------------------------------------------------------------------------
@@ -180,7 +181,14 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
 
     test('onResponse delivers through conversationConductor.deliver keyed on the CONDUCTOR'
       + "'s envelope id (not the triggering Discord message id), sending via sendEnvelopeResponse to the origin channel", async () => {
-        const params = makeConductorParams();
+        const addRecentChannel = mock(() => undefined);
+        const deliveredPayloads: { channelId: string, messageIds: string[] }[] = [];
+        const deliver = mock(async (_envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+            const payload = await send();
+            deliveredPayloads.push(payload);
+            return { delivered: true };
+        });
+        const params = makeConductorParams({ addRecentChannel, conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver } });
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
         const config = captureConfig(params);
 
@@ -196,8 +204,9 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({
             envelopeId: 'env-999', kind: 'discord', channelId: '123', text: 'hello',
         }));
-        const conductorDeliver = (params.conversationConductor as unknown as { deliver: ReturnType<typeof mock> }).deliver;
-        expect(conductorDeliver).toHaveBeenCalledWith('env-999', expect.any(Function));
+        expect(deliver).toHaveBeenCalledWith('env-999', expect.any(Function));
+        expect(deliveredPayloads).toEqual([{ channelId: '123', messageIds: [] }]);
+        expect(addRecentChannel).toHaveBeenCalledWith('123');
     });
 
     test('onResponse forwards params.discordCapability to sendEnvelopeResponse so a Discord outage queues to the real outbox instead of losing the response', async () => {
@@ -238,6 +247,57 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         expect(responseSenderModule.sendEnvelopeResponse).not.toHaveBeenCalled();
     });
 
+    test('does not send an envelope-less response, but still records the returned session id', async () => {
+        const setLastSessionId = mock(() => undefined);
+        const params = makeConductorParams({ setLastSessionId });
+        const sendEnvelopeResponse = spyOn(responseSenderModule, 'sendEnvelopeResponse');
+        spies.push(sendEnvelopeResponse);
+        const config = captureConfig(params);
+        const discordMessage = { id: 'msg-1', content: 'hi', channelId: '123' } as unknown as Message;
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-without-envelope', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: undefined,
+        }, discordMessage, [makeBatchMessage('123', 'msg-1', new Date(0))]);
+
+        expect(sendEnvelopeResponse).not.toHaveBeenCalled();
+        expect(mockLogger.warn).toHaveBeenCalledWith({ msg: 'Conductor response has no envelopeId — cannot deliver idempotently, skipping send' });
+        expect(setLastSessionId).toHaveBeenCalledWith('sess-without-envelope');
+    });
+
+    test('adds a channel only after a conductor-confirmed delivery and logs unexpected delivery failures', async () => {
+        const addRecentChannel = mock(() => undefined);
+        const deliveryError = new Error('journal unavailable');
+        const params = makeConductorParams({
+            addRecentChannel,
+            conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver: mock(() => Promise.reject(deliveryError)) },
+        });
+        const config = captureConfig(params);
+        const discordMessage = { id: 'msg-1', content: 'hi', channelId: '123' } as unknown as Message;
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, [makeBatchMessage('123', 'msg-1', new Date(0))]);
+
+        expect(addRecentChannel).not.toHaveBeenCalled();
+        expect(mockLogger.error).toHaveBeenCalledWith({ err: deliveryError, envelopeId: 'env-1', msg: 'Conductor response delivery failed' });
+    });
+
+    test('does not add a channel when the conductor rejects a duplicate delivery without invoking its send callback', async () => {
+        const addRecentChannel = mock(() => undefined);
+        const params = makeConductorParams({
+            addRecentChannel,
+            conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver: mock(async () => ({ delivered: false })) },
+        });
+        const config = captureConfig(params);
+        const discordMessage = { id: 'msg-1', content: 'hi', channelId: '123' } as unknown as Message;
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-duplicate',
+        }, discordMessage, [makeBatchMessage('123', 'msg-1', new Date(0))]);
+
+        expect(addRecentChannel).not.toHaveBeenCalled();
+    });
+
     test('onResponse keeps addRecentMessage(\'izzy\') and the discord-exchange activity-log write (folded idle-status-inputs gap)', async () => {
         const addRecentMessage = mock(() => undefined);
         const activityLogger = { log: mock(() => Promise.resolve()) };
@@ -260,6 +320,42 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
 
         expect(addRecentMessage).toHaveBeenCalledWith('It\'s sunny.', 'izzy');
         expect(activityLogger.log).toHaveBeenCalledWith(expect.objectContaining({ type: 'discord-exchange', summary: 'Craig asked about the weather; Izzy answered.' }));
+    });
+
+    test('falls back to the stable exchange summary and warns if asynchronous activity logging fails', async () => {
+        const activityLogger = { log: mock(() => Promise.reject(new Error('activity store unavailable'))) };
+        const params = makeConductorParams({ activityLogger });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        mockGenerateText.mockResolvedValueOnce('');
+        const config = captureConfig(params);
+        const discordMessage = { id: 'msg-1', content: 'hello', channelId: '123' } as unknown as Message;
+
+        await config.onResponse?.({
+            response: 'reply', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, [makeBatchMessage('123', 'msg-1', new Date(0))]);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(activityLogger.log).toHaveBeenCalledWith({ type: 'discord-exchange', summary: 'Discord exchange in channel' });
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ channelId: '123', msg: 'Activity log failed for Discord exchange' }));
+    });
+
+    test('limits exchange summarization input to 500 characters per side', async () => {
+        const activityLogger = { log: mock(() => Promise.resolve()) };
+        const params = makeConductorParams({ activityLogger });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+        const userContent = 'u'.repeat(501);
+        const response = 'r'.repeat(501);
+        const discordMessage = { id: 'msg-1', content: userContent, channelId: '123' } as unknown as Message;
+
+        await config.onResponse?.({
+            response, sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, [makeBatchMessage('123', 'msg-1', new Date(0))]);
+        await Promise.resolve();
+
+        expect(mockGenerateText).toHaveBeenCalledWith(`Summarize this Discord exchange in one sentence (max 30 words):\nUser: ${'u'.repeat(500)}\nIzzy: ${'r'.repeat(500)}`);
     });
 
     // ---------------------------------------------------------------------------
@@ -332,7 +428,9 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         const batch = [
             makeBatchMessage('123', '100', new Date(1000)),
             makeBatchMessage('123', '101', new Date(2000)),
+            makeBatchMessage('123', '100', new Date(3000)),
             makeBatchMessage('456', '200', new Date(1500)),
+            makeBatchMessage('456', '200', new Date(2500)),
         ];
 
         await config.onResponse?.({
@@ -342,6 +440,104 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         expect(recordHandled).toHaveBeenCalledTimes(2);
         expect(recordHandled).toHaveBeenCalledWith('123', '101', new Date(2000).toISOString());
         expect(recordHandled).toHaveBeenCalledWith('456', '200', new Date(1500).toISOString());
+    });
+
+    test('bounds concurrent watermark writes, drains them, and warns in batch order', async () => {
+        const first  = Promise.withResolvers<void>();
+        const second = Promise.withResolvers<void>();
+        const third  = Promise.withResolvers<void>();
+        const fourth = Promise.withResolvers<void>();
+        const writes = new Map([['123', first], ['456', second], ['789', third], ['999', fourth]]);
+        const admitted: string[] = [];
+        const recordHandled = mock((channelId: string) => {
+            admitted.push(channelId);
+            return writes.get(channelId)!.promise;
+        });
+        const params = makeConductorParams({ inboxManager: { recordHandled } });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        mockLogger.warn.mockClear();
+        const config = captureConfig(params);
+        const discordMessage = { id: '100', content: 'hi', channelId: '123' } as unknown as Message;
+        const batch = [
+            makeBatchMessage('123', '100', new Date(1000)),
+            makeBatchMessage('456', '200', new Date(2000)),
+            makeBatchMessage('789', '300', new Date(3000)),
+            makeBatchMessage('999', '400', new Date(4000)),
+        ];
+
+        const response = config.onResponse!({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, batch);
+        await Bun.sleep(1);
+        expect(admitted).toEqual(['123', '456', '789']);
+
+        const firstError = new Error('first write failed');
+        const thirdError = new Error('third write failed');
+        third.reject(thirdError);
+        second.resolve();
+        await Bun.sleep(1);
+        expect(admitted).toEqual(['123', '456', '789', '999']);
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+
+        first.reject(firstError);
+        fourth.resolve();
+        await response;
+        expect(mockLogger.warn).toHaveBeenNthCalledWith(1, { err: firstError, channelId: '123', msg: 'Failed to record handled watermark' });
+        expect(mockLogger.warn).toHaveBeenNthCalledWith(2, { err: thirdError, channelId: '789', msg: 'Failed to record handled watermark' });
+    });
+
+    test('serializes watermark writes to the same channel across overlapping responses', async () => {
+        const firstWrite = Promise.withResolvers<void>();
+        let callCount = 0;
+        const recordHandled = mock(() => {
+            callCount++;
+            return callCount === 1 ? firstWrite.promise : Promise.resolve();
+        });
+        const params = makeConductorParams({ inboxManager: { recordHandled } });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+        const discordMessage = { id: '100', content: 'hi', channelId: '123' } as unknown as Message;
+        const result = { response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1' };
+
+        const firstResponse = config.onResponse!(result, discordMessage, [makeBatchMessage('123', '100', new Date(1000))]);
+        await Bun.sleep(1);
+        const secondResponse = config.onResponse!({ ...result, envelopeId: 'env-2' }, discordMessage, [makeBatchMessage('123', '101', new Date(2000))]);
+        await Bun.sleep(1);
+        expect(recordHandled).toHaveBeenCalledTimes(1);
+
+        firstWrite.resolve();
+        await Promise.all([firstResponse, secondResponse]);
+        expect(recordHandled).toHaveBeenCalledTimes(2);
+        expect(recordHandled).toHaveBeenNthCalledWith(1, '123', '100', new Date(1000).toISOString());
+        expect(recordHandled).toHaveBeenNthCalledWith(2, '123', '101', new Date(2000).toISOString());
+    });
+
+    test('retains the newest pending tail while an earlier same-channel write settles, then deletes the settled final tail', async () => {
+        const firstWrite = Promise.withResolvers<void>();
+        const secondWrite = Promise.withResolvers<void>();
+        let calls = 0;
+        const recordHandled = mock(() => (++calls === 1 ? firstWrite.promise : secondWrite.promise));
+        const params = makeConductorParams({ inboxManager: { recordHandled } });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const deleteSpy = spyOn(Map.prototype, 'delete');
+        spies.push(deleteSpy);
+        const config = captureConfig(params);
+        const discordMessage = { id: '100', content: 'hi', channelId: '123' } as unknown as Message;
+        const result = { response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker };
+
+        const firstResponse = config.onResponse!({ ...result, envelopeId: 'env-1' }, discordMessage, [makeBatchMessage('123', '100', new Date(1000))]);
+        await Bun.sleep(1);
+        const secondResponse = config.onResponse!({ ...result, envelopeId: 'env-2' }, discordMessage, [makeBatchMessage('123', '101', new Date(2000))]);
+        await Bun.sleep(1);
+        firstWrite.resolve();
+        await Bun.sleep(1);
+        expect(deleteSpy).not.toHaveBeenCalledWith('123');
+
+        secondWrite.resolve();
+        await Promise.all([firstResponse, secondResponse]);
+        await Promise.resolve();
+        expect(deleteSpy).toHaveBeenCalledTimes(1);
+        expect(deleteSpy).toHaveBeenCalledWith('123');
     });
 
     test('onResponse does not journal (deliver\'s send callback throws) on a no-response skip, but does journal on sent/queued', async () => {
@@ -387,5 +583,141 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         }, discordMessage, batch);
 
         expect(deliverCalls).toEqual([{ threw: false }, { threw: false }, { threw: true }]);
+    });
+
+    test('suppresses the expected no-response delivery sentinel without treating it as a conductor failure', async () => {
+        const deliver = mock(async (_envelopeId: string, send: () => Promise<unknown>) => send());
+        const params = makeConductorParams({
+            conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver },
+        });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, skipReason: 'no-response' }));
+        const config = captureConfig(params);
+        const discordMessage = { id: 'msg-1', content: 'hi', channelId: '123' } as unknown as Message;
+        mockLogger.error.mockClear();
+
+        await config.onResponse?.({
+            response: '@@NO_RESPONSE@@', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-no-response',
+        }, discordMessage, [makeBatchMessage('123', 'msg-1', new Date(0))]);
+
+        expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+});
+
+describe('processAttachments', () => {
+    const spies: ReturnType<typeof spyOn>[] = [];
+
+    afterEach(() => {
+        for(const spy of spies) {
+            spy.mockRestore();
+        }
+        spies.length = 0;
+        mockLogger.info.mockClear();
+        mockLogger.warn.mockClear();
+    });
+
+    function context(messageId: string, attachments: DiscordMessageContext['attachments']): DiscordMessageContext {
+        return {
+            guildId:   createGuildId('guild-1'),
+            channelId: createChannelId('channel-1'),
+            userId:    createUserId('user-1'),
+            username:  'Craig',
+            messageId,
+            content:   'attachments',
+            timestamp: new Date(0).toISOString(),
+            botUserId: createUserId('bot-1'),
+            attachments,
+        };
+    }
+
+    test('returns empty media for an empty context batch without invoking either persistence boundary', async () => {
+        const fetchImages = spyOn(attachmentsModule, 'fetchImages');
+        const save = spyOn(attachmentsModule, 'saveNonImageAttachment');
+
+        await expect(processAttachments([])).resolves.toEqual({ images: [], contentAdditions: [] });
+
+        expect(fetchImages).not.toHaveBeenCalled();
+        expect(save).not.toHaveBeenCalled();
+    });
+
+    test('returns empty media when every context has no attachments and does not invoke either persistence boundary', async () => {
+        mockLogger.info.mockClear();
+        const fetchImages = spyOn(attachmentsModule, 'fetchImages');
+        const save = spyOn(attachmentsModule, 'saveNonImageAttachment');
+
+        await expect(processAttachments([context('message-1', []), context('message-2', undefined)])).resolves.toEqual({ images: [], contentAdditions: [] });
+
+        expect(fetchImages).not.toHaveBeenCalled();
+        expect(save).not.toHaveBeenCalled();
+        expect(mockLogger.info).not.toHaveBeenCalled();
+    });
+
+    test('separates images from files, reports failed image retrieval, and saves every non-image recursively in input order', async () => {
+        const image = { filename: 'photo.png', contentType: 'image/png', url: 'https://example.test/photo.png', size: 12 };
+        const video = { filename: 'clip.mp4', contentType: 'video/mp4', url: 'https://example.test/clip.mp4', size: 2048 };
+        const document = { filename: 'notes.txt', contentType: 'text/plain', url: 'https://example.test/notes.txt', size: 32 };
+        const fetched = { filename: 'photo.png', mediaType: 'image/png' as const, base64Data: 'aGVsbG8=', originalSize: 12, width: 2, height: 3 };
+        const failure = { filename: 'broken.jpg', contentType: 'image/jpeg', size: 99, error: 'timeout' };
+        spies.push(
+            spyOn(attachmentsModule, 'fetchImages').mockResolvedValue({ images: [fetched], failures: [failure] }),
+            spyOn(attachmentsModule, 'saveNonImageAttachment').mockImplementation(async (attachment) => {
+                return attachment.filename === 'clip.mp4'
+                    ? { localPath: '/tmp/clip.mp4', originalFilename: 'clip.mp4', contentType: 'video/mp4', size: 2048 }
+                    : { localPath: '/tmp/notes.txt', originalFilename: 'notes.txt', contentType: 'text/plain', size: 32 };
+            })
+        );
+
+        const result = await processAttachments([context('first-message', [image, video]), context('second-message', [document])]);
+
+        expect(attachmentsModule.fetchImages).toHaveBeenCalledWith([image]);
+        expect(attachmentsModule.saveNonImageAttachment).toHaveBeenNthCalledWith(1, video, process.cwd(), 'first-message');
+        expect(attachmentsModule.saveNonImageAttachment).toHaveBeenNthCalledWith(2, document, process.cwd(), 'first-message');
+        expect(result).toEqual({
+            images:           [fetched],
+            contentAdditions: [
+                '[Image fetch failed: broken.jpg - timeout]',
+                '[Video file saved: /tmp/clip.mp4 (video/mp4, 2KB). Use analyzeLocalVideo to analyze this video for scene frames, metadata, and transcription.]',
+                '[Attached file: /tmp/notes.txt (text/plain, 32B)]',
+            ],
+        });
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ totalAttachments: 1, fetchedImages: 1, failedImages: 1, msg: 'Fetched 1 images from 1 image attachments (1 failed)' }));
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ filename: 'clip.mp4', msg: 'Saved non-image attachment: clip.mp4' }));
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ filename: 'broken.jpg', msg: 'Failed to fetch image: broken.jpg' }));
+    });
+
+    test('continues to later files after a failed non-image save and records the failure with its source metadata', async () => {
+        const missing = { filename: 'missing.pdf', contentType: 'application/pdf', url: 'https://example.test/missing.pdf', size: 500 };
+        const saved = { filename: 'saved.csv', contentType: 'text/csv', url: 'https://example.test/saved.csv', size: 50 };
+        spies.push(spyOn(attachmentsModule, 'saveNonImageAttachment').mockImplementation(async (attachment) => {
+            return attachment.filename === 'missing.pdf'
+                ? null
+                : { localPath: '/tmp/saved.csv', originalFilename: 'saved.csv', contentType: 'text/csv', size: 50 };
+        }));
+
+        await expect(processAttachments([context('message-1', [missing, saved])])).resolves.toEqual({
+            images: [], contentAdditions: ['[Attached file: /tmp/saved.csv (text/csv, 50B)]'],
+        });
+
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ filename: 'missing.pdf', contentType: 'application/pdf', msg: 'Failed to save non-image attachment: missing.pdf' }));
+        expect(attachmentsModule.saveNonImageAttachment).toHaveBeenCalledTimes(2);
+    });
+
+    test('does not produce an image-fetch summary for a non-image-only context', async () => {
+        const document = { filename: 'notes.txt', contentType: 'text/plain', url: 'https://example.test/notes.txt', size: 32 };
+        spies.push(spyOn(attachmentsModule, 'saveNonImageAttachment').mockResolvedValue(null));
+        mockLogger.info.mockClear();
+
+        await processAttachments([context('message-1', [document])]);
+
+        expect(mockLogger.info).not.toHaveBeenCalled();
+    });
+
+    test('uses the explicit unknown source-message fallback when the first context has no message id', async () => {
+        const document = { filename: 'notes.txt', contentType: 'text/plain', url: 'https://example.test/notes.txt', size: 32 };
+        spies.push(spyOn(attachmentsModule, 'saveNonImageAttachment').mockResolvedValue(null));
+        const missingMessageId = { ...context('placeholder', [document]), messageId: undefined } as unknown as DiscordMessageContext;
+
+        await processAttachments([missingMessageId]);
+
+        expect(attachmentsModule.saveNonImageAttachment).toHaveBeenCalledWith(document, process.cwd(), 'unknown');
     });
 });

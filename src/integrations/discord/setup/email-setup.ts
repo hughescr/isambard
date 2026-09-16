@@ -146,7 +146,6 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
                 client,
                 adminDiscordChannelId,
                 { content: `Safe email from **${email.from.address}** — not on allowlist.\nSubject: ${email.subject}\n\nTo allowlist: first \`/contact add\` (if needed), then \`/allowlist add <personId>\`.` },
-                // Stryker disable next-line StringLiteral: log message content is not behavior-affecting
                 'Failed to send safe-but-not-allowlisted notification to admin channel',
                 discordCapability
             );
@@ -165,7 +164,6 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
                 client,
                 adminDiscordChannelId,
                 { embeds: [embed], components: [actionRow] },
-                // Stryker disable next-line StringLiteral: log message content is not behavior-affecting
                 'Failed to send email review embed to admin channel',
                 discordCapability
             );
@@ -184,7 +182,6 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
                 client,
                 adminDiscordChannelId,
                 { embeds: [embed], components: [actionRow] },
-                // Stryker disable next-line StringLiteral: log message content is not behavior-affecting
                 'Failed to send unsafe alert to admin channel',
                 discordCapability
             );
@@ -202,7 +199,6 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
                 client,
                 adminDiscordChannelId,
                 { content: `Allowlisted sender **${email.from.address}** failed SPF/DKIM auth check.\nSubject: ${email.subject}\nEmail was sent to classifier instead of auto-approved.` },
-                // Stryker disable next-line StringLiteral: log message content is not behavior-affecting
                 'Failed to send auth-failure notification to admin channel',
                 discordCapability
             );
@@ -237,7 +233,6 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
  */
 export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetupResult> {
     const { emailConfig, client, adminDiscordUserId } = options;
-    // Stryker disable next-line ObjectLiteral: Dependency injection for testability — sleep override is a no-op in production
     const retryDeps = options._deps?.sleep ? { deps: { sleep: options._deps.sleep } } : {};
 
     // Create classifier; use the pre-loaded PersonAllowlist passed in by the caller
@@ -248,12 +243,10 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // When a pre-created client is passed in, the caller is responsible for having
     // already called (or will call) init() on it — this avoids recreating downstream
     // objects on reconnection and keeps all consumer references stable.
-    // Stryker disable BlockStatement: WildDuck client creation and init are integration-only
     let wildDuckClient: WildDuckClient;
     if(options.wildDuckClient) {
         wildDuckClient = options.wildDuckClient;
     } else {
-        // Stryker disable ObjectLiteral,StringLiteral: WildDuck client wiring is integration-only
         wildDuckClient = new WildDuckClient({
             url:              emailConfig.wildDuckApiUrl,
             user:             emailConfig.user,
@@ -261,10 +254,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
             maxBodySizeBytes: emailConfig.maxBodySizeBytes,
         });
         // Stryker restore ObjectLiteral,StringLiteral
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('Starting WildDuck client...');
         await wildDuckClient.init();
-        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
         logger.info('WildDuck client initialized');
     }
     // Stryker restore BlockStatement
@@ -275,9 +266,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // the TypeScript checker today, but the comments are kept anchored to the lines that
     // actually carry the mutants rather than the `new EmailProcessor(` call line above them.)
     const processor = new EmailProcessor(
-        // Stryker disable next-line ObjectLiteral: EmailProcessor construction wiring is integration-only - not unit testable
         { allowlist, classifier, wildDuckClient },
-        // Stryker disable next-line ObjectLiteral: EmailProcessor construction wiring is integration-only - not unit testable
         buildEmailProcessorCallbacks({
             client,
             adminDiscordChannelId: emailConfig.adminDiscordChannelId,
@@ -287,16 +276,13 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     );
 
     // Create review handler (handles email-* button interactions)
-    // Stryker disable next-line ObjectLiteral: ReviewHandler config object is integration wiring
     const reviewHandler = new ReviewHandler({ wildDuckClient, adminDiscordUserId, allowlistInteractionHandler: options.allowlistInteractionHandler });
 
     // Create rate limiter for outbound email
-    // Stryker disable next-line ObjectLiteral: TokenBucketRateLimiter config object is integration wiring
     const rateLimiter = new TokenBucketRateLimiter({ capacity: emailConfig.sendReservoirCapacity, refillRatePerHour: emailConfig.sendReservoirRefillRatePerHour });
 
     // Build sendApprovalRequest callback (posts approval embed to #admin channel)
     // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.
-    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression: sendApprovalRequest callback is integration wiring
     const sendApprovalRequest = async (to: string, subject: string, draftUid: number, cc?: string[]): Promise<void> => {
         const embed = new EmbedBuilder()
             .setTitle('Outbound Email Approval Required')
@@ -307,7 +293,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                 { name: 'UID',     value: String(draftUid), inline: true }
             );
 
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: cc field conditional is integration wiring
         if(cc && cc.length > 0) {
             embed.addFields({ name: 'CC', value: cc.join(', '), inline: true });
         }
@@ -341,13 +326,12 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                 } else {
                     throw new ChannelNotAccessibleError(emailConfig.adminDiscordChannelId);
                 }
-            }, { policy: { maxAttempts: 3 }, ...retryDeps }));
+            }, retryDeps));
     };
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression
 
     // Create listener (not started yet — started in clientReady handler)
     // Must be created after sendApprovalRequest and wildDuckClient are defined.
-    // Stryker disable next-line ObjectLiteral: WildDuckListener config object is integration wiring
     const listener = new WildDuckListener(wildDuckClient, processor, {
         pollFallbackMs:      emailConfig.pollFallbackMs,
         sseReconnectDelayMs: emailConfig.sseReconnectDelayMs,
@@ -355,7 +339,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     });
 
     // Create outbound approval handler (handles email-send-* button/modal interactions)
-    // Stryker disable next-line ObjectLiteral: outbound approval handler wiring is integration-only
     const outboundApprovalHandler = new OutboundApprovalHandler({
         wildDuckClient,
         sagaBackend:                 options.approvalSagaBackend,
@@ -368,7 +351,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // object literal) so a second session's server set can build its own fresh instance —
     // see EmailSetupResult.createEmailMcpServerInstance — from the exact same closed-over
     // dependencies; emailMcpServer below is simply the first invocation.
-    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration: MCP server options and admin notification callback are integration wiring - not unit testable
     const createEmailMcpServerInstance = (): McpServerConfig => createEmailMCPServer({
         sendAdminNotification: async ({ mailboxName, uid, reference }) => {
             const { embed, actionRow } = buildRestrictedAccessEmbed(mailboxName, uid, reference);
@@ -391,10 +373,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
     const emailMcpServer = createEmailMcpServerInstance();
 
-    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
     logger.info({ msg: 'Email integration initialized' });
 
-    // Stryker disable next-line ObjectLiteral: return object is integration wiring
     return {
         listener,
         reviewHandler,
@@ -417,7 +397,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
  * When a capability facade is provided, uses it for outbox fallback support.
  * Errors are non-fatal — logs the provided error message and returns.
  */
-// Stryker disable all: sendToAdminChannel is integration-only wiring — not unit testable
 async function sendToAdminChannel(
     client:             Client,
     channelId:          string,

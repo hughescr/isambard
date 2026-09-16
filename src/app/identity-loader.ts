@@ -16,27 +16,20 @@ export async function loadIdentityContext(
     oauthToken: string | undefined,
     contextBuilder?: ContextBuilder
 ): Promise<string | undefined> {
-    // Stryker disable next-line ConditionalExpression: Optional initialization - equivalent mutant
     if(!oauthToken) {
         return undefined;
     }
 
     // Try to load identity context from memory system
-    // Stryker disable next-line ConditionalExpression: Optional initialization - equivalent mutant
     if(contextBuilder) {
-        // Stryker disable next-line BlockStatement: Try block for optional initialization - equivalent mutant
         try {
-            // Stryker disable next-line LogicalOperator: Fallback default is equivalent behavior
             return await contextBuilder.loadCoreIdentity() || 'Isambard - AI Assistant';
-        // Stryker disable next-line BlockStatement: Catch block for optional initialization - equivalent mutant
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             logger.warn(`Failed to load identity context: ${errorMessage}`);
-            // Stryker disable next-line StringLiteral: Fallback default string is not behavior-affecting
             return 'Isambard - AI Assistant';
         }
     }
 
-    // Stryker disable next-line StringLiteral: Fallback default string is not behavior-affecting
     return 'Isambard - AI Assistant';
 }

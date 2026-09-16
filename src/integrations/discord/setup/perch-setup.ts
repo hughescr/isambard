@@ -113,7 +113,6 @@ export function setupPerchDriverAndScheduler(params: SetupPerchDriverParams): {
 } {
     const { conductor, perchConfig, clock, contextBuilder, activityLogger, channelRegistry, responseRouter, client, rateLimiter, discordCapability, isCostPaused, timeHeader, slotHooks } = params;
 
-    // Stryker disable next-line BlockStatement: composition root — timezone-based hour resolution is not unit-testable with fake timers
     const getCurrentLocalHour = (): number => DateTime.now().setZone(perchConfig.timezone).hour;
 
     const deliveringConductor = wrapConductorWithDelivery(conductor, {
