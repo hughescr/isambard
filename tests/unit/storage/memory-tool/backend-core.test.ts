@@ -6,6 +6,7 @@ import {
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { ValidationError } from '@/errors';
 import { MemoryToolBackendCore } from '@/storage/memory-tool/backend-core';
 import type { MemoryToolItem, MemoryPath, MemoryToolItemData } from '@/storage/memory-tool/types';
 import { stripDynamoKeys } from '@/storage/utils/index.js';
@@ -245,6 +246,27 @@ describe('MemoryToolBackendCore', () => {
             expect(result?.path).toBe('/test/file.md' as MemoryPath);
         });
 
+        test('sends PK and SK unswapped to GetCommand', async () => {
+            const mockItem: MemoryToolItem = {
+                PK:          'DIR#/test',
+                SK:          'FILE#file.md',
+                GSI1PK:      'LAYER#test',
+                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                path:        '/test/file.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/markdown',
+                metadata:    {},
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            };
+            ddbMock.on(GetCommand).resolves({ Item: mockItem });
+
+            await backend.get('/test/file.md' as MemoryPath);
+
+            const sentKey = ddbMock.commandCalls(GetCommand)[0].args[0].input.Key;
+            expect(sentKey).toEqual({ PK: 'DIR#/test', SK: 'FILE#file.md' });
+        });
+
         test('normalizes only missing metadata on a legacy DynamoDB row before get and update', async () => {
             const legacyItem = {
                 PK:          'DIR#/state',
@@ -353,6 +375,39 @@ describe('MemoryToolBackendCore', () => {
             });
 
             expect(result.tags).toBeUndefined();
+        });
+
+        test('rejects false metadata instead of treating it as omitted', async () => {
+            await expect(backend.create({
+                path:        '/test/invalid-metadata.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/plain',
+                metadata:    false as unknown as Record<string, unknown>,
+            })).rejects.toBeInstanceOf(ValidationError);
+        });
+
+        test('keeps a singleton tag when creating an item', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const result = await backend.create({
+                path:        '/test/single-tag.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/plain',
+                tags:        new Set(['only-tag']),
+            });
+
+            expect(result.tags).toEqual(new Set(['only-tag']));
+        });
+
+        test('propagates a create write failure', async () => {
+            const writeFailure = new Error('create write failed');
+            ddbMock.on(PutCommand).rejects(writeFailure);
+
+            await expect(backend.create({
+                path:        '/test/write-failure.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/plain',
+            })).rejects.toBe(writeFailure);
         });
     });
 
@@ -491,6 +546,42 @@ describe('MemoryToolBackendCore', () => {
             expect(putCalls).toHaveLength(1);
             const written = putCalls[0].args[0].input.Item as Record<string, unknown>;
             expect(written.TTL).toBe(newTtl);
+        });
+
+        test('update() lets zero TTL override an existing expiration', async () => {
+            const itemWithTtl = { ...ttlItemBase, TTL: 1_700_000_000 } as unknown as MemoryToolItem;
+            ddbMock.on(GetCommand).resolves({ Item: itemWithTtl });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.update(ttlItemBase.path, { content: 'Updated content', ttl: 0 });
+
+            const written = ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item as Record<string, unknown>;
+            expect(written.TTL).toBe(0);
+        });
+
+        test('update() does not expose DynamoDB TTL in its data result', async () => {
+            const itemWithTtl = { ...ttlItemBase, TTL: 1_700_000_000 } as unknown as MemoryToolItem;
+            ddbMock.on(GetCommand).resolves({ Item: itemWithTtl });
+            ddbMock.on(PutCommand).resolves({});
+
+            const result = await backend.update(ttlItemBase.path, { content: 'Updated content' });
+
+            expect(result).not.toHaveProperty('TTL');
+        });
+
+        test('update() propagates a write failure', async () => {
+            const writeFailure = new Error('update write failed');
+            ddbMock.on(GetCommand).resolves({ Item: ttlItemBase });
+            ddbMock.on(PutCommand).rejects(writeFailure);
+
+            await expect(backend.update(ttlItemBase.path, { content: 'Updated content' })).rejects.toBe(writeFailure);
+        });
+
+        test('delete() propagates a delete failure', async () => {
+            const deleteFailure = new Error('delete failed');
+            ddbMock.on(DeleteCommand).rejects(deleteFailure);
+
+            await expect(backend.delete(ttlItemBase.path)).rejects.toBe(deleteFailure);
         });
     });
 });

@@ -94,4 +94,3 @@ export function createSpawnRunner(): SpawnRunner {
 export function createBinarySpawnRunner(): BinarySpawnRunner {
     return runBinaryProcess;
 }
-// Stryker restore all

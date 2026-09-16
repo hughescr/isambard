@@ -164,7 +164,6 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
                 }
             }, retryDeps));
     };
-    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression
 
     // Build sendDMApprovalRequest callback (posts DM approval embed to #admin channel)
     // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.
@@ -196,7 +195,6 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
                 }
             }, retryDeps));
     };
-    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression,LogicalOperator
 
     // Create outbound approval handler (handles bsky-send-* and bsky-dm-* button/modal interactions)
     const outboundApprovalHandler = new BskyOutboundApprovalHandler({

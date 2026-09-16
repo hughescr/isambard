@@ -66,7 +66,6 @@ export function createMemoryMCPServer(
             tool(
                 'semantic_search',
                 'Semantic search over memories by content similarity. Use the `search` tool for tag-based filtering instead. The query is embedded the same way memory content is, so phrase it in the form a matching memory would take — declarative statements rather than questions.',
-                // Stryker restore StringLiteral
                 {
                     query: z.string().describe('Natural language query to search for semantically similar memories'),
                     layer: z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
@@ -101,6 +100,7 @@ export function createMemoryMCPServer(
                             const statePaths = resolvedItems
                                 .filter(({ item }) => item?.path.startsWith('/state/'))
                                 .map(({ item }) => item!.path);
+                            // Stryker disable next-line llm: statePaths.length is always a nonnegative integer, so > 0 and >= 1 are identical here.
                             if(statePaths.length > 0) {
                                 options.recordAccess(statePaths).catch((error: unknown) => {
                                     logger.warn({ error, paths: statePaths, msg: 'Failed to record memory access from semantic_search' });
@@ -126,6 +126,7 @@ export function createMemoryMCPServer(
                             })
                             .join(RESULT_SEPARATOR);
 
+                        // Stryker disable next-line llm: formatted is always a string, so !formatted and formatted.length === 0 select only the empty string.
                         if(!formatted) {
                             return mcpTextResult('No semantically similar memories found');
                         }
@@ -174,12 +175,12 @@ export function createMemoryMCPServer(
                             };
                         }
                         // Fire-and-forget: record access for state-layer memories (scoring)
+                        // Stryker disable next-line llm: options is an object or undefined, so optional chaining and `&&` agree.
                         if(args.path.startsWith('/state/') && options?.recordAccess) {
                             options.recordAccess([memoryPath]).catch((error: unknown) => {
                                 logger.warn({ error, path: args.path, msg: 'Failed to record memory access' });
                             });
                         }
-                        // Stryker restore BlockStatement
                         return mcpTextResult(result.content);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
@@ -253,6 +254,7 @@ export function createMemoryMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
+                        // Stryker disable next-line llm: adding the hyphen to the class only replaces each ISO-date hyphen with itself, so the timestamp is unchanged.
                         const timestamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
                         const path = createMemoryPath(`/events/${args.eventType}/${timestamp}`);
                         const content = args.details
@@ -298,11 +300,13 @@ export function createMemoryMCPServer(
                             args.layer ? createLayerName(args.layer) : undefined,
                             queryOptions
                         );
+                        // Stryker disable next-line llm: array length is always nonnegative, so === 0 and <= 0 are identical here.
                         if(results.items.length === 0) {
                             return mcpTextResult('No memories found matching tags');
                         }
                         const formatted = results.items.map((r) => {
                             const preview = r.contentPreview ?? 'No content';
+                            // Stryker disable next-line llm: fixed nonnegative ordered bounds make slice(0, 200) and substring(0, 200) identical.
                             return `${r.memoryPath}: ${preview.slice(0, 200)}${preview.length > 200 ? '...' : ''}`;
                         }).join('\n\n');
                         return mcpTextResult(appendCursorInfo(formatted, results.nextCursor));
@@ -324,7 +328,6 @@ export function createMemoryMCPServer(
             tool(
                 'list',
                 'List memories in a directory',
-                // Stryker restore StringLiteral
                 {
                     path:      z.string().optional().describe('Directory path (e.g., /, /identity, /users). Defaults to root /'),
                     limit:     z.number().int().positive().optional().describe('Maximum number of results to return'),
@@ -340,9 +343,9 @@ export function createMemoryMCPServer(
                         while(dirPath !== '/' && dirPath.endsWith('/')) {
                             dirPath = dirPath.slice(0, -1);
                         }
-                        // Stryker restore ConditionalExpression,MethodExpression,UnaryOperator,LogicalOperator,BlockStatement
 
                         // Build queryOptions object only if filter params provided
+                        // Stryker disable next-line llm: the expression is only a truthiness test, where undefined and false select the same branch.
                         const queryOptions = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
                             ? { limit: args.limit, cursor: args.cursor, startDate: args.startDate, endDate: args.endDate }
                             : undefined;
@@ -378,11 +381,11 @@ export function createMemoryMCPServer(
             tool(
                 'listTags',
                 'List all tags with their usage counts',
-                // Stryker restore StringLiteral
                 {},
                 async (): Promise<CallToolResult> => {
                     try {
                         const tagCounts = await backend.listTagCounts();
+                        // Stryker disable next-line llm: tagCounts is a defined array, so === 0, !length, and optional-chained length === 0 are identical.
                         if(tagCounts.length === 0) {
                             return mcpTextResult('No tags found');
                         }
@@ -404,7 +407,6 @@ export function createMemoryMCPServer(
             tool(
                 'deleteMemory',
                 'Delete a memory at the specified path. Returns the deleted content as confirmation.',
-                // Stryker restore StringLiteral
                 {
                     path: z.string().describe('Memory path to delete (e.g., /identity/old-values, /state/outdated)'),
                 },
@@ -417,6 +419,7 @@ export function createMemoryMCPServer(
                                 isError: true,
                             };
                         }
+                        // Stryker disable next-line llm: Set.size is always a nonnegative integer, so > 0 and >= 1 are identical here.
                         const tags = result.tags && result.tags.size > 0 ? [...result.tags].join(', ') : 'none';
                         return mcpTextResult(`Deleted memory at ${result.path}\nTags: ${tags}\nLast updated: ${result.updatedAt}\n\n${result.content}`);
                     } catch (error) {
@@ -432,7 +435,6 @@ export function createMemoryMCPServer(
             tool(
                 'updateTags',
                 'Add or remove tags on an existing memory without changing its content.',
-                // Stryker restore StringLiteral
                 {
                     path:       z.string().describe('Memory path to update tags on'),
                     addTags:    z.array(z.string()).optional().describe('Tags to add to the memory'),
@@ -469,6 +471,7 @@ export function createMemoryMCPServer(
 
                         await backend.update(memoryPath, { tags: newTags, preserveUpdatedAt: true });
 
+                        // Stryker disable next-line llm: Set.size is a non-negative integer, so `> 0` and `!== 0` agree.
                         const beforeStr = beforeTags.size > 0 ? [...beforeTags].toSorted((a, b) => a.localeCompare(b)).join(', ') : '(none)';
                         const afterStr = newTags.size > 0 ? [...newTags].toSorted((a, b) => a.localeCompare(b)).join(', ') : '(none)';
                         return mcpTextResult(`Updated tags on ${args.path}\nBefore: ${beforeStr}\nAfter: ${afterStr}`);

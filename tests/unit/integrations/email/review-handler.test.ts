@@ -487,6 +487,18 @@ describe('ReviewHandler.handleButton()', () => {
             expect(wildDuck.moveMessage).not.toHaveBeenCalled();
             expect(editReply).not.toHaveBeenCalled();
         });
+
+        test('parses UID with explicit base-10 radix (hex-looking UID is not auto-detected as hex)', async () => {
+            const wildDuck  = makeWildDuck();
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
+            const { interaction } = makeInteraction('email-trash:0x10:Review');
+
+            await handler.handleButton(interaction);
+
+            // Number.parseInt('0x10', 10) stops at 'x' and yields 0 (base-10 parse of "0"),
+            // whereas an auto-detected/base-0 parse would read '0x10' as hex 16.
+            expect(wildDuck.moveMessage).toHaveBeenCalledWith('Review', 0, expect.anything());
+        });
     });
 
     // -------------------------------------------------------------------------

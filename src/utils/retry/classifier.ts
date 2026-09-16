@@ -8,6 +8,7 @@ export const defaultClassifier: ErrorClassifier = (error: unknown): ErrorClassif
     let message = 'Unknown error';
 
     if(error instanceof Error && error.message) {
+        // Stryker disable next-line llm: error.message is already proven truthy by the enclosing guard, so `|| 'Unknown error'` is unreachable dead code here.
         message = error.message;
     } else if(typeof error === 'string' && error) {
         message = error;
@@ -104,6 +105,7 @@ export function classifyHttpStatus(
     }
 
     // Server errors (5xx) - transient
+    // Stryker disable next-line NumberLiteralValue: any status in [499, 500) is already returned as permanent by the preceding 4xx branch, so 499 and 500 are indistinguishable here.
     if(status >= 500 && status < 600) {
         return { category: 'transient', message };
     }

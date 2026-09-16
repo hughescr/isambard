@@ -317,6 +317,11 @@ describe('IdentityCache', () => {
     });
 
     describe('revision()', () => {
+        test('starts at 0', () => {
+            const cache = new IdentityCache(loaderMock);
+            expect(cache.revision()).toBe(0);
+        });
+
         test('advances on invalidate() and on set(), but never on get()', async () => {
             const cache = new IdentityCache(loaderMock);
             const start = cache.revision();

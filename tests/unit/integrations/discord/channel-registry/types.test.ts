@@ -135,6 +135,11 @@ describe('channel-registry/types', () => {
             expect(() => channelMetadataSchema.parse(invalid)).toThrow(z.ZodError);
         });
 
+        it('should accept a one-character channelName at the min-length boundary', () => {
+            const result = channelMetadataSchema.parse({ ...validMetadata, channelName: 'x' });
+            expect(result.channelName).toBe('x');
+        });
+
         it('should reject invalid datetime strings', () => {
             const invalidDate = { ...validMetadata, discoveredAt: 'not-a-date' };
             expect(() => channelMetadataSchema.parse(invalidDate)).toThrow(z.ZodError);

@@ -32,6 +32,7 @@ export async function mapBounded<T, R>(
         await worker();
     };
 
+    // Stryker disable next-line llm: the forms differ only for empty input, where the extra worker returns before mapping or writing results.
     const workers = Array.from(
         { length: Math.min(Math.max(1, concurrency), items.length) },
         () => worker()

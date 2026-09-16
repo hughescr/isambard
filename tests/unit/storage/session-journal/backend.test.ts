@@ -21,6 +21,7 @@ describe('SessionJournalBackend', () => {
     afterEach(() => {
         ddbMock.restore();
         jest.restoreAllMocks();
+        jest.useRealTimers();
     });
 
     describe('append', () => {
@@ -66,16 +67,16 @@ describe('SessionJournalBackend', () => {
             expect(ttl).toBeLessThanOrEqual(nowSeconds + 8 * 86_400);
         });
 
-        test('TTL defaults to 30 days out when ttlDays is omitted', async () => {
+        test('TTL defaults to exactly 30 days out when ttlDays is omitted', async () => {
+            const now = new Date('2026-09-05T10:00:00.000Z');
+            jest.useFakeTimers();
+            jest.setSystemTime(now);
             ddbMock.on(PutCommand).resolves({});
-            const nowSeconds = Math.floor(Date.now() / 1000);
 
-            await backend.append('perch', { type: 'shutdown', at: new Date() });
+            await backend.append('perch', { type: 'shutdown', at: now });
 
             const item = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item as Record<string, unknown>;
-            const ttl = item.TTL as number;
-            expect(ttl).toBeGreaterThanOrEqual(nowSeconds + 29 * 86_400);
-            expect(ttl).toBeLessThanOrEqual(nowSeconds + 31 * 86_400);
+            expect(item.TTL).toBe(Math.floor(now.getTime() / 1000) + 30 * 86_400);
         });
 
         test('carries entry-specific fields onto the stored item', async () => {

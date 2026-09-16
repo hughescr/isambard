@@ -15,7 +15,6 @@ function parseScdetTimestamps(stderr: string): number[] {
         timestamps.push(Number(match[1]));
         match = lineRe.exec(stderr);
     }
-    // Stryker restore BlockStatement
     return timestamps;
 }
 
@@ -62,10 +61,10 @@ export async function detectScenes(
         '-f', 'null',
         '-',
     ]);
-    // Stryker restore StringLiteral
 
     // ffmpeg writes filter output to stderr regardless of exit code
     // Non-zero exit on null mux is normal; warn only when exit is non-zero AND no scdet output
+    // Stryker disable next-line llm: SpawnResult.stderr is a non-optional string, so the only falsy value is '' itself — the || '' fallback is unreachable/equivalent.
     const changeTimestamps = parseScdetTimestamps(result.stderr);
     if(result.exitCode !== 0 && changeTimestamps.length === 0) {
         // Could be a real failure (not just the null mux exit) — fall through to fallback below

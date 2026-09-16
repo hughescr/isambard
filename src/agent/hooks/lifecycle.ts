@@ -45,7 +45,6 @@ export function createSessionLifecycleHooks(deps: SessionLifecycleHooksDeps): Pa
                             msg:                    'Agent session stopped normally',
                         });
                         onStop?.(stopInput);
-                        // Stryker restore OptionalChaining
                         return { 'continue': true };
                     },
                 ],
@@ -64,7 +63,6 @@ export function createSessionLifecycleHooks(deps: SessionLifecycleHooksDeps): Pa
                             msg:             'Agent session stopped with failure',
                         });
                         onStopFailure?.(failInput);
-                        // Stryker restore OptionalChaining
                         return { 'continue': true };
                     },
                 ],

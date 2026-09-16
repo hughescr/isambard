@@ -118,6 +118,7 @@ export async function insert(
     }
 
     // Insert the new text
+    // Stryker disable next-line NumberLiteralValue: splice clamps a negative deleteCount to zero, so any negative literal inserts without deleting.
     lines.splice(params.insert_line, 0, params.insert_text);
     const newContent = lines.join('\n');
 
@@ -165,6 +166,7 @@ export async function str_replace(
     }
 
     // Replace the text
+    // Stryker disable next-line llm: the uniqueness check above guarantees exactly one occurrence, so replace and replaceAll produce the same string.
     const newContent = item.content.replace(params.old_str, params.new_str);
 
     const contentBytes = new TextEncoder().encode(newContent).length;
@@ -239,6 +241,7 @@ export async function search(
 
     if(params.tags && params.tags.length > 0) {
         // Tag-based search with optional layer filter — uses tag index
+        // Stryker disable next-line llm: the enclosing branch requires params.tags to be truthy, so the || [] fallback is unreachable.
         const result = await backend.searchByTags(new Set(params.tags), params.layer, { limit: params.limit });
         // Tag index items have preview data directly — format from TagIndexItem fields
         const query = params.tags.join(',');
@@ -292,6 +295,7 @@ export async function search(
             const contentPreview = item.content.slice(0, 100);
             return item.content.length > contentPreview.length ? `${contentPreview}...` : contentPreview;
         };
+        // Stryker disable next-line llm: the call site below only invokes this when item.contentPreview is truthy, so negating the guard, optional-chaining it, or appending && true / && item.contentPreview cannot change the ternary test; string length is a non-negative integer so > 99 equals >= 100; and contentPreview is capped at 100 by memoryToolItemSchema and generateContentPreview, so substring(0, 100) is the identity
         const getPreviewFromField = () => (item.contentPreview && item.contentPreview.length >= 100 ? `${item.contentPreview}...` : item.contentPreview);
         const preview = item.contentPreview ? getPreviewFromField() : getPreviewFromContent();
         const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
@@ -321,6 +325,7 @@ export async function recall(
     // Legacy DynamoDB rows can lack content even though writes require it.
     const items: (Omit<MemoryToolItemData, 'content'> & { content?: string | null })[] = await backend.getAutoLoadItems(options);
 
+    // Stryker disable next-line llm: array lengths are never negative, so <= 0 and === 0 are the same test.
     if(items.length === 0) {
         return 'No auto-load memories found';
     }
@@ -342,6 +347,7 @@ export async function recall(
 
         // Skip empty layers
 
+        // Stryker disable next-line llm: Object.groupBy values are non-empty arrays or undefined, never null, so !x and === undefined select the same groups.
         if(!layerItems) {
             continue;
         }
@@ -374,6 +380,7 @@ export async function list_by_layer(
 ): Promise<string> {
     const result = await backend.listByLayer(params.layer, { limit: params.limit });
 
+    // Stryker disable next-line llm: array lengths are never negative, so <= 0 and === 0 are the same test.
     if(result.items.length === 0) {
         return `No items found in layer: ${params.layer}`;
     }

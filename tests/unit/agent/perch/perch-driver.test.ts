@@ -212,6 +212,32 @@ describe('createPerchDriver', () => {
         expect(wrapUpOptions.priority).toBe('human');
     });
 
+    test('submits the wrap-up immediately when its lead time exceeds the configured session duration', () => {
+        deps = { ...deps, config: makeConfig({ maxSessionMinutes: 1, wrapUpTimeoutMinutes: 2 }) };
+        const driver = createPerchDriver(deps);
+
+        driver.runSlot('afternoon');
+        clock.advance(0);
+
+        expect(conductor.submit).toHaveBeenCalledTimes(2);
+        expect(conductor.submissions[1].envelope.kind).toBe('wrapup');
+    });
+
+    test('an already-due wrap-up is armed with a delay of exactly zero, never a negative one', () => {
+        // The Clock port hands the delay straight to setTimeout, and both Bun and Node treat a
+        // negative delay as a contract violation (Bun emits TimeoutNegativeWarning on stderr and
+        // re-clamps to 1ms), so the driver must clamp an overdue wrap-up to 0 itself.
+        deps = { ...deps, config: makeConfig({ maxSessionMinutes: 1, wrapUpTimeoutMinutes: 2 }) };
+        const setTimer = jest.spyOn(clock, 'setTimer');
+        const driver = createPerchDriver(deps);
+
+        driver.runSlot('afternoon');
+
+        const delays = setTimer.mock.calls.map(([, ms]) => ms);
+        expect(delays).toContain(0);
+        expect(delays.every(ms => ms >= 0)).toBe(true);
+    });
+
     test('a wrap-up submission failure is logged but does not crash the driver', async () => {
         conductor.submit = mock((envelope, options) => {
             if(envelope.kind === 'wrapup') {

@@ -204,6 +204,19 @@ describe('generateText', () => {
 
             expect(result).toBe('streamed text');
         });
+
+        test('uses a one-character streamed result instead of the canonical fallback', async () => {
+            async function* oneCharacterAssistantGenerator() {
+                yield {
+                    type:    'assistant',
+                    message: { content: [{ type: 'text', text: 'X' }] },
+                };
+                yield { type: 'result', subtype: 'success', result: 'fallback text' };
+            }
+            mockQuery.mockImplementation(() => oneCharacterAssistantGenerator());
+
+            expect(await generateText('Test prompt')).toBe('X');
+        });
     });
 
     describe('stripMarkdown option', () => {
@@ -430,6 +443,17 @@ describe('generateText', () => {
             mockQuery.mockImplementation(() => delayedGenerator());
             expect(await generateText('Test prompt', { timeoutMs: 0 })).toBe('ready');
             expect(await generateText('Test prompt', { timeoutMs: -1 })).toBe('ready');
+        });
+
+        test('uses a 15-second deadline when no timeout is provided', async () => {
+            const timeoutController = new AbortController();
+            const timeoutSpy = spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutController.signal);
+            try {
+                await generateText('Test prompt');
+                expect(timeoutSpy).toHaveBeenCalledWith(15_000);
+            } finally {
+                timeoutSpy.mockRestore();
+            }
         });
 
         test('detaches timeout abort forwarding after generation completes', async () => {

@@ -181,4 +181,30 @@ Respond with exactly one word:
 
 Classification:`);
     });
+    // The fixtures above reuse 'user-123'/'channel-123' for both the question and the
+    // answering message, which cannot detect the question and message fields being swapped.
+    it('should attribute the question to its trigger user and channel, not the answering message', async () => {
+        mockGenerateText.mockResolvedValue('answer');
+        const question: PendingQuestion = {
+            ...baseQuestion,
+            triggerUserId: userIdSchema.parse('user-asker'),
+            channelId:     channelIdSchema.parse('channel-question'),
+        };
+        const message: MessageToClassify = {
+            ...baseMessage,
+            authorId:  'user-responder',
+            channelId: 'channel-message',
+        };
+
+        await classifyWithHaiku(question, message);
+
+        const prompt: string = mockGenerateText.mock.calls[0][0];
+        expect(prompt).toContain('- Asked by user: user-asker\n- In channel: channel-question');
+    });
+
+    it('should treat a hyphen as a word separator when extracting the classification word', async () => {
+        mockGenerateText.mockResolvedValue('unrelated-not addressed to the bot at all');
+
+        expect(await classifyWithHaiku(baseQuestion, baseMessage)).toBe('unrelated');
+    });
 });

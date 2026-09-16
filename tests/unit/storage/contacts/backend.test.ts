@@ -949,6 +949,13 @@ describe('ContactBackend', () => {
             const keys = lookupDeletes.map(item => item.DeleteRequest?.Key?.PK as string);
             expect(keys).toContain('CONTACT_LOOKUP#email#alice@example.com');
             expect(keys).toContain('CONTACT_LOOKUP#discord#alice#1234');
+
+            // Each lookup delete's Key must contain exactly PK + SK — DynamoDB rejects a
+            // DeleteRequest whose Key omits either primary-key attribute.
+            expect(lookupDeletes.find(item => item.DeleteRequest?.Key?.PK === 'CONTACT_LOOKUP#email#alice@example.com')?.DeleteRequest?.Key)
+                .toEqual({ PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#alice-smith' });
+            expect(lookupDeletes.find(item => item.DeleteRequest?.Key?.PK === 'CONTACT_LOOKUP#discord#alice#1234')?.DeleteRequest?.Key)
+                .toEqual({ PK: 'CONTACT_LOOKUP#discord#alice#1234', SK: 'CONTACT#alice-smith' });
         });
 
         test('throws ContactNotFoundError when contact does not exist', async () => {
@@ -1359,7 +1366,9 @@ describe('ContactBackend', () => {
             expect(calls[0].args[0].input.TableName).toBe('TestTable');
             expect(calls[0].args[0].input.IndexName).toBe('GSI2');
             expect(calls[0].args[0].input.KeyConditionExpression).toBe('GSI2PK = :pk');
-            expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+            // Exact match (not toMatchObject): an extra placeholder here (e.g. an unused
+            // ':sk') is a real DynamoDB ValidationException, not just noise.
+            expect(calls[0].args[0].input.ExpressionAttributeValues).toEqual({
                 ':pk': 'CONTACTS',
             });
         });
@@ -1579,6 +1588,120 @@ describe('ContactBackend', () => {
 
             // Exact match: fake clock ensures deterministic output
             expect(emailLookupItem?.PutRequest?.Item?.createdAt).toBe('2026-05-01T12:00:00.000Z');
+        });
+    });
+
+    // ======================================================================
+    // putContact — request ordering (push vs unshift regression guards)
+    // ======================================================================
+    describe('putContact (request ordering)', () => {
+        test('new lookup items preserve identifier order (push, not unshift)', async () => {
+            ddbMock.on(GetCommand).resolves(notFound());
+            ddbMock.on(BatchWriteCommand).resolves({});
+
+            // ALICE has 2 identifiers: email first, discord second. Both are new
+            // (no existing contact), so buildNewLookupRequests appends them in order.
+            await backend.putContact(ALICE);
+
+            const bwCalls = ddbMock.commandCalls(BatchWriteCommand);
+            const firstBatchItems = bwCalls[0]?.args[0].input.RequestItems?.TestTable ?? [];
+            expect(firstBatchItems.map(item => item.PutRequest?.Item?.PK)).toEqual([
+                'CONTACT_LOOKUP#email#alice@example.com',
+                'CONTACT_LOOKUP#discord#alice#1234',
+            ]);
+        });
+
+        test('deleted lookup items preserve identifier order (push, not unshift)', async () => {
+            const existingContact: Contact = {
+                ...ALICE,
+                identifiers: [
+                    { platform: 'email',   value: 'a@example.com' },
+                    { platform: 'discord', value: 'b#1' },
+                    { platform: 'bsky',    value: 'c.bsky.social' },
+                ],
+            };
+            ddbMock.on(GetCommand).resolves(contactGetResponse(existingContact));
+            ddbMock.on(BatchWriteCommand).resolves({});
+
+            // New contact shares none of the old identifiers, so all 3 old lookups
+            // are deleted (in buildDeleteRequests' iteration order) and 1 new lookup added.
+            const newContact: Contact = {
+                ...ALICE,
+                identifiers: [{ platform: 'name', value: 'totally-new' }],
+                updatedAt:   '2026-02-01T00:00:00.000Z',
+            };
+            await backend.putContact(newContact);
+
+            const bwCalls = ddbMock.commandCalls(BatchWriteCommand);
+            const allItems = bwCalls.flatMap(
+                call => call.args[0].input.RequestItems?.TestTable ?? []
+            );
+            const deletes = allItems.filter(item => item.DeleteRequest !== undefined);
+            expect(deletes.map(item => item.DeleteRequest?.Key?.PK)).toEqual([
+                'CONTACT_LOOKUP#email#a@example.com',
+                'CONTACT_LOOKUP#discord#b#1',
+                'CONTACT_LOOKUP#bsky#c.bsky.social',
+            ]);
+        });
+    });
+
+    // ======================================================================
+    // deleteContact — await propagation (AwaitDrop regression guards)
+    // ======================================================================
+    describe('deleteContact (await propagation)', () => {
+        test('propagates a profile-delete failure without attempting lookup deletes', async () => {
+            ddbMock.on(GetCommand).resolves(contactGetResponse(ALICE));
+            ddbMock.on(BatchWriteCommand).rejects(new Error('profile delete failed'));
+
+            await expect(backend.deleteContact(PERSON_ID)).rejects.toThrow('profile delete failed');
+
+            // If the profile-delete await were dropped, execution would fall through to
+            // the lookup-delete batch before the profile-delete rejection is observed.
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
+        });
+
+        test('propagates a lookup-delete batch failure back to the caller', async () => {
+            ddbMock.on(GetCommand).resolves(contactGetResponse(ALICE));
+            let callCount = 0;
+            ddbMock.on(BatchWriteCommand).callsFake(async () => {
+                callCount++;
+                if(callCount === 1) {
+                    return {}; // profile delete succeeds
+                }
+                throw new Error('lookup delete failed');
+            });
+
+            // If the final await were dropped, deleteContact would resolve before the
+            // lookup-delete batch settles, silently swallowing this rejection.
+            await expect(backend.deleteContact(PERSON_ID)).rejects.toThrow('lookup delete failed');
+        });
+    });
+
+    // ======================================================================
+    // removeIdentifier — updatedAt freshness
+    // ======================================================================
+    describe('removeIdentifier (updatedAt freshness)', () => {
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('stamps updatedAt with the current time, not the stale existing value', async () => {
+            // ALICE.updatedAt is '2026-01-15T00:00:00.000Z' — distinct from the fake clock below.
+            ddbMock.on(GetCommand).resolves(contactGetResponse(ALICE));
+            ddbMock.on(BatchWriteCommand).resolves({});
+
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2026-03-01T09:30:00.000Z'));
+
+            await backend.removeIdentifier(PERSON_ID, 'discord', 'alice#1234');
+
+            const bwCalls = ddbMock.commandCalls(BatchWriteCommand);
+            const allItems = bwCalls.flatMap(
+                call => call.args[0].input.RequestItems?.TestTable ?? []
+            );
+            const profilePut = allItems.find(item => item.PutRequest?.Item?.SK === 'PROFILE');
+
+            expect(profilePut?.PutRequest?.Item?.updatedAt).toBe('2026-03-01T09:30:00.000Z');
         });
     });
 });

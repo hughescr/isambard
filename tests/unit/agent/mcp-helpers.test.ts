@@ -1,5 +1,5 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { mcpServiceUnavailableResult, checkServiceHealth, checkWriteServiceHealth, withHealthGuard, withWriteHealthGuard, withToolErrorHandling } from '../../../src/agent/mcp-helpers';
+import { describe, test, expect, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
+import { mcpServiceUnavailableResult, mcpJsonResult, checkServiceHealth, checkWriteServiceHealth, withHealthGuard, withWriteHealthGuard, withToolErrorHandling } from '../../../src/agent/mcp-helpers';
 import type { ServiceHealthRegistry } from '../../../src/services/health-registry';
 import type { ReconnectionLoop } from '../../../src/services/reconnection-loop';
 import type { ServiceHealthEntry } from '../../../src/services/types';
@@ -40,9 +40,37 @@ function makeLoop(): ReconnectionLoop {
     };
 }
 
+/** Extracts the single text part of a CallToolResult. */
+function textOf(result: { content: unknown[] }): string {
+    return (result.content[0] as { text: string }).text;
+}
+
+// ---- mcpJsonResult ----
+
+describe('mcpJsonResult', () => {
+    test('pretty-prints with a two-space indent at every nesting level', () => {
+        const result = mcpJsonResult({ outer: { inner: 1 }, items: [1, 2] });
+        expect(textOf(result)).toBe([
+            '{',
+            '  "outer": {',
+            '    "inner": 1',
+            '  },',
+            '  "items": [',
+            '    1,',
+            '    2',
+            '  ]',
+            '}',
+        ].join('\n'));
+    });
+});
+
 // ---- mcpServiceUnavailableResult ----
 
 describe('mcpServiceUnavailableResult', () => {
+    afterEach(() => {
+        setSystemTime();
+    });
+
     test('state=disabled → category permanent_not_configured, message says "not configured"', () => {
         const entry = makeEntry({ state: 'disabled' });
         const result = mcpServiceUnavailableResult('email', entry);
@@ -193,6 +221,54 @@ describe('mcpServiceUnavailableResult', () => {
         // Should show ~1s (ceil of 0.5 is 1)
         expect(text).toContain('~1s');
     });
+
+    // ---- part ordering: the "currently <state>" header always leads the message ----
+    // Each of these cases appends a part after the header, so a push→unshift swap
+    // (which moves that part in front of the header) changes the user-visible message.
+
+    test('part order: "Offline since" is appended after the header', () => {
+        const entry = makeEntry({ state: 'offline', lastOfflineAt: new Date(Date.now() - 60_000) });
+        const text = textOf(mcpServiceUnavailableResult('email', entry));
+        expect(text).toStartWith('The email service is currently offline.');
+        expect(text).toContain('Offline since');
+    });
+
+    test('part order: "Next reconnection attempt" is appended after the header', () => {
+        const entry = makeEntry({ state: 'offline', nextRetryAt: new Date(Date.now() + 30_000) });
+        const text = textOf(mcpServiceUnavailableResult('email', entry));
+        expect(text).toStartWith('The email service is currently offline.');
+        expect(text).toContain('Next reconnection attempt');
+    });
+
+    test('part order: degraded notice is appended after the header', () => {
+        const entry = makeEntry({ state: 'degraded' });
+        const text = textOf(mcpServiceUnavailableResult('email', entry));
+        expect(text).toStartWith('The email service is currently degraded.');
+        expect(text).toContain('Read operations may still work');
+    });
+
+    test('part order: "not configured" notice is appended after the header', () => {
+        const entry = makeEntry({ state: 'disabled' });
+        const text = textOf(mcpServiceUnavailableResult('email', entry));
+        expect(text).toStartWith('The email service is currently disabled.');
+        expect(text).toContain('not configured');
+    });
+
+    // ---- waitSec boundary: the remaining wait is reported in whole seconds, rounded up ----
+
+    test('nextRetryAt exactly 1000ms away → "~1s"', () => {
+        const frozenNow = new Date('2026-01-01T12:00:00.000Z');
+        setSystemTime(frozenNow);
+        const entry = makeEntry({ state: 'offline', nextRetryAt: new Date(frozenNow.getTime() + 1000) });
+        expect(textOf(mcpServiceUnavailableResult('email', entry))).toContain('Next reconnection attempt in ~1s.');
+    });
+
+    test('nextRetryAt 1001ms away → "~2s" (partial seconds round up)', () => {
+        const frozenNow = new Date('2026-01-01T12:00:00.000Z');
+        setSystemTime(frozenNow);
+        const entry = makeEntry({ state: 'offline', nextRetryAt: new Date(frozenNow.getTime() + 1001) });
+        expect(textOf(mcpServiceUnavailableResult('email', entry))).toContain('Next reconnection attempt in ~2s.');
+    });
 });
 
 // ---- checkServiceHealth ----
@@ -265,6 +341,7 @@ describe('checkWriteServiceHealth', () => {
         const text = (result!.content[0] as { text: string }).text;
         expect(text).toContain('discord');
         expect(text).toContain('approval');
+        expect(text).toContain('offline');
     });
 
     test('approval unavailable message also mentions primary service being online', () => {

@@ -857,6 +857,28 @@ describe('WildDuckClient', () => {
             const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect(options.signal).toBeInstanceOf(AbortSignal);
         });
+
+        test('aborts an in-flight request at exactly 30 seconds, not a millisecond earlier', async () => {
+            const client = await makeInitializedClient();
+            const gate = Promise.withResolvers<Response>();
+            const state = { aborted: false };
+            mockFetch.mockImplementationOnce((_url, options) => {
+                const signal = options?.signal;
+                signal?.addEventListener('abort', () => {
+                    state.aborted = true;
+                    gate.reject(signal.reason instanceof Error ? signal.reason : new Error('Aborted'));
+                }, { once: true });
+                return gate.promise;
+            });
+
+            const completion = client.search({});
+
+            jest.advanceTimersByTime(29_999);
+            expect(state.aborted).toBe(false);
+            jest.advanceTimersByTime(1);
+            expect(state.aborted).toBe(true);
+            await expect(completion).rejects.toThrow();
+        });
     });
 
     // -----------------------------------------------------------------------
@@ -1788,6 +1810,22 @@ describe('WildDuckClient', () => {
             expect(body.removeFlags).toEqual(['B']);
         });
 
+        test('sends only the flag fields even when the options object carries extra properties', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            // A non-literal argument bypasses TS excess-property checks, as a caller forwarding a wider
+            // object would. WildDuck's PUT message endpoint also accepts seen/expires/moveTo, so the
+            // client must whitelist the flag fields rather than forward the options verbatim.
+            const wideOptions = { addFlags: ['A'], seen: true, expires: '2026-01-01T00:00:00Z' };
+            await client.updateMessageFlags('Drafts', 42, wideOptions);
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            const body = JSON.parse(options.body as string) as Record<string, unknown>;
+            expect(body).toEqual({ addFlags: ['A'] });
+        });
+
         test('sends Content-Type application/json header', async () => {
             const client = await makeInitializedClient();
 
@@ -2123,6 +2161,35 @@ describe('WildDuckClient', () => {
             await expect(client.searchByKeyword('CleanInbox', 'TestFlag')).resolves.toEqual([1]);
         });
 
+        test('splits on the last colon so a folder path containing a colon still yields its UID', async () => {
+            const client = new WildDuckClient(CLIENT_OPTIONS);
+            client.search = mock(async () => [{
+                message: 'Work:Projects:42',
+                from:    'sender@example.com',
+                to:      [],
+                subject: 'Colon in folder name',
+                date:    '2025-01-01T10:00:00.000Z',
+            }]);
+
+            await expect(client.searchByKeyword('Work:Projects', 'TestFlag')).resolves.toEqual([42]);
+        });
+
+        test('parses the UID as an integer, never a fractional number', async () => {
+            const client = new WildDuckClient(CLIENT_OPTIONS);
+            client.search = mock(async () => [{
+                message: 'CleanInbox:7.5',
+                from:    'sender@example.com',
+                to:      [],
+                subject: 'Fractional suffix',
+                date:    '2025-01-01T10:00:00.000Z',
+            }]);
+
+            const uids = await client.searchByKeyword('CleanInbox', 'TestFlag');
+
+            expect(uids).toEqual([7]);
+            expect(uids.every(uid => Number.isInteger(uid))).toBe(true);
+        });
+
         test('does not reinterpret a hexadecimal-looking server ID as a decimal UID', async () => {
             const client = await makeInitializedClient();
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
@@ -2187,7 +2254,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('{"error":"validation failed"}', 400));
 
-            await expect(client.search({})).rejects.toThrow('validation failed');
+            await expect(client.search({})).rejects.toThrow('WildDuck API error: 400 Bad Request: {"error":"validation failed"}');
         });
 
         test('makeRequest does not append colon when body is empty string', async () => {
@@ -2933,6 +3000,32 @@ describe('WildDuckClient', () => {
             expect(result?.headers.xRspamdScore).toBe('1.5');
         });
 
+        test('omits a blank reply-to address rather than emitting a blank Reply-To header', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                ...FULL_MESSAGE_RESPONSE,
+                replyTo: { address: '' },
+            }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.headers.replyTo).toBeUndefined();
+        });
+
+        test('omits a blank x-rspamd-score header rather than emitting a blank score', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                ...FULL_MESSAGE_RESPONSE,
+                headers: { ...FULL_MESSAGE_RESPONSE.headers, 'x-rspamd-score': '' },
+            }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.headers.xRspamdScore).toBeUndefined();
+        });
+
         test('preserves every line of the X-Rspamd report header', async () => {
             const client = await makeInitializedClient();
             const report = 'R_SPF_ALLOW(-0.20)\nDKIM_SIGNED(0.00)\nDMARC_POLICY_ALLOW(-0.50)';
@@ -3018,6 +3111,48 @@ describe('WildDuckClient', () => {
 
             // Result must be valid UTF-8 (no partial multi-byte sequences)
             expect(result?.bodyText).toBe('あ');
+        });
+
+        test('backs up exactly one byte when the cut lands on the continuation byte of a 2-byte character', async () => {
+            // 'aé' is 3 bytes (0x61 0xC3 0xA9); limit=2 cuts on the continuation byte 0xA9.
+            // Backing up one byte lands on the lead byte 0xC3 and stops, yielding 'a'.
+            const client = new WildDuckClient({ ...CLIENT_OPTIONS, maxBodySizeBytes: 2 });
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
+            await client.init();
+            mockFetch.mockClear();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...FULL_MESSAGE_RESPONSE, text: 'aé' }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.bodyText).toBe('a');
+        });
+
+        test('keeps spf and dkim verification results on their own keys', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                ...FULL_MESSAGE_RESPONSE,
+                verificationResults: { spf: 'spf.example.com', dkim: 'dkim.example.com', tls: {}, arc: false, bimi: false },
+            }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.verificationResults).toEqual({ spf: 'spf.example.com', dkim: 'dkim.example.com' });
+        });
+
+        test('normalises to/cc recipients, dropping an empty display name', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                ...FULL_MESSAGE_RESPONSE,
+                to: [{ address: 'me@example.com', name: '' }],
+                cc: [{ address: 'cc@example.com', name: '' }],
+            }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.to).toStrictEqual([{ address: 'me@example.com' }]);
+            expect(result?.cc).toStrictEqual([{ address: 'cc@example.com' }]);
         });
 
         test('uses messageId from headers when messageId field missing', async () => {

@@ -32,6 +32,7 @@ async function copyDirectory(sourceDir: string, destDir: string, limit: ReturnTy
             // For test compatibility, we read and write when copyFile with FICLONE fails
             await limit(async () => {
                 try {
+                    // Stryker disable next-line llm: copyFile's mode only chooses CoW clone vs byte copy; the written bytes and the fallback path are identical, so the difference is unobservable.
                     await copyFile(sourcePath, destPath, constants.COPYFILE_FICLONE);
                 } catch{
                     // COPYFILE_FICLONE is only a performance hint; copy bytes if unavailable.
@@ -39,9 +40,7 @@ async function copyDirectory(sourceDir: string, destDir: string, limit: ReturnTy
                     await writeFile(destPath, content);
                 }
             });
-            // Stryker restore BlockStatement
         }
-        // Stryker restore ConditionalExpression
     }));
     // A rejected child must not let the caller tear down or reuse the target while
     // other admitted copies (including recursive children) are still writing.
@@ -69,7 +68,6 @@ async function clearDirectory(dirPath: string): Promise<void> {
             throw error;
         }
     }
-    // Stryker restore BlockStatement,ObjectLiteral,BooleanLiteral,ConditionalExpression,EqualityOperator,StringLiteral
 }
 
 /**

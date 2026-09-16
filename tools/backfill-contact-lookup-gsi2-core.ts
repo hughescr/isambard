@@ -35,7 +35,6 @@ export function parseArgs(argv: string[]): BackfillOptions {
     // Start with both flags disabled; set them below as we find the relevant CLI args.
     let dryRun = false;
     let showHelp = false;
-    // Stryker restore BooleanLiteral
 
     // Strip argv[0] (runtime) and argv[1] (script path); only process user-provided args.
     const args = argv.slice(2);
@@ -67,6 +66,7 @@ export function createUpdateRateLimiter(
         setTimeout(resolve, ms);
     })
 ): () => Promise<void> {
+    // Stryker disable next-line NumberLiteralValue: initial nextStart is read only through Math.max(0, nextStart - now()), so any value <= 0 is indistinguishable for non-negative clocks
     let nextStart = 0;
     let tail: Promise<void> = Promise.resolve();
     function recordStart(): void {
@@ -76,6 +76,7 @@ export function createUpdateRateLimiter(
     }
     return () => {
         const ticket = tail.then(async () => {
+            // Stryker disable next-line NumberLiteralValue: waitMs is consumed only by if(waitMs > 0), so clamping to -1 instead of 0 is unobservable
             const waitMs = Math.max(0, nextStart - now());
             if(waitMs > 0) {
                 await sleep(waitMs);
@@ -126,7 +127,6 @@ async function updateLookupRow(
         return 'error';
     }
 }
-// Stryker restore all
 
 /**
  * Process one page of contact profile items from the CONTACTS GSI2 partition.
@@ -191,7 +191,6 @@ export async function processContacts(
 
     return { updated, skipped, errors };
 }
-// Stryker restore all
 
 /** Summary statistics accumulated during the backfill run. */
 export interface BackfillStats {
@@ -279,7 +278,6 @@ export async function runBackfillLoop(
                         { cause: err }
                     );
                 }
-                // Stryker restore StringLiteral,ObjectLiteral
 
                 // Exponential backoff before retrying the failed page.
                 const backoffMs = baseBackoffMs * (2 ** (consecutiveFailures - 1));
@@ -287,7 +285,6 @@ export async function runBackfillLoop(
                 await sleep(backoffMs);
             }
         }
-        // Stryker restore BlockStatement
     } finally {
         // Print summary whether we completed normally or are propagating a circuit-breaker error.
         onSummary(stats, exclusiveStartKey);

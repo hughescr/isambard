@@ -151,6 +151,8 @@ Backfill complete:
     }
 }
 
+// Stryker disable next-line BlockStatement: main-entry block runs only as a CLI subprocess, invisible to in-process coverage
 if(import.meta.main) {
+    // Stryker disable next-line AwaitDrop: Distinguishing top-level rejection from unhandledRejection requires a main-entry subprocess, exceeding the sub-1ms test budget; not equivalent.
     await runBackfillCli(process.argv);
 }

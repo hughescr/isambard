@@ -193,6 +193,30 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             expect(result.isError).toBe(true);
         });
 
+        test('should stringify a symbol thrown by backend.searchByTags', async () => {
+            mockBackend.searchByTags = mock(async () => {
+                throw Symbol('search failure');
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'search');
+
+            let outcome: { kind: 'result', result: CallToolResult } | { kind: 'error', error: unknown };
+            try {
+                outcome = { kind: 'result', result: await handler({ tags: ['tag1'] }) };
+            } catch (error) {
+                outcome = { kind: 'error', error };
+            }
+
+            // A non-Error thrown value (here a Symbol) must be converted with String(), not
+            // interpolated directly — interpolating a raw Symbol in a template literal throws.
+            expect(outcome.kind).toBe('result');
+            if(outcome.kind === 'result') {
+                expect(textContent(outcome.result.content[0])).toBe('Error searching memories: Symbol(search failure)');
+                expect(outcome.result.isError).toBe(true);
+            }
+        });
+
         test('should format results with path and content preview', async () => {
             mockBackend.searchByTags = mock(async () => ({
                 items: [
@@ -215,6 +239,86 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             const result = await handler({ tags: ['tag1'] });
 
             expect(textContent(result.content[0])).toBe('/memories/note.md: This is my note content');
+        });
+
+        test('shows an empty content preview verbatim rather than falling back to "No content"', async () => {
+            mockBackend.searchByTags = mock(async () => ({
+                items: [
+                    {
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/memories/empty.md',
+                        memoryPath:     '/memories/empty.md' as MemoryPath,
+                        layer:          'identity' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           new Set(['tag1']),
+                        contentPreview: '',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'search');
+
+            const result = await handler({ tags: ['tag1'] });
+
+            // contentPreview: '' is present (not nullish), so it must be shown as-is —
+            // a falsy-based fallback would replace it with 'No content'.
+            expect(textContent(result.content[0])).toBe('/memories/empty.md: ');
+        });
+
+        test('preserves leading/trailing whitespace in content preview rather than trimming it', async () => {
+            const paddedContent = '  padded content  ';
+            mockBackend.searchByTags = mock(async () => ({
+                items: [
+                    {
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/memories/pad.md',
+                        memoryPath:     '/memories/pad.md' as MemoryPath,
+                        layer:          'identity' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           new Set(['tag1']),
+                        contentPreview: paddedContent,
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'search');
+
+            const result = await handler({ tags: ['tag1'] });
+
+            expect(textContent(result.content[0])).toBe(`/memories/pad.md: ${paddedContent}`);
+        });
+
+        test('shows a missing memory path as "undefined" rather than falling back to "Unknown"', async () => {
+            mockBackend.searchByTags = mock(async () => ({
+                items: [
+                    {
+                        PK:             'TAG#tag1' as const,
+                        SK:             '/memories/x.md',
+                        // Bypass the TagIndexReadItem['memoryPath'] string type to simulate a
+                        // backend row that has no memoryPath at runtime (a nullish-coalescing
+                        // fallback would substitute 'Unknown' here instead).
+                        memoryPath:     undefined as unknown as MemoryPath,
+                        layer:          'identity' as const,
+                        updatedAt:      '2025-01-01T00:00:00.000Z',
+                        tags:           new Set(['tag1']),
+                        contentPreview: 'content',
+                    },
+                ],
+                nextCursor: undefined,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'search');
+
+            const result = await handler({ tags: ['tag1'] });
+
+            // memoryPath is undefined; the current code interpolates it as literal
+            // "undefined" text. A `?? 'Unknown'` fallback would show 'Unknown' instead.
+            expect(textContent(result.content[0])).toBe('undefined: content');
         });
     });
 

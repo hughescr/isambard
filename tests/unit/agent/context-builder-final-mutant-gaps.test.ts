@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, jest, mock, test } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createContextBuilder, formatMemoryPreview, type CalendarService } from '@/agent/context-builder';
+import type { BlueskyClient } from '@/integrations/bsky';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import { createMemoryPath } from '@/storage/memory-tool/types';
 
@@ -143,6 +144,27 @@ describe('context builder final mutation boundaries', () => {
         expect(result).toContain('Today (Wed Mar 18)');
     });
 
+    test('calendar day labels use the context clock captured before loading calendars', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-03-18T23:59:00.000Z'));
+        const store = backend();
+        store.list = mock(async () => ({ items: [] }));
+        store.getStateItemsScored = mock(async () => []);
+        store.searchByTimeRange = mock(async () => []);
+        store.listByLayer = mock(async () => ({ items: [] }));
+        const calendarService = {
+            registry: { getAllCalendars: mock(async () => [{}]) },
+            client:   { getContextEvents: mock(async () => {
+                jest.setSystemTime(new Date('2026-03-19T00:00:00.000Z'));
+                return { events: [{ uid: 'event', summary: 'Late event', start: new Date('2026-03-18T22:00:00.000Z'), end: new Date('2026-03-18T22:30:00.000Z'), isAllDay: false, calendarLabel: 'Main' }], failed: [] };
+            }) },
+        } as unknown as CalendarService;
+
+        const result = await createContextBuilder({ backend: store, calendarService }).buildUserMessagePrefix('u', 'UTC');
+
+        expect(result).toContain('Today (Wed Mar 18)');
+    });
+
     test('older event previews measure age from the event to the context clock', async () => {
         jest.useFakeTimers();
         jest.setSystemTime(NOW);
@@ -260,4 +282,31 @@ describe('context builder final mutation boundaries', () => {
         expect(result).toContain(second);
         expect(result).not.toContain('more user memories');
     });
+});
+
+test('an empty but present Bluesky cursor still indicates an additional page', async () => {
+    const store = backend();
+    store.getStateItemsScored = mock(async () => []);
+    store.searchByTimeRange = mock(async () => []);
+    store.listByLayer = mock(async () => ({ items: [] }));
+    const bskyDMService = {
+        client: {
+            listConversations: mock(async () => ({
+                conversations: [{
+                    id:          'convo',
+                    rev:         '1',
+                    members:     [{ did: 'did:alice', handle: 'alice.bsky.social' }],
+                    muted:       false,
+                    unreadCount: 1,
+                }],
+                cursor: '',
+            })),
+            ownHandle: 'izzy.bsky.social',
+        } as unknown as BlueskyClient,
+    };
+
+    const result = await createContextBuilder({ backend: store, bskyDMService }).buildPerchContext(NOW);
+
+    expect(result).toContain('You have 1+ DMs');
+    expect(result).toContain('More conversations available');
 });

@@ -102,6 +102,14 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(timestamp >= beforeCall).toBe(true);
             expect(timestamp <= afterCall).toBe(true);
         });
+
+        test('honours a provided empty-string timestamp instead of auto-generating one', () => {
+            // Only an omitted (nullish) timestamp is auto-generated, so the fallback is keyed on
+            // `??` rather than `||`: a supplied-but-falsy value must pass through verbatim.
+            const keys = MemoryToolKeyGenerator.createKeys('/identity/file.xml' as MemoryPath, '');
+
+            expect(keys.GSI1SK).toBe('UPDATED#');
+        });
     });
 
     describe('parsePath', () => {

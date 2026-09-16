@@ -125,6 +125,20 @@ describe('createWakeTurnDelivery', () => {
         await expect(h.conductor.deliver.mock.results[0]?.value).resolves.toEqual({ delivered: true, channelId: 'chan-1', messageIds: [] });
     });
 
+    it('a not-sent-but-queued send is treated as delivered, not thrown as not-sent — the guard requires BOTH sent and queued to be falsy', async () => {
+        const h = build();
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: true });
+
+        await h.deliver(makeEnvelope({ channelId: 'chan-1' }), makeTurnResult());
+
+        expect(h.conductor.deliver).toHaveBeenCalled();
+        // If the guard collapsed to checking `sent` twice (ignoring `queued`), this send callback
+        // would throw WakeTurnNotSentError despite having been queued, and conductor.deliver's
+        // returned promise would reject instead of resolving.
+        await expect(h.conductor.deliver.mock.results[0]?.value).resolves.toEqual({ delivered: true, channelId: 'chan-1', messageIds: [] });
+        expect(h.logger.error).not.toHaveBeenCalled();
+    });
+
     it('threads discordCapability through to sendEnvelopeResponse when provided', async () => {
         const discordCapability = { sendToChannel: jest.fn() };
         const h = build({ discordCapability: discordCapability as unknown as CreateWakeTurnDeliveryParams['discordCapability'] });
@@ -253,5 +267,61 @@ describe('createWakeTurnDelivery', () => {
         await expect(h.deliver(makeEnvelope({ kind: 'task', channelId: undefined }), makeTurnResult())).resolves.toBeUndefined();
 
         expect(h.logger.error).toHaveBeenCalled();
+    });
+
+    it('a known-target delivery does not resolve until the send settles — proves deliverWakeTurn genuinely awaits deliverToKnownTarget\'s conductor.deliver chain rather than firing it and returning early', async () => {
+        const h = build();
+        let resolveSend!: (v: { sent: boolean }) => void;
+        const pending = new Promise<{ sent: boolean }>((resolve) => {
+            resolveSend = resolve;
+        });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockReturnValue(pending);
+
+        let settled = false;
+        const operation = h.deliver(makeEnvelope({ channelId: 'chan-1' }), makeTurnResult());
+        const observer = operation.then(() => {
+            settled = true;
+            return undefined;
+        });
+
+        // No amount of microtask flushing settles `observer` while the send is genuinely pending —
+        // this is what distinguishes a real await chain from a fire-and-forget call (which would
+        // settle it almost immediately, without ever observing sendEnvelopeResponse's own result).
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        resolveSend({ sent: true });
+        await operation;
+        await observer;
+        expect(settled).toBe(true);
+    });
+
+    it('a fallback delivery does not resolve until the routing (and then the send) settles — proves deliverToFallback\'s conductor.deliver chain is genuinely awaited, not fired and forgotten', async () => {
+        const h = build();
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        let resolveRouting!: (v: { targetChannelId: string, shouldSend: boolean, content: string, isFallback: boolean }) => void;
+        const pending = new Promise<{ targetChannelId: string, shouldSend: boolean, content: string, isFallback: boolean }>((resolve) => {
+            resolveRouting = resolve;
+        });
+        h.responseRouter.routeToFallback.mockReturnValue(pending);
+
+        let settled = false;
+        const operation = h.deliver(makeEnvelope({ kind: 'task', channelId: undefined }), makeTurnResult());
+        const observer = operation.then(() => {
+            settled = true;
+            return undefined;
+        });
+
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        resolveRouting({ targetChannelId: 'fallback-channel-id', shouldSend: true, content: 'x', isFallback: true });
+        await operation;
+        await observer;
+        expect(settled).toBe(true);
     });
 });

@@ -15,6 +15,7 @@ describe('formatBytes', () => {
 
     test('returns KB for values >= 1024 and < 1MB', () => {
         expect(formatBytes(1024)).toBe('1KB');
+        expect(formatBytes(1025)).toBe('1KB'); // 1.0009KB rounds down to 1
         expect(formatBytes(1536)).toBe('2KB'); // 1.5KB rounds to 2
         expect(formatBytes(10_240)).toBe('10KB');
     });

@@ -66,8 +66,10 @@ export class StreamTracker {
 
             // Extract tool_use blocks (capture the last one)
             const toolUses = extractToolUses(message);
+            // Stryker disable next-line llm: array length is a nonnegative integer, so > 0 and >= 1 are equivalent
             if(toolUses.length > 0) {
                 // Get the last tool_use block
+                // Stryker disable next-line llm: every filtered ToolUseBlock is a non-null object, so at(-1) is always truthy here and ?? and || agree
                 this.pendingToolUse = toolUses.at(-1) ?? null;
             } else if(message.message?.content !== undefined) {
                 // If there's content but no tool_use, clear pendingToolUse

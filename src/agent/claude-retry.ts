@@ -9,11 +9,12 @@ function isNetworkErrorByMessage(error: unknown): ErrorClassification | undefine
         return undefined;
     }
 
+    // Stryker disable next-line llm: only a message containing the bare ECONNREFUSE prefix without its D could distinguish this; no such error code exists.
     const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
+    // Stryker disable next-line llm: includes and indexOf >= 0 are equivalent membership checks.
     if(!networkErrorCodes.some(code => error.message.includes(code))) {
         return undefined;
     }
-    // Stryker restore StringLiteral,ConditionalExpression,BlockStatement
 
     return { category: 'transient', message: error.message };
 }
@@ -26,6 +27,7 @@ function getErrorMessage(error: unknown): string {
         return error;
     }
 
+    // Stryker disable next-line llm: inside the typeof-object branch null is the only falsy value, so `!== null` and truthiness agree.
     if(typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string' && error.message) {
         return error.message;
     }

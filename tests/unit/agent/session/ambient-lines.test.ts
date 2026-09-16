@@ -361,8 +361,9 @@ describe('composeAmbientLines: provider reports', () => {
 
     it('shows burn only for comparable samples in the same reset window', () => {
         const snapshot = providerSnapshot(35);
+        snapshot.providers[0].quotaAfter!.collectedAt = new Date(NOW.getTime() - 30 * 60_000);
         const prior = providerSnapshot(25);
-        prior.generatedAt = new Date(NOW.getTime() - 3_600_000);
+        prior.generatedAt = new Date(NOW.getTime() - 90 * 60_000);
         const priorCodex = prior.providers[0];
         priorCodex.quotaAfter!.collectedAt = prior.generatedAt;
         // A previous snapshot can use a different provider order; burn must match by provider id.
@@ -567,5 +568,21 @@ describe('withAmbientLines', () => {
     it('appends each line as one more bullet under the header', () => {
         expect(withAmbientLines('## Current Time\n- UTC: now', ['Perch: idle', 'Quota: 5-hour 42% used']))
             .toBe('## Current Time\n- UTC: now\n- Perch: idle\n- Quota: 5-hour 42% used');
+    });
+});
+
+it('marks a direct-fallback quota expired at the render-time reset boundary, even when it was collected earlier', () => {
+    const snapshot = providerSnapshot(35);
+    snapshot.anthropicFallback = {
+        collectedAt: new Date(NOW.getTime() - 60_000),
+        expiresAt:   new Date(NOW.getTime() + 60_000),
+        windows:     { fiveHour: { utilization: 42, resetsAt: NOW } },
+    };
+    const data = quotaJson(compose({ providerSnapshot: snapshot })[0]);
+
+    expect(data.anthropic).toEqual({
+        quota_lookup: { status: 'ok', last_attempt_at: '2026-09-09T22:06:00.000Z', source: 'direct_anthropic' },
+        observed_at:  '2026-09-09T22:06:00.000Z',
+        quotas:       [{ id: 'five_hour', window: '5h', status: 'expired' }],
     });
 });

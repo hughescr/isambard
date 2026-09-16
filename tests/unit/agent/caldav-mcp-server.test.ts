@@ -127,6 +127,15 @@ describe.concurrent('createCaldavMCPServer', () => {
                 expect(user.safeParse('').success).toBe(false);
             }
         });
+
+        test('accepts a one-day lookahead but rejects zero and negative days', () => {
+            const tools = (createCaldavMCPServer({ client: mockClient, registry: mockRegistry }).instance as unknown as RegisteredToolInstance)._registeredTools;
+            const days  = tools.getUpcomingEvents.inputSchema.shape.days as z.ZodOptional<z.ZodNumber>;
+
+            expect(days.safeParse(1).success).toBe(true);
+            expect(days.safeParse(0).success).toBe(false);
+            expect(days.safeParse(-1).success).toBe(false);
+        });
     });
 
     describe('getCalendarEvents tool', () => {
@@ -210,6 +219,24 @@ describe.concurrent('createCaldavMCPServer', () => {
                 start:         '2026-03-18T09:00:00.000Z',
                 end:           '2026-03-18T09:30:00.000Z',
             });
+        });
+
+        test('reports an event with an invalid Date as a tool error instead of serializing null timestamps', async () => {
+            // CalDAVClient builds `end` via `new Date(String(undefined))` when a VEVENT has no DTEND,
+            // so an Invalid Date is a real production value. The explicit toISOString() mapping throws
+            // on it (a RangeError the wrapper turns into an error result); plain JSON serialization
+            // would instead call Date.prototype.toJSON, which quietly emits `null`.
+            (mockClient.getEvents as ReturnType<typeof mock>).mockResolvedValueOnce({
+                events: [mockEvent({ end: new Date('undefined') })],
+                failed: [],
+            });
+            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const handler = getToolHandler(server, 'getCalendarEvents');
+
+            const result = await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Invalid Date');
         });
 
         test('should return empty events with message when no calendars configured', async () => {
@@ -428,6 +455,24 @@ describe.concurrent('createCaldavMCPServer', () => {
             const text   = textContent(result.content[0]);
             const parsed = JSON.parse(text) as { calendars: { calendars: { path: string }[] }[] };
             expect(parsed.calendars[0].calendars[0].path).toBe('/home/calendars/home/');
+        });
+
+        test('preserves registry order across multiple calendar servers', async () => {
+            (mockRegistry.getAllCalendars as ReturnType<typeof mock>).mockImplementation(async () => [
+                mockServerEntry({ description: 'Personal iCloud' }),
+                mockServerEntry({
+                    description: 'Work Google',
+                    calendars:   [{ calendarPath: '/work/calendars/work/', label: 'Work' }],
+                }),
+            ]);
+            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const handler = getToolHandler(server, 'listUserCalendars');
+
+            const result = await handler({ user: 'user-123' });
+
+            const parsed = JSON.parse(textContent(result.content[0])) as { calendars: { serverDescription: string, calendars: { label: string }[] }[] };
+            expect(parsed.calendars.map(c => c.serverDescription)).toEqual(['Personal iCloud', 'Work Google']);
+            expect(parsed.calendars.map(c => c.calendars[0]?.label)).toEqual(['Home', 'Work']);
         });
 
         test('should return empty when no calendars configured', async () => {

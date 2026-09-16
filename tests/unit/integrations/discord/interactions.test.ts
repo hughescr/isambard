@@ -76,6 +76,14 @@ describe('createInteractionHandler', () => {
         });
     });
 
+    it('should propagate a rejected reply when question is not found', async () => {
+        const interaction = createMockButtonInteraction('question:unknown-q:value', 'user1', 'msg1');
+        const replyError = new Error('reply failed');
+        interaction.reply = mock().mockRejectedValue(replyError);
+
+        await expect(handler.handleButtonInteraction(interaction)).rejects.toBe(replyError);
+    });
+
     it('should reply ephemeral when question is not in waiting state', async () => {
         const now = Date.now();
         const question: Omit<PendingQuestion, 'state'> = {
@@ -143,6 +151,30 @@ describe('createInteractionHandler', () => {
         expect(inactiveRegistry.resolveWithAnswer).not.toHaveBeenCalled();
     });
 
+    it('should propagate a rejected reply for a question that is no longer waiting', async () => {
+        const inactiveQuestion: PendingQuestion = {
+            questionId:      'q-inactive-rejection',
+            channelId:       'ch1' as ChannelId,
+            originMessageId: 'msg1',
+            triggerUserId:   'user1' as UserId,
+            questionText:    'Already answered',
+            createdAt:       Date.now() - 1000,
+            expiresAt:       Date.now() + 5000,
+            options:         [{ label: 'Yes', value: 'yes' }],
+            state:           'answered',
+        };
+        const inactiveRegistry = {
+            getQuestion:       mock(() => inactiveQuestion),
+            resolveWithAnswer: mock(),
+        } as unknown as QuestionRegistry;
+        const inactiveHandler = createInteractionHandler({ questionRegistry: inactiveRegistry });
+        const interaction = createMockButtonInteraction('question:q-inactive-rejection:yes', 'user2', 'msg2');
+        const replyError = new Error('reply failed');
+        interaction.reply = mock().mockRejectedValue(replyError);
+
+        await expect(inactiveHandler.handleButtonInteraction(interaction)).rejects.toBe(replyError);
+    });
+
     it('should reply ephemeral when question has expired (expiresAt < now)', async () => {
         // Set system time to a known value using vi.useFakeTimers
         const baseTime = new Date('2024-01-01T12:00:00Z').getTime();
@@ -178,6 +210,30 @@ describe('createInteractionHandler', () => {
             content: 'This question has expired or is no longer valid.',
             flags:   MessageFlags.Ephemeral,
         });
+    });
+
+    it('should propagate a rejected reply for an expired question', async () => {
+        const expiredQuestion: PendingQuestion = {
+            questionId:      'q-expired-rejection',
+            channelId:       'ch1' as ChannelId,
+            originMessageId: 'msg1',
+            triggerUserId:   'user1' as UserId,
+            questionText:    'Expired question',
+            createdAt:       Date.now() - 10_000,
+            expiresAt:       Date.now() - 1,
+            options:         [{ label: 'Yes', value: 'yes' }],
+            state:           'waiting',
+        };
+        const expiredRegistry = {
+            getQuestion:       mock(() => expiredQuestion),
+            resolveWithAnswer: mock(),
+        } as unknown as QuestionRegistry;
+        const expiredHandler = createInteractionHandler({ questionRegistry: expiredRegistry });
+        const interaction = createMockButtonInteraction('question:q-expired-rejection:yes', 'user2', 'msg2');
+        const replyError = new Error('reply failed');
+        interaction.reply = mock().mockRejectedValue(replyError);
+
+        await expect(expiredHandler.handleButtonInteraction(interaction)).rejects.toBe(replyError);
     });
 
     it('should accept a question at its exact expiration timestamp', async () => {
@@ -260,6 +316,31 @@ describe('createInteractionHandler', () => {
             msg:           'Button answer received',
         });
         await resultPromise;
+    });
+
+    it('should propagate a rejected update before resolving the question', async () => {
+        const waitingQuestion: PendingQuestion = {
+            questionId:      'q-update-rejection',
+            channelId:       'ch1' as ChannelId,
+            originMessageId: 'msg1',
+            triggerUserId:   'user1' as UserId,
+            questionText:    'Choose an option',
+            createdAt:       Date.now(),
+            expiresAt:       Date.now() + 5000,
+            options:         [{ label: 'Yes', value: 'yes' }],
+            state:           'waiting',
+        };
+        const waitingRegistry = {
+            getQuestion:       mock(() => waitingQuestion),
+            resolveWithAnswer: mock(),
+        } as unknown as QuestionRegistry;
+        const waitingHandler = createInteractionHandler({ questionRegistry: waitingRegistry });
+        const interaction = createMockButtonInteraction('question:q-update-rejection:yes', 'user2', 'msg2');
+        const updateError = new Error('update failed');
+        interaction.update = mock().mockRejectedValue(updateError);
+
+        await expect(waitingHandler.handleButtonInteraction(interaction)).rejects.toBe(updateError);
+        expect(waitingRegistry.resolveWithAnswer).not.toHaveBeenCalled();
     });
 
     it('should remove buttons after click', async () => {

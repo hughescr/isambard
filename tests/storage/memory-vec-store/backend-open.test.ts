@@ -2,6 +2,8 @@ import { Database, type Database as DatabaseType } from 'bun:sqlite';
 import { afterEach, describe, expect, it, jest, mock } from 'bun:test';
 // @ts-expect-error Bun query specifiers create an isolated module instance for this process-global test.
 import { configureCustomSQLite as configureFreshSQLite } from '../../../src/storage/memory-vec-store/backend.ts?default-deps-setter-test';
+// @ts-expect-error Bun query specifiers create an isolated module instance for this process-global test.
+import { VectorIndex as DefaultConfigureVectorIndex } from '../../../src/storage/memory-vec-store/backend.ts?open-default-configure-test';
 import {
     VectorIndex,
     configureCustomSQLite,
@@ -224,6 +226,37 @@ describe('VectorIndex validation without native SQLite calls', () => {
             expect((queryError as VectorIndexError).context).toMatchObject({ length: 256 });
         } finally {
             index.close();
+        }
+    });
+});
+
+describe('VectorIndex.open default configure fallback', () => {
+    it('runs the process-wide SQLite configuration when no configure dependency is injected', async () => {
+        const overridePath = '/custom/default-configure-test.dylib';
+        const previousPlatform = process.platform;
+        const previousOverride = process.env.SQLITE_VEC_LIB_PATH;
+        // The default dependencies only probe on darwin; pin the platform so the
+        // assertion is meaningful on every CI runner.
+        Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+        process.env.SQLITE_VEC_LIB_PATH = overridePath;
+        const setCustomSQLite = jest.spyOn(Database, 'setCustomSQLite').mockImplementation(() => true);
+        try {
+            const index = await DefaultConfigureVectorIndex.open(':memory:', {
+                loadExtension: mock(() => {}),
+                migrateSchema: mock(() => {}),
+            });
+            try {
+                expect(setCustomSQLite).toHaveBeenCalledWith(overridePath);
+            } finally {
+                index.close();
+            }
+        } finally {
+            Object.defineProperty(process, 'platform', { value: previousPlatform, configurable: true });
+            if(previousOverride === undefined) {
+                delete process.env.SQLITE_VEC_LIB_PATH;
+            } else {
+                process.env.SQLITE_VEC_LIB_PATH = previousOverride;
+            }
         }
     });
 });

@@ -107,6 +107,20 @@ describe('createIngressGate', () => {
         expect(gate.admit(makeMessage('1'))).toBe('dropped');
     });
 
+    test('open() dedups replayed ids case-sensitively', () => {
+        // Guards the exact id used in the replay lookup: an id that differs only in case is a
+        // different message, so a buffered message whose id is in replayedIds verbatim must not
+        // be drained.
+        const drained: FakeMessage[] = [];
+        const gate = createIngressGate<FakeMessage>({ onDrain: message => drained.push(message) });
+
+        gate.admit(makeMessage('ABC-123'));
+
+        gate.open(new Set(['ABC-123']));
+
+        expect(drained).toEqual([]);
+    });
+
     test('open() after stop() does not transition back to open', () => {
         const drained: FakeMessage[] = [];
         const gate = createIngressGate<FakeMessage>({ onDrain: message => drained.push(message) });

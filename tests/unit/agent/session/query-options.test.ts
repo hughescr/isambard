@@ -210,6 +210,24 @@ describe('buildAllowedTools', () => {
     test('mcp__memory__* is present even when no servers are configured', () => {
         expect(buildAllowedTools({})).toContain('mcp__memory__*');
     });
+
+    test('pushes configured MCP tool patterns onto the end of the list, in OPTIONAL_MCP_SERVER_ORDER order', () => {
+        // discord precedes inbox in OPTIONAL_MCP_SERVER_ORDER; push (not unshift) keeps them last, in that order.
+        const tools = buildAllowedTools({ discord: mockMcpServer, inbox: mockMcpServer });
+        expect(tools.slice(-2)).toEqual(['mcp__discord__*', 'mcp__inbox__*']);
+    });
+
+    test('an explicit null server value is treated as absent, not attached', () => {
+        const tools = buildAllowedTools({ discord: null } as unknown as SessionMcpServers);
+        expect(tools).not.toContain('mcp__discord__*');
+    });
+
+    test('a configured server is read as a plain property, not gated behind hasOwnProperty', () => {
+        // servers[name] must resolve any truthy value at that key, not only own-enumerable ones.
+        const servers = Object.create({ discord: mockMcpServer }) as SessionMcpServers;
+        const tools = buildAllowedTools(servers);
+        expect(tools).toContain('mcp__discord__*');
+    });
 });
 
 describe('buildSessionQueryOptions', () => {
@@ -355,6 +373,11 @@ describe('buildSessionQueryOptions', () => {
         expect(opts.agentProgressSummaries).toBe(true);
     });
 
+    test('thinking is adaptive, not disabled', () => {
+        const opts = buildSessionQueryOptions(baseParams());
+        expect(opts.thinking).toEqual({ type: 'adaptive' });
+    });
+
     test('satisfies Options', () => {
         const opts: Options = buildSessionQueryOptions(baseParams());
         expect(opts).toBeDefined();
@@ -365,18 +388,21 @@ describe('buildSessionQueryOptions', () => {
             return buildSessionQueryOptions(baseParams({ isInterrupting })).stderr;
         }
 
-        test('"Operation aborted" logs at debug only while isInterrupting() is true', () => {
-            const stderr = stderrOf(() => true);
-            stderr('Operation aborted\nstack trace...');
-            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
-            expect(mockLogger.error).not.toHaveBeenCalled();
-        });
-
-        test('"Operation aborted" logs at error when isInterrupting() is false', () => {
-            const stderr = stderrOf(() => false);
-            stderr('Operation aborted\nstack trace...');
-            expect(mockLogger.error).toHaveBeenCalledTimes(1);
-            expect(mockLogger.debug).not.toHaveBeenCalled();
+        test.each([
+            ['"Operation aborted" logs at debug only while isInterrupting() is true', () => true, 'Operation aborted\nstack trace...', 'debug'],
+            ['"Operation aborted" logs at error when isInterrupting() is false', () => false, 'Operation aborted\nstack trace...', 'error'],
+            ['"Operation aborted" is matched anywhere in the payload, not only at the start', () => true, 'preamble noise Operation aborted trailing detail', 'debug'],
+            ['hook-close markers are matched anywhere in the payload, not only at the start/end', () => false, 'noise before Error in hook callback: middle Stream closed noise after', 'debug'],
+        ] as [string, () => boolean, string, string][])('%s', (_label, isInterrupting, data, expected) => {
+            const stderr = stderrOf(isInterrupting);
+            stderr(data);
+            if(expected === 'debug') {
+                expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+                expect(mockLogger.error).not.toHaveBeenCalled();
+            } else {
+                expect(mockLogger.error).toHaveBeenCalledTimes(1);
+                expect(mockLogger.debug).not.toHaveBeenCalled();
+            }
         });
 
         test('"Error in hook callback" + "Stream closed" logs at debug', () => {
@@ -434,5 +460,25 @@ describe('buildSessionQueryOptions', () => {
             expect(mockLogger.debug).toHaveBeenCalledTimes(1);
             expect(mockLogger.error).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe('stderr abort specificity', () => {
+    beforeEach(() => {
+        mockLogger.debug.mockClear();
+        mockLogger.error.mockClear();
+    });
+
+    afterEach(() => {
+        mockLogger.debug.mockClear();
+        mockLogger.error.mockClear();
+    });
+
+    test('does not treat a different operation failure as the expected abort', () => {
+        const stderr = buildSessionQueryOptions(baseParams({ isInterrupting: () => true })).stderr;
+        stderr('Operation retry failed');
+
+        expect(mockLogger.error).toHaveBeenCalledTimes(1);
+        expect(mockLogger.debug).not.toHaveBeenCalled();
     });
 });

@@ -98,6 +98,27 @@ describe('extractSceneFrames', () => {
         // 3 - 1 failed = 2 frames returned
         expect(frames).toHaveLength(2);
     });
+
+    it('applies the offset once frameRate exceeds the zero boundary (frameRate=1)', async () => {
+        // frameRate=1 is > the "frameRate > 0" threshold, so offset = 1/1 = 1.
+        // A mutant widening the boundary to "frameRate > 1" would leave frameRate=1
+        // in the else branch, producing offset=0 instead.
+        const capturedTimestamps: number[] = [];
+        const scenes: SceneInfo[] = [{ index: 0, startTime: 5, endTime: 15 }];
+        await extractSceneFrames('/test/video.mp4', scenes, 1, makeTrackingRunner(capturedTimestamps));
+        expect(capturedTimestamps[0]).toBe(6);  // 5 + 1/1
+        expect(capturedTimestamps[2]).toBe(14); // 15 - 1/1
+    });
+
+    it('appends each scene\'s frames after the previous scene\'s (push, not unshift)', async () => {
+        const capturedTimestamps: number[] = [];
+        await extractSceneFrames('/test/video.mp4', TWO_SCENES, 30, makeTrackingRunner(capturedTimestamps));
+        expect(capturedTimestamps).toHaveLength(6);
+        // Scene 0's begin frame must be captured first; scene 1's begin frame fourth.
+        // Swapping push for unshift would prepend each scene's block, reversing this.
+        expect(capturedTimestamps[0]).toBeCloseTo(0 + 1 / 30, 5);
+        expect(capturedTimestamps[3]).toBeCloseTo(10 + 1 / 30, 5);
+    });
 });
 
 describe('extractFramesAtTimestamps', () => {
@@ -234,6 +255,33 @@ describe('extractFramesAtTimestamps', () => {
         const frames = await extractFramesAtTimestamps('/test/video.mp4', [1], emptySuccessRunner);
         expect(frames).toHaveLength(0);
     });
+
+    it('treats only stdout.length === 0 as empty output, not any length <= 0', async () => {
+        // A Buffer's length can never be negative, but a mutant weakening the
+        // check to "<= 0" is only observable by faking a negative-length stdout.
+        const negativeLengthRunner: BinarySpawnRunner = async () => ({
+            stdout:   { length: -1 } as unknown as Buffer,
+            stderr:   '',
+            exitCode: 0,
+        });
+        const frames = await extractFramesAtTimestamps('/test/video.mp4', [1], negativeLengthRunner);
+        expect(frames).toHaveLength(1);
+    });
+
+    it('builds the -ss argument with String() so a coerced null timestamp fails at toFixed(), not earlier', async () => {
+        // timestamp is typed as number, but a caller could still hand back null
+        // through an unsafe cast (as the sparse-array tests above already do).
+        // String(null) === 'null' (no throw), so with the real code the failure
+        // only surfaces later at timestamp.toFixed(3). A mutant using
+        // timestamp.toString() instead would throw immediately on the null,
+        // before ever reaching toFixed — a different failure point/message.
+        // This also distinguishes "item === undefined" from "item == undefined":
+        // under == , null is loosely equal to undefined and the call would be
+        // rejected earlier with the mapWithConcurrency invariant-violation message.
+        const timestamps = [null] as unknown as number[];
+        await expect(extractFramesAtTimestamps('/test/video.mp4', timestamps, makeSuccessRunner()))
+            .rejects.toThrow(/toFixed/);
+    });
 });
 
 describe('extractFramesInRange', () => {
@@ -261,5 +309,15 @@ describe('extractFramesInRange', () => {
         const capturedTimestamps: number[] = [];
         await extractFramesInRange('/test/video.mp4', 10, 20, 3, makeTrackingRunner(capturedTimestamps));
         expect(capturedTimestamps[1]).toBe(15);  // not 25 (which would be wrong)
+    });
+
+    it('extracts no frames when count=0 (only count=1 takes the midpoint branch)', async () => {
+        // A mutant widening "count === 1" to "count <= 1" would push a midpoint
+        // frame for count=0 too, instead of the empty timestamps the for-loop
+        // (0 < 0, never runs) produces.
+        const capturedTimestamps: number[] = [];
+        const frames = await extractFramesInRange('/test/video.mp4', 0, 30, 0, makeTrackingRunner(capturedTimestamps));
+        expect(frames).toHaveLength(0);
+        expect(capturedTimestamps).toHaveLength(0);
     });
 });

@@ -57,7 +57,9 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
             // Session-peers block 5: quota thresholds and the perch ceiling. Every field is an
             // optional env-var override — left unset, Zod's quotaConfigSchema fills the default.
             quota:         {
+                // Stryker disable next-line llm: asInt differs from asIntPositive only for negative values, which quotaConfigSchema's .positive() rejects, so loadConfig throws either way and only the error's identity changes
                 pollIntervalMs:      env.get('AGENT_QUOTA_POLL_INTERVAL_MS').asIntPositive(),
+                // Stryker disable next-line llm: asInt differs from asIntPositive only for negative values, which quotaConfigSchema's .positive() rejects, so loadConfig throws either way and only the error's identity changes
                 perchPauseAtPercent: env.get('AGENT_QUOTA_PERCH_PAUSE_AT_PERCENT').asIntPositive(),
                 // asArray()'s own default delimiter is ',' — passing it explicitly only adds a
                 // string literal whose mutant is equivalent (env-var reads the delimiter as
@@ -171,6 +173,7 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
         const safeErrors = result.error.issues.map((issue) => {
             const path = issue.path.join('.');
             const isSensitive = issue.path.some(p =>
+                // Stryker disable next-line StringMethodArgSwap,llm: all sensitive-bearing config-schema keys end with password, token, or secret, so includes and endsWith are equivalent through loadConfig
                 sensitiveFields.some(sf => String(p).toLowerCase().includes(sf)));
             return {
                 path,

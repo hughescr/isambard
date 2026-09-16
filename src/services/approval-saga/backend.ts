@@ -4,7 +4,6 @@ import { BaseRepository, createPrefixedKey } from '@/storage';
 
 const SAGA_PK        = 'APPROVAL#SAGA';
 const SAGA_SK_PREFIX = 'SAGA';
-// Stryker restore StringLiteral
 
 const TTL_DAYS = 30;
 
@@ -55,7 +54,6 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
         const saga = await this.get(id);
         if(saga === undefined) {
             logger.warn({ id, newState }, 'ApprovalSagaBackend.updateState: saga not found');
-            // Stryker restore ObjectLiteral,StringLiteral
             return;
         }
 
@@ -86,7 +84,6 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
                 ':state': state,
             },
         });
-        // Stryker restore StringLiteral,ObjectLiteral
 
         const results: ApprovalSaga[] = [];
         for(const item of items) {
@@ -94,8 +91,8 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
             if(parsed.success) {
                 results.push(parsed.data);
             } else {
+                // Stryker disable next-line llm: zod's ZodError.toString() is defined as () => this.message, so both spellings log the identical string.
                 logger.warn({ item, error: parsed.error.message }, 'ApprovalSagaBackend.listByState: failed to parse saga');
-                // Stryker restore ObjectLiteral,StringLiteral
             }
         }
         return results;

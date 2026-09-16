@@ -285,6 +285,7 @@ export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): 
             // the ambient lines describe the moment the bundle was composed.
             const header = timeHeader?.();
 
+            // Stryker disable next-line llm: role is the primitive union 'conversation' | 'perch', so loose and strict equality are indistinguishable
             if(role === 'perch') {
                 if(kind === 'resume') {
                     // No task-list/perch-context fetch at all for a perch resume -- neither is

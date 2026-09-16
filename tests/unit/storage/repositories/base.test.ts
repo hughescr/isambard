@@ -4,9 +4,12 @@ import {
     GetCommand,
     PutCommand,
     DeleteCommand,
-    QueryCommand
+    QueryCommand,
+    UpdateCommand,
+    type UpdateCommandInput
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { DynamoTimeoutError } from '@/storage/dynamo-retry';
 import { BaseRepository, type DynamoDBKey } from '@/storage/repositories/base';
 
 // Concrete implementation for testing abstract class
@@ -28,6 +31,10 @@ class TestRepository extends BaseRepository<{ id: string, name: string }> {
             KeyConditionExpression:    'PK = :pk',
             ExpressionAttributeValues: { ':pk': pk },
         });
+    }
+
+    async testUpdateItem(params: Omit<UpdateCommandInput, 'TableName'>, operation: string) {
+        return this.updateItem(params, operation);
     }
 
     static testTtlFromDays(days: number): number { return TestRepository.ttlFromDays(days); }
@@ -155,6 +162,52 @@ describe('BaseRepository', () => {
             const result = await repository.testQuery('test');
 
             expect(result).toEqual([]);
+        });
+    });
+
+    describe('timeout wrapping when timeoutMs is configured', () => {
+        let timeoutRepository: TestRepository;
+
+        beforeEach(() => {
+            jest.useFakeTimers();
+            jest.setSystemTime(0);
+            timeoutRepository = new TestRepository(
+                ddbMock as unknown as DynamoDBDocumentClient,
+                'TestTable',
+                5000
+            );
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('updateItem times out after the configured timeoutMs, not sooner', async () => {
+            // Never settles — the configured timeout must be what ends the operation
+            ddbMock.on(UpdateCommand).callsFake(() => new Promise(() => {}) as never);
+
+            let caught: unknown = 'not-settled';
+            const observed = timeoutRepository
+                .testUpdateItem(
+                    { Key: { PK: 'pk', SK: 'sk' }, UpdateExpression: 'SET #n = :n' },
+                    'UpdateItem'
+                )
+                .catch((err: unknown) => {
+                    caught = err;
+                });
+
+            // One ms short of the configured 5000 ms: the operation must still be pending
+            jest.advanceTimersByTime(4999);
+            await Promise.resolve();
+            expect(caught).toBe('not-settled');
+
+            // The configured timeout must fire now, and report the configured budget
+            jest.advanceTimersByTime(1);
+            await observed;
+
+            expect(caught).toBeInstanceOf(DynamoTimeoutError);
+            expect((caught as DynamoTimeoutError).context.timeoutMs).toBe(5000);
+            expect((caught as DynamoTimeoutError).context.operation).toBe('UpdateItem');
         });
     });
 

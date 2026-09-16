@@ -136,6 +136,12 @@ describe('packSignBits', () => {
         expect(() => packSignBits(input, 1, 7)).toThrow('dim must be a positive multiple of 8, got 7');
     });
 
+    it('throws when dim is greater than 8 but not a multiple of 8', () => {
+        // Guards against flooring dim/8: floor(12/8) === 1 is a positive integer, so the
+        // validation would pass and a 12-float vector would silently pack as a single byte.
+        expect(() => packSignBits(new Float32Array(12), 1, 12)).toThrow('dim must be a positive multiple of 8, got 12');
+    });
+
     it('throws when dim is 0', () => {
         const input = new Float32Array(0);
         expect(() => packSignBits(input, 1, 0)).toThrow('dim must be a positive multiple of 8, got 0');

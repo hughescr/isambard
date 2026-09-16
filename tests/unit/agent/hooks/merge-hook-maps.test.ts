@@ -118,5 +118,13 @@ describe('mergeHookMaps', () => {
             const result = mergeHookMaps(map);
             expect(result).not.toBe(map);
         });
+
+        test('gives each event a fresh array, so pushing to the merged result cannot grow the caller\'s map', () => {
+            const map = { TaskCreated: [makeMatcher('a')] };
+            const result = mergeHookMaps(map);
+            result.TaskCreated?.push(makeMatcher('b'));
+            expect(result.TaskCreated).toHaveLength(2);
+            expect(map.TaskCreated).toHaveLength(1);
+        });
     });
 });

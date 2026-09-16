@@ -48,6 +48,7 @@ export function buildMultimodalContent(
     const blocks: ContentBlock[] = [];
 
     // Add image blocks first (better for Claude's processing)
+    // Stryker disable next-line llm: used only as an if condition; both forms are falsy for undefined and [], and truthy for every non-empty array.
     if(images?.length) {
         for(const image of images) {
             blocks.push({
@@ -77,5 +78,6 @@ export function buildMultimodalContent(
  * @returns true if images array is non-empty, false otherwise
  */
 export function hasImages(images?: PlatformImage[]): boolean {
+    // Stryker disable next-line llm: images is typed PlatformImage[] | undefined, so `!= null` and the extra `!== null` conjunct agree with `!== undefined` on undefined and on every array; only a type-forbidden null differs.
     return images !== undefined && images.length > 0;
 }

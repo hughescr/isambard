@@ -12,6 +12,7 @@ import { mockLogger } from '../../setup';
 import * as staticAgentSessionModule from '@/agent';
 import * as staticStorageLayerModule from '@/app/storage-layer';
 import type { DynamoDBConfig, ReconciliationConfig, ContactReconciliationConfig } from '@/config/schemas';
+import type { EmbedderLike } from '@/storage';
 import * as staticStorageClientModule from '@/storage/client';
 import type { ContactReconciliationScheduler } from '@/storage/contacts/reconciliation/scheduler';
 import * as staticContactReconciliationModule from '@/storage/contacts/reconciliation/scheduler';
@@ -914,5 +915,144 @@ describe('createStorageLayer', () => {
 
         expect(createContactSchedulerSpy).not.toHaveBeenCalled();
         expect(result.contactReconciliationScheduler).toBeUndefined();
+    });
+
+    test('propagates a missing embedder.close() through the wrapped indexer embedder rather than silently succeeding', async () => {
+        // EmbedderLike.close is a required method, so a conforming embedder always has one.
+        // This deliberately-nonconforming double (cast past the type system, same pattern the
+        // file already uses elsewhere) proves the wrapped closure at the onIndexerEmbedderCloseAttempt
+        // call site really does call `embedder.close()` unguarded rather than swallowing a missing method.
+        spies.push(
+            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    {} as unknown as DynamoDBClient,
+                docClient: {} as unknown as DynamoDBDocumentClient,
+                tableName: 'TestTable',
+            }),
+            // @ts-expect-error - Mocking constructor
+            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
+                getTagIndexBackend: mock(() => ({})),
+                get:                mock(async () => undefined),
+                updateMetadataOnly: mock(async () => ({})),
+            })),
+            // @ts-expect-error - Mocking constructor
+            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})),
+            spyOn(staticVecStoreModule.VectorIndex, 'open').mockResolvedValue({
+                close: mock(() => {}),
+            } as unknown as typeof staticVecStoreModule.VectorIndex.prototype)
+        );
+
+        const brokenEmbedder = {
+            encode: mock(async () => ({ data: new Uint8Array(128) })),
+        } as unknown as EmbedderLike;
+
+        const { createStorageLayer } = staticStorageLayerModule;
+        const result = await createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+            enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
+        }, brokenEmbedder, undefined, () => {});
+
+        await expect(result.asyncIndexer!.close()).rejects.toThrow();
+    });
+
+    test('propagates a missing notifyDrift() on the reconciliation scheduler rather than silently succeeding', async () => {
+        // ReconciliationScheduler.notifyDrift is a required method, so a conforming scheduler
+        // always has one. This deliberately-nonconforming double proves the drift callback
+        // really does call `reconciliationScheduler.notifyDrift()` unguarded.
+        spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
+            tableName: 'TestTable',
+        }));
+
+        let capturedDriftCallback: (() => void) | undefined;
+        type MemoryToolConstructorArgs = ConstructorParameters<typeof staticMemoryToolModule.MemoryToolBackend>;
+        // @ts-expect-error -- Bun types constructor-only spy implementations as never
+        spies.push(spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation((
+            _holder: MemoryToolConstructorArgs[0],
+            _tableName: MemoryToolConstructorArgs[1],
+            _indexer: MemoryToolConstructorArgs[2],
+            driftCallback: MemoryToolConstructorArgs[3]
+        ) => {
+            capturedDriftCallback = driftCallback;
+            return {
+                getTagIndexBackend: mock(() => ({})),
+                get:                mock(async () => undefined),
+                updateMetadataOnly: mock(async () => ({})),
+            };
+        }));
+
+        const brokenScheduler = {
+            start:      mock(() => {}),
+            stop:       mock(() => {}),
+            getState:   mock(() => ({ isRunning: false as const, currentPhase: null, lastCompletedAt: undefined })),
+            triggerNow: mock(async () => undefined),
+        } as unknown as ReconciliationScheduler;
+        spies.push(
+            spyOn(staticReconciliationModule, 'createReconciliationScheduler').mockReturnValue(brokenScheduler),
+            // @ts-expect-error - Mocking constructor
+            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+        );
+
+        const { createStorageLayer } = staticStorageLayerModule;
+        await createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig);
+
+        expect(capturedDriftCallback).toBeDefined();
+        expect(() => capturedDriftCallback!()).toThrow();
+    });
+
+    test('waits for releaseFailedStorage to finish before rejecting when a later constructor fails', async () => {
+        // AwaitDrop guard: if the `await` on releaseFailedStorage(...) in the catch block were
+        // dropped, createStorageLayer would reject immediately, racing ahead of cleanup instead
+        // of waiting for it. Hold the embedder's close() pending to prove the rejection blocks
+        // on it.
+        const constructionError = new Error('backend failed');
+        const cleanupOrder: string[] = [];
+        const destroy = mock(() => {
+            cleanupOrder.push('holder');
+        });
+        let resolveEmbedderClose: (() => void) | undefined;
+        const embedder = {
+            encode: mock(async () => ({ data: new Uint8Array(128) })),
+            close:  mock(async () => new Promise<void>((resolve) => {
+                resolveEmbedderClose = resolve;
+            })),
+        };
+        spies.push(
+            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    { destroy } as unknown as DynamoDBClient,
+                docClient: {} as unknown as DynamoDBDocumentClient,
+                tableName: 'TestTable',
+            }),
+            spyOn(staticVecStoreModule.VectorIndex, 'open').mockResolvedValue({
+                close: mock(() => {
+                    cleanupOrder.push('vector');
+                }),
+            } as unknown as typeof staticVecStoreModule.VectorIndex.prototype),
+            // @ts-expect-error - Deliberately failing backend constructor
+            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => { throw constructionError; })
+        );
+
+        let settled = false;
+        const promise = staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+            enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
+        }, embedder);
+        void promise.catch(() => {
+            settled = true;
+        });
+
+        // embedder.close() is still pending -- createStorageLayer must still be blocked on
+        // `await releaseFailedStorage(...)`, which is itself blocked on `await asyncIndexer.close()`.
+        // No number of microtask flushes can settle this promise while resolveEmbedderClose is unused.
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        expect(cleanupOrder).toEqual([]);
+
+        resolveEmbedderClose!();
+        await expect(promise).rejects.toBe(constructionError);
+        expect(settled).toBe(true);
+        expect(cleanupOrder).toEqual(['vector', 'holder']);
     });
 });

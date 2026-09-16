@@ -40,11 +40,13 @@ async function sendChunksViaCapability(
 ): Promise<SendEnvelopeResponseResult> {
     let anyQueued = false;
     for(const [i, chunk] of chunks.entries()) {
+        // Stryker disable llm: targetChannelId is a ChannelId (string), so `targetChannelId || ''` is the identity.
         // eslint-disable-next-line no-await-in-loop -- sequential: Discord message ordering, outbox writes must preserve order
         const result = await discordCapability.sendToChannel(targetChannelId, chunk, {
             priority: 'high',
             type:     outboxTypeForEnvelopeKind(kind),
         });
+        // Stryker restore llm
         if(result.status === 'queued' || result.status === 'unavailable') {
             anyQueued = true;
         }
@@ -168,7 +170,6 @@ export async function sendEnvelopeResponse(config: SendEnvelopeResponseConfig): 
                 channelType: routeError.context.channelType,
                 msg:         `Cannot route envelope response: well-known channel #${routeError.context.channelType} not configured. Response skipped.`,
             });
-            // Stryker restore all
             return {
                 sent:       false,
                 skipReason: `Well-known channel #${routeError.context.channelType} not configured`,
@@ -184,7 +185,6 @@ export async function sendEnvelopeResponse(config: SendEnvelopeResponseConfig): 
             fullResponse: text,
             msg:          'Agent chose not to respond (@@NO_RESPONSE@@ sentinel detected)',
         });
-        // Stryker restore all
         return {
             sent:       false,
             skipReason: 'no-response',

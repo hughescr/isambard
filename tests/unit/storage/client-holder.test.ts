@@ -99,6 +99,24 @@ describe.concurrent('DynamoDBClientHolder', () => {
             expect(destroyMock).toHaveBeenCalledTimes(1);
         });
 
+        test('should NOT call destroy() on the old client 1ms before the 5000ms grace period elapses, but SHOULD at exactly 5000ms', () => {
+            const oldClient    = makeStubClient(destroyMock);
+            const oldDocClient = makeStubDocClient();
+            const holder       = new DynamoDBClientHolder(oldClient, oldDocClient);
+
+            const newClient    = makeStubClient();
+            const newDocClient = makeStubDocClient();
+            holder.swap(newClient, newDocClient);
+
+            // One ms short of the grace period: must not have fired yet.
+            jest.advanceTimersByTime(4999);
+            expect(destroyMock).not.toHaveBeenCalled();
+
+            // The final ms: the timer scheduled at exactly 5000ms must fire now.
+            jest.advanceTimersByTime(1);
+            expect(destroyMock).toHaveBeenCalledTimes(1);
+        });
+
         test('should NOT call destroy() on the new client after swap', () => {
             const oldClient      = makeStubClient(destroyMock);
             const newDestroyMock = mock(() => {});
@@ -193,6 +211,26 @@ describe.concurrent('DynamoDBClientHolder', () => {
             // client3's grace timer fires
             jest.advanceTimersByTime(5001);
             expect(destroy3).toHaveBeenCalledTimes(1);
+        });
+
+        test('a client whose destroy() throws during the eager destroy is not destroyed a second time by a later swap', () => {
+            const destroy1 = mock(() => {
+                throw new Error('destroy failed');
+            });
+            const client1 = makeStubClient(destroy1);
+            const holder  = new DynamoDBClientHolder(client1, makeStubDocClient());
+
+            // First swap: client1 enters the grace window
+            holder.swap(makeStubClient(), makeStubDocClient());
+
+            // Second swap: client1 is eagerly destroyed — and that destroy() throws
+            expect(() => holder.swap(makeStubClient(), makeStubDocClient())).toThrow('destroy failed');
+            expect(destroy1).toHaveBeenCalledTimes(1);
+
+            // The pending timer was cleared BEFORE the eager destroy, so the failed client is not
+            // re-destroyed by the next swap
+            holder.swap(makeStubClient(), makeStubDocClient());
+            expect(destroy1).toHaveBeenCalledTimes(1);
         });
     });
 

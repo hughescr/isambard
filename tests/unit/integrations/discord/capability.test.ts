@@ -281,6 +281,16 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         expect(item.epoch).toBe(0);
     });
 
+    test('generates a dedupeKey when no key is supplied', async () => {
+        const outbox  = makeOutboxBackend();
+        const { cap } = makeCapability(false, outbox);
+
+        await cap.sendToChannel('ch-1', 'Hello');
+
+        const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
+        expect(item.dedupeKey).toMatch(/^[0-9a-f-]{36}$/u);
+    });
+
     test('custom dedupeKey is preserved on outbox item', async () => {
         const outbox   = makeOutboxBackend();
         const { cap }  = makeCapability(false, outbox);
@@ -322,6 +332,18 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         if(result.status === 'queued') {
             expect(result.outboxId).toBe(item.id);
         }
+    });
+
+    test('when the outbox enqueue fails: sendToChannel rejects instead of reporting queued', async () => {
+        const failure = new Error('outbox down');
+        const enqueueRejection = Promise.reject(failure);
+        // Keep the shared rejected promise handled: the AwaitDrop mutant discards
+        // this promise, and an unhandled rejection would mask the assertion below.
+        void enqueueRejection.catch(() => undefined);
+        const outbox = { enqueue: mock(() => enqueueRejection) } as unknown as OutboxBackend;
+        const { cap } = makeCapability(false, outbox);
+
+        await expect(cap.sendToChannel('ch-1', 'Hello')).rejects.toThrow('outbox down');
     });
 });
 
@@ -395,5 +417,15 @@ describe('DiscordCapabilityImpl.fetchChannel', () => {
 
         await cap.fetchChannel('ch-1');
         expect(logger.warn).toHaveBeenCalledTimes(1);
+    });
+
+    test('fetches the channel using the requested channel id', async () => {
+        const channel = makeChannel();
+        const client  = makeClient(channel);
+        const { cap } = makeCapability(true);
+        cap.setClient(client);
+
+        await cap.fetchChannel('ch-42');
+        expect(client.channels.fetch).toHaveBeenCalledWith('ch-42');
     });
 });

@@ -14,7 +14,6 @@ export interface CalendarRegistryKeys {
 const PREFIX_CALCAL   = 'CALCAL';
 const SK_CALENDARS    = 'CALENDARS';
 const SHARED_USER_ID  = 'SHARED';
-// Stryker restore StringLiteral
 
 /**
  * Generates DynamoDB keys for Calendar Registry items

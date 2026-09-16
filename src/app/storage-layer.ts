@@ -23,13 +23,13 @@ function makeAbortError(reason: unknown): DOMException {
     if(reason instanceof Error) {
         message = reason.message;
     } else if(typeof reason === 'string') {
+        // Stryker disable next-line llm: the enclosing typeof guard proves reason is a primitive string, so String(reason) is identical.
         message = reason;
     } else {
         message = 'Aborted';
     }
     return new DOMException(message, 'AbortError');
 }
-// Stryker restore all
 
 /**
  * Storage layer components
@@ -145,6 +145,7 @@ export async function createStorageLayer(
                 embedder: indexerEmbedder,
                 logger,
             });
+            // Stryker disable next-line llm: dbPath only feeds this log message, and pinning its empty-string rendering has no behavioural value.
             logger.info(`Vector index initialized at ${vectorIndexConfig.dbPath}`);
         }
 
@@ -189,6 +190,7 @@ export async function createStorageLayer(
                     tableName,
                     sleep:     (ms: number, signal?: AbortSignal): Promise<void> => {
                         if(signal?.aborted) {
+                            // Stryker disable next-line llm: signal?.aborted can be truthy only when signal is non-nullish, so optional and direct reason access are equivalent.
                             return Promise.reject(makeAbortError(signal.reason));
                         }
                         return new Promise((resolve, reject) => {
@@ -200,12 +202,12 @@ export async function createStorageLayer(
                             }, ms);
                             function onAbort(): void {
                                 clearTimeout(timer);
+                                // Stryker disable next-line llm: onAbort is registered only through signal?.addEventListener, so signal! and signal? read the same object.
                                 reject(makeAbortError(signal!.reason));
                             }
                             signal?.addEventListener('abort', onAbort, { once: true });
                         });
                     },
-                    // Stryker restore all
                 },
             });
             logger.info('Contact reconciliation scheduler configured');

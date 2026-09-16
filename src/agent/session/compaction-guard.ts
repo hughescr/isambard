@@ -74,6 +74,7 @@ export function createCompactionGuard(params: CreateCompactionGuardParams): Comp
     let inFlight = false;
     let ceilingTimer: TimerHandle | undefined;
     let nextBackoffSkips = 1;
+    // Stryker disable next-line NumberLiteralValue: skipRemaining is only read via `> 0`, where initial 0 and -1 are indistinguishable.
     let skipRemaining = 0;
     let thresholdPercentCell = params.thresholdPercent;
 
@@ -88,6 +89,7 @@ export function createCompactionGuard(params: CreateCompactionGuardParams): Comp
         }
         if(reason === 'success') {
             nextBackoffSkips = 1;
+            // Stryker disable next-line NumberLiteralValue: skipRemaining is only read via `> 0`, where reset values 0 and -1 are indistinguishable.
             skipRemaining = 0;
             return;
         }
@@ -130,6 +132,7 @@ export function createCompactionGuard(params: CreateCompactionGuardParams): Comp
                 skipRemaining -= 1;
                 return;
             }
+            // Stryker disable next-line llm: `queueEmpty == false` and `!queueEmpty` coincide for the boolean-typed parameter.
             if(usage.percentage < thresholdPercentCell || !queueEmpty) {
                 return;
             }

@@ -89,7 +89,6 @@ export async function extractMetadata(videoPath: string, run: SpawnRunner): Prom
         '-show_streams',
         videoPath,
     ]);
-    // Stryker restore StringLiteral
 
     if(result.exitCode !== 0) {
         throw new MediaProcessingError(

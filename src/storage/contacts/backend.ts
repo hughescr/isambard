@@ -44,7 +44,6 @@ const CONTACT_IO_CONCURRENCY = 4;
 
 const DEFAULT_SLEEP = (ms: number): Promise<void> =>
     new Promise((resolve) => { setTimeout(resolve, ms); });
-// Stryker restore all
 
 /**
  * Produce a normalized comparison key for a ContactIdentifier.
@@ -58,6 +57,7 @@ function identifierKey(id: ContactIdentifier): string {
  * Splits an array into chunks of the given size.
  */
 function splitIntoBatches<T>(items: T[], size: number): T[][] {
+    // Stryker disable next-line llm: binding slice is identical here; the sole caller passes an integer size, and multiplication order is equivalent.
     return Array.from({ length: Math.ceil(items.length / size) }, (_, i) => items.slice(i * size, (i + 1) * size));
 }
 
@@ -80,6 +80,7 @@ export class ContactBackend extends BaseRepository<Contact> {
         requests: BatchWriteRequest[],
         deps?: ContactBackendDeps
     ): Promise<void> {
+        // Stryker disable next-line llm: deps.sleep is always a function or undefined, so ?? and || are equivalent here.
         const sleep = deps?.sleep ?? DEFAULT_SLEEP;
         let pending: BatchWriteItems = { [this.tableName]: requests };
 
@@ -108,10 +109,12 @@ export class ContactBackend extends BaseRepository<Contact> {
                     nextPending[table] = unprocessed;
                 }
             }
+            // Stryker disable next-line llm: nextPending and UnprocessedItems are structurally identical for a valid DynamoDB response.
             pending = nextPending;
         }
 
         // Budget exhausted — throw so the caller knows the write is incomplete
+        // Stryker disable next-line llm: pending values are defined arrays by construction, so the optional fallback is unreachable.
         const remainingCount = Object.values(pending).reduce((count, items) => count + items.length, 0);
         throw new BatchWriteExhaustedError('ContactBackend.batchWriteWithRetry', remainingCount, BATCH_WRITE_MAX_RETRIES);
     }
@@ -150,10 +153,13 @@ export class ContactBackend extends BaseRepository<Contact> {
      */
     private buildNewLookupRequests(contact: Contact, oldSet: Set<string>): BatchWriteRequest[] {
         const requests: BatchWriteRequest[] = [];
+        // Stryker disable next-line llm: Contact.identifiers is a required array (putContact already read its length), so the nullish fallback is unreachable.
         for(const identifier of contact.identifiers) {
             if(!oldSet.has(identifierKey(identifier))) {
                 const lookupKeys = ContactKeyGenerator.createLookupKeys(
+                    // Stryker disable next-line llm: ContactIdentifier.platform is a required enum value.
                     identifier.platform,
+                    // Stryker disable next-line llm: createLookupKeys already lowercases identifier values.
                     identifier.value,
                     contact.personId
                 );
@@ -169,6 +175,7 @@ export class ContactBackend extends BaseRepository<Contact> {
      */
     private buildDeleteRequests(existing: Contact, newSet: Set<string>): BatchWriteRequest[] {
         const requests: BatchWriteRequest[] = [];
+        // Stryker disable next-line llm: existing comes from getContact's contactSchema.parse, so every identifier has a required platform.
         for(const identifier of existing.identifiers) {
             if(!newSet.has(identifierKey(identifier))) {
                 const { PK, SK } = ContactKeyGenerator.createLookupKeys(
@@ -177,6 +184,7 @@ export class ContactBackend extends BaseRepository<Contact> {
                     existing.personId
                 );
                 // DeleteRequest.Key must only contain the primary key attributes (PK + SK); GSI keys are not allowed
+                // Stryker disable next-line llm: DynamoDB key property declaration order is unobservable.
                 requests.push({ DeleteRequest: { Key: { PK, SK } } });
             }
         }
@@ -206,6 +214,7 @@ export class ContactBackend extends BaseRepository<Contact> {
      */
     async putContact(contact: Contact, deps?: ContactBackendDeps): Promise<void> {
         // Fail fast: a contact with no identifiers is unreachable via resolveIdentifier
+        // Stryker disable next-line llm: an array length cannot be negative, so === 0 and <= 0 are equivalent.
         if(contact.identifiers.length === 0) {
             throw new ContactNoIdentifiersError(contact.personId);
         }
@@ -219,6 +228,7 @@ export class ContactBackend extends BaseRepository<Contact> {
 
         // Compute normalized key sets to detect unchanged identifiers.
         // This matches the normalization applied in ContactKeyGenerator.createLookupKeys().
+        // Stryker disable next-line llm: Set treats undefined as empty, and map does not mutate its source, making both rewrites inert.
         const oldSet = new Set(existing?.identifiers.map(id => identifierKey(id)));
         const newSet = new Set(contact.identifiers.map(id => identifierKey(id)));
 
@@ -273,6 +283,7 @@ export class ContactBackend extends BaseRepository<Contact> {
         // Delete the profile first so partial failures leave orphan lookups rather than
         // a contact with phantom-deleted identifiers
         const profileKeys = ContactKeyGenerator.createProfileKeys(personId);
+        // Stryker disable next-line llm: profileKeys is a fresh {PK, SK} object used once, so spreading it or passing it directly produces identical input.
         await this.batchWriteWithRetry([{ DeleteRequest: { Key: { ...profileKeys } } }], deps);
 
         // Delete all lookup items in batches
@@ -302,7 +313,6 @@ export class ContactBackend extends BaseRepository<Contact> {
                 ':pk': `CONTACT_LOOKUP#${platform}#${normalizedValue}`,
             },
         });
-        // Stryker restore StringLiteral,ObjectLiteral
 
         const limit = pLimit(CONTACT_IO_CONCURRENCY);
         const contacts = await Promise.all(lookupItems.map((item) => {
@@ -378,7 +388,6 @@ export class ContactBackend extends BaseRepository<Contact> {
                 ExpressionAttributeValues: { ':pk': 'CONTACTS' },
                 ExclusiveStartKey:         lastKey,
             }));
-            // Stryker restore StringLiteral,ObjectLiteral
             allItems.push(...(result.Items ?? []) as Record<string, unknown>[]);
             lastKey = result.LastEvaluatedKey;
         } while(lastKey);
@@ -406,15 +415,22 @@ export class ContactBackend extends BaseRepository<Contact> {
                 contact.displayName,
                 ...contact.identifiers.map(id => id.value),
             ];
+            // Stryker disable next-line NumberLiteralValue: an unmatched score is filtered out whether initialized to 0 or -1.
             let best = 0;
             for(const candidate of candidates) {
                 const c = candidate.toLowerCase();
+                // Stryker disable next-line llm: c and q are strings, so strict and loose equality are equivalent.
                 if(c === q) {
+                    // Stryker disable next-line NumberLiteralValue: only rank is observable, and both 3 and 4 rank above the other tiers.
                     return 3;
                 }
+                // Stryker disable next-line llm: q is already lowercase, so lowercasing it again is inert.
                 if(c.startsWith(q)) {
                     best = Math.max(best, 2);
-                } else if(c.includes(q)) {
+                } else if(
+                    // Stryker disable next-line llm: q is already lowercase, so lowercasing it again is inert.
+                    c.includes(q)
+                ) {
                     best = Math.max(best, 1);
                 }
             }

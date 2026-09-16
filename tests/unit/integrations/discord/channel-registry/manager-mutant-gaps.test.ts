@@ -3,7 +3,7 @@ import type { Channel, Client } from 'discord.js';
 import type { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { ChannelMetadata, ChannelStorageRecord } from '@/integrations/discord/channel-registry/types';
-import { createChannelId, createGuildId } from '@/integrations/discord/types';
+import { createChannelId, createGuildId, type GuildId } from '@/integrations/discord/types';
 
 function deferred<T>() {
     let finish!: (value: T) => void;
@@ -178,5 +178,57 @@ describe('ChannelRegistryManager mutation contracts', () => {
             fetchGate.resolve({ id: channelId, name: 'general' } as unknown as Channel);
             await operation;
         }
+    });
+
+    test('getChannelsByGuild returns warmed-cache channels in cache insertion order', async () => {
+        const first = record({ channelId: createChannelId('order-1') });
+        const second = record({ channelId: createChannelId('order-2') });
+        const third = record({ channelId: createChannelId('order-3') });
+        backend.getChannelsByGuild = mock((guildId: GuildId) => Promise.resolve(
+            guildId === homeGuildId ? [first, second, third] : []
+        ));
+
+        await manager.warmCache();
+        const results = await manager.getChannelsByGuild(homeGuildId);
+
+        // Reversed (3, 2, 1) if the warmed-cache loop iterates the cache backwards
+        // or accumulates matches with unshift instead of push.
+        expect(results.map(channel => channel.channelId))
+            .toEqual([first.channelId, second.channelId, third.channelId]);
+    });
+
+    test('getUnmutedChannels returns warmed-cache channels in cache insertion order', async () => {
+        const first = record({ channelId: createChannelId('unmuted-1') });
+        const muted = record({ channelId: createChannelId('muted'), isMuted: true });
+        const second = record({ channelId: createChannelId('unmuted-2') });
+        const third = record({ channelId: createChannelId('unmuted-3') });
+        backend.getChannelsByGuild = mock((guildId: GuildId) => Promise.resolve(
+            guildId === homeGuildId ? [first, muted, second, third] : []
+        ));
+
+        await manager.warmCache();
+        const results = await manager.getUnmutedChannels();
+
+        // Reversed (3, 2, 1) if the warmed-cache loop iterates the cache backwards
+        // or accumulates matches with unshift instead of push.
+        expect(results.map(channel => channel.channelId))
+            .toEqual([first.channelId, second.channelId, third.channelId]);
+    });
+
+    test('warms home-guild channels before direct-message channels', async () => {
+        const guildRecord = record({ channelId: createChannelId('guild-channel') });
+        const dmRecord = record({ channelId: createChannelId('dm-channel'), guildId: createGuildId('DM') });
+        const fetched: string[] = [];
+        backend.getChannelsByGuild = mock((guildId: GuildId) => Promise.resolve(
+            guildId === homeGuildId ? [guildRecord] : [dmRecord]
+        ));
+        client.channels.fetch = mock(async (id) => {
+            fetched.push(id);
+            return { id, name: id } as unknown as Channel;
+        });
+
+        await manager.warmCache();
+
+        expect(fetched).toEqual([guildRecord.channelId, dmRecord.channelId]);
     });
 });

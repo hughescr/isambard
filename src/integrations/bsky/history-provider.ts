@@ -110,5 +110,6 @@ export class BskyHistoryProvider implements PlatformHistoryProvider {
 // ---------------------------------------------------------------------------
 
 function truncate(text: string): string {
+    // Stryker disable next-line llm: MAX_TEXT_LENGTH is positive, so slice(0, n) and substring(0, n) are equivalent.
     return text.slice(0, MAX_TEXT_LENGTH);
 }

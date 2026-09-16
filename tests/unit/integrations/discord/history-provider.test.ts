@@ -464,5 +464,60 @@ describe('DiscordHistoryProvider', () => {
             // 200 chars should not be truncated (only > 200 triggers truncation)
             expect(result[0]?.summary).toBe(`Alice: ${exactContent}`);
         });
+
+        test('truncates content longer than MAX_CONTENT_LENGTH down to exactly 200 chars', async () => {
+            channelRegistry.getUnmutedChannels.mockResolvedValue(UNMUTED_CHANNELS.slice(0, 1));
+            const overContent = 'C'.repeat(201);
+            const msg = makeMessage('msg-1', 'user-123', 'Alice', overContent, '2026-01-01T10:00:00.000Z');
+            searchService.searchMessages.mockResolvedValue({ messages: [msg] });
+
+            const result = await provider.fetchHistory({ identifier: 'Alice' });
+
+            // 201-char content must be cut to exactly 200 chars, not 201.
+            expect(result[0]?.summary).toBe(`Alice: ${'C'.repeat(200)}`);
+        });
+
+        test('preserves within-channel message order (push, not unshift)', async () => {
+            channelRegistry.getUnmutedChannels.mockResolvedValue(UNMUTED_CHANNELS.slice(0, 1));
+            const msg1 = makeMessage('order-1', 'user-1', 'A', 'first', '2026-01-01T10:00:00.000Z');
+            const msg2 = makeMessage('order-2', 'user-2', 'B', 'second', '2026-01-01T11:00:00.000Z');
+            const msg3 = makeMessage('order-3', 'user-3', 'C', 'third', '2026-01-01T12:00:00.000Z');
+            searchService.searchMessages.mockResolvedValue({ messages: [msg1, msg2, msg3] });
+
+            const result = await provider.fetchHistory({ identifier: 'Alice' });
+
+            // A single channel returning multiple messages must keep the service's own
+            // order; unshift would reverse it to [C, B, A].
+            expect(result.map(entry => entry.summary)).toEqual(['A: first', 'B: second', 'C: third']);
+        });
+
+        test('passes startTime and endTime to the DM channel search without swapping them', async () => {
+            dmTracker.getOrCreateDMByUsername.mockResolvedValue(DM_CHANNEL_ID);
+            channelRegistry.getUnmutedChannels.mockResolvedValue([]);
+            searchService.searchMessages.mockResolvedValue({ messages: [] });
+            const startTime = new Date('2026-01-01T00:00:00.000Z');
+            const endTime   = new Date('2026-01-02T00:00:00.000Z');
+
+            await provider.fetchHistory({
+                identifier: 'alice',
+                metadata:   { discordUserId: 'user-123' },
+                startTime,
+                endTime,
+            });
+
+            expect(searchService.searchMessages).toHaveBeenCalledWith(
+                expect.objectContaining({ channelId: DM_CHANNEL_ID, startTime, endTime })
+            );
+        });
+
+        test('omits limit rather than defaulting it to 0 when maxMessages is not provided', async () => {
+            channelRegistry.getUnmutedChannels.mockResolvedValue(UNMUTED_CHANNELS.slice(0, 1));
+            searchService.searchMessages.mockResolvedValue({ messages: [] });
+
+            await provider.fetchHistory({ identifier: 'Alice' });
+
+            const call = searchService.searchMessages.mock.calls[0]?.[0] as { limit?: number };
+            expect(call.limit).toBeUndefined();
+        });
     });
 });

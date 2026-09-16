@@ -38,6 +38,7 @@ describe('PerchScheduler', () => {
 
     afterEach(() => {
         jest.useRealTimers();
+        jest.restoreAllMocks();
     });
 
     describe('constructor', () => {
@@ -663,6 +664,35 @@ describe('PerchScheduler', () => {
             scheduler.stop();
         });
 
+        test('waits the whole 1000ms startup delay before triggering', () => {
+            const testConfig = {
+                ...config,
+                testMode: {
+                    enabled:          true,
+                    triggerOnStartup: true,
+                    forceSlot:        'afternoon' as const,
+                },
+            };
+
+            const deps: PerchSchedulerDeps = {
+                logger:         mockLogger,
+                config:         testConfig,
+                onPerchTrigger: mockOnPerchTrigger,
+            };
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            // One millisecond short of the startup delay: nothing may have fired yet.
+            jest.advanceTimersByTime(999);
+            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
+
+            jest.advanceTimersByTime(1);
+            expect(mockOnPerchTrigger).toHaveBeenCalledWith('afternoon');
+
+            scheduler.stop();
+        });
+
         test('should use normal cron scheduling when testMode is undefined', () => {
             const testConfig = {
                 ...config,
@@ -1048,6 +1078,20 @@ describe('PerchScheduler', () => {
             scheduler.stop();
         });
 
+        test('uses the hour from getCurrentLocalHour() unnormalized — an out-of-range hour propagates to getSlotForHour() rather than being wrapped mod 24', () => {
+            const deps: PerchSchedulerDeps = {
+                logger:              mockLogger,
+                config,
+                getCurrentLocalHour: () => 25, // out of range: getSlotForHour() rejects [0,23] via validateHour
+                onPerchTrigger:      mockOnPerchTrigger,
+            };
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            expect(() => jest.advanceTimersByTime(3_600_000)).toThrow(RangeError);
+        });
+
         test('should log deferral when a perch turn is already running', () => {
             const deps: PerchSchedulerDeps = {
                 logger:              mockLogger,
@@ -1202,6 +1246,113 @@ describe('PerchScheduler', () => {
             expect(secondScheduleCall).toBeDefined();
             const secondLog = secondScheduleCall![0] as { delaySeconds: number, nextTrigger: string };
             expect(new Date(secondLog.nextTrigger).getTime()).toBeGreaterThanOrEqual(Date.parse('2026-09-12T04:00:00Z'));
+
+            scheduler.stop();
+        });
+    });
+
+    describe('hour seed and previous-hour guard boundaries', () => {
+        /** Latest "Next perch trigger scheduled" payload from the debug log. */
+        function lastSchedule(): { delaySeconds: number, nextTrigger: string } | undefined {
+            return (mockLogger.debug as unknown as Mock<(...args: unknown[]) => void>).mock.calls
+                .findLast(call => typeof call[1] === 'string' && call[1].includes('Next perch trigger scheduled'))?.[0] as
+                { delaySeconds: number, nextTrigger: string } | undefined;
+        }
+
+        test('seeds the hour hash from the current hour bucket and skips the previous scheduled hour', () => {
+            // Three consecutive triggers drawn from cron-parser's H hash, asserted exactly.
+            // The expectation below was derived from the documented rules, not copied from a run:
+            //  - the hash seed is the *current* hour bucket — one full hour of epoch ms, floored —
+            //    so a clock time late in an hour must not seed the following hour (ceil/round) and
+            //    the divisor must be a whole hour;
+            //  - the next trigger must fall after the end of the hour containing the previous
+            //    trigger (the double-fire guard), including when the fresh hash lands in the
+            //    half-hour before that boundary.
+            // 08:23 -> fresh hash 09:18 (seed hour 8, not hour 9: 08:55 would be the ceil/round seed)
+            // 09:18 -> fresh hash 10:55 (hash re-seeded by hour 9, lands late in hour 9)
+            // 10:55 -> fresh hash 11:04 (hash lands before hour 10's boundary, guard skips hour 10)
+            const deps: PerchSchedulerDeps = {
+                logger:         mockLogger,
+                config:         { ...config, timezone: 'UTC' },
+                onPerchTrigger: mockOnPerchTrigger,
+            };
+            jest.setSystemTime(new Date('2026-01-01T08:23:00Z'));
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            expect(lastSchedule()?.nextTrigger).toBe('2026-01-01T09:18:00Z');
+            jest.advanceTimersByTime(lastSchedule()!.delaySeconds * 1000 + 1);
+            expect(lastSchedule()?.nextTrigger).toBe('2026-01-01T10:55:00Z');
+            jest.advanceTimersByTime(lastSchedule()!.delaySeconds * 1000 + 1);
+            expect(lastSchedule()?.nextTrigger).toBe('2026-01-01T11:04:00Z');
+
+            scheduler.stop();
+        });
+
+        test('skips a fresh hash that lands inside the hour of the previous trigger', () => {
+            // Guard behaviour with a controlled iterator: the candidate handed back for the hour
+            // that already fired must be discarded, and the next candidate used instead. The
+            // iterator throws after a handful of candidates so a guard that never converges fails
+            // the test instead of spinning forever.
+            const candidates = [new Date('2026-03-02T03:16:00Z'), new Date('2026-03-02T04:16:00Z')];
+            let consumed = 0;
+            jest.spyOn(CronExpressionParser, 'parse').mockImplementation((() => ({
+                next: () => {
+                    consumed += 1;
+                    if(consumed > 10) {
+                        throw new Error('previous-hour guard did not converge');
+                    }
+                    return { toDate: () => candidates[Math.min(consumed - 1, candidates.length - 1)] };
+                },
+            })) as unknown as typeof CronExpressionParser.parse);
+            jest.setSystemTime(new Date('2026-03-02T03:00:00Z'));
+
+            const scheduler = createPerchScheduler({
+                logger:         mockLogger,
+                config:         { ...config, timezone: 'UTC' },
+                onPerchTrigger: mockOnPerchTrigger,
+            });
+            scheduler.start();
+
+            // The first schedule takes the 03:16 candidate; firing it re-parses and lands on the
+            // same hour, so the guard must skip to 04:16 rather than 03:16.
+            expect(lastSchedule()?.nextTrigger).toBe('2026-03-02T03:16:00Z');
+            jest.advanceTimersByTime(16 * 60_000 + 1);
+            expect(lastSchedule()?.nextTrigger).toBe('2026-03-02T04:16:00Z');
+
+            scheduler.stop();
+        });
+    });
+
+    describe('next trigger delay clamping', () => {
+        test('schedules at exactly 0ms when the computed trigger time is already in the past', () => {
+            const epoch = Date.parse('2026-02-08T12:00:00Z');
+            jest.setSystemTime(epoch);
+
+            // The clock advances while the delay is being computed (the parse itself is slow), so
+            // the parsed trigger time ends up 5s in the past of the wall clock read afterwards.
+            jest.spyOn(CronExpressionParser, 'parse').mockImplementation((() => ({
+                next: () => {
+                    jest.setSystemTime(epoch + 10_000);
+                    return { toDate: () => new Date(epoch + 5000) };
+                },
+            })) as unknown as typeof CronExpressionParser.parse);
+            const setTimeoutSpy = jest.spyOn(globalThis, 'setTimeout');
+
+            const scheduler = createPerchScheduler({
+                logger:         mockLogger,
+                config:         { ...config, timezone: 'UTC' },
+                onPerchTrigger: mockOnPerchTrigger,
+            });
+            scheduler.start();
+
+            const scheduleCall = (mockLogger.debug as unknown as Mock<(...args: unknown[]) => void>).mock.calls
+                .findLast(call => typeof call[1] === 'string' && call[1].includes('Next perch trigger scheduled'))?.[0] as
+                { delaySeconds: number, nextTrigger: string } | undefined;
+            expect(scheduleCall).toEqual({ delaySeconds: 0, nextTrigger: '2026-02-08T12:00:05Z' });
+            // The pending timeout is armed with a delay of exactly 0ms, never 1ms or negative.
+            expect(setTimeoutSpy.mock.calls.at(-1)?.[1]).toBe(0);
 
             scheduler.stop();
         });

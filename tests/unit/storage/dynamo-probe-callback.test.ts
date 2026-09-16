@@ -145,6 +145,25 @@ describe('runDynamoDBProbe', () => {
                 { error: 'plain string error' }
             );
         });
+
+        it('should coerce a non-string, non-Error throw (e.g. a number) via String(), not a type assertion', async () => {
+            // A plain `as string` type assertion does not convert at runtime — it would leave
+            // the numeric value untouched, so this test only passes when the code actually
+            // calls String(err).
+            const probeFn = mock(async (_client: DynamoDBClient, _tableName: string): Promise<void> => {
+                throw 42;
+            });
+            const client = makeStubClient();
+            const { eventSender, sendEventMock } = makeStubRegistry();
+
+            await runDynamoDBProbe(client, 'TestTable', eventSender, undefined, probeFn);
+
+            expect(sendEventMock).toHaveBeenCalledWith(
+                'dynamodb',
+                'CONNECTION_LOST',
+                { error: '42' }
+            );
+        });
     });
 
     describe('without optional logger', () => {
@@ -202,6 +221,29 @@ describe('runDynamoDBProbe', () => {
             const sendEventWarnArg = calls[1][0];
             expect(sendEventWarnArg.msg).toBe('DynamoDB probe: failed to send CONNECTION_LOST event');
             expect(sendEventWarnArg.error).toBe('registry stopped');
+        });
+
+        it('should coerce a non-string, non-Error sendEvent throw via String(), not a type assertion', async () => {
+            // Same rationale as the probeFn case: a bare `as string` assertion would leave a
+            // thrown number untouched instead of converting it, so this only passes when the
+            // code actually calls String(error_).
+            const probeFn = mock(async (_client: DynamoDBClient, _tableName: string): Promise<void> => {
+                throw new Error('probe error');
+            });
+            const client = makeStubClient();
+            const throwingEventSender: ProbeEventSender = {
+                sendEvent: mock(() => { throw 99; }),
+            };
+            const logger = makeStubLogger();
+
+            await runDynamoDBProbe(client, 'TestTable', throwingEventSender, logger, probeFn);
+
+            const warnMock = logger.warn as ReturnType<typeof mock>;
+            expect(warnMock).toHaveBeenCalledTimes(2);
+            const calls = warnMock.mock.calls as [Record<string, unknown>][];
+            const sendEventWarnArg = calls[1][0];
+            expect(sendEventWarnArg.msg).toBe('DynamoDB probe: failed to send CONNECTION_LOST event');
+            expect(sendEventWarnArg.error).toBe('99');
         });
 
         it('should not crash when sendEvent throws and no logger is provided', async () => {

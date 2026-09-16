@@ -32,13 +32,14 @@ export class EmailClassifier {
                 { from: email.from.address, subject: email.subject }
             );
         }
-        // Stryker restore BlockStatement
 
+        // Stryker disable next-line llm: rawText.length === 0 is equivalent to rawText === '' for every string.
         if(rawText === '') {
             throw new ClassifierError('Classifier returned empty response');
         }
 
         const parsed = classifierVerdictSchema.safeParse(this.extractJson(rawText));
+        // Stryker disable next-line llm: parsed.data! differs only by a TypeScript non-null assertion, which is erased at runtime.
         const verdict: ClassifierVerdict = parsed.success
             ? parsed.data
             : {
@@ -56,7 +57,6 @@ export class EmailClassifier {
             reason:     verdict.reason,
             msg:        'Email classified',
         });
-        // Stryker restore ObjectLiteral,StringLiteral
 
         return verdict;
     }
@@ -104,10 +104,12 @@ export class EmailClassifier {
             // Recover the widest brace-delimited candidate, but do not attempt
             // extraction when there is no opening brace or no later closing brace.
             const firstBrace = text.indexOf('{');
+            // Stryker disable next-line llm: String.indexOf returns only -1 or a non-negative index, so < 0 is equivalent to === -1.
             if(firstBrace === -1) {
                 return null;
             }
             const candidate = text.slice(firstBrace, text.lastIndexOf('}') + 1);
+            // Stryker disable next-line llm: candidate is a string, so candidate.length === 0 is equivalent to candidate === ''.
             if(candidate === '') {
                 return null;
             }
@@ -118,6 +120,5 @@ export class EmailClassifier {
                 return null;
             }
         }
-        // Stryker restore BlockStatement
     }
 }

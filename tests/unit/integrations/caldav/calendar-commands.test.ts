@@ -95,6 +95,19 @@ function createDeferred<T>(): PromiseWithResolvers<T> {
     return Promise.withResolvers<T>();
 }
 
+// The handler's await chain is finite and entirely microtask-driven (every collaborator here is
+// a resolved mock), so draining a fixed number of microtasks — far more than that chain can
+// contain — deterministically proves whether execution advanced past an awaited call, without a
+// real timer or a wall-clock delay.
+const MICROTASK_DRAIN = 200;
+
+async function drainMicrotasks(): Promise<void> {
+    for(let i = 0; i < MICROTASK_DRAIN; i += 1) {
+        // eslint-disable-next-line no-await-in-loop -- sequential awaits are the point: each turn must be its own microtask
+        await Promise.resolve();
+    }
+}
+
 async function expectHandlerToWaitForReply(
     invoke:    () => Promise<void>,
     editReply: Mock<(...args: unknown[]) => Promise<unknown>>,
@@ -368,7 +381,7 @@ describe('CalendarCommandHandler - permission checks', () => {
             await handler.handle(asChatInput);
             resolved = true;
         })();
-        await Promise.resolve();
+        await drainMicrotasks();
 
         expect(editReply).toHaveBeenCalledWith({ content: 'Only the admin can manage other users\' calendars.' });
         expect(resolved).toBe(false);
@@ -524,6 +537,24 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
             { error: expect.any(Error), serverUrl: 'https://bad.example.com' },
             'Failed to add calendar server'
         );
+    });
+
+    test('renders a rejected non-Error value verbatim instead of substituting a fallback message', async () => {
+        const expectNonErrorReply = async (thrown: string, expected: string): Promise<void> => {
+            mockCaldav.discoverCalendars.mockRejectedValue(thrown);
+            const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'add-server', {
+                server_url: 'https://bad.example.com', username: 'u', password: 'p', description: 'Bad',
+            });
+
+            await handler.handle(asChatInput);
+
+            expect(editReply).toHaveBeenCalledWith({ content: expected, components: [] });
+        };
+
+        await expectNonErrorReply('socket hang up', 'Failed to add server: socket hang up');
+        // A value that stringifies to nothing is still the reason the user is shown — never a
+        // fabricated one.
+        await expectNonErrorReply('', 'Failed to add server: ');
     });
 
     test('uses targetUser when admin specifies a different user', async () => {
@@ -724,6 +755,17 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         expect((editReply.mock.calls.at(-1)?.[0] as { content: string }).content).toContain('Calendar selection failed');
     });
 
+    test('rejects a fractional selection index instead of flooring it onto a real calendar', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([{ path: '/cal/a', displayName: 'A' }, { path: '/cal/b', displayName: 'B' }]);
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', { server_url: 'https://caldav.example.com', username: 'u', password: 'p', description: 'Server' });
+        awaitComponent.mockResolvedValue({ values: ['0.5'], deferUpdate: mock(async () => {}) });
+
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.addServer).not.toHaveBeenCalled();
+        expect((editReply.mock.calls.at(-1)?.[0] as { content: string }).content).toContain('Calendar selection failed');
+    });
+
     test('limits select-menu labels to Discord’s 100-character maximum', async () => {
         const longName = 'A'.repeat(101);
         mockCaldav.discoverCalendars.mockResolvedValue([
@@ -746,6 +788,29 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
                 .map(component => component.toJSON()),
         };
         expect(renderedPrompt.components[0]?.components[0]?.options[0]?.label).toBe(longName.slice(0, 100));
+    });
+
+    test('preserves leading/trailing whitespace in calendar select-menu labels', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/a', displayName: '  Padded Calendar  ' },
+            { path: '/cal/b', displayName: 'Short' },
+        ]);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['0'], deferUpdate: mock(async () => {}) });
+        await handler.handle(asChatInput);
+
+        const prompt = editReply.mock.calls[0]?.[0] as { components: unknown[] };
+        const renderedPrompt = {
+            components: (prompt.components as { toJSON(): { components: { options: { label: string }[] }[] } }[])
+                .map(component => component.toJSON()),
+        };
+        expect(renderedPrompt.components[0]?.components[0]?.options[0]?.label).toBe('  Padded Calendar  ');
     });
 
     test('rejects missing required server options before CalDAV discovery', async () => {
@@ -928,7 +993,7 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         awaitComponent.mockResolvedValue({ values: ['0'], deferUpdate: () => acknowledgement.promise });
 
         const handling = handler.handle(asChatInput);
-        await Promise.resolve();
+        await drainMicrotasks();
 
         expect(mockRegistry.addServer).not.toHaveBeenCalled();
         acknowledgement.resolve();
@@ -1803,6 +1868,24 @@ describe('CalendarCommandHandler - /calendar shared add-server', () => {
         );
     });
 
+    test('renders a rejected non-Error value verbatim for the shared flow too', async () => {
+        const expectNonErrorReply = async (thrown: string, expected: string): Promise<void> => {
+            mockCaldav.discoverCalendars.mockRejectedValue(thrown);
+            const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server', {
+                server_url: 'https://bad.example.com', username: 'u', password: 'p', description: 'Bad',
+            });
+
+            await handler.handle(asChatInput);
+
+            expect(editReply).toHaveBeenCalledWith({ content: expected, components: [] });
+        };
+
+        await expectNonErrorReply('socket hang up', 'Failed to add shared server: socket hang up');
+        // A value that stringifies to nothing is still the reason the user is shown — never a
+        // fabricated one.
+        await expectNonErrorReply('', 'Failed to add shared server: ');
+    });
+
     test('shared: presents select menu and stores only selected calendars', async () => {
         mockCaldav.discoverCalendars.mockResolvedValue([
             { path: '/shared/a', displayName: 'Shared A' },
@@ -1911,6 +1994,35 @@ describe('CalendarCommandHandler - /calendar shared list', () => {
         expect(replyArg.content).toContain('Holidays');
         expect(replyArg.content).toContain('/shared/holidays');
         expect(replyArg.content).toBe('**Holidays** (aabbccdd-1111-2222-3333-444455556666):\n  - Holidays (/shared/holidays)\n  - Birthdays (/shared/birthdays)\n\n**Birthdays** (bbbbccdd-1111-2222-3333-444455556666):\n  - Team birthdays (/shared/team-birthdays)');
+    });
+
+    test('lists every stored shared calendar even when its label is empty', async () => {
+        // The registry does not run calendarEntrySchema on write, and discoverCalendars()
+        // passes a CalDAV server's empty displayname through verbatim, so an empty label
+        // can be persisted. The listing must still show that calendar (with its path) so
+        // the user can see it and remove it; silently dropping it would hide the entry.
+        mockRegistry.getSharedRecord.mockResolvedValue({
+            userId:    'SHARED',
+            createdAt: '',
+            updatedAt: '',
+            servers:   [{
+                serverId:    TEST_SERVER_UUID,
+                description: 'Holidays',
+                serverUrl:   'https://caldav.example.com',
+                username:    'u',
+                password:    'p',
+                calendars:   [
+                    { calendarPath: '/shared/unnamed', label: '' },
+                    { calendarPath: '/shared/holidays', label: 'Holidays' },
+                ],
+            }],
+        });
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, 'shared', 'list');
+        await handler.handle(asChatInput);
+
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toBe(`**Holidays** (${TEST_SERVER_UUID}):\n  -  (/shared/unnamed)\n  - Holidays (/shared/holidays)`);
     });
 
     test('replies "No shared calendars configured" when none exist (null record)', async () => {

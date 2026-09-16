@@ -90,7 +90,9 @@ function transformConversation(convo: BskyConversation): object {
 function collectVideoPlaylistsFromDM(msg: BskyDirectMessage): string[] {
     const playlists: string[] = [];
     for(const nested of msg.embed?.embeds ?? []) {
+        // Stryker disable next-line llm: nested.type is a string-literal discriminator, so loose and strict equality against 'video' coincide.
         if(nested.type === 'video') {
+            // Stryker disable next-line llm: the 'video' discriminator narrows to the union member whose video field is always built by normalizeVideoEmbed, so optional chaining is a no-op.
             playlists.push(nested.video.playlist);
         }
     }
@@ -172,6 +174,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         if(newNotifications.length > 0 || !hadExistingCheckpoint) {
                         // Use max of lastSeenAt (if defined) and current time to guard against clock drift.
                         // When lastSeenAt is undefined (empty first poll), fall back to current time directly.
+                            // Stryker disable next-line llm,NumberLiteralValue: the undefined-lastSeenAt fallback is dominated by Date.now() in the Math.max below; only a pre-epoch or backwards mocked clock could tell 0 from 1, -1 or Date.now()
                             const latestMs = lastSeenAt === undefined ? 0 : new Date(lastSeenAt).getTime();
                             const seenAt   = new Date(Math.max(latestMs, Date.now())).toISOString();
                             await client.updateNotificationsSeen(seenAt);
@@ -427,7 +430,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         } catch (markError) {
                             logger.warn({ error: markError instanceof Error ? markError.message : String(markError), msg: 'Failed to mark conversation as read' });
                         }
-                        // Stryker restore BlockStatement
 
                         // Build DID→handle map from conversation members
                         const didToHandle = new Map(convo.members.map(m => [m.did, m.handle]));

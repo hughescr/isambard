@@ -9,6 +9,10 @@ describe('text and time public boundaries', () => {
         expect(truncateToWordBoundary('a bc def', 5)).toBe('a bc…');
     });
 
+    test('truncates at a space immediately after the first character', () => {
+        expect(truncateToWordBoundary('a bcdef', 5)).toBe('a…');
+    });
+
     test('rounds 58 elapsed hours to two days', () => {
         const now = new Date('2026-01-04T00:00:00.000Z');
         jest.useFakeTimers();

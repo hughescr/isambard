@@ -225,6 +225,7 @@ export function initialLedger(role: SessionRole): Ledger {
 
 /** `task_type` -> ledger task kind. Everything not explicitly recognised is `'other'`. */
 function taskKindFor(taskType: string | undefined): LedgerTask['kind'] {
+    // Stryker disable next-line llm: taskType is string | undefined, where == and === agree against a string literal
     if(taskType === 'local_agent') {
         return 'subagent';
     }
@@ -680,6 +681,7 @@ function toResetsAtMs(resetsAt: unknown): number | undefined {
         return Number.isFinite(resetsAt) ? resetsAt * 1000 : undefined;
     }
     if(typeof resetsAt === 'string') {
+        // Stryker disable next-line llm: new Date(string).getTime() uses the same parser as Date.parse(string), so the results are identical
         const parsed = Date.parse(resetsAt);
         return Number.isFinite(parsed) ? parsed : undefined;
     }
@@ -711,6 +713,7 @@ export function toQuotaWindow(utilization: unknown, resetsAt: unknown): QuotaWin
     }
     const percent = utilization * 100;
     const resetsAtMs = toResetsAtMs(resetsAt);
+    // Stryker disable next-line llm: toResetsAtMs returns number or undefined and never null, so loose and strict undefined checks coincide.
     if(resetsAtMs === undefined) {
         return { utilization: percent };
     }
@@ -1098,6 +1101,7 @@ export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
             return reduceSdkFrame(ledger, event.frame, event.at);
         }
         case 'envelope_queued': {
+            // Stryker disable next-line llm: EnvelopeKind is nonempty, and the reducer only distinguishes discord from every other value.
             return reduceEnvelopeQueued(ledger, event.kind);
         }
         case 'turn_submitted': {
@@ -1119,6 +1123,7 @@ export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
             return reduceContextUsagePolled(ledger, event.usage);
         }
         case 'tick': {
+            // Stryker disable next-line llm: the sole producer is process.memoryUsage().rss, whose non-negative integer output makes the fallback unreachable.
             return reduceTick(ledger, event.rssBytes);
         }
         case 'task_lost': {

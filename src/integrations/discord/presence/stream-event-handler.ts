@@ -115,7 +115,6 @@ export async function buildLedgerThinkingSynopsis(
         // Fallback handled by the ledger's own base phase (no generatedStatus) — empty catch is intentional
     }
     return undefined;
-    // Stryker restore BlockStatement
 }
 
 /**
@@ -184,6 +183,7 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
         void (async () => {
             try {
                 const synopsis = await dynamicStatusGenerator.generateSynopsis(context);
+                // Stryker disable next-line llm: generateSynopsis is typed Promise<string | null>, so == null and === null accept the same values.
                 if(completed || synopsis === null) {
                     return;
                 }
@@ -214,7 +214,9 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
             phase:           'using_tool',
             userMessage,
             toolName,
+            // Stryker disable next-line llm: lastToolName was just assigned toolName, so both Map keys are identical here.
             toolInput:       pendingToolInputs.get(toolName),
+            // Stryker disable next-line llm: lastToolName was just assigned toolName, so both description arguments are identical here.
             toolDescription: getToolDescription(toolName),
             accumulatedText: capturedAccumulatedText || undefined,
             recentToolCalls: capturedRecentToolCalls,
@@ -238,6 +240,7 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
         void (async () => {
             try {
                 const text = await thinkingSynopsis;
+                // Stryker disable next-line llm: thinkingSynopsis is typed Promise<string | undefined>, so == undefined and === undefined accept the same values.
                 if(completed || text === undefined || anySynopsisDispatched) {
                     return;
                 }
@@ -258,9 +261,12 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
      * the pre-generated text while it is still the freshest thing this handler has.
      */
     function handleThinkingTransition(): void {
+        // Stryker disable next-line llm: Boolean(x), !!x, and x have identical truthiness in the sole conditional use below.
         const hasThinkingContent = Boolean(accumulatedThinkingContent);
+        // Stryker disable next-line llm: array length is a nonnegative integer, making > 0 and >= 1 equivalent.
         const hasToolHistory = recentToolCalls.length > 0;
 
+        // Stryker disable next-line llm: both operands are booleans, so reapplying Boolean cannot alter this condition.
         if((hasThinkingContent || hasToolHistory) && canGenerateSynopsis(dynamicStatusGenerator, throttle)) {
             const capturedThinkingContent = accumulatedThinkingContent || undefined;
             const capturedRecentToolCalls = [...recentToolCalls];
@@ -295,6 +301,7 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
     const collectAssistantText = (event: Extract<AgentStreamEvent, { type: 'assistant' }>): string => {
         const content: AssistantContentBlock[] | undefined = event.message?.content;
         let completeText = '';
+        // Stryker disable next-line llm: content is an array or undefined, and arrays are truthy, so ?? and || are equivalent.
         for(const block of content ?? []) {
             if(block.type === 'thinking' && block.thinking) {
                 accumulatedThinkingContent = (accumulatedThinkingContent + block.thinking).slice(-MAX_THINKING_CONTENT_LENGTH);
@@ -346,6 +353,7 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
                 generateAndDispatch({
                     phase:           'responding',
                     userMessage,
+                    // Stryker disable next-line llm: this branch requires nonempty responseText just appended to accumulatedText, so the fallback is unreachable.
                     accumulatedText: accumulatedText || undefined,
                     subagentSummary: latestSubagentSummary,
                 }, 'responding');
@@ -355,6 +363,7 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
 
     const handleSystemEvent = (event: Extract<AgentStreamEvent, { type: 'system' }>): void => {
         if(event.subtype === 'task_progress' && event.summary) {
+            // Stryker disable next-line llm: task_id is a string or undefined, for which ?? '' and || '' return the same string.
             const taskKey = event.task_id ?? '';
             if(lastSummaryByTask.get(taskKey) === event.summary) {
                 return;

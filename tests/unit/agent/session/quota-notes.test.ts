@@ -174,6 +174,17 @@ describe('createQuotaNotes', () => {
         expect(notify.mock.calls[1][0].text).toBe('Quota: the five-hour window has reset; it was at 80%.');
     });
 
+    test('rounds a fractional peak in both threshold and reset notes', () => {
+        const notes = createQuotaNotes({ notify });
+
+        notes.record(fiveHour(75.6));
+        notes.record(fiveHour(2, RESET_B));
+
+        expect(notify).toHaveBeenCalledTimes(2);
+        expect(notify.mock.calls[0][0].text).toBe('Quota: the five-hour window has passed 75% (now 76%) of the shared Claude subscription.');
+        expect(notify.mock.calls[1][0].text).toBe('Quota: the five-hour window has reset; it was at 76%.');
+    });
+
     test('a window whose peak reached exactly the lowest threshold still reports its reset', () => {
         const notes = createQuotaNotes({ notify });
 

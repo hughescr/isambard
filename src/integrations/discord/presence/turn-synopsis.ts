@@ -131,6 +131,7 @@ export function attachTurnSynopsis(deps: AttachTurnSynopsisDeps): () => void {
 
     const unsubscribeLedger = ledgerStore.subscribe((ledger) => {
         const { turn } = ledger;
+        // Stryker disable next-line llm: turn?.id and openTurnId are both string | undefined, so == and === are equivalent (no cross-type coercion is possible).
         if(turn?.id === openTurnId) {
             return;
         }

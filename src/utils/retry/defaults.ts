@@ -9,7 +9,6 @@ const defaultDeps: RetryDeps = {
         debug: () => undefined,
     },
 };
-// Stryker restore all
 
 /**
  * Validates the retry policy and merges deps with defaults.

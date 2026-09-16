@@ -139,6 +139,7 @@ export async function runCli(argv: string[], deps: PruneCliDeps = {}): Promise<v
     write(`pruned ${removed} stale static mutant verdict(s) from ${path}\n`);
 }
 
+// Stryker disable next-line BlockStatement: main-entry block runs only as a CLI subprocess, invisible to in-process coverage
 if(import.meta.main) {
     // Stryker disable next-line AwaitDrop: entrypoint call with nothing following it in this block; same equivalent-mutant reasoning as tools/backfill-contact-lookup-gsi2.ts's identical AwaitDrop disable.
     await runCli(process.argv);

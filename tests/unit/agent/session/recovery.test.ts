@@ -227,6 +227,17 @@ describe('lastKnownAt', () => {
 
         expect(lastKnownAt(entries)).toBe(firstAt);
     });
+
+    test('an at exactly 1ms later than the current latest still replaces it', () => {
+        const earlier = new Date(1000);
+        const oneMsLater = new Date(1001);
+        const entries: JournalEntry[] = [
+            { type: 'turn_completed', at: earlier, envelopeId: 'env-1', kind: 'discord', responseText: 'first' },
+            { type: 'turn_failed', at: oneMsLater, envelopeId: 'env-2', kind: 'discord', error: 'boom' },
+        ];
+
+        expect(lastKnownAt(entries)).toBe(oneMsLater);
+    });
 });
 
 describe('taskLaunchEntries', () => {

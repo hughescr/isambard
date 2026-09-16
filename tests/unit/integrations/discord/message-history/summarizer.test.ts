@@ -462,6 +462,37 @@ describe('createMessageSummarizer', () => {
             expect(result[0].synopsis).toBe('Group discussion summary');
         });
 
+        test('substitutes the message block exactly once when a body contains the placeholder', async () => {
+            const summarizer = createMessageSummarizer({});
+
+            await summarizer.summarizeMessageBatch([
+                createMockSearchResult({ authorUsername: 'alice', content: 'Use {messages} as the key' }),
+            ]);
+
+            const prompt = mockGenerateText.mock.calls[0]?.[0];
+            expect(prompt).toContain('[alice] Use {messages} as the key');
+            // A second `.replace('{messages}', ...)` pass re-substitutes the placeholder inside the
+            // message body, rendering the author a second time.
+            expect(prompt.match(/\[alice\]/g)).toHaveLength(1);
+        });
+
+        test('deduplicates authors in first-appearance order, not batch timestamp order', async () => {
+            const messages = [
+                createMockSearchResult({ id: '100000000000000011', authorUsername: 'alice', timestamp: '2025-01-15T10:05:00.000Z' }),
+                createMockSearchResult({ id: '100000000000000012', authorUsername: 'bob', timestamp: '2025-01-15T10:00:00.000Z' }),
+                createMockSearchResult({ id: '100000000000000013', authorUsername: 'alice', timestamp: '2025-01-15T10:10:00.000Z' }),
+            ];
+
+            const summarizer = createMessageSummarizer({});
+
+            const result = await summarizer.summarizeMessageBatch(messages, 10);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].authors).toEqual(['alice', 'bob']);
+            expect(result[0].startTimestamp).toBe('2025-01-15T10:00:00.000Z');
+            expect(result[0].endTimestamp).toBe('2025-01-15T10:10:00.000Z');
+        });
+
         test('should use default batch size of 10', async () => {
             const messages = Array.from({ length: 25 }, (_, i) =>
                 createMockSearchResult({
@@ -475,9 +506,12 @@ describe('createMessageSummarizer', () => {
 
             const result = await summarizer.summarizeMessageBatch(messages);
 
-            // 25 / 10 = 3 batches
+            // 25 / 10 = 3 batches of sizes [10, 10, 5]; asserting the exact
+            // per-batch sizes (not just the batch count) pins the default to
+            // 10 rather than any other value that also yields 3 batches.
             expect(result).toHaveLength(3);
             expect(mockGenerateText).toHaveBeenCalledTimes(3);
+            expect(result.map(batch => batch.messageCount)).toEqual([10, 10, 5]);
         });
 
         test('should propagate errors from generateText', async () => {

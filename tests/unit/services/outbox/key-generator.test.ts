@@ -163,6 +163,13 @@ describe('OutboxKeyGenerator', () => {
             expect(OutboxKeyGenerator.parseSK('ITEM#01')).toBeUndefined();
         });
 
+        test('preserves every hash in the dedupe key', () => {
+            expect(OutboxKeyGenerator.parseSK('ITEM#0#first#second')).toEqual({
+                priority:  'high',
+                dedupeKey: 'first#second',
+            });
+        });
+
         test('returns undefined when priority char is not 0, 1, or 2', () => {
             expect(OutboxKeyGenerator.parseSK(`ITEM#9#${DEDUPE_KEY}`)).toBeUndefined();
         });

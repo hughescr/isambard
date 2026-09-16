@@ -124,6 +124,28 @@ describe('EmailProcessor', () => {
             expect(classifier.classify).not.toHaveBeenCalled();
         });
 
+        test('sender on allowlist + SPF pass (no DKIM) → CleanInbox bypass', async () => {
+            const email = makeEmail({
+                verificationResults: { spf: 'example.com', dkim: false },
+            });
+            const classifier = makeClassifier(makeVerdict('safe'));
+            const { conn, moveMessage } = makeImap();
+
+            const processor = new EmailProcessor({
+                allowlist:      makeAllowlist(true),
+                classifier,
+                wildDuckClient: conn,
+            });
+
+            const result = await processor.processEmail(email);
+
+            expect(result.verdict).toBeNull();
+            expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
+            expect(result.allowlistBypassed).toBe(true);
+            expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.CleanInbox);
+            expect(classifier.classify).not.toHaveBeenCalled();
+        });
+
         test('sender on allowlist but no auth pass → falls through to classifier', async () => {
             const email = makeEmail({
                 verificationResults: { spf: false, dkim: false },
@@ -144,6 +166,25 @@ describe('EmailProcessor', () => {
             // safe → CleanInbox
             expect(result.destinationFolder).toBe(EmailFolder.CleanInbox);
             expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.CleanInbox);
+        });
+
+        test('logs the numeric classifier confidence', async () => {
+            const email      = makeEmail();
+            const verdict    = makeVerdict('safe', { confidence: 0.42 });
+            const classifier = makeClassifier(verdict);
+            const { conn }   = makeImap();
+            const processor = new EmailProcessor({
+                allowlist:      makeAllowlist(false),
+                classifier,
+                wildDuckClient: conn,
+            });
+
+            await processor.processEmail(email);
+
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                verdict:    'safe',
+                confidence: 0.42,
+            }));
         });
 
         test('sender on allowlist with no verificationResults → falls through to classifier', async () => {

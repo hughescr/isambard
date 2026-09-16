@@ -438,6 +438,21 @@ describe('createBootBundleBuilder — conversation fresh', () => {
         expect(text).toContain('deployed the thing');
     });
 
+    test('uses each event’s updatedAt rather than createdAt when rendering its age', async () => {
+        const contextBuilder = makeContextBuilder({
+            loadRecentEventsSince: jest.fn().mockResolvedValue([
+                { path: '/events/1', content: 'deployed the thing', contentType: 'text/plain', metadata: {}, createdAt: new Date(T0.getTime() - (2 * 60 * 60 * 1000)).toISOString(), updatedAt: T0.toISOString() },
+            ]),
+        });
+        const builder = createBootBundleBuilder({
+            role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
+        });
+
+        const text = await builder.build({ ...emptyInput, kind: 'fresh' });
+
+        expect(text).toContain('/events/1 (now): deployed the thing');
+    });
+
     test('calls channelListProvider and includes its text when present', async () => {
         const contextBuilder = makeContextBuilder();
         const channelListProvider = jest.fn().mockResolvedValue('#general, #random');

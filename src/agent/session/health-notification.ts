@@ -134,6 +134,7 @@ export function createHealthOutageCoalescer(params: CreateHealthOutageCoalescerP
         // before arming the timer, and `pending` is emptied only here — so `members` is never
         // empty when this runs. No emptiness guard: it would be dead code (see Q5 review finding).
         const members = [...pending.values()];
+        // Stryker disable next-line llm: pending never escapes this closure and members is already snapshotted, so rebinding and clear() are indistinguishable
         pending = new Map();
         const services = members.map(member => member.service);
         const dedupeKey = members.map(member => `${member.service}:${member.epoch}`).toSorted((a, b) => a.localeCompare(b)).join('+');

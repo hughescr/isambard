@@ -743,7 +743,9 @@ describe('setupConductorPresence', () => {
         mockPresenceManager.applyView.mockClear();
 
         conversation.dispatch({ type: 'sdk_frame', frame: frames.resultSuccess(), at: new Date(1) });
-        jest.advanceTimersByTime(IDLE_SETTLE_MS - 1);
+        // Explicit boundary values, rather than IDLE_SETTLE_MS, make this test a change detector
+        // for the production settling duration itself.
+        jest.advanceTimersByTime(1499);
         // Another idle-composed tick (a ledger event while idle) must not push the deadline out.
         conversation.dispatch({ type: 'tick', rssBytes: 1, at: new Date(2) });
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();

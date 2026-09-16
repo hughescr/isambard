@@ -35,8 +35,12 @@ export function classifyDiscordError(error: unknown): ErrorClassification {
 
     if(error instanceof Error && error.message) {
         message = error.message;
-    } else if(typeof error === 'string' && error) {
-        message = error;
+    } else {
+        // Stryker disable next-line llm: operand-swapped && on two pure operands is the same conjunction; used only as a condition, so the returned operand is never observed
+        const stringError = typeof error === 'string' && error;
+        if(stringError) {
+            message = stringError;
+        }
     }
 
     // Check for AbortError (transient - request timed out after Discord.js exhausted internal retries)

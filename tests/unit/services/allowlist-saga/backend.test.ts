@@ -90,6 +90,12 @@ describe('AllowlistSagaBackend', () => {
                 resultPersonId:   'alice-smith',
             });
         });
+
+        test('propagates a write failure to the caller', async () => {
+            ddbMock.on(PutCommand).rejects(new Error('DynamoDB unavailable'));
+
+            await expect(backend.create(BASE_SAGA)).rejects.toThrow('DynamoDB unavailable');
+        });
     });
 
     describe('get', () => {
@@ -202,6 +208,20 @@ describe('AllowlistSagaBackend', () => {
             );
 
             loggerWarnSpy.mockRestore();
+        });
+
+        test('propagates a conditional-put failure to the caller', async () => {
+            ddbMock.on(GetCommand).resolves({
+                Item: {
+                    PK: 'ALLOWLIST#SAGA',
+                    SK: `SAGA#${SAGA_UUID}`,
+                    ...BASE_SAGA,
+                },
+            });
+            ddbMock.on(PutCommand).rejects(new Error('ConditionalCheckFailedException'));
+
+            await expect(backend.update(SAGA_UUID, { state: 'completed' }))
+                .rejects.toThrow('ConditionalCheckFailedException');
         });
     });
 });

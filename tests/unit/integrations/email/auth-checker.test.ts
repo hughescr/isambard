@@ -70,4 +70,11 @@ describe.concurrent('checkVerificationResults', () => {
     test('accepts a bare domain as the From domain', () => {
         expect(checkVerificationResults({ spf: 'example.com', dkim: 'example.com' }, 'example.com')).toEqual({ spfPass: true, dkimPass: true });
     });
+
+    test('uses the first @ (not the last) when the local part itself contains an @', () => {
+        // 'a@b@example.com' has two '@' characters. Domain extraction must split on the
+        // first one (indexOf), giving local part 'a' and domain 'b@example.com' — not the
+        // last one (lastIndexOf), which would wrongly give domain 'example.com'.
+        expect(checkVerificationResults({ spf: 'b@example.com' }, 'a@b@example.com')).toEqual({ spfPass: true, dkimPass: false });
+    });
 });

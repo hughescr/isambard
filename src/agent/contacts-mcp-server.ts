@@ -81,10 +81,13 @@ export function createContactsMCPServer(options: ContactsMCPServerOptions) {
                     if(!contact) {
                         return mcpTextResult(`Contact '${args.personId}' not found.`);
                     }
+                    // Stryker disable next-line llm: both platforms are schema-validated string primitives, so loose and strict equality are equivalent.
                     const matches = contact.identifiers.filter(id => id.platform === args.platform);
+                    // Stryker disable next-line llm: array length is non-negative, so <= 0 and !length are equivalent to === 0.
                     if(matches.length === 0) {
                         return mcpTextResult(`Contact '${args.personId}' has no ${args.platform} identifier.`);
                     }
+                    // Stryker disable next-line llm: the zero-length guard returns above, so matches is non-empty here.
                     return mcpJsonResult({ personId: contact.personId, platform: args.platform, values: matches.map(id => id.value) });
                 }),
                 { annotations: { title: 'Look Up Contact ID', readOnlyHint: true, idempotentHint: true } }

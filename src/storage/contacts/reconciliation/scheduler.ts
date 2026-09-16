@@ -103,6 +103,7 @@ export function createContactReconciliationScheduler(deps: ContactReconciliation
             return undefined;
         }
 
+        // Stryker disable next-line llm: `activeWork` is only ever `null` or a Promise object, so truthiness and non-null checks are equivalent.
         if(activeWork !== null) {
             const requestedGeneration = generation;
             await activeWork;
@@ -140,7 +141,6 @@ export function createContactReconciliationScheduler(deps: ContactReconciliation
                 totalDurationMs: result.totalDurationMs,
                 msg:             'Contact reconciliation complete',
             });
-            /* Stryker restore StringLiteral,ObjectLiteral */
 
             return result;
         } catch (error) {
@@ -186,19 +186,22 @@ export function createContactReconciliationScheduler(deps: ContactReconciliation
                 intervalMs: config.intervalMs,
                 msg:        'Contact reconciliation scheduler started',
             });
-            /* Stryker restore StringLiteral,ObjectLiteral */
         },
 
         stop(): void {
+            // Stryker disable next-line llm: generation is used only as an opaque object identity.
             generation = {}; // prevent a stopped run from scheduling after it completes
 
             if(schedulerTimeout) {
+                // Stryker disable next-line llm: Bun/Node timer handles can be cleared by either timer clear function.
                 clearTimeout(schedulerTimeout);
+                // Stryker disable next-line llm: timer field reset is private; only scheduleNextTrigger reads it, and clearing a cleared handle is inert.
                 schedulerTimeout = null;
             }
             // Fix 4: abort any in-flight reconciliation run so it exits promptly
             if(abortController) {
                 abortController.abort();
+                // Stryker disable next-line llm: abort controller reset is private; finishRun nulls it anyway and re-aborting is idempotent.
                 abortController = null;
             }
             isRunning = false; // reset: stop() always clears isRunning for getState()

@@ -206,7 +206,6 @@ export class DiscordRateLimiter {
                     channelId,
                 });
             })
-            // Stryker restore all
             .then(() => {
                 this.logger?.debug({
                     msg: 'Executing queued operation',

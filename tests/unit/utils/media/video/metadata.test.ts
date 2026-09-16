@@ -161,6 +161,36 @@ describe('extractMetadata', () => {
         expect(metadata.frameRate).toBe(25);
     });
 
+    it('returns zero for malformed frame-rate strings', async () => {
+        const output = JSON.stringify({
+            streams: [{ codec_type: 'video', avg_frame_rate: '30/1/1' }],
+            format:  {},
+        });
+
+        const metadata = await extractMetadata('/test/video.mp4', makeRunner(output));
+        expect(metadata.frameRate).toBe(0);
+    });
+
+    it('parses fractions with a negative denominator', async () => {
+        const output = JSON.stringify({
+            streams: [{ codec_type: 'video', avg_frame_rate: '30/-1' }],
+            format:  {},
+        });
+
+        const metadata = await extractMetadata('/test/video.mp4', makeRunner(output));
+        expect(metadata.frameRate).toBe(-30);
+    });
+
+    it('returns zero for an unparseable plain frame rate', async () => {
+        const output = JSON.stringify({
+            streams: [{ codec_type: 'video', avg_frame_rate: 'not-a-rate' }],
+            format:  {},
+        });
+
+        const metadata = await extractMetadata('/test/video.mp4', makeRunner(output));
+        expect(metadata.frameRate).toBe(0);
+    });
+
     it('preserves ffprobe frame-rate syntax and prefers avg_frame_rate', async () => {
         const output = JSON.stringify({
             streams: [{
@@ -280,6 +310,18 @@ describe('extractMetadata', () => {
         const metadata = await extractMetadata('/test/video.mp4', makeRunner(output));
         expect(metadata.videoBitrate).toBe(2_000_000);
     });
+    it('preserves fractional ffprobe bitrate values without rounding', async () => {
+        const output = JSON.stringify({
+            streams: [
+                { codec_type: 'video', bit_rate: '4.5', avg_frame_rate: '30/1' },
+                { codec_type: 'audio', sample_rate: '44.5' },
+            ],
+            format: {},
+        });
+        const metadata = await extractMetadata('/test/video.mp4', makeRunner(output));
+        expect(metadata.videoBitrate).toBe(4.5);
+        expect(metadata.audioSampleRate).toBe(44.5);
+    });
 });
 
 describe('parseFfprobeOutput', () => {
@@ -314,6 +356,14 @@ describe('parseFfprobeOutput', () => {
         }
         expect(caught).toBeInstanceOf(MediaProcessingError);
         expect((caught as MediaProcessingError).context.operation).toBe('ffprobe');
+    });
+
+    it('rejects empty ffprobe stdout instead of treating it as an empty JSON object', () => {
+        expect(() => parseFfprobeOutput('')).toThrow('Failed to parse ffprobe output: ');
+    });
+
+    it('includes malformed ffprobe stdout in the parse error', () => {
+        expect(() => parseFfprobeOutput('not json')).toThrow('Failed to parse ffprobe output: not json');
     });
 
     it('throws MediaProcessingError on valid JSON with invalid schema', () => {

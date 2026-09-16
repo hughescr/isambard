@@ -252,6 +252,19 @@ describe('createTaskLaunchHooks', () => {
             expect(h.record.mock.calls[0][0]).toMatchObject({ kind: 'task', channelId: 'chan-task', authorId: 'user-task' });
         });
 
+        it('logs and does not record when status() itself returns a nullish value (destructuring throws, caught by the outer try/catch)', async () => {
+            const h = build({
+                conductor: { status: jest.fn(() => undefined as unknown as ConductorStatus), adoptWakeTurn: jest.fn() },
+            });
+            const fn = getHook(h.hooks, 'PostToolUse');
+
+            const result = await fn(postToolUseInput(), undefined, { signal: makeSignal() });
+
+            expect(result).toEqual({ 'continue': true });
+            expect(h.record).not.toHaveBeenCalled();
+            expect(h.logger.warn).toHaveBeenCalledWith({ error: expect.any(Error) }, 'task-launch PostToolUse hook failed');
+        });
+
         it('never throws: a registry.record throw is caught and logged, still returning continue:true', async () => {
             const h = build();
             (h.record as unknown as { mockImplementation: (fn: () => void) => void }).mockImplementation(() => {
@@ -288,24 +301,34 @@ describe('createTaskLaunchHooks', () => {
             expect(call[0].summary).toHaveLength(500);
         });
 
-        it('takes the whole remainder after </output-file> as the summary when the closing </task-notification> tag is missing (e.g. truncated)', async () => {
+        it.each<[string, string, string]>([
+            [
+                'takes the whole remainder after </output-file> as the summary when the closing </task-notification> tag is missing (e.g. truncated)',
+                '<task-notification>\n<task-id>agent-X</task-id>\n<tool-use-id>tool-T</tool-use-id>\n<output-file></output-file>\nBG-AGENT-DONE-BUT-TRUNCATED',
+                'BG-AGENT-DONE-BUT-TRUNCATED',
+            ],
+            [
+                'preserves a one-character summary without wrapper whitespace',
+                '<task-notification><task-id>agent-X</task-id><tool-use-id>tool-T</tool-use-id><output-file></output-file>x</task-notification>',
+                'x',
+            ],
+            [
+                'summary is empty when the prompt has no </output-file> tag at all (afterOutputFile\'s ?? \'\' fallback)',
+                '<task-notification>\n<task-id>agent-X</task-id>\n<tool-use-id>tool-T</tool-use-id>\n</task-notification>',
+                '',
+            ],
+            [
+                'finds the FIRST </task-notification> after </output-file>, not the last, when the summary text itself contains that literal tag string',
+                '<task-notification>\n<task-id>agent-X</task-id>\n<tool-use-id>tool-T</tool-use-id>\n<output-file></output-file>SUMMARY_A</task-notification>SUMMARY_B</task-notification>',
+                'SUMMARY_A',
+            ],
+        ])('%s', async (_name, prompt, summary) => {
             const h = build();
             const fn = getHook(h.hooks, 'UserPromptSubmit');
 
-            await fn(userPromptSubmitInput({ prompt: '<task-notification>\n<task-id>agent-X</task-id>\n<tool-use-id>tool-T</tool-use-id>\n<output-file></output-file>\nBG-AGENT-DONE-BUT-TRUNCATED' }), undefined, { signal: makeSignal() });
+            await fn(userPromptSubmitInput({ prompt }), undefined, { signal: makeSignal() });
 
-            expect(h.adoptWakeTurn).toHaveBeenCalledWith({ taskId: 'agent-X', toolUseId: 'tool-T', summary: 'BG-AGENT-DONE-BUT-TRUNCATED' });
-        });
-
-        it('preserves a one-character summary without wrapper whitespace', async () => {
-            const h = build();
-            const fn = getHook(h.hooks, 'UserPromptSubmit');
-
-            await fn(userPromptSubmitInput({
-                prompt: '<task-notification><task-id>agent-X</task-id><tool-use-id>tool-T</tool-use-id><output-file></output-file>x</task-notification>',
-            }), undefined, { signal: makeSignal() });
-
-            expect(h.adoptWakeTurn).toHaveBeenCalledWith({ taskId: 'agent-X', toolUseId: 'tool-T', summary: 'x' });
+            expect(h.adoptWakeTurn).toHaveBeenCalledWith({ taskId: 'agent-X', toolUseId: 'tool-T', summary });
         });
 
         it('does not adopt for a prompt that is not a task-notification wake', async () => {
@@ -329,19 +352,6 @@ describe('createTaskLaunchHooks', () => {
 
             expect(result).toEqual({ 'continue': true });
             expect(h.logger.warn).toHaveBeenCalledWith({ error: expect.any(Error) }, 'task-launch UserPromptSubmit hook failed');
-        });
-
-        it('summary is empty when the prompt has no </output-file> tag at all (afterOutputFile\'s ?? \'\' fallback)', async () => {
-            const h = build();
-            const fn = getHook(h.hooks, 'UserPromptSubmit');
-
-            await fn(
-                userPromptSubmitInput({ prompt: '<task-notification>\n<task-id>agent-X</task-id>\n<tool-use-id>tool-T</tool-use-id>\n</task-notification>' }),
-                undefined,
-                { signal: makeSignal() }
-            );
-
-            expect(h.adoptWakeTurn).toHaveBeenCalledWith({ taskId: 'agent-X', toolUseId: 'tool-T', summary: '' });
         });
     });
 });

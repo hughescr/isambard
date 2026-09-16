@@ -143,6 +143,7 @@ describe('vector backfill options', () => {
             layer: 'users', dbPath: path.resolve('./custom.sqlite'), modelSlug: '0.6b', modelQuant: 'Q8_0', rateLimitRcuPerSec: 2.5,
         });
         expect(parseArgs(['bun', 'script', '--model-slug=4b', '--model-quant=Q4_K_M'])).toMatchObject({ modelSlug: '4b', modelQuant: 'Q4_K_M' });
+        expect(parseArgs(['bun', 'script', '--rate-limit-rcu-per-sec=1'])).toMatchObject({ rateLimitRcuPerSec: 1 });
     });
 
     test.each([
@@ -213,6 +214,27 @@ describe('vector backfill page', () => {
         expect(stats).toEqual({ scanned: 3, skipped: 0, indexed: 2, errors: 1 });
         expect(index.entries.map(entry => entry.layer)).toEqual(['identity', 'identity']);
         expect(index.entries.map(entry => entry.sk)).toEqual(['FILE#item-0', 'FILE#item-2']);
+    });
+
+    test('retries an odd failed batch with its larger half first', async () => {
+        const calls: string[][] = [];
+        const items = [makeItem(0), makeItem(1), makeItem(2)];
+        const texts = items.map(item => `${item.path}\n${item.content}`);
+        const index = makeIndex();
+        const embedder = {
+            encode: mock(async (batch: readonly string[]) => {
+                calls.push([...batch]);
+                if(batch.length === 3) {
+                    throw new Error('batch rejected');
+                }
+                return { data: new Uint8Array(batch.length * 128) };
+            }),
+        };
+
+        const stats = await processPage(items, DEFAULT_OPTIONS, index, embedder);
+
+        expect(stats).toEqual({ scanned: 3, skipped: 0, indexed: 3, errors: 0 });
+        expect(calls).toEqual([texts, texts.slice(0, 2), texts.slice(2)]);
     });
 
     test('bisects a malformed embedding result, records its exact failure, and keeps healthy items', async () => {
@@ -615,6 +637,16 @@ describe('vector backfill runner with injected services', () => {
         expect(runtime.embedder.encode).toHaveBeenCalledTimes(1);
         expect(runtime.index.entries.map(entry => entry.sk)).toEqual(['FILE#item-1']);
         expect(runtime.write.mock.calls.map(call => call[0]).join('')).toContain('Scanned: 2\n  Skipped (up-to-date): 1\n  Indexed: 1\n  Errors: 0');
+    });
+
+    test('sleeps for the final millisecond needed to meet the page budget', async () => {
+        const runtime = makeRuntime([{ items: [], nextCursor: 'next' }, { items: [] }]);
+        runtime.now.mockReturnValueOnce(0).mockReturnValueOnce(9999).mockReturnValue(10_000);
+
+        await main(['bun', 'script'], runtime.deps);
+
+        expect(runtime.sleep).toHaveBeenCalledTimes(1);
+        expect(runtime.sleep).toHaveBeenCalledWith(1);
     });
 
     test('continues pagination without sleeping when page processing already spent the budget', async () => {

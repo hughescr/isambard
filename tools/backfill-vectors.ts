@@ -370,6 +370,7 @@ export async function main(argv: string[] = process.argv, deps: BackfillDependen
             // At --rate-limit-rcu-per-sec reads/sec, one page should take at least minPageIntervalMs.
             if(cursor) {
                 const elapsed = deps.now() - pageStartMs;
+                // Stryker disable next-line NumberLiteralValue: any non-positive floor is skipped by the sleepMs > 0 guard below, so 0 and -1 are indistinguishable
                 const sleepMs = Math.max(0, minPageIntervalMs - elapsed);
                 if(sleepMs > 0) {
                     // eslint-disable-next-line no-await-in-loop -- intentional sleep for rate limiting between pages
@@ -408,4 +409,5 @@ export async function runBackfillCli(isMain: boolean, run: () => Promise<void>):
     }
 }
 
+// Stryker disable next-line AwaitDrop: only observable when run as the real CLI against production DynamoDB, which tests cannot safely exercise
 await runBackfillCli(import.meta.main, main);

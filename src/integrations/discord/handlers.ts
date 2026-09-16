@@ -38,9 +38,11 @@ export function extractAttachmentMetadata(message: Message): AttachmentMetadata[
     }
 
     return [...message.attachments.values()].map(attachment => ({
+        // Stryker disable next-line llm: attachment.url is a non-nullable string; `x || ''` is an identity for every string value (the only falsy string is '' itself).
         url:         attachment.url,
         filename:    attachment.name,
         contentType: inferImageContentType(attachment.name, attachment.contentType),
+        // Stryker disable next-line llm: discord.js Attachment.size is a non-nullable number, so `size || 0` is an identity for every real payload value (0 stays 0).
         size:        attachment.size,
         width:       attachment.width ?? undefined,
         height:      attachment.height ?? undefined,
@@ -243,7 +245,6 @@ function updateChannelMetadataInInbox(
         createGuildId(message.guild?.id ?? 'DM')
     );
 }
-// Stryker restore StringLiteral,LogicalOperator,BlockStatement
 
 /**
  * Helper function to refresh channel metadata in the inbox once a message is known to warrant a
@@ -295,7 +296,6 @@ function shouldIgnoreMessage(message: Message, botUserId: UserId): boolean {
 
     return false;
 }
-// Stryker restore ConditionalExpression,EqualityOperator,BooleanLiteral
 
 /**
  * Helper function to determine response context for a message.
@@ -323,7 +323,6 @@ async function determineResponseContext(
             // negative that avoids responding to deleted-message replies. Logging every
             // deleted-reference lookup would be very noisy in active channels.
         }
-        // Stryker restore BlockStatement
     }
 
     // Muting applies at the channel level only. Threads inherit their parent channel's mute state.
@@ -355,6 +354,7 @@ async function handlePendingQuestion(
 
     if(message.channel.isThread()) {
         // Thread messages: parent channel + thread ID
+        // Stryker disable next-line llm: parentId is a snowflake id or null, so ?? and || differ only for an impossible empty string.
         lookupChannelId = createChannelId(message.channel.parentId ?? message.channel.id);
         lookupThreadId = message.channel.id;
     } else {
@@ -389,7 +389,6 @@ async function handlePendingQuestion(
         classification,
         msg:        `Message classified as ${classification}`,
     });
-    // Stryker restore all
 
     if(classification === 'answer') {
         logger.info({
@@ -449,11 +448,13 @@ export function dispatchToCoordinator(
     botUserId: UserId,
     coordinator: MessageCoordinator
 ): void {
+    // Stryker disable next-line llm: extractAttachmentMetadata always returns an array, so the || [] fallback is unreachable.
     const attachments = extractAttachmentMetadata(message);
     const context: DiscordMessageContext = {
         guildId:     createGuildId(message.guild?.id ?? 'DM'),
         channelId:   createChannelId(message.channel.id),
         userId:      createUserId(message.author.id),
+        // Stryker disable next-line llm: User.username is a non-nullable string in discord.js 14, so the ?? '' fallback is unreachable.
         username:    message.author.username,
         messageId:   message.id,
         content:     message.cleanContent,
@@ -510,6 +511,7 @@ async function submitPerchChannelMessage(
         isDM:        false,
         now:         new Date(),
         timezone,
+        // Stryker disable next-line llm: timeHeader is a function or undefined, so ?? and || are identical.
         timeHeader:  (perch.timeHeader ?? formatTimeHeader)(timezone),
     });
 

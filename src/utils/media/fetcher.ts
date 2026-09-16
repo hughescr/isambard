@@ -112,7 +112,7 @@ export async function fetchImages(
     attachments: MediaFetchMetadata[]
 ): Promise<FetchImagesResult> {
     const results = await Promise.all(
-
+        // Stryker disable next-line llm: fetchImage is async, so map yields Promise objects, which are always truthy; a filter(Boolean) on them removes nothing and null results are already skipped below
         attachments.map(attachment => fetchImage(attachment))
     );
 
@@ -124,8 +124,10 @@ export async function fetchImages(
             continue;  // Skipped (too large, unsupported type)
         }
         if(result.success) {
+            // Stryker disable next-line llm: fetchImage builds image as an object literal on every success path, so result.image is always truthy and a `|| null` fallback is unreachable
             images.push(result.image);
         } else {
+            // Stryker disable next-line llm: fetchImage builds failure as an object literal on both failure paths, so result.failure is always truthy and a `|| {}` fallback is unreachable
             failures.push(result.failure);
         }
     }

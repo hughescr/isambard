@@ -80,6 +80,18 @@ describe('PersonAllowlist.load()', () => {
         expect(allowlist.isAllowed('email', 'Straße@example.com')).toBe(true);
         expect(allowlist.isAllowed('email', 'STRASSE@example.com')).toBe(false);
     });
+    test('defensively copies the loaded personIds set so later mutation of the source set does not leak in', async () => {
+        const sourceSet = new Set<string>([ALICE_ID]);
+        ddbMock.on(GetCommand).resolves({ Item: { personIds: sourceSet } });
+        (mockBackend.getContact as ReturnType<typeof mock>).mockResolvedValue(ALICE_CONTACT);
+
+        const allowlist = makeAllowlist();
+        await allowlist.load();
+
+        sourceSet.add(BOB_ID);
+        expect(allowlist.isPersonAllowed(BOB_ID)).toBe(false);
+    });
+
     test('bounds contact reads while allowing queued reads to start as slots free', async () => {
         const ids = Array.from({ length: 10 }, (_, index) => createContactId(`person-${index}`));
         const gates = new Map(ids.map(id => [id, deferred<Contact | undefined>()]));
@@ -464,6 +476,10 @@ describe('PersonAllowlist.addPerson()', () => {
             },
         });
         expect((transactItems[0] as { Put: { Item: Record<string, unknown> } }).Put.Item.addedAt).toBeDefined();
+        // Exact ISO-8601 shape (single trailing 'Z') — catches an accidental extra
+        // character appended to new Date().toISOString().
+        expect((transactItems[0] as { Put: { Item: Record<string, unknown> } }).Put.Item.addedAt)
+            .toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
         // Second item: Update the INDEX StringSet
         expect(transactItems[1]).toMatchObject({
@@ -482,6 +498,17 @@ describe('PersonAllowlist.addPerson()', () => {
             personId: ALICE_ID,
             msg:      'PersonAllowlist: person added',
         }));
+    });
+
+    test('propagates a TransactWriteCommand rejection from the DynamoDB write', async () => {
+        const writeError = new Error('ddb transact failed');
+        ddbMock.on(TransactWriteCommand).rejects(writeError);
+
+        const allowlist = makeAllowlist();
+        await expect(allowlist.addPerson(ALICE_ID, { addedBy: 'outbound-approval' })).rejects.toThrow('ddb transact failed');
+
+        // In-memory state must not have been updated after a rejected write
+        expect(allowlist.isPersonAllowed(ALICE_ID)).toBe(false);
     });
 
     test('after addPerson, isAllowed returns true for that person\'s identifiers', async () => {
@@ -572,6 +599,25 @@ describe('PersonAllowlist.removePerson()', () => {
             personId: ALICE_ID,
             msg:      'PersonAllowlist: person removed',
         }));
+    });
+
+    test('propagates a TransactWriteCommand rejection from the DynamoDB delete', async () => {
+        ddbMock.on(GetCommand).resolves({
+            Item: { personIds: new Set([ALICE_ID]) },
+        });
+        (mockBackend.getContact as ReturnType<typeof mock>)
+            .mockResolvedValue(ALICE_CONTACT);
+
+        const allowlist = makeAllowlist();
+        await allowlist.load();
+
+        const writeError = new Error('ddb transact failed');
+        ddbMock.on(TransactWriteCommand).rejects(writeError);
+
+        await expect(allowlist.removePerson(ALICE_ID)).rejects.toThrow('ddb transact failed');
+
+        // In-memory state must not have been purged after a rejected write
+        expect(allowlist.isPersonAllowed(ALICE_ID)).toBe(true);
     });
 
     test('after removePerson, isAllowed returns false for that person\'s identifiers', async () => {
@@ -792,6 +838,24 @@ describe('PersonAllowlist.list()', () => {
         expect('notes' in (entries[1] ?? {})).toBe(false);
     });
 
+    test('preserves an explicit empty-string notes value from a row', async () => {
+        const aliceEntry = {
+            PK:       'PERSON#ALLOWLIST',
+            SK:       `PERSON#${ALICE_ID}`,
+            personId: ALICE_ID,
+            notes:    '',
+            addedAt:  '2026-01-01T00:00:00.000Z',
+            addedBy:  'discord-command',
+        };
+        ddbMock.on(QueryCommand).resolves({ Items: [aliceEntry] });
+
+        const allowlist = makeAllowlist();
+        const entries = await allowlist.list();
+
+        expect(entries[0]?.notes).toBe('');
+        expect('notes' in (entries[0] ?? {})).toBe(true);
+    });
+
     test('uses correct QueryCommand key expression', async () => {
         ddbMock.on(QueryCommand).resolves({ Items: [] });
 
@@ -935,5 +999,20 @@ describe('PersonAllowlist.addPerson() notes', () => {
         const putItem = (txCalls[0]?.args[0].input.TransactItems![0] as { Put: { Item: Record<string, unknown> } }).Put.Item;
         // notes key must be absent entirely — not just undefined — to avoid spurious DynamoDB null attribute
         expect('notes' in putItem).toBe(false);
+    });
+
+    test('includes an explicit empty-string notes value (distinct from omitted)', async () => {
+        ddbMock.on(TransactWriteCommand).resolves({});
+        (mockBackend.getContact as ReturnType<typeof mock>)
+            .mockResolvedValue(ALICE_CONTACT);
+
+        const allowlist = makeAllowlist();
+        // notes === '' is `!== undefined` but falsy — this distinguishes the two checks
+        await allowlist.addPerson(ALICE_ID, { notes: '', addedBy: 'outbound-approval' });
+
+        const txCalls = ddbMock.commandCalls(TransactWriteCommand);
+        const putItem = (txCalls[0]?.args[0].input.TransactItems![0] as { Put: { Item: Record<string, unknown> } }).Put.Item;
+        expect('notes' in putItem).toBe(true);
+        expect(putItem.notes).toBe('');
     });
 });

@@ -258,6 +258,42 @@ describe('CalDAVClient.discoverCalendars', () => {
         expect(err.context).toMatchObject({ serverUrl: 'https://bad.example.com' });
     });
 
+    test('originalError context carries the actual failure, not a blank string', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<never> => {
+            throw new Error('Connection refused');
+        });
+
+        const client = createClient();
+        let thrown: unknown;
+        try {
+            await client.discoverCalendars('https://bad.example.com', 'user', 'pass');
+        } catch (e) {
+            thrown = e;
+        }
+
+        expect(thrown).toBeInstanceOf(CaldavAuthError);
+        const err = thrown as CaldavAuthError;
+        expect(err.context?.originalError).toBe(String(new Error('Connection refused')));
+    });
+
+    test('does not leak the username into CaldavAuthError context', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<never> => {
+            throw new Error('Connection refused');
+        });
+
+        const client = createClient();
+        let thrown: unknown;
+        try {
+            await client.discoverCalendars('https://bad.example.com', 'secret-user', 'pass');
+        } catch (e) {
+            thrown = e;
+        }
+
+        expect(thrown).toBeInstanceOf(CaldavAuthError);
+        const err = thrown as CaldavAuthError;
+        expect(Object.keys(err.context ?? {}).toSorted((a, b) => a.localeCompare(b))).toEqual(['originalError', 'serverUrl']);
+    });
+
     test('labels discover-calendar timeouts as fetchCalendars', async () => {
         mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
         mockFetchCalendars.mockImplementation((): Promise<never> => new Promise(() => {}));
@@ -761,6 +797,25 @@ describe('CalDAVClient.getEvents', () => {
         // No CONNECT_SUCCESS when already online (no failures tracked)
         expect(sendEvent).not.toHaveBeenCalledWith('caldav', 'CONNECT_SUCCESS');
     });
+
+    test('CONNECTION_LOST stringifies a non-Error failure value', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<never> => {
+            // Non-Error rejection: exercises the String(error) fallback in the health event payload
+            throw 'socket hang up';
+        });
+
+        const { registry, sendEvent } = makeHealthRegistry();
+        const client = createClient({ healthRegistry: registry, cacheTtlMs: 0 });
+        const server = makeServer();
+        const end    = new Date('2025-06-18T12:00:00.000Z');
+
+        await client.getEvents([server], BASE_DATE, end);
+        await client.getEvents([server], BASE_DATE, end);
+        await client.getEvents([server], BASE_DATE, end);
+
+        expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', { error: 'socket hang up' });
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -1041,6 +1096,16 @@ describe('CalDAVClient event extraction', () => {
         });
     });
 
+    test('maps a one-off VEVENT start and end to their own distinct instants', async () => {
+        const { events } = await extractEvents([makeVEvent({
+            start: new Date('2025-06-15T14:00:00.000Z'),
+            end:   new Date('2025-06-15T15:30:00.000Z'),
+        })]);
+
+        expect(events[0]?.start).toEqual(new Date('2025-06-15T14:00:00.000Z'));
+        expect(events[0]?.end).toEqual(new Date('2025-06-15T15:30:00.000Z'));
+    });
+
     test('uses (No title) when summary is missing', async () => {
         const { events } = await extractEvents([makeVEvent({ summary: undefined })]);
         expect(events[0]?.summary).toBe('(No title)');
@@ -1134,13 +1199,13 @@ describe('CalDAVClient event extraction', () => {
         expect(events[0]?.status).toBe('cancelled');
     });
 
-    test('status is undefined for unknown status string', async () => {
-        const { events } = await extractEvents([makeVEvent({ status: 'UNKNOWN_STATUS' })]);
-        expect(events[0]?.status).toBeUndefined();
-    });
-
-    test('status is undefined when not present', async () => {
-        const { events } = await extractEvents([makeVEvent({ status: undefined })]);
+    test.each([
+        ['unknown status string', 'UNKNOWN_STATUS'],
+        ['not present', undefined],
+        ['whitespace-padded, not trimmed before comparing', ' CONFIRMED '],
+        ['a superstring that merely contains "confirmed"', 'UNCONFIRMED'],
+    ])('status is undefined for %s', async (_label, status) => {
+        const { events } = await extractEvents([makeVEvent({ status })]);
         expect(events[0]?.status).toBeUndefined();
     });
 
@@ -1257,8 +1322,8 @@ describe('CalDAVClient event extraction', () => {
         const { events } = await extractEvents([
             makeVEvent({ start: startStr, end: endStr }),
         ]);
-        expect(events[0]?.start).toBeInstanceOf(Date);
-        expect(events[0]?.end).toBeInstanceOf(Date);
+        expect(events[0]?.start).toEqual(new Date(startStr));
+        expect(events[0]?.end).toEqual(new Date(endStr));
     });
 
     // --- timezone extraction ---

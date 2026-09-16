@@ -37,7 +37,6 @@ export const DEFAULT_SIGMOID_PARAMS: SigmoidParams = {
     midpoint:  5,
     lambda:    Math.LN2 / (7 * 24 * 60 * 60 * 1000), // 7-day half-life in milliseconds
 };
-/* Stryker restore ObjectLiteral */
 
 /**
  * Calculate priority score using sigmoid activation and exponential decay
@@ -72,6 +71,7 @@ export function sigmoidScore(
 
     // Frequency component: sigmoid activation
     // 1 / (1 + e^(-steepness * (clampedCount - midpoint)))
+    // Stryker disable next-line llm: Math.pow(Math.exp(1), x) is the same function as Math.exp(x); the score diverges by at most one ulp, unobservable without pinning an exact float literal
     const frequencyScore = 1 / (1 + Math.exp(-steepness * (clampedCount - midpoint)));
 
     // Recency component: exponential decay

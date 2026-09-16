@@ -169,6 +169,13 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         expect(params.conversationConductor.submit).toHaveBeenCalled();
     });
 
+    test('configures the MessageCoordinator with a 250ms debounce window', () => {
+        const params = makeConductorParams();
+        const config = captureConfig(params);
+
+        expect(config.debounceMs).toBe(250);
+    });
+
     test('onProcessingEnd is a no-op in conductor mode — the ledger shim is the sole writer of the idle transition', () => {
         const params = makeConductorParams();
         const config = captureConfig(params);
@@ -709,5 +716,57 @@ describe('processAttachments', () => {
         await processAttachments([context('message-1', [document])]);
 
         expect(mockLogger.info).not.toHaveBeenCalled();
+    });
+
+    test('treats a contentType that merely contains "video/" without starting with it as a non-video attachment', async () => {
+        const weird = { filename: 'weird.bin', contentType: 'application/x-video/octet-stream', url: 'https://example.test/weird.bin', size: 10 };
+        spies.push(spyOn(attachmentsModule, 'saveNonImageAttachment').mockResolvedValue({
+            localPath: '/tmp/weird.bin', originalFilename: 'weird.bin', contentType: 'application/x-video/octet-stream', size: 10,
+        }));
+
+        const result = await processAttachments([context('message-1', [weird])]);
+
+        expect(result.contentAdditions).toEqual(['[Attached file: /tmp/weird.bin (application/x-video/octet-stream, 10B)]']);
+    });
+
+    test('appends multiple image-fetch failures in encounter order (push, not unshift)', async () => {
+        const image1 = { filename: 'a.png', contentType: 'image/png', url: 'https://example.test/a.png', size: 1 };
+        const image2 = { filename: 'b.png', contentType: 'image/png', url: 'https://example.test/b.png', size: 1 };
+        const failureA = { filename: 'a.png', contentType: 'image/png', size: 1, error: 'timeout' };
+        const failureB = { filename: 'b.png', contentType: 'image/png', size: 1, error: 'refused' };
+        spies.push(spyOn(attachmentsModule, 'fetchImages').mockResolvedValue({ images: [], failures: [failureA, failureB] }));
+
+        const result = await processAttachments([context('message-1', [image1, image2])]);
+
+        expect(result.contentAdditions).toEqual([
+            '[Image fetch failed: a.png - timeout]',
+            '[Image fetch failed: b.png - refused]',
+        ]);
+    });
+
+    test('preserves fetched image order (no implicit reversal)', async () => {
+        const imgA = { filename: 'a.png', mediaType: 'image/png' as const, base64Data: 'YQ==', originalSize: 1, width: 1, height: 1 };
+        const imgB = { filename: 'b.png', mediaType: 'image/png' as const, base64Data: 'Yg==', originalSize: 1, width: 1, height: 1 };
+        const attA = { filename: 'a.png', contentType: 'image/png', url: 'https://example.test/a.png', size: 1 };
+        const attB = { filename: 'b.png', contentType: 'image/png', url: 'https://example.test/b.png', size: 1 };
+        spies.push(spyOn(attachmentsModule, 'fetchImages').mockResolvedValue({ images: [imgA, imgB], failures: [] }));
+
+        const result = await processAttachments([context('message-1', [attA, attB])]);
+
+        expect(result.images).toEqual([imgA, imgB]);
+    });
+
+    test('propagates a later non-image save rejection through the recursive await chain', async () => {
+        const first = { filename: 'first.txt', contentType: 'text/plain', url: 'https://example.test/first.txt', size: 10 };
+        const second = { filename: 'second.txt', contentType: 'text/plain', url: 'https://example.test/second.txt', size: 10 };
+        const saveError = new Error('second save exploded');
+        spies.push(spyOn(attachmentsModule, 'saveNonImageAttachment').mockImplementation(async (attachment) => {
+            if(attachment.filename === 'second.txt') {
+                throw saveError;
+            }
+            return { localPath: '/tmp/first.txt', originalFilename: 'first.txt', contentType: 'text/plain', size: 10 };
+        }));
+
+        await expect(processAttachments([context('message-1', [first, second])])).rejects.toThrow(saveError);
     });
 });

@@ -591,6 +591,25 @@ describe('retryAsync', () => {
         });
     });
 
+    describe('Mutation testing: awaited backoff sleep', () => {
+        it('should propagate a rejection from the sleep dep instead of retrying immediately', async () => {
+            const sleepError = new Error('sleep failed');
+            const operation = mock(() => Promise.reject(new Error('transient failure')));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'transient failure' }));
+            const failingSleep = mock(() => Promise.reject(sleepError));
+
+            await expect(retryAsync(operation, {
+                policy: defaultPolicy,
+                classifier,
+                deps:   { ...deps, sleep: failingSleep },
+            })).rejects.toThrow('sleep failed');
+
+            // A dropped `await` would swallow the sleep failure and start the next attempt immediately.
+            expect(operation).toHaveBeenCalledTimes(1);
+            expect(failingSleep).toHaveBeenCalledTimes(1);
+        });
+    });
+
     describe('Default behavior', () => {
         it('should use default policy when not provided', async () => {
             const operation = mock(() => Promise.resolve('success'));

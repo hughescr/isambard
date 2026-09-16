@@ -100,9 +100,11 @@ export function createIngressGate<T extends IngressGateMessage>(options: CreateI
 
             state = 'open';
             const toDrain = buffer;
+            // Stryker disable next-line llm: buffer is never read once the gate leaves 'buffering' (no transition back), so leaving the drained array aliased there is behaviourally identical; clearing it is memory hygiene only
             buffer = [];
 
             for(const message of toDrain) {
+                // Stryker disable next-line llm: `|| false` on a boolean is a no-op; Set.has always returns a boolean, so the disjunction is semantically identical
                 if(!replayedIds.has(message.id)) {
                     onDrain(message);
                 }

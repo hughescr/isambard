@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, mock, beforeEach, spyOn } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { Client } from 'discord.js';
+import { ButtonStyle, type Client } from 'discord.js';
 import { mockLogger } from '../../../../setup';
 import type { NotifyParams } from '@/agent';
 import { ChannelNotAccessibleError } from '@/errors';
@@ -241,6 +241,21 @@ describe('setupEmail — isSendableChannel type guard', () => {
         expect(metadata).toEqual({ priority: 'high', type: 'email_approval' });
     });
 
+    it('creates distinct, correctly styled approval actions that target the requested draft', async () => {
+        const mockSend = mock(async (_payload: unknown) => undefined);
+        options.client = { channels: { fetch: mock(async () => ({ send: mockSend })) } } as unknown as Client;
+        const result = await setupEmail(options);
+
+        await result.sendApprovalRequest('to@example.com', 'Test Subject', 321);
+
+        const payload = mockSend.mock.calls[0]?.[0] as { components: { toJSON: () => { components: { type: number, custom_id: string, label: string, style: ButtonStyle }[] } }[] };
+        expect(payload.components[0]?.toJSON().components).toEqual([
+            { type: 2, custom_id: 'email-send-approve:321', label: 'Approve', style: ButtonStyle.Success },
+            { type: 2, custom_id: 'email-send-approveallowlist:321', label: 'Approve + Allowlist...', style: ButtonStyle.Primary },
+            { type: 2, custom_id: 'email-send-reject:321', label: 'Reject', style: ButtonStyle.Danger },
+        ]);
+    });
+
     it('creates and initializes WildDuck when no client is provided, and logs the lifecycle', async () => {
         options.wildDuckClient = undefined;
         const initSpy = spyOn(WildDuckClient.prototype, 'init').mockResolvedValue(undefined);
@@ -251,6 +266,16 @@ describe('setupEmail — isSendableChannel type guard', () => {
         expect(mockLogger.info.mock.calls).toContainEqual(['Starting WildDuck client...']);
         expect(mockLogger.info.mock.calls).toContainEqual(['WildDuck client initialized']);
         expect(mockLogger.info.mock.calls).toContainEqual([{ msg: 'Email integration initialized' }]);
+        initSpy.mockRestore();
+    });
+
+    it('targets the configured WildDuck API URL when it creates the client', async () => {
+        options.wildDuckClient = undefined;
+        const initSpy = spyOn(WildDuckClient.prototype, 'init').mockResolvedValue(undefined);
+
+        const result = await setupEmail(options);
+
+        expect(result.wildDuckClient.getApiUrl()).toBe(MINIMAL_EMAIL_CONFIG.wildDuckApiUrl);
         initSpy.mockRestore();
     });
 

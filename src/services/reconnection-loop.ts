@@ -19,6 +19,7 @@ export interface ReconnectionLoop {
 }
 
 const DEFAULT_POLICY: Partial<RetryPolicy> = {
+    // Stryker disable next-line NumberLiteralValue: maxAttempts is inert here — the policy only feeds calculateDelay, which reads baseDelayMs/backoffMultiplier/jitterFraction/maxDelayMs, and 9 and 10 both pass retryPolicySchema
     maxAttempts:       10,
     baseDelayMs:       1000,
     maxDelayMs:        300_000,

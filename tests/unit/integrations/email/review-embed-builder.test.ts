@@ -294,6 +294,12 @@ describe('buildOutboundApprovalEmbed', () => {
         expect(result.embed.toJSON().title).toContain('Outbound');
     });
 
+    test('creates embed with blue color', () => {
+        const result = buildOutboundApprovalEmbed({ to: 'craig@example.com', subject: 'Hi', draftUid: 99 });
+        const data    = result.embed.toJSON();
+        expect(data.color).toBe(0x00_55_FF);
+    });
+
     test('embed includes To field', () => {
         const result = buildOutboundApprovalEmbed({ to: 'craig@example.com', subject: 'Hi', draftUid: 99 });
         const field  = result.embed.toJSON().fields?.find(f => f.name === 'To');
@@ -303,6 +309,17 @@ describe('buildOutboundApprovalEmbed', () => {
     test('embed includes Subject field', () => {
         const result = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Test Subject', draftUid: 99 });
         const field  = result.embed.toJSON().fields?.find(f => f.name === 'Subject');
+        expect(field?.value).toBe('Test Subject');
+    });
+
+    test('Subject field is the subject even when cc is present (not the first cc address)', () => {
+        const result = buildOutboundApprovalEmbed({
+            to:       'a@b.com',
+            subject:  'Test Subject',
+            draftUid: 99,
+            cc:       ['cc@b.com'],
+        });
+        const field = result.embed.toJSON().fields?.find(f => f.name === 'Subject');
         expect(field?.value).toBe('Test Subject');
     });
 
@@ -326,11 +343,27 @@ describe('buildOutboundApprovalEmbed', () => {
         expect(approve).toBeDefined();
     });
 
+    test('Approve button uses the Success style', () => {
+        const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
+        const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
+        const approve = buttons.find(b => b.custom_id === 'email-send-approve:42');
+        // ButtonStyle.Success = 3
+        expect(approve?.style).toBe(3);
+    });
+
     test('actionRow has Approve+Allowlist button with correct customId', () => {
         const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
         const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
         const btn     = buttons.find(b => b.custom_id === 'email-send-approveallowlist:42');
         expect(btn).toBeDefined();
+    });
+
+    test('Approve+Allowlist button uses the Primary style', () => {
+        const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
+        const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
+        const btn     = buttons.find(b => b.custom_id === 'email-send-approveallowlist:42');
+        // ButtonStyle.Primary = 1
+        expect(btn?.style).toBe(1);
     });
 
     test('actionRow has Reject button with correct customId', () => {

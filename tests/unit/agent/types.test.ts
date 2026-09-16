@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import type { AgentStreamEvent, SystemEvent } from '../../../src/agent/types';
+import { channelIdSchema, userIdSchema, type AgentStreamEvent, type SystemEvent } from '../../../src/agent/types';
+
+describe('platform identifier schemas', () => {
+    it('requires a non-empty value for both identifier brands', () => {
+        for(const schema of [channelIdSchema, userIdSchema]) {
+            expect(schema.safeParse('').success).toBe(false);
+            expect(schema.safeParse('x').success).toBe(true);
+        }
+    });
+});
 
 // Compile-time-only assertions: the widened SystemEvent.subtype union and the new optional
 // ResultEvent fields are checked with `satisfies`. Each describe carries exactly one runtime

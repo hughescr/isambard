@@ -91,6 +91,7 @@ function pad2(value: number): string {
 
 /** `m:ss`, or `h:mm:ss` once past an hour. Negative input reads as zero. */
 function formatDuration(milliseconds: number): string {
+    // Stryker disable next-line llm, NumberLiteralValue: whole-second flooring makes moving the clamp or raising its floor to 1 ms unobservable.
     const totalSeconds = Math.floor(Math.max(0, milliseconds) / 1000);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -104,6 +105,7 @@ function formatDuration(milliseconds: number): string {
 
 /** `0`, `<1k`, `118k`, `1.2M` — enough precision to watch a number move, never more. */
 function formatTokens(tokens: number): string {
+    // Stryker disable next-line llm: tokens is a cumulative numeric counter, so it is never negative and loose/strict zero equality agree.
     if(tokens === 0) {
         return '0';
     }
@@ -115,6 +117,7 @@ function formatTokens(tokens: number): string {
     if(thousands < 1000) {
         return `${thousands}k`;
     }
+    // Stryker disable next-line llm: numeric separators are lexical, so 1_000_000 and 1000000 have the same value.
     return `${(tokens / 1_000_000).toFixed(1)}M`;
 }
 
@@ -125,6 +128,7 @@ function formatClock(at: Date, timeZone: string): string {
 
 /** Ten cells, `Math.floor(fraction * 10)` of them filled, saturating at both ends. */
 function renderMeter(fraction: number): string {
+    // Stryker disable next-line llm: the lower clamp absorbs the only floor/trunc difference, which occurs for negative non-integers.
     const filled = Math.max(0, Math.min(METER_CELLS, Math.floor(fraction * METER_CELLS)));
     return `${METER_FILLED.repeat(filled)}${METER_EMPTY.repeat(METER_CELLS - filled)}`;
 }
@@ -171,6 +175,7 @@ function summariseWorkflow(workflow: TaskBoardWorkflow): WorkflowSummary {
 
 /** Second line of a running workflow: where the run has got to, and its token spend so far. */
 function renderPhaseLine(summary: WorkflowSummary, totalTokens: number): string {
+    // Stryker disable next-line llm: agentsSeen is an array length, so < 1 and === 0 agree for every reachable value.
     if(summary.agentsSeen === 0) {
         return summary.firstPhase === undefined ? 'Starting' : `Starting${SEPARATOR}${summary.firstPhase}`;
     }
@@ -186,12 +191,14 @@ function renderPhaseLine(summary: WorkflowSummary, totalTokens: number): string 
 /** Meter, phase line, and — when there is both a running agent and a summary — the `↳` line. */
 function renderRunningWorkflowValue(task: TaskBoardTask, workflow: TaskBoardWorkflow): string {
     const summary = summariseWorkflow(workflow);
+    // Stryker disable next-line llm: agentsSeen is an array length, so <= 0 and === 0 agree for every reachable value.
     const agentCounts = summary.agentsSeen === 0
         ? ''
         : `${SEPARATOR}${summary.agentsDone} / ${summary.agentsSeen} agents finished`;
 
     const lines = [
         `${renderMeter(workflow.meterFraction)} ${summary.completedPhases} / ${summary.totalPhases} phases${agentCounts}`,
+        // Stryker disable next-line llm: totalTokens is materialised as a number, so || 0 differs only for unreachable NaN; 0 and -0 render alike.
         renderPhaseLine(summary, task.totalTokens),
     ];
     if(summary.runningAgent !== undefined && task.summary !== undefined) {
@@ -228,9 +235,11 @@ function renderTaskValue(task: TaskBoardTask): string {
 }
 
 function renderValue(task: TaskBoardTask): string {
+    // Stryker disable next-line llm: workflow?: TaskBoardWorkflow is undefined or an object, never null, so == and === against undefined agree.
     if(task.workflow === undefined) {
         return renderTaskValue(task);
     }
+    // Stryker disable next-line llm: both operands are strings, so == and === agree for every status value.
     return task.status === 'running'
         ? renderRunningWorkflowValue(task, task.workflow)
         : renderFinishedWorkflowValue(task, task.workflow);
@@ -251,7 +260,7 @@ function renderName(task: TaskBoardTask): string {
     const description = clip(task.description, DESCRIPTION_MAX);
     const segments: string[] = [];
     if(task.label !== undefined) {
-        // Stryker disable next-line llm: this guard narrows label to string, and every string satisfies s || '' === s.
+        // Stryker disable next-line llm, ArrayMethodSwap: the guard narrows label to string, and the empty segments array makes push/unshift identical.
         segments.push(task.label);
     }
     if(description.length > 0) {
@@ -317,6 +326,7 @@ function enforceTotalLimit(title: string, footer: string, fields: readonly Rende
     const limited: RenderedEmbedField[] = [];
     let excess = total - MAX_TOTAL_CHARS;
     for(const field of fields.toReversed()) {
+        // Stryker disable next-line llm: field.value comes from `clip(renderValue(task), 1024)` and is never empty, and clip() only distinguishes a negative max from 0 for empty text.
         const value = clip(field.value, field.value.length - excess);
         excess -= field.value.length - value.length;
         limited.unshift({ name: field.name, value });

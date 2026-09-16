@@ -32,7 +32,6 @@ const PREFIX_CONTACT_LOOKUP  = 'CONTACT_LOOKUP';
 const SK_PROFILE             = 'PROFILE';
 const GSI2PK_CONTACTS        = 'CONTACTS';
 const GSI2PK_CONTACT_LOOKUPS = 'CONTACT_LOOKUPS';
-// Stryker restore StringLiteral
 
 /**
  * Generates DynamoDB keys for Contact items
@@ -142,11 +141,15 @@ export const ContactKeyGenerator = {
      */
     parseLookupPK(pk: string): { platform: PlatformType, value: string } {
         const PREFIX = 'CONTACT_LOOKUP#';
+        // Stryker disable next-line llm: startsWith always returns a boolean, so ! and === false are equivalent.
         if(!pk.startsWith(PREFIX)) {
             throw new InvariantViolationError('ContactKeyGenerator.parseLookupPK', `Invalid lookup PK format: expected CONTACT_LOOKUP#..., got ${pk}`);
         }
+        // Stryker disable next-line llm: slice and substring are identical for a single non-negative start offset.
         const rest = pk.slice(PREFIX.length);
+        // Stryker disable next-line llm: a leading "#" either yields an empty or "#"-prefixed platform (rejected by platformTypeSchema) or trips the separator check; both only throw on malformed keys, which no caller distinguishes.
         const hashIndex = rest.indexOf('#');
+        // Stryker disable next-line llm: indexOf returns -1 as its only negative value, so === -1 and < 0 agree.
         if(hashIndex === -1) {
             throw new InvariantViolationError('ContactKeyGenerator.parseLookupPK', `Invalid lookup PK format: missing platform separator in ${pk}`);
         }

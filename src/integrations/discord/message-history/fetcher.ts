@@ -99,10 +99,12 @@ function transformMessage(message: Message): DiscordSearchResult {
         channelId: channelIdSchema.parse(message.channelId),
         guildId:   message.guildId ? guildIdSchema.parse(message.guildId) : null,
         author:    {
+            // Stryker disable next-line llm: message.author.id is a non-nullable string per discord.js types; the || '' fallback is unreachable without violating that contract.
             id:          message.author.id,
             username:    message.author.username,
             displayName: message.author.displayName,
         },
+        // Stryker disable next-line llm: message.content is non-nullable; '' || '' is identical for every permitted string value.
         content:   message.content,
         timestamp: message.createdAt.toISOString(),
         attachments,
@@ -170,6 +172,7 @@ function processBatch(
             break;
         }
 
+        // Stryker disable next-line ArrayMethodSwap: insertion order is unobservable because fetchMessages fully re-sorts by snowflake id before returning.
         messages.push(message);
 
         if(currentMessages.length + messages.length >= maxMessages) {
@@ -184,6 +187,7 @@ function processBatch(
 
 function pageOptions(cursor: string | undefined, remaining: number): { limit: number, before?: string } {
     const options: { limit: number, before?: string } = {
+        // Stryker disable next-line llm: for supported nonnegative limits, processBatch stops pagination once the count reaches maxMessages, so remaining is nonnegative and Math.abs is the identity
         limit: Math.min(DISCORD_API_MAX_MESSAGES, Math.max(1, remaining)),
     };
     if(cursor) {
@@ -240,6 +244,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
 
                 // Process batch using helper function
                 const batchResult = processBatch(batch, afterSnowflake, allMessages, maxMessages);
+                // Stryker disable next-line ArrayMethodSwap, llm: page accumulation order is unobservable because fetchMessages fully re-sorts by snowflake id before returning.
                 allMessages.push(...batchResult.messages);
                 hasMore ||= batchResult.hasMore;
 
@@ -296,6 +301,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
      * Returns only the messages that were successfully fetched.
      */
     async function fetchByIds(channelId: string, messageIds: string[]): Promise<DiscordSearchResult[]> {
+        // Stryker disable next-line llm: an array length is a nonnegative integer, so <= 0 and === 0 coincide
         if(messageIds.length === 0) {
             return [];
         }

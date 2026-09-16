@@ -199,6 +199,27 @@ describe('createShutdown', () => {
         expect(journal.flushCount).toBe(0);
     });
 
+    it('propagates a rejecting stopIngress() as a rejection of run()', async () => {
+        const clock = new FakeClock();
+        const journal = new FakeJournal();
+        const stopIngressError = new Error('stopIngress failed');
+        const stopIngress = mock(async () => {
+            throw stopIngressError;
+        });
+        const sessionShutdown = mock(async () => undefined);
+        const session: ShutdownSession = { name: 'conversation', shutdown: sessionShutdown };
+
+        const shutdown = createShutdown({
+            sessions: [session], journal, stopIngress, clock, turnWaitMs: 1000, deadlineMs: 5000, logger: makeLogger(),
+        });
+
+        await expect(shutdown.run()).rejects.toThrow(stopIngressError);
+
+        // Without the await, execution would have continued past stopIngress() into the
+        // session-shutdown phase; confirm it never got there.
+        expect(sessionShutdown).not.toHaveBeenCalled();
+    });
+
     it('second run() returns the same promise and never calls stopIngress or any session shutdown twice', async () => {
         const clock = new FakeClock();
         const journal = new FakeJournal();

@@ -132,7 +132,6 @@ export function buildOutboundApprovalEmbed(params: OutboundApprovalEmbedParams):
     const ccFields = params.cc && params.cc.length > 0
         ? [{ name: 'Cc', value: params.cc.join(', '), inline: true }]
         : [];
-    // Stryker restore BooleanLiteral
 
     const embed = new EmbedBuilder()
         .setTitle('Outbound Email Approval Required')
@@ -143,9 +142,11 @@ export function buildOutboundApprovalEmbed(params: OutboundApprovalEmbedParams):
             ...ccFields
         );
 
+    // Stryker disable next-line llm: draftUid is a required number, so the nullish fallback can never run.
+    const approveCustomId = `email-send-approve:${params.draftUid}`;
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-            .setCustomId(`email-send-approve:${params.draftUid}`)
+            .setCustomId(approveCustomId)
             .setLabel('Approve')
             .setStyle(ButtonStyle.Success),
         new ButtonBuilder()

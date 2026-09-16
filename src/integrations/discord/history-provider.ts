@@ -47,6 +47,7 @@ async function searchChannel(
         for(const msg of result.messages as RawDiscordMessage[]) {
             const id = msg.id;
             if(id) {
+                // Stryker disable next-line llm: id is truthy under the enclosing guard, so adding a fallback is behaviorally identical.
                 messages.push({ id, message: msg });
             }
         }

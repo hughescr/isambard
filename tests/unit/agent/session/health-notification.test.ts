@@ -139,13 +139,9 @@ describe('createHealthOutageCoalescer', () => {
         expect(notify).toHaveBeenCalledTimes(2);
     });
 
-    test('DEFAULT_HEALTH_OUTAGE_WINDOW_MS is a low single-digit-seconds value', () => {
-        expect(DEFAULT_HEALTH_OUTAGE_WINDOW_MS).toBeGreaterThan(0);
-        expect(DEFAULT_HEALTH_OUTAGE_WINDOW_MS).toBeLessThanOrEqual(9000);
-    });
-
-    test('DEFAULT_HEALTH_ALREADY_REPORTED_CAPACITY is a positive number', () => {
-        expect(DEFAULT_HEALTH_ALREADY_REPORTED_CAPACITY).toBeGreaterThan(0);
+    test('documented default values hold the five-second batch latency bound and 200-key memory budget', () => {
+        expect(DEFAULT_HEALTH_OUTAGE_WINDOW_MS).toBe(5000);
+        expect(DEFAULT_HEALTH_ALREADY_REPORTED_CAPACITY).toBe(200);
     });
 
     test('the "already reported" memory is a bounded FIFO: once past capacity, the oldest key is evicted and can notify again', () => {

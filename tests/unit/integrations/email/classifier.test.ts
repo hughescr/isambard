@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mockLogger, mockGenerateTextWithSystemPrompt, originalGenerateTextWithSystemPrompt } from '../../../setup';
 import { ClassifierError } from '@/errors';
 import { EmailClassifier } from '@/integrations/email/classifier';
+import { CLASSIFIER_SYSTEM_PROMPT } from '@/integrations/email/classifier-prompt';
 import type { EmailMetadata } from '@/integrations/email/types';
 
 // ---------------------------------------------------------------------------
@@ -550,9 +551,85 @@ describe('EmailClassifier', () => {
             const classifier = new EmailClassifier();
             await classifier.classify(makeEmail());
 
-            // System prompt should be non-empty and contain classifier instructions
-            expect(capturedSystemPrompt).toBeTruthy();
-            expect(typeof capturedSystemPrompt).toBe('string');
+            // Must be passed through unmodified - no appended or altered text
+            expect(capturedSystemPrompt).toBe(CLASSIFIER_SYSTEM_PROMPT);
+        });
+    });
+
+    describe('API error message construction', () => {
+        test('does not prefix the message with the error class name for a plain Error', async () => {
+            mockGenerateTextWithSystemPrompt.mockRejectedValue(new Error('Network error'));
+
+            const classifier = new EmailClassifier();
+
+            let caught: ClassifierError | undefined;
+            try {
+                await classifier.classify(makeEmail());
+            } catch (err) {
+                if(err instanceof ClassifierError) {
+                    caught = err;
+                }
+            }
+
+            expect(caught?.message).toBe('Classification API call failed: Network error');
+        });
+
+        test('stringifies a non-Error rejection value into the message', async () => {
+            mockGenerateTextWithSystemPrompt.mockRejectedValue('a plain string failure');
+
+            const classifier = new EmailClassifier();
+
+            let caught: ClassifierError | undefined;
+            try {
+                await classifier.classify(makeEmail());
+            } catch (err) {
+                if(err instanceof ClassifierError) {
+                    caught = err;
+                }
+            }
+
+            expect(caught?.message).toBe('Classification API call failed: a plain string failure');
+        });
+    });
+
+    describe('empty response guard', () => {
+        test('does not treat a whitespace-only response as empty', async () => {
+            mockGenerateTextWithSystemPrompt.mockResolvedValue('   ');
+
+            const classifier = new EmailClassifier();
+            const result = await classifier.classify(makeEmail());
+
+            // Whitespace is not '', so it should fall through to JSON parsing (which
+            // fails) rather than throwing the "empty response" ClassifierError.
+            expect(result.verdict).toBe('uncertain');
+            expect(result.reason).toBe('Failed to parse classifier response');
+        });
+    });
+
+    describe('user message header ordering', () => {
+        test('appends optional headers in order after the base headers', async () => {
+            let capturedUserMessage: string | undefined;
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string | string[], user: string) => {
+                capturedUserMessage = user;
+                return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
+            });
+
+            const classifier = new EmailClassifier();
+            await classifier.classify(makeEmail());
+
+            const msg      = capturedUserMessage!;
+            const fromIdx   = msg.indexOf('From:');
+            const authIdx   = msg.indexOf('Authentication-Results:');
+            const scoreIdx  = msg.indexOf('X-Rspamd-Score:');
+            const reportIdx = msg.indexOf('X-Rspamd-Report:');
+
+            expect(fromIdx).toBeGreaterThanOrEqual(0);
+            expect(authIdx).toBeGreaterThanOrEqual(0);
+            expect(scoreIdx).toBeGreaterThanOrEqual(0);
+            expect(reportIdx).toBeGreaterThanOrEqual(0);
+            expect(fromIdx).toBeLessThan(authIdx);
+            expect(authIdx).toBeLessThan(scoreIdx);
+            expect(scoreIdx).toBeLessThan(reportIdx);
         });
     });
 });

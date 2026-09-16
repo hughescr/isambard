@@ -641,6 +641,48 @@ describe('IdleStatusGenerator', () => {
                 expect(userPromptArg).toContain(`Current work:\n${taskContext}\n\nRecent conversation:`);
             });
 
+            test('should assemble all three sections most-stable first, with the status instruction last', async () => {
+                const taskContext = 'Working on: Test task';
+                const recentContext = 'Recent chat';
+                const thinkingContext = 'Still turning over the caching question';
+                const mockGetTaskContext = mock(() => Promise.resolve(taskContext));
+                const mockGetRecentContext = mock(() => Promise.resolve(recentContext));
+                const mockGetLastThinkingContent = mock(() => thinkingContext);
+
+                const generator = createIdleStatusGenerator({
+                    logger:                 mockLogger,
+                    activityType:           ActivityType.Custom,
+                    identityContext:        () => Promise.resolve('Test identity'),
+                    getTaskContext:         mockGetTaskContext,
+                    getRecentContext:       mockGetRecentContext,
+                    getLastThinkingContent: mockGetLastThinkingContent,
+                });
+
+                await generator.generate();
+
+                const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                // Anthropic prefix caching wants the most stable section first (task → recent →
+                // thinking); the last section must stay last (kills push → unshift on it), and the
+                // instruction after them is the first-person one (kills 'first' → 'third').
+                expect(userPromptArg).toBe(`Current work:\n${taskContext}\n\nRecent conversation:\n${recentContext}\n\nLast thoughts:\n${thinkingContext}\n\nStatus text (first person, under 50 chars):`);
+            });
+
+            test('should put the static prefix before the instructions with a blank line between', async () => {
+                const generator = createIdleStatusGenerator({
+                    logger:          mockLogger,
+                    activityType:    ActivityType.Custom,
+                    identityContext: () => Promise.resolve('Test identity'),
+                });
+
+                await generator.generate();
+
+                const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string;
+                // String-form system prompt (legacy path): identity-substituted prefix, blank line,
+                // then the instructions block — never the other way round and never one newline.
+                expect(systemPromptArg).toContain('Test identity\n\n## The Vibe');
+                expect(systemPromptArg.indexOf('## Who is Isambard')).toBeLessThan(systemPromptArg.indexOf('## The Vibe'));
+            });
+
             test.each([
                 { section: 'Who is Isambard', marker: '## Who is Isambard (Izzy)?', content: 'Test identity' },
                 { section: 'The Vibe', marker: '## The Vibe', content: 'You will be given a numbered list of "now-signals"' },
@@ -789,6 +831,40 @@ describe('IdleStatusGenerator', () => {
             expect(userPromptArg).toContain('1.  [perch] late-night exploration\n2.  [tool]');
         });
 
+        test('should append the status instruction after the menu for a single signal', async () => {
+            const signals = makeSignals().slice(0, 1);
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getLiveSignals:  () => Promise.resolve(signals),
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            // One signal still takes the menu branch (kills `signals.length > 0` → `> 1`, which
+            // would drop the status instruction and leave the model with an unguided prompt).
+            expect(userPromptArg).toContain('1.  [perch] late-night exploration');
+            expect(userPromptArg).toContain('Status text (first person, under 50 chars):');
+        });
+
+        test('should separate the signal menu from the status instruction with a blank line', async () => {
+            const signals = makeSignals();
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getLiveSignals:  () => Promise.resolve(signals),
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            // Menu and instruction are separate blocks (kills the '\n\n' → '\n' and '\n\n' → '' mutants)
+            expect(userPromptArg).toContain('3.  [time] late night\n\nStatus text (first person, under 50 chars):');
+        });
+
         test('should number signals starting from 1', async () => {
             const signals = makeSignals();
             const generator = createIdleStatusGenerator({
@@ -850,6 +926,24 @@ describe('IdleStatusGenerator', () => {
             const identityTextIdx = systemPromptArg[0].indexOf('My unique identity text');
             expect(identityHeaderIdx).toBeGreaterThan(-1);
             expect(identityTextIdx).toBeGreaterThan(identityHeaderIdx);
+        });
+
+        test('should substitute the whole {identityContext} placeholder, leaving no braces behind', async () => {
+            const signals = makeSignals();
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('My unique identity text'),
+                getLiveSignals:  () => Promise.resolve(signals),
+            });
+
+            await generator.generate();
+
+            const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[];
+            // Replacing only the inner text leaves the identity wrapped in braces, which the model
+            // reads as an unsubstituted placeholder rather than the identity block.
+            expect(systemPromptArg[0]).toContain('## Who is Isambard (Izzy)?\nMy unique identity text');
+            expect(systemPromptArg[0]).not.toContain('{My unique identity text}');
         });
 
         test('should include "now-signals" instructions in static instructions block', async () => {

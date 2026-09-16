@@ -67,6 +67,7 @@ export function diffAgenda(
     baseline: readonly AgendaEntry[] | undefined,
     current:  readonly AgendaEntry[]
 ): { added: AgendaEntry[], removed: AgendaEntry[], changed: AgendaEntry[], isFirst: boolean } {
+    // Stryker disable next-line llm: the declared type is array or undefined and both production calls pass Map.get, which cannot yield null, so strict and loose checks coincide.
     if(baseline === undefined) {
         return { added: [], removed: [], changed: [], isFirst: true };
     }

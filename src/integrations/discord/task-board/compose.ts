@@ -57,16 +57,20 @@ export interface ComposeTaskBoardsOptions {
 function addTask(groups: Map<string, BoardGroup>, task: BoardTaskInput, fallbackChannelId: string | undefined): void {
     const { turnId } = task;
     const channelId = task.channelId ?? fallbackChannelId;
+    // Stryker disable next-line llm: channelId and turnId are each string | undefined (every source is ??/?.-guarded, never null), so loose and strict undefined checks coincide.
     if(channelId === undefined || turnId === undefined) {
         return;
     }
 
     const key = `${channelId}:${turnId}`;
+    // Stryker disable next-line llm: Map.get already yields undefined for an absent key, key is a string, and every stored value is a truthy BoardGroup, so a has-guard, template key or || undefined fallback changes nothing.
     const group = groups.get(key);
     if(group === undefined) {
+        // Stryker disable next-line llm: key is already a string, so key + '' is the same Map key.
         groups.set(key, { key, channelId, turnId, tasks: [task] });
         return;
     }
+    // Stryker disable next-line llm: BoardGroup never escapes this module, so pushing onto its private task array and replacing the entry with a copied group compose identical boards.
     group.tasks.push(task);
 }
 
@@ -80,6 +84,7 @@ function composeWorkflow(workflow: BoardWorkflowInput | undefined): TaskBoardWor
     return {
         phases:        workflow.phases,
         agents:        workflow.agents,
+        // Stryker disable next-line llm: equivalent — with no agents `done` is necessarily 0, so `0 / (0 || 1) === 0`; otherwise `agents.length || 1` is `agents.length`.
         meterFraction: workflow.agents.length === 0 ? 0 : done / workflow.agents.length,
     };
 }
@@ -94,6 +99,7 @@ function composeTask(task: BoardTaskInput, now: Date): TaskBoardTask {
         status:      task.status,
         startedAt:   task.startedAt,
         finishedAt:  task.finishedAt,
+        // Stryker disable next-line llm: adding 0 to a getTime() number (NaN included) is the identity.
         elapsedMs:   (task.finishedAt ?? now).getTime() - task.startedAt.getTime(),
         summary:     task.progress?.summary,
         totalTokens: task.progress?.totalTokens ?? 0,
@@ -121,6 +127,7 @@ function boardState(running: boolean, failed: boolean): TaskBoardState {
 function composeBoard(group: BoardGroup, now: Date): TaskBoardView {
     const ordered = group.tasks.toSorted(compareTasks);
 
+    // Stryker disable next-line llm: some(...) returning true implies ordered.length > 0, while false short-circuits an added && length check, so the extra condition is redundant.
     const running = ordered.some(task => task.status === 'running');
     const failed = ordered.some(task => task.status === 'failed' || task.status === 'stopped');
     const state: TaskBoardState = boardState(running, failed);
@@ -148,13 +155,16 @@ function composeBoard(group: BoardGroup, now: Date): TaskBoardView {
 export function composeTaskBoards(ledgers: readonly BoardLedgerInput[], now: Date, options: ComposeTaskBoardsOptions = {}): TaskBoardView[] {
     const groups = new Map<string, BoardGroup>();
     for(const ledger of ledgers) {
+        // Stryker disable next-line llm: fallbackChannelIds is a record object or undefined (never null or another falsy value), so && and ?. index to the same value.
         const fallbackChannelId = options.fallbackChannelIds?.[ledger.role];
         for(const task of [...ledger.tasks, ...ledger.finishedTasks]) {
             addTask(groups, task, fallbackChannelId);
         }
     }
 
-    return [...groups.values()]
-        .map(group => composeBoard(group, now))
-        .toSorted(compareBoards);
+    // Stryker disable next-line llm: array spread and Array.from consume the same Map values iterator into the same ordered array.
+    const boards = [...groups.values()]
+        .map(group => composeBoard(group, now));
+    // Stryker disable next-line llm: compareBoards reads no `this`, so a null-bound comparator orders identically.
+    return boards.toSorted(compareBoards);
 }

@@ -2,14 +2,12 @@ import type { OutboxPriority } from './types';
 
 const OUTBOX_PK_PREFIX = 'OUTBOX#';
 const ITEM_SK_PREFIX   = 'ITEM#';
-// Stryker restore StringLiteral
 
 const PRIORITY_SORT: Record<OutboxPriority, string> = {
     high:   '0',
     medium: '1',
     low:    '2',
 };
-// Stryker restore StringLiteral,ObjectLiteral
 
 /**
  * DynamoDB key generator for outbox items.
@@ -46,10 +44,12 @@ export const OutboxKeyGenerator = {
         const withoutPrefix = sk.slice(ITEM_SK_PREFIX.length);
         // Format: {priorityChar}#{dedupeKey}
         const hashIdx = withoutPrefix.indexOf('#');
+        // Stryker disable next-line llm: indexOf returns only -1 or a non-negative index, so `=== -1` and `< 0` select the same branch.
         if(hashIdx === -1) {
             return undefined;
         }
         const priorityChar = withoutPrefix.slice(0, hashIdx);
+        // Stryker disable next-line llm: the guard above returns on -1, so hashIdx + 1 is non-negative and slice and substring return the same suffix.
         const dedupeKey = withoutPrefix.slice(hashIdx + 1);
 
         const priorityEntry = Object.entries(PRIORITY_SORT).find(([, v]) => v === priorityChar);

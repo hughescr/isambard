@@ -9,7 +9,6 @@ const WIKIPEDIA_HEADERS = {
     'User-Agent':     'Isambard/1.0 (https://github.com/hughescr/isambard)',
     'Api-User-Agent': 'Isambard/1.0 (https://github.com/hughescr/isambard)',
 };
-// Stryker restore ObjectLiteral,StringLiteral
 
 /**
  * Creates an MCP server for Wikipedia article discovery and retrieval.

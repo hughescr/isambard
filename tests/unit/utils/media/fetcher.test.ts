@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { mockHeicConvert, mockLogger, setHeicConvertImpl, resetHeicConvertImpl } from '../../../setup';
 import { fetchImage, fetchImages, FETCH_TIMEOUT_MS } from '@/utils/media/fetcher';
 import { type MediaFetchMetadata, MAX_IMAGE_SIZE_BYTES } from '@/utils/media/types';
@@ -22,6 +22,7 @@ describe('Media Fetcher', () => {
 
     afterEach(() => {
         resetHeicConvertImpl();
+        jest.useRealTimers();
         // Restore original fetch
         globalThis.fetch = originalFetch;
     });
@@ -337,6 +338,43 @@ describe('Media Fetcher', () => {
                 expect(result.failure.error).toContain('Invalid HEIC data');
             }
         });
+
+        test('aborts a stalled fetch exactly at FETCH_TIMEOUT_MS', async () => {
+            jest.useFakeTimers();
+
+            const metadata: MediaFetchMetadata = {
+                url:         'https://example.com/slow.jpg',
+                filename:    'slow.jpg',
+                contentType: 'image/jpeg',
+                size:        1024,
+            };
+
+            // A request that only ever settles if the signal handed to fetch aborts
+            const captured: { signal?: AbortSignal } = {};
+            mockFetch.mockImplementationOnce(async (_url: string, options?: RequestInit): Promise<Response> => new Promise<Response>((_resolve, reject) => {
+                captured.signal = options?.signal ?? undefined;
+                options?.signal?.addEventListener('abort', () => {
+                    reject(new Error('The operation was aborted'));
+                });
+            }));
+
+            const pending = fetchImage(metadata);
+
+            // One millisecond short of the deadline the request is still live
+            jest.advanceTimersByTime(FETCH_TIMEOUT_MS - 1);
+            expect(captured.signal?.aborted).toBe(false);
+
+            // ...and at the deadline the fetch is aborted, surfacing as a failure
+            jest.advanceTimersByTime(1);
+            expect(captured.signal?.aborted).toBe(true);
+
+            const result = await pending;
+            expect(result?.success).toBe(false);
+            if(result && !result.success) {
+                expect(result.failure.filename).toBe('slow.jpg');
+                expect(result.failure.error).toContain('aborted');
+            }
+        });
     });
 
     describe('fetchImages', () => {
@@ -474,6 +512,42 @@ describe('Media Fetcher', () => {
 
             expect(result.images).toHaveLength(0);
             expect(result.failures).toHaveLength(0);
+        });
+
+        test('reports multiple failures in attachment order', async () => {
+            const attachments: MediaFetchMetadata[] = [
+                {
+                    url:         'https://example.com/image1.jpg',
+                    filename:    'image1.jpg',
+                    contentType: 'image/jpeg',
+                    size:        1024,
+                },
+                {
+                    url:         'https://example.com/image2.jpg',
+                    filename:    'image2.jpg',
+                    contentType: 'image/jpeg',
+                    size:        2048,
+                },
+                {
+                    url:         'https://example.com/image3.jpg',
+                    filename:    'image3.jpg',
+                    contentType: 'image/jpeg',
+                    size:        4096,
+                },
+            ];
+
+            mockFetch.mockResolvedValueOnce({
+                ok:          true,
+                arrayBuffer: async () => Buffer.from('jpeg-data-1').buffer,
+            } as Response);
+            mockFetch.mockRejectedValueOnce(new Error('boom-2'));
+            mockFetch.mockRejectedValueOnce(new Error('boom-3'));
+
+            const result = await fetchImages(attachments);
+
+            expect(result.images.map(image => image.filename)).toEqual(['image1.jpg']);
+            expect(result.failures.map(failure => failure.filename)).toEqual(['image2.jpg', 'image3.jpg']);
+            expect(result.failures.map(failure => failure.error)).toEqual(['boom-2', 'boom-3']);
         });
 
         test('returns empty arrays for empty input', async () => {

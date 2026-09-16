@@ -12,6 +12,7 @@ export function resolveServer(servers: CalendarServerEntry[], input: string): Ca
         return null;
     }
     if(isCalendarServerId(input)) {
+        // Stryker disable next-line llm: find and filter()[0] return the same first match (or undefined) for a dense server array
         return servers.find(s => s.serverId === input) ?? null;
     }
 
@@ -22,6 +23,7 @@ export function resolveServer(servers: CalendarServerEntry[], input: string): Ca
         return null;
     }
     if(matches.length === 1) {
+        // Stryker disable next-line llm: after the length-one guard, index zero is defined and coincides with the last index
         return matches[0] ?? null;
     }
     throw new AmbiguousCalendarMatchError('server', input, matches.map(s => ({ id: s.serverId, label: s.description })));
@@ -47,6 +49,7 @@ export function resolveCalendar(
     const lower = input.toLowerCase();
     const matches = server.calendars.filter(c => c.label.toLowerCase() === lower);
 
+    // Stryker disable next-line llm: array length cannot be negative, so === 0 and <= 0 coincide
     if(matches.length === 0) {
         return null;
     }

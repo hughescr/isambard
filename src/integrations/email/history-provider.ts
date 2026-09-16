@@ -14,6 +14,7 @@ const DEFAULT_MAX_MESSAGES = 10;
  */
 function isSentMailFolder(message: string): boolean {
     const colonIdx = message.lastIndexOf(':');
+    // Stryker disable next-line llm: lastIndexOf yields only -1 or a non-negative index, so `> -1` equals `!== -1`, and after that guard slice(0, n) and substring(0, n) agree for n >= 0
     return colonIdx !== -1 && message.slice(0, colonIdx) === 'Sent Mail';
 }
 
@@ -24,6 +25,7 @@ function truncate(text: string, maxChars: number): string {
     if(text.length <= maxChars) {
         return text;
     }
+    // Stryker disable next-line llm: the sole caller passes the positive constant MAX_SUBJECT_CHARS, and slice(0, n) and substring(0, n) only differ for negative n
     return `${text.slice(0, maxChars)}...`;
 }
 
@@ -101,7 +103,6 @@ export class EmailHistoryProvider implements PlatformHistoryProvider {
             if(params.endTime && date > params.endTime) {
                 return false;
             }
-            // Stryker restore ConditionalExpression,LogicalOperator
             return true;
         });
 

@@ -300,6 +300,43 @@ describe('semantic_search MCP tool', () => {
             expect(text.endsWith('y'.repeat(200))).toBe(true);
         });
 
+        test('shows an empty layer verbatim rather than falling back to "unknown"', async () => {
+            (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
+                makeQueryResult('DIR#/identity', 'FILE#item1', 7, ''),
+            ]);
+            const item = makeItem({ path: '/identity/item1' as MemoryPath, content: 'some content' });
+            (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(item);
+
+            const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
+            const handler = getToolHandler(server, 'semantic_search');
+            const result = await handler({ query: 'test', limit: 5 });
+
+            const text = textContent(result.content[0]);
+            // An empty layer must render as nothing between "layer: " and "]" — a fallback
+            // to 'unknown' would change this substring.
+            expect(text).toContain('layer: ]');
+            expect(text).not.toContain('unknown');
+        });
+
+        test('an item whose content is missing at runtime surfaces as an error rather than an empty preview', async () => {
+            (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
+                makeQueryResult('DIR#/identity', 'FILE#item1', 7, 'identity'),
+            ]);
+            // Bypass the MemoryToolItemData['content'] string type to simulate a backend
+            // that returns an item without content at runtime.
+            const item = makeItem({ path: '/identity/item1' as MemoryPath, content: undefined as unknown as string });
+            (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(item);
+
+            const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
+            const handler = getToolHandler(server, 'semantic_search');
+            const result = await handler({ query: 'test', limit: 5 });
+
+            // Undefined content must not be silently coerced to an empty string preview:
+            // formatting it (content.slice) throws, and the outer catch reports the failure.
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Error in semantic search:');
+        });
+
         test('multiple results are separated by a blank line', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
                 makeQueryResult('DIR#/identity', 'FILE#item-a', 5, 'identity'),
@@ -392,6 +429,27 @@ describe('semantic_search MCP tool', () => {
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toContain('Error in semantic search: DynamoDB error');
+        });
+
+        test('gracefully stringifies a symbol thrown by embedder.encode', async () => {
+            (mockEmbedder.encode as ReturnType<typeof mock>).mockRejectedValue(Symbol('embed failure'));
+            const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
+            const handler = getToolHandler(server, 'semantic_search');
+
+            let outcome: { kind: 'result', result: CallToolResult } | { kind: 'error', error: unknown };
+            try {
+                outcome = { kind: 'result', result: await handler({ query: 'test', limit: 5 }) };
+            } catch (error) {
+                outcome = { kind: 'error', error };
+            }
+
+            // A non-Error thrown value (here a Symbol) must be converted with String(), not
+            // interpolated directly — interpolating a raw Symbol in a template literal throws.
+            expect(outcome.kind).toBe('result');
+            if(outcome.kind === 'result') {
+                expect(textContent(outcome.result.content[0])).toBe('Error in semantic search: Symbol(embed failure)');
+                expect(outcome.result.isError).toBe(true);
+            }
         });
     });
 

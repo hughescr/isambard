@@ -96,11 +96,11 @@ function formatHistoryEntries(displayName: string, entries: HistoryEntry[]): str
         const sameYear  = ts.getUTCFullYear() === now.getUTCFullYear();
         const sameMonth = ts.getUTCMonth() === now.getUTCMonth();
         const sameDay   = ts.getUTCDate() === now.getUTCDate();
-        // Stryker restore ConditionalExpression
         const isToday   = sameYear && sameMonth && sameDay;
         const timeStr = isToday
             ? `${String(ts.getUTCHours()).padStart(2, '0')}:${String(ts.getUTCMinutes()).padStart(2, '0')}`
             : ts.toISOString().slice(0, 10);
+        // Stryker disable next-line llm: summary is a string, so `${summary}` and `${summary || ''}` render identically for every value
         return `[${platformLabel(entry.platform)}] [${timeStr}] ${entry.summary}`;
     });
     return `--- Recent interactions with ${displayName} ---\n${lines.join('\n')}\n--- End of recent history ---`;
@@ -123,6 +123,7 @@ export class PersonHistoryCoordinator {
     private async resolveContact(identifier: string, platformHint: PlatformType | undefined): Promise<Contact[]> {
         if(platformHint) {
             const direct = await this.options.contactBackend.resolveIdentifier(platformHint, identifier);
+            // Stryker disable next-line llm: Contact[] length is a non-negative integer, so > 0 and >= 1 select the same arrays
             if(direct.length > 0) {
                 return direct;
             }
@@ -190,7 +191,9 @@ export class PersonHistoryCoordinator {
     private mergeProviderResults(results: PromiseSettledResult<HistoryEntry[]>[]): HistoryEntry[] {
         const allEntries: HistoryEntry[] = [];
         for(const result of results) {
+            // Stryker disable next-line llm: PromiseSettledResult has exactly two statuses, so === 'fulfilled' and !== 'rejected' are the same predicate.
             if(result.status === 'fulfilled') {
+                // Stryker disable next-line llm: result.value is a non-nullable HistoryEntry[] and arrays are always truthy, so the fallback is unreachable.
                 allEntries.push(...result.value);
             } else {
                 const reason: unknown = result.reason;

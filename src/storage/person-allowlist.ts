@@ -55,10 +55,13 @@ export class PersonAllowlist {
      * This lets `isAllowed('discord', <id-or-username>)` match either space.
      */
     private indexContact(contact: Contact, personId: ContactId): void {
+        // Stryker disable next-line llm: contact.identifiers is z.array(...).min(1) — never null/undefined by schema, so `|| []` is a type-guaranteed no-op
         for(const identifier of contact.identifiers) {
+            // Stryker disable next-line llm: identifier.value is a non-empty z.string() and reverseKey() already normalizes via .trim() internally, so a pre-trim here is idempotent and unobservable
             this.reverseMap.set(this.reverseKey(identifier.platform, identifier.value), personId);
         }
         if(contact._internal?.discordUserId) {
+            // Stryker disable next-line llm: reached only when the enclosing `contact._internal?.discordUserId` guard is truthy, which already guarantees contact._internal is non-null — the optional chain here is equivalent
             this.reverseMap.set(this.reverseKey('discord', contact._internal.discordUserId), personId);
         }
     }
@@ -78,6 +81,7 @@ export class PersonAllowlist {
             : new Set<string>();
 
         this.personIds  = new Set<string>(rawSet);
+        // Stryker disable next-line llm: generic type arguments are erased, so both forms construct the same empty Map.
         this.reverseMap = new Map<string, ContactId>();
 
         const limit = pLimit(ALLOWLIST_READ_CONCURRENCY);
@@ -91,9 +95,11 @@ export class PersonAllowlist {
             }
 
             // Each outcome resolves even on a read error, so later completions cannot reject unobserved.
+            // Stryker disable next-line llm: personId is the unchanged result of parsing this same personIdStr, so reparsing it is unobservable.
             const outcome = limit(() => this.contactBackend.getContact(personId))
                 .then(contact => ({ status: 'fulfilled', contact } as const))
                 .catch((error: unknown) => ({ status: 'rejected', error } as const));
+            // Stryker disable next-line ArrayMethodSwap: this array is only awaited for completion as a whole, so insertion order is unobservable.
             outstanding.push(outcome);
             return { kind: 'read', personId, outcome } as const;
         });
@@ -118,6 +124,7 @@ export class PersonAllowlist {
             }
         } catch (error) {
             // A failed prefix must not publish later entries, but all queued reads finish before load returns.
+            // Stryker disable next-line PromiseCombinatorSwap: every outstanding promise has a rejection handler and therefore resolves.
             await Promise.all(outstanding);
             throw error;
         }
@@ -130,6 +137,7 @@ export class PersonAllowlist {
      * O(1) — two map/set lookups.
      */
     isAllowed(platform: PlatformType, value: string): boolean {
+        // Stryker disable next-line llm: personId is only tested for falsiness, so a missing map value is indistinguishable from an empty string.
         const personId = this.reverseMap.get(this.reverseKey(platform, value));
         if(!personId) {
             return false;
@@ -175,6 +183,7 @@ export class PersonAllowlist {
                         Key:                       { PK, SK: SK_INDEX },
                         UpdateExpression:          'ADD #personIds :newId',
                         ExpressionAttributeNames:  { '#personIds': 'personIds' },
+                        // Stryker disable next-line llm: Set construction dedups duplicate elements — new Set([id]) and new Set([id, id]) are indistinguishable in size/content/marshalling
                         ExpressionAttributeValues: { ':newId': new Set([personId]) },
                     },
                 },
@@ -261,7 +270,9 @@ export class PersonAllowlist {
                 },
                 ExclusiveStartKey: lastEvaluatedKey,
             }));
+            // Stryker disable next-line llm: Items is array-or-undefined, and arrays are always truthy, making ?? and || equivalent.
             items.push(...(result.Items ?? []));
+            // Stryker disable next-line llm: adding ?? undefined cannot affect the truthiness check that is this value’s only observation.
             lastEvaluatedKey = result.LastEvaluatedKey;
         } while(lastEvaluatedKey);
 

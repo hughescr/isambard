@@ -40,7 +40,6 @@ export class OutboxBackend extends BaseRepository<OutboxItem> {
             ScanIndexForward: true,
             Limit:            limit,
         });
-        // Stryker restore StringLiteral,ObjectLiteral
         return items.map(item => outboxItemSchema.parse(item));
     }
 

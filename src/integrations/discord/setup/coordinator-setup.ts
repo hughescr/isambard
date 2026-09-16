@@ -190,6 +190,7 @@ function newestMessagePerChannel(batch: Message[]): Map<string, Message> {
     const newest = new Map<string, Message>();
     for(const message of batch) {
         const existing = newest.get(message.channelId);
+        // Stryker disable next-line llm: Map.get returns Message or undefined, and every Message object is truthy, so both guards are equivalent.
         if(!existing || BigInt(message.id) > BigInt(existing.id)) {
             newest.set(message.channelId, message);
         }
@@ -250,6 +251,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
         discordMessage: Message,
         batch: Message[]
     ): Promise<void> {
+        // Stryker disable next-line llm: envelopeId is string or undefined, never null, so strict and loose undefined checks are equivalent.
         if(envelopeId === undefined) {
             logger.warn({ msg: 'Conductor response has no envelopeId — cannot deliver idempotently, skipping send' });
             return;

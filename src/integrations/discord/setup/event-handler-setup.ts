@@ -29,7 +29,6 @@ import { safeAsyncHandler } from '@/utils';
 const NOOP_RECONNECTION_REGISTRY: Pick<ServiceHealthRegistry, 'sendEvent'> = {
     sendEvent: () => undefined,
 };
-// Stryker restore all
 
 /**
  * Sends an urgent error notification to the owner via the fallback channel.
@@ -47,6 +46,7 @@ async function sendRegistryErrorNotification(
         // Route to fallback channel for startup errors — no origin channel exists here.
         const routing = await responseRouter.routeToFallback(notificationContent);
 
+        // Stryker disable next-line llm: RoutingResult.targetChannelId is a required ChannelId (min length 1) from every producer, so the dropped conjunct is always truthy.
         if(routing.shouldSend && routing.targetChannelId) {
             // Fetch the target channel and send directly
             const targetChannel = await client.channels.fetch(routing.targetChannelId);
@@ -56,7 +56,6 @@ async function sendRegistryErrorNotification(
                     targetChannelId: routing.targetChannelId,
                     msg:             'Channel registry error notification sent to fallback channel',
                 });
-                // Stryker restore all
             }
         }
     } catch (notificationError) {
@@ -89,6 +88,7 @@ export function initializeChannelRegistry(
     rateLimiter?: DiscordRateLimiter,
     healthRegistry?: ServiceHealthRegistry
 ): void {
+    // Stryker disable next-line llm: healthRegistry is `ServiceHealthRegistry | undefined`, so ?? and || pick the no-op stub for exactly the same value (an object registry is always truthy).
     const registry = healthRegistry ?? NOOP_RECONNECTION_REGISTRY;
 
     // Register the channel-registry service with the health registry so it
@@ -143,10 +143,10 @@ export function initializeChannelRegistry(
             logger.info({
                 discovered: discoveryResult.discovered,
                 updated:    discoveryResult.updated,
+                // Stryker disable next-line llm: discoveryResult.errors is a typed array, so the `|| []` fallback is a no-op
                 errors:     discoveryResult.errors.length,
                 msg:        `Channel discovery completed: ${discoveryResult.discovered} new, ${discoveryResult.updated} updated`,
             });
-            // Stryker restore all
         } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
             logger.error({
@@ -218,7 +218,6 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         ingressGate,
         perch,
     }), logger, 'messageCreate handler'));
-    // Stryker restore StringLiteral
 }
 
 /**
@@ -260,5 +259,4 @@ export function setupChannelCleanupHandlers(params: {
 
         coordinator.removeGuildChannels(guildChannelIds);
     }, logger, 'guildDelete handler'));
-    // Stryker restore StringLiteral
 }

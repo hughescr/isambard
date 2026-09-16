@@ -19,6 +19,7 @@ const TAG_INDEX_WRITE_CONCURRENCY = 4;
 /** Validate a retry response before handing it back to DynamoDB. */
 function failedTagFromRequest(request: BatchWriteRequest, operation: 'put' | 'delete'): string {
     const rawPk: unknown = operation === 'put' ? request.PutRequest?.Item?.PK : request.DeleteRequest?.Key?.PK;
+    // Stryker disable next-line llm: An empty string already fails the following TAG# prefix check.
     if(typeof rawPk !== 'string' || !rawPk.startsWith('TAG#')) {
         throw new InvariantViolationError('failedTagFromRequest', 'BatchWrite returned a failed request without a TAG# key');
     }
@@ -27,11 +28,14 @@ function failedTagFromRequest(request: BatchWriteRequest, operation: 'put' | 'de
 
 function retryRequestItems(items: BatchWriteItems): NonNullable<BatchWriteCommandInput['RequestItems']> {
     const pending: NonNullable<BatchWriteCommandInput['RequestItems']> = {};
+    // Stryker disable next-line llm: Callers pass either a request-map literal or UnprocessedItems with a nullish object fallback.
     for(const table of Object.keys(items)) {
         const requests = items[table];
+        // Stryker disable next-line llm: BatchWriteItems values are arrays or undefined, never null.
         if(requests === undefined) {
             throw new InvariantViolationError('collectFailedRequests', 'unprocessedItems[tableName] undefined despite tableName from Object.keys()');
         }
+        // Stryker disable next-line llm: The guard above narrows requests to an array, which is always truthy and already passes Array.isArray.
         pending[table] = requests;
     }
     return pending;
@@ -83,6 +87,7 @@ export class MemoryToolBackendTagIndex {
      * Splits an array into chunks of the given size.
      */
     private splitIntoBatches<T>(items: T[], size: number): T[][] {
+        // Stryker disable next-line llm: items.slice.bind(items) invokes slice with the same receiver as the direct call; i is an Array.from index and size is 25 at every call site (slice truncates its bounds regardless), so Math.floor(i * size) is the identity; and multiplication is commutative, so size * i equals i * size
         return Array.from({ length: Math.ceil(items.length / size) }, (_, i) => items.slice(i * size, (i + 1) * size));
     }
 
@@ -148,11 +153,10 @@ export class MemoryToolBackendTagIndex {
             } catch (error) {
                 logger.warn({ error, msg: 'Batch write threw exception - treating current batch as failed' });
                 // Return current unprocessed items as failed (items that succeeded in prior iterations are excluded)
-
+                // Stryker disable next-line llm: BatchWriteItems values are WriteRequest[] whose elements are objects, so flat() and flat(2) produce the same list
                 return (Object.values(unprocessedItems).flat());
             }
         }
-        // Stryker restore BlockStatement
 
         logger.warn({ unprocessedItems, msg: `Batch write failed after ${MAX_RETRIES} attempts` });
 
@@ -164,6 +168,7 @@ export class MemoryToolBackendTagIndex {
             if(tableRequests === undefined) {
                 throw new InvariantViolationError('collectFailedRequests', 'unprocessedItems[tableName] undefined despite tableName from Object.keys()');
             }
+            // Stryker disable next-line ArrayMethodSwap: Downstream logic observes only length and set membership, not request order.
             failedRequests.push(...tableRequests);
         }
 
@@ -190,6 +195,7 @@ export class MemoryToolBackendTagIndex {
                 }
                 return outcome.value;
             });
+            // Stryker disable next-line llm: failedTagFromRequest returns a scalar string, so flatMap and map are equivalent.
             failedTags = new Set(failedRequests.map(req => failedTagFromRequest(
                 req, operation === 'deleteTagIndexItems' ? 'delete' : 'put'
             )));
@@ -231,6 +237,7 @@ export class MemoryToolBackendTagIndex {
                 `incrementTagCount:${tag}`
             ));
 
+        // Stryker disable next-line PromiseCombinatorSwap: retryWithBackoff catches every rejection, so these operations cannot reject.
         await Promise.all(operations);
     }
 
@@ -272,10 +279,10 @@ export class MemoryToolBackendTagIndex {
                     })),
                     `deleteMetaCount:${tag}`
                 );
-                // Stryker restore BlockStatement
             }
         });
 
+        // Stryker disable next-line PromiseCombinatorSwap: retryWithBackoff catches every rejection, so these operations cannot reject.
         await Promise.all(operations);
     }
 
@@ -301,12 +308,14 @@ export class MemoryToolBackendTagIndex {
                 ...queryParams,
             }));
 
+            // Stryker disable next-line llm: Query Items is array-or-undefined, so nullish and falsy fallbacks are equivalent.
             const items = result.Items ?? [];
             for(const item of items) {
                 // Extract tag from GSI2SK: 'TAG#tagname' -> 'tagname'
                 const gsi2sk = item.GSI2SK as string;
                 const tag = gsi2sk.slice(4); // Remove 'TAG#' prefix
                 const count = item.count as number;
+                // Stryker disable next-line ArrayMethodSwap: The returned array is freshly sorted, so construction order is unobservable.
                 results.push({ tag, count });
             }
 
@@ -439,6 +448,7 @@ export class MemoryToolBackendTagIndex {
         const cursorSchema = z.record(z.string(), z.unknown());
         const cursorResult = cursorSchema.safeParse(parsed);
         if(!cursorResult.success) {
+            // Stryker disable next-line llm: err is only the logger.warn diagnostic payload; error.issues and the ZodError itself carry the same information and the skip-ExclusiveStartKey behaviour is identical
             logger.warn({ err: cursorResult.error.issues, cursor }, 'Invalid cursor shape — skipping ExclusiveStartKey; query will restart from the beginning');
             return undefined;
         }
@@ -461,13 +471,13 @@ export class MemoryToolBackendTagIndex {
             KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
             ExpressionAttributeValues: { ':pk': pk, ':skPrefix': 'PATH#' },
         };
-        // Stryker restore StringLiteral
 
         // Build FilterExpression for layer and date filters
         const filterExpressions: string[] = [];
         const expressionValues: Record<string, string> = { ':pk': pk, ':skPrefix': 'PATH#' };
 
         if(layer) {
+            // Stryker disable next-line ArrayMethodSwap: This is the first write to a freshly empty array, making push and unshift identical.
             filterExpressions.push('layer = :layer');
             expressionValues[':layer'] = layer;
         }
@@ -491,6 +501,7 @@ export class MemoryToolBackendTagIndex {
         }
         if(options?.cursor) {
             // parseCursor returns undefined for malformed/wrong-shape JSON (after logging a warning) — skip ExclusiveStartKey in that case
+            // Stryker disable next-line llm: The enclosing truthiness guard guarantees a non-nullish cursor.
             const parsedKey = this.parseCursor(options.cursor);
             queryParams.ExclusiveStartKey = parsedKey;
         }
@@ -525,6 +536,7 @@ export class MemoryToolBackendTagIndex {
         const normalizedTagsSet = normalizeTags(new Set(tags));
         const normalizedTags = [...normalizedTagsSet];
 
+        // Stryker disable next-line llm: A non-empty input stays non-empty after lowercase normalization and deduplication.
         if(normalizedTags.length === 1) {
             const singleTag = normalizedTags[0]!;
             return this.queryByTag(singleTag, layer, options);
@@ -547,10 +559,10 @@ export class MemoryToolBackendTagIndex {
             // Guard against stale index rows by verifying every requested tag.
             const matching = pageResult.items.filter(item =>
                 normalizedTags.every(tag => item.tags.has(tag)));
-            // Stryker restore MethodExpression,ArrowFunction
             collectedItems.push(...matching);
 
             // Update cursor for next page
+            // Stryker disable next-line llm: A falsy next cursor immediately breaks before currentCursor can be read again.
             currentCursor = pageResult.nextCursor;
 
             // Stop if no more pages or we've collected enough
@@ -559,7 +571,6 @@ export class MemoryToolBackendTagIndex {
             }
             // eslint-disable-next-line no-constant-condition -- Intentional infinite loop with break
         } while(true);
-        // Stryker restore ConditionalExpression,BlockStatement
 
         // Trim to limit
         const items = requestedLimit ? collectedItems.slice(0, requestedLimit) : collectedItems;

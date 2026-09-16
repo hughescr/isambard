@@ -1143,6 +1143,30 @@ describe('createPerchConductor', () => {
         expect(h.journal.byKind('session_reopen_requested').at(-1)).toMatchObject({ reason: 'an identity change' });
     });
 
+    it('reopens carrying the rebuilt perch prompt composed verbatim from the new identity text', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        await flush();
+
+        // The identity blob is arbitrary memory text, so whitespace it carries belongs to the
+        // prompt: the rebuild must pass the composer's own output through unmodified.
+        const revised = 'I am Izzy, revised\n';
+        h.identityGet.mockResolvedValue(revised);
+        h.fireIdentityChange();
+        await flush();
+        await flush();
+
+        expect(h.instances).toHaveLength(2);
+        const systemPrompt = h.instances[1].receivedParams?.options.systemPrompt;
+        expect(typeof systemPrompt === 'string' && systemPrompt.endsWith(revised)).toBe(true);
+    });
+
     it('an identity change that renders the same prompt reopens nothing (perch)', async () => {
         const h = buildPerch();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
@@ -2005,6 +2029,43 @@ describe('createSessionAmbience', () => {
         await h.ambience.quotaPoller.poll();
 
         expect(h.ambience.timeHeaderFor('conversation')()).toContain('Subscription quotas are shared; provider balances are separate.');
+    });
+
+    it('does not spend the one-time note on an ambient line that merely CONTAINS the quota prefix', async () => {
+        const h = ambienceHarness();
+        h.ambience.quotaPoller.start();
+        h.ambience.register(h.conversation);
+        h.ambience.register(h.perch);
+        // The perch slot label is the only free text that can reach an ambient line, so it is what
+        // distinguishes the quota line's PREFIX from a mere substring: a label that happens to read
+        // 'Quota: ...' mid-line is not a quota reading and must not burn the one-time note.
+        h.perch.dispatch({
+            type:     'turn_submitted',
+            at:       new Date(0),
+            envelope: { id: 'env-perch', kind: 'perch', queuedAt: new Date(0), perch: { slot: 'Quota: reset imminent', endsAt: new Date(0) } },
+        });
+
+        const beforeQuota = h.ambience.timeHeaderFor('conversation')();
+        expect(beforeQuota).toContain('Perch: slot "Quota: reset imminent"');
+        expect(beforeQuota).not.toContain('Subscription quotas are shared; provider balances are separate.');
+
+        await h.ambience.quotaPoller.poll();
+
+        expect(h.ambience.timeHeaderFor('conversation')()).toContain('Subscription quotas are shared; provider balances are separate.');
+    });
+
+    it('renders a window whose reset is still 1ms in the future as open, on the session clock exactly', () => {
+        const h = ambienceHarness({ clockAt: 1000 });
+        h.ambience.register(h.conversation);
+        h.ambience.register(h.perch);
+        // A reset one millisecond after the session clock: still open. Any offset applied to
+        // clock.now() before the render makes this window read as already expired.
+        h.perch.dispatch({ type: 'quota_polled', quota: { fiveHour: { utilization: 42, resetsAt: new Date(1001) } }, at: new Date(0) });
+
+        const header = h.ambience.timeHeaderFor('conversation')();
+
+        expect(header).toContain('"resets_at": "1970-01-01T00:00:01.001Z"');
+        expect(header).not.toContain('"status": "expired"');
     });
 
     it('returns the same provider instance for a role every time, so the one-time note is per session, not per producer', () => {

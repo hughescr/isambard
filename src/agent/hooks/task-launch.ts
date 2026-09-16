@@ -67,9 +67,12 @@ function isSubagentInternal(input: PostToolUseHookInput): boolean {
 
 /** The text after `</output-file>` up to the `<task-notification>` closing tag, trimmed and capped to {@link SUMMARY_CAP}. */
 function extractSummary(prompt: string): string {
+    // Stryker disable next-line llm: ?? and || are equivalent here — split returns only strings or undefined, and the sole falsy string equals the empty fallback.
     const afterOutputFile = prompt.split('</output-file>')[1] ?? '';
+    // Stryker disable next-line llm: indexOf and search are equivalent here — the fixed string contains no regular-expression metacharacters.
     const closingIndex = afterOutputFile.indexOf('</task-notification>');
     const body = closingIndex === -1 ? afterOutputFile : afterOutputFile.slice(0, closingIndex);
+    // Stryker disable next-line llm: slice(0, n) and substring(0, n) are equivalent for the fixed nonnegative bounds 0 and SUMMARY_CAP.
     return body.trim().slice(0, SUMMARY_CAP);
 }
 
@@ -124,11 +127,16 @@ export function createTaskLaunchHooks(params: CreateTaskLaunchHooksParams): Part
                     async (input): Promise<{ 'continue': boolean }> => {
                         try {
                             const promptInput = input as UserPromptSubmitHookInput;
+                            // Stryker disable next-line llm: UserPromptSubmitHookInput.prompt is a non-nullable string per the SDK's own type, so `?? ''` is unreachable
                             const parsed = parseTaskNotification(promptInput.prompt);
                             if(parsed === undefined) {
                                 return { 'continue': true };
                             }
-                            conductor.adoptWakeTurn({ taskId: parsed.taskId, toolUseId: parsed.toolUseId, summary: extractSummary(promptInput.prompt) });
+                            // Stryker disable next-line llm: parseTaskNotification rejects an empty/missing taskId before returning an object, so `parsed.taskId ?? ''` is unreachable
+                            const taskId = parsed.taskId;
+                            // Stryker disable next-line llm: parseTaskNotification rejects an empty/missing toolUseId before returning an object, so `parsed.toolUseId ?? ''` is unreachable
+                            const toolUseId = parsed.toolUseId;
+                            conductor.adoptWakeTurn({ taskId, toolUseId, summary: extractSummary(promptInput.prompt) });
                         } catch (error) {
                             logger.warn({ error }, 'task-launch UserPromptSubmit hook failed');
                         }

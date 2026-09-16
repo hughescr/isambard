@@ -295,4 +295,23 @@ describe('createDiscordRecoveryHandler', () => {
         });
         expect(submitCatchUp).not.toHaveBeenCalled();
     });
+
+    test('catches and logs a catch-up submission failure', async () => {
+        const warmCache = mock(async () => undefined);
+        const submitCatchUp = mock(async () => {
+            throw new Error('catch-up failed');
+        });
+        const logger = makeFakeLogger();
+        const handler = createDiscordRecoveryHandler({ warmCache, submitCatchUp, logger });
+
+        handler({ service: 'discord', newState: 'online' } as never);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(logger.warn).toHaveBeenCalledWith({
+            error: 'catch-up failed',
+            msg:   'Discord recovery phase failed',
+        });
+    });
 });

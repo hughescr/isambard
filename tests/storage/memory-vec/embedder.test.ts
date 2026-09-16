@@ -457,6 +457,74 @@ describe('loadEmbedder convenience alias', () => {
     });
 });
 
+describe('Embedder mutation witnesses', () => {
+    beforeEach(() => {
+        resetMockFs();
+        resetNodeLlamaCppMocks();
+        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockResolvedValue(undefined);
+        mockFsPromises.access.mockImplementation(async _path => undefined);
+    });
+
+    afterEach(() => {
+        resetMockFs();
+        jest.restoreAllMocks();
+    });
+
+    it('waits for failed-load cleanup before propagating the initialization error', async () => {
+        const loadError = new Error('context initialization failed');
+        let finishDisposal: (() => void) | undefined;
+        const pendingDisposal = new Promise<undefined>((resolve) => {
+            finishDisposal = () => resolve(undefined);
+        });
+        const disposalStarted = new Promise<void>((resolve) => {
+            mockLlamaModel.dispose.mockImplementationOnce(() => {
+                resolve();
+                return pendingDisposal;
+            });
+        });
+        mockLlamaModel.createEmbeddingContext.mockRejectedValueOnce(loadError);
+
+        const loading = loadEmbedder();
+        let rejected = false;
+        void loading.catch(() => {
+            rejected = true;
+        });
+        await disposalStarted;
+        await Promise.resolve();
+        expect(rejected).toBe(false);
+
+        finishDisposal?.();
+        await expect(loading).rejects.toBe(loadError);
+    });
+
+    it('uses zero for missing embedding dimensions', async () => {
+        const vector: (number | undefined)[] = Array.from({ length: 1024 }, () => -1);
+        vector[0] = undefined;
+        mockLlamaContext.getEmbeddingFor.mockImplementation(async () => ({
+            vector: vector as unknown as Float32Array<ArrayBuffer>,
+        }));
+
+        const embedder = await loadEmbedder();
+        const result = await embedder.encode(['missing first dimension']);
+        await embedder.close();
+
+        expect(result.data[0]).toBe(0);
+    });
+
+    it('reports the two disposal failures in disposal order', async () => {
+        const embedder = await loadEmbedder();
+        const contextError = new Error('context disposal failed');
+        const llamaError = new Error('llama disposal failed');
+        mockLlamaContext.dispose.mockRejectedValueOnce(contextError);
+        mockLlamaInstance.dispose.mockRejectedValueOnce(llamaError);
+
+        const failure = await embedder.close().catch((error: unknown) => error);
+
+        expect(failure).toBeInstanceOf(AggregateError);
+        expect((failure as AggregateError).errors).toEqual([contextError, llamaError]);
+    });
+});
+
 // Ensure spyOn is available (used above) — satisfies import check
 
 const _ensureSpyOn = spyOn;

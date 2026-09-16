@@ -42,7 +42,6 @@ export const PerchSlotSchema = z.enum([
     'late-night',
     'unscheduled',
 ]);
-/* Stryker restore all */
 
 /**
  * Suggestion level determines how strongly to recommend time-specific activities.
@@ -58,7 +57,6 @@ export const SuggestionLevelSchema = z.enum([
     'open',
     'light_touch',
 ]);
-/* Stryker restore all */
 
 /**
  * Configuration for a single perch time slot.
@@ -86,7 +84,6 @@ export const PerchSlotConfigSchema = z.object({
     level:     SuggestionLevelSchema,
     hint:      z.string().min(1),
 });
-/* Stryker restore ObjectLiteral,MethodExpression */
 
 /**
  * Test mode configuration for perch time.

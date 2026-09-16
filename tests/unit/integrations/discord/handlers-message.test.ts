@@ -218,6 +218,39 @@ describe('Discord Event Handlers', () => {
             expect(context.userId).toBe('111111111111111111');
         });
 
+        it('should track a DM with the author id, the channel id and the author username', async () => {
+            const mockDmTracker = {
+                trackFromMessage: mock(async () => undefined),
+            };
+
+            const mockCoordinator = createMockCoordinator();
+            const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                botUserId:       '999999999999999999' as UserId,
+                coordinator:     mockCoordinator,
+                dmTracker:       mockDmTracker as unknown as DMTracker,
+            });
+
+            const dmMessage = {
+                ...mockMessage,
+                channel:   mockDMChannel,
+                channelId: '444444444444444444',
+                guild:     null,
+            } as unknown as Message;
+
+            await handler(dmMessage);
+
+            // The tracker keys the DM on the AUTHOR's user id + the CHANNEL's id + the author's
+            // username — passing the channel id where a user id belongs (or vice versa) would
+            // file the DM under the wrong contact, silently, since the tracker resolves ids.
+            expect(mockDmTracker.trackFromMessage).toHaveBeenCalledWith(
+                '111111111111111111',
+                '444444444444444444',
+                'testuser'
+            );
+        });
+
         it('should process messages with bot mentions', async () => {
             const botId = '999999999999999999';
             const mockCoordinator = createMockCoordinator();
@@ -286,6 +319,26 @@ describe('Discord Event Handlers', () => {
             expect(context.timestamp).toBe('2025-01-15T12:00:00.000Z');
         });
 
+        it('should pass the message cleanContent to the coordinator, not the raw content', async () => {
+            const mockCoordinator = createMockCoordinator();
+            const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                botUserId:       '999999999999999999' as UserId,
+                coordinator:     mockCoordinator,
+            });
+
+            // Discord's cleanContent has the mention markup resolved; the conductor should see
+            // that form, not the raw `<@id>` snowflake.
+            mockMessage.content = 'raw <@999999999999999999> text';
+            Object.defineProperty(mockMessage, 'cleanContent', { value: 'raw @testuser text', writable: true });
+
+            await handler(mockMessage);
+
+            const context = mockCoordinator.handleMessage.mock.calls[0][0];
+            expect(context.content).toBe('raw @testuser text');
+        });
+
         it('should handle DM messages with null guild', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
@@ -349,6 +402,73 @@ describe('Discord Event Handlers', () => {
             await handler(mockMessage);
 
             expect(mockCoordinator.handleMessage).toHaveBeenCalled();
+        });
+
+        describe('mention detection anywhere in the message', () => {
+            // In these channels only a mention is processed, so shouldRespond mirrors isMention —
+            // an isMention computed from the wrong string predicate surfaces as a dropped dispatch.
+            function createMentionOnlyHandler(mockCoordinator: ReturnType<typeof createMockCoordinator>) {
+                return createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
+                    channelRegistry: {
+                        shouldProcess: mock((_channelId: ChannelId, _isDM: boolean, isMention: boolean) => isMention),
+                        getChannel:    mock(() => null),
+                        warmCache:     mock(() => Promise.resolve()),
+                    } as unknown as ChannelRegistryManager,
+                    botUserId:   '999999999999999999' as UserId,
+                    coordinator: mockCoordinator,
+                });
+            }
+
+            it('should treat a mention that is neither first nor last in the content as a mention', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const handler = createMentionOnlyHandler(mockCoordinator);
+
+                mockMessage.content = 'hey <@999999999999999999> are you there';
+                Object.defineProperty(mockMessage, 'cleanContent', { value: 'hey @testuser are you there', writable: true });
+
+                await handler(mockMessage);
+
+                expect(mockCoordinator.handleMessage).toHaveBeenCalledTimes(1);
+            });
+
+            it('should treat an alternative-format mention that is neither first nor last as a mention', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const handler = createMentionOnlyHandler(mockCoordinator);
+
+                mockMessage.content = 'hey <@!999999999999999999> are you there';
+                Object.defineProperty(mockMessage, 'cleanContent', { value: 'hey @testuser are you there', writable: true });
+
+                await handler(mockMessage);
+
+                expect(mockCoordinator.handleMessage).toHaveBeenCalledTimes(1);
+            });
+
+            it.each([
+                ['standard', '<@999999999999999999 malformed'],
+                ['alternative', '<@!999999999999999999 malformed'],
+            ])('does not treat an unterminated $0 mention as a bot mention', async (_format, content) => {
+                const mockCoordinator = createMockCoordinator();
+                const shouldProcess = mock((_channelId: ChannelId, _isDM: boolean, isMention: boolean) => isMention);
+                const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
+                    channelRegistry: {
+                        shouldProcess,
+                        getChannel: mock(() => null),
+                        warmCache:  mock(() => Promise.resolve()),
+                    } as unknown as ChannelRegistryManager,
+                    botUserId:   '999999999999999999' as UserId,
+                    coordinator: mockCoordinator,
+                });
+
+                mockMessage.content = content;
+                Object.defineProperty(mockMessage, 'cleanContent', { value: content, writable: true });
+
+                await handler(mockMessage);
+
+                expect(shouldProcess).toHaveBeenCalledWith('333333333333333333', false, false, false);
+                expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
+            });
         });
 
         describe('isDM detection logging', () => {
@@ -861,6 +981,31 @@ describe('Discord Event Handlers', () => {
                 });
 
                 // Should NOT continue normal processing (early return after polite reply)
+                expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
+            });
+
+            it('should propagate a withDiscordRetry rejection for the unrelated-message reply out of the handler', async () => {
+                (mockAnswerClassifier.classify as ReturnType<typeof mock>).mockImplementation(
+                    async () => 'unrelated' as ClassificationResult
+                );
+                mockWithDiscordRetry.mockRejectedValueOnce(new Error('retry exhausted'));
+
+                const mockCoordinator = createMockCoordinator();
+                const handler = createMessageHandler({
+                    ingressGate:      createPassingIngressGate(),
+                    channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:        '999999999999999999' as UserId,
+                    coordinator:      mockCoordinator,
+                    questionRegistry: mockQuestionRegistry,
+                    answerClassifier: mockAnswerClassifier,
+                });
+
+                // The polite-reply send is awaited: a retry that gives up must surface as a
+                // rejected handler, not be swallowed while the question is left looking answered.
+                await expect(handler(mockMessage)).rejects.toThrow('retry exhausted');
+
+                expect(mockQuestionRegistry.cancel).not.toHaveBeenCalled();
+                expect(mockQuestionRegistry.resolveWithAnswer).not.toHaveBeenCalled();
                 expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
             });
 
@@ -1378,6 +1523,30 @@ describe('Discord Event Handlers', () => {
                     expect.any(String)  // guildId
                 );
             });
+
+            it('should propagate a recordActivity rejection out of the handler (the receipt-time checkpoint is awaited)', async () => {
+                const mockInboxManager = {
+                    updateChannelMetadata: mock(() => undefined),
+                    recordActivity:        mock(() => Promise.reject(new Error('inbox unavailable'))),
+                } as unknown as InboxManager;
+
+                const mockCoordinator = createMockCoordinator();
+                const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    inboxManager:    mockInboxManager,
+                });
+
+                // A dropped await here (inside updateInboxCheckpoint OR at its call site) would let
+                // the failure float as an unhandled rejection while the handler carried on to
+                // dispatch the message as if the checkpoint had landed.
+                await expect(handler(mockMessage)).rejects.toThrow('inbox unavailable');
+
+                expect(mockInboxManager.recordActivity).toHaveBeenCalledTimes(1);
+                expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
+            });
         });
 
         describe('isTypingChannel type guard', () => {
@@ -1706,6 +1875,85 @@ describe('Discord Event Handlers', () => {
                 const text = defaultEnvelope.text;
                 expect(text).toContain('## Current Time');
                 expect(text).toContain('Europe/London');
+            });
+
+            it('uses the message cleanContent for the perch envelope body and the recent-message ring buffer, not the raw content', async () => {
+                const mockInboxManager = createMockInboxManager();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: null });
+                const addRecentMessage = mock(() => undefined);
+                const ingressGate = createMockIngressGate(() => 'pass');
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  createMockCoordinator(),
+                    inboxManager: mockInboxManager,
+                    addRecentMessage,
+                    ingressGate,
+                    perch:        {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                const rawMessage = {
+                    ...mockMessage,
+                    content:      'hi <@999999999999999999> ping',
+                    cleanContent: 'hi @testuser ping',
+                } as unknown as Message;
+
+                await handler(rawMessage);
+
+                const [envelope] = perchConductor.submit.mock.calls[0] as unknown as [{ text: string }];
+                expect(envelope.text).toContain('testuser: hi @testuser ping');
+                expect(addRecentMessage).toHaveBeenCalledWith('hi @testuser ping', 'user');
+            });
+
+            it('renders the envelope channel segment from the channel name, stamps it with the current time and passes the requesting channel id to submit', async () => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date('2025-06-01T10:00:00.000Z'));
+
+                const mockInboxManager = createMockInboxManager();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: null });
+                const ingressGate = createMockIngressGate(() => 'pass');
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  createMockCoordinator(),
+                    inboxManager: mockInboxManager,
+                    ingressGate,
+                    perch:        {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                // The mock channel's own name differs from its id, so the envelope header shows
+                // which of the two the channel segment is built from.
+                const namedChannelMessage = {
+                    ...mockMessage,
+                    channel: { ...mockTextChannel, name: 'perch-time' },
+                } as unknown as Message;
+
+                await handler(namedChannelMessage);
+
+                const [envelope, submitOptions] = perchConductor.submit.mock.calls[0] as unknown as [
+                    { text: string, createdAt: Date },
+                    { priority: string, requestingChannelId?: string }
+                ];
+                expect(envelope.text).toContain('#perch-time');
+                expect(envelope.createdAt.getTime()).toBe(new Date('2025-06-01T10:00:00.000Z').getTime());
+                // The requesting channel id is what the conductor's reply routing falls back to.
+                expect(submitOptions).toEqual({ priority: 'other', requestingChannelId: PERCH_CHANNEL_ID });
+
+                jest.useRealTimers();
             });
 
             it('still records inbox activity/checkpoint and addRecentMessage for a perch-channel message', async () => {

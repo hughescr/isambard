@@ -184,8 +184,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
         expect(batchSizes().reduce((total, size) => total + size, 0)).toBe(26);
     });
 
-    test('bulk writes honor the four-request concurrency bound', async () => {
-        const firstThreeStarted = deferred<void>();
+    test('bulk writes honor the four-request concurrency bound exactly', async () => {
         const releaseWrites = deferred<void>();
         let started = 0;
         let inFlight = 0;
@@ -194,9 +193,6 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
             started++;
             inFlight++;
             maximumInFlight = Math.max(maximumInFlight, inFlight);
-            if(started === 3) {
-                firstThreeStarted.resolve();
-            }
             await releaseWrites.promise;
             inFlight--;
             return { UnprocessedItems: {} };
@@ -210,10 +206,17 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
             'preview',
             'identity'
         );
-        await firstThreeStarted.promise;
+
+        // Give pLimit a bounded number of macrotask turns to dispatch every batch it is
+        // willing to run concurrently. We never await an unresolved promise here: a
+        // below-limit concurrency mutant must fail the assertion below instead of hanging
+        // the test forever waiting for a 4th dispatch that never comes.
+        await Bun.sleep(0);
+        await Bun.sleep(0);
         await Bun.sleep(0);
         try {
-            expect(maximumInFlight).toBeLessThanOrEqual(4);
+            expect(started).toBe(4);
+            expect(maximumInFlight).toBe(4);
         } finally {
             releaseWrites.resolve();
             await operation;
@@ -255,5 +258,29 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
         await backend.queryByTags(['ALPHA', 'beta']);
 
         expect(ddbMock.commandCalls(QueryCommand)[0].args[0].input.ExpressionAttributeValues?.[':pk']).toBe('TAG#alpha');
+    });
+
+    test('incrementTagCounts targets the configured table', async () => {
+        ddbMock.on(UpdateCommand).resolves({});
+
+        await backend.incrementTagCounts(new Set(['counted']));
+
+        const calls = ddbMock.commandCalls(UpdateCommand);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args[0].input.TableName).toBe('TestTable');
+    });
+
+    test('accepts a cursor whose attribute values are not all strings', async () => {
+        ddbMock.on(QueryCommand).resolves({ Items: [] });
+        // DynamoDB key attribute values are not always strings; a string-only
+        // record schema would reject this cursor and silently restart the query.
+        const key = { PK: 'TAG#important', SK: 'PATH#/state/note.md', version: 3 };
+        const cursor = Buffer.from(JSON.stringify(key)).toString('base64');
+
+        await backend.queryByTag('important', undefined, { cursor });
+
+        const calls = ddbMock.commandCalls(QueryCommand);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(key);
     });
 });

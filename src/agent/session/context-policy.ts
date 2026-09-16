@@ -207,6 +207,7 @@ function healthStateKey(entries: Readonly<Record<ServiceName, ServiceHealthEntry
         }
         lines.push(`${name}:${entry.state}:${entry.lastError?.code ?? ''}`);
     }
+    // Stryker disable next-line llm: lines.join('|') is never falsy when nonempty because each line contains a state-delimited prefix, making the ternary and fallback equivalent
     return lines.length > 0 ? lines.join('|') : undefined;
 }
 
@@ -335,6 +336,7 @@ export function createContextPolicy(params: CreateContextPolicyParams): ContextP
             // `events` a caller renders alongside them must cover exactly that same day (see the
             // `CalendarDelta.events` doc).
             const events = eventsInWindow(fetchedEvents, window);
+            // Stryker disable next-line llm: toAgenda reapplies the same window filter, so passing raw or already-filtered events is equivalent
             const agenda = toAgenda(events, window);
             calendarPollCache.set(userId, { agenda, events, polledAtMs: nowMs, window });
             const diff = diffAgenda(calendarBaselines.get(userId), agenda);
@@ -355,9 +357,11 @@ export function createContextPolicy(params: CreateContextPolicyParams): ContextP
             }
             const currentKey = healthStateKey(healthRegistry.getAll());
             pendingHealthStateKey = currentKey;
+            // Stryker disable next-line llm: both health keys are string | undefined, so == and === agree
             if(currentKey === lastHealthStateKey) {
                 return undefined;
             }
+            // Stryker disable next-line llm: buildStatusSummary() returns undefined or nonempty joined status lines, never '', so || and ?? agree
             return healthRegistry.buildStatusSummary() ?? 'All services are back online.';
         },
 

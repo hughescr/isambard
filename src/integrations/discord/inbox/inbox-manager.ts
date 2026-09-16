@@ -280,6 +280,7 @@ export class InboxManager {
 
         let totalLoaded = 0;
         for(const outcome of outcomes) {
+            // Stryker disable next-line llm: `length > 0` and `length >= 1` are equivalent for an array length (a non-negative integer)
             if(outcome.messages.length > 0) {
                 this.unreadMessages.set(outcome.channelId, outcome.messages);
                 totalLoaded += outcome.messages.length;
@@ -323,6 +324,7 @@ export class InboxManager {
         const channels: UnreadOverview['channels'] = [];
 
         for(const [channelId, messages] of this.unreadMessages) {
+            // Stryker disable next-line llm: unread count = length - read count is an identity because `!m.isRead` and `m.isRead` partition the array; no input distinguishes the two forms
             const unreadCount = messages.filter(m => !m.isRead).length;
             if(unreadCount > 0) {
                 const metadata = this.channelMetadata.get(channelId);
@@ -391,6 +393,7 @@ export class InboxManager {
      * ```
      */
     async markAsRead(channelId: ChannelId, messageIds: string[]): Promise<void> {
+        // Stryker disable next-line llm: the map is only written at loadUnread with non-empty arrays, so `|| []` is unreachable and a missing channel falls through to a zero-iteration loop with no checkpoint write, log or state change either way
         const messages = this.unreadMessages.get(channelId);
         if(!messages) {
             return;
@@ -634,6 +637,7 @@ export class InboxManager {
             });
 
             const handledMessageIdBig = BigInt(handled.messageId);
+            // Stryker disable next-line llm: response.messages is a fresh slice owned by this call, and the trailing toSorted by snowflake fixes the only observable order, so an in-place reverse first is unobservable
             const filteredMessages = response.messages
                 .filter(msg => BigInt(msg.id) > handledMessageIdBig)
                 .filter(msg => !this.botUserId || msg.author.id !== this.botUserId)

@@ -551,4 +551,45 @@ describe.concurrent('formatCalendarContext', () => {
         expect(result).not.toContain('EST');
         expect(result).not.toContain('UTC');
     });
+
+    it('uses dated labels for events earlier than yesterday', () => {
+        const event = makeEvent({
+            summary: 'Earlier Event',
+            start:   new Date('2026-03-16T17:00:00Z'),
+            end:     new Date('2026-03-16T18:00:00Z'),
+        });
+        const result = formatCalendarContext([event], NOW, TZ);
+        expect(result).toContain('### Mon Mar 16');
+        expect(result).not.toContain('### Yesterday');
+    });
+
+    it('keeps source and UTC timezones in display priority order', () => {
+        const event = makeEvent({
+            summary:  'Priority Meeting',
+            start:    new Date('2026-03-18T17:00:00Z'),
+            end:      new Date('2026-03-18T18:00:00Z'),
+            timezone: 'America/New_York',
+        });
+        const result = formatCalendarContext([event], NOW, TZ);
+        expect(result).toContain(
+            '- 09:00–10:00 PST (12:00–13:00 EST / 17:00–18:00 UTC): Priority Meeting [Work]'
+        );
+    });
+
+    it('renders all optional event details as one readable calendar line', () => {
+        const event = makeEvent({
+            summary:       'Complete Event',
+            start:         new Date('2026-03-18T17:00:00Z'),
+            end:           new Date('2026-03-18T18:00:00Z'),
+            isAllDay:      true,
+            location:      'Room 1',
+            attendees:     ['attendee@example.com'],
+            status:        'tentative',
+            calendarLabel: 'Personal',
+        });
+        const result = formatCalendarContext([event], NOW, TZ);
+        expect(result).toContain(
+            '- All day: Complete Event [Personal] @ Room 1 (1 attendee) [tentative]'
+        );
+    });
 });

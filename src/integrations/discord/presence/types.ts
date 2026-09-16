@@ -114,7 +114,6 @@ export const ToolStatusMap: Record<string, string> = {
     mcp__memory__search:          'Searching memories...',
     // Future tools can be added here
 };
-// Stryker restore all
 
 /**
  * Maps tool names to human-readable descriptions of what the tool does.

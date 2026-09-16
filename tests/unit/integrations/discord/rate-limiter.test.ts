@@ -16,6 +16,14 @@ import { DiscordRateLimiter, type LimitFunction } from '@/integrations/discord/r
 // Synchronous mock limit function that just executes immediately (no p-limit overhead)
 const syncLimit: LimitFunction = async <T>(fn: () => PromiseLike<T>): Promise<T> => fn();
 
+/** Flushes enough microtask ticks for a chained promise sequence to settle. */
+async function flushMicrotasks(count = 10): Promise<void> {
+    for(let i = 0; i < count; i += 1) {
+        // eslint-disable-next-line no-await-in-loop -- deterministic microtask-drain helper used only in tests, not a real async loop
+        await Promise.resolve();
+    }
+}
+
 describe('new DiscordRateLimiter', () => {
     test('sends single message to channel', async () => {
         const mockChannel = {
@@ -220,27 +228,45 @@ describe('new DiscordRateLimiter', () => {
         expect(firstMessage.id).toBe('msg-1');
     });
 
-    test('default globalConcurrency is 5', async () => {
-        const callOrder: string[] = [];
+    test('default globalConcurrency limits concurrent sends across channels to 5', async () => {
+        // No limitFn injected here: this exercises the real p-limit instance built from the
+        // constructor's default `globalConcurrency = 5`, not the synchronous test stand-in.
+        const started: string[] = [];
+        const releases: ((msg: Message) => void)[] = [];
 
-        // Create 6 different channels to test the limit
+        // Create 6 different channels whose sends never resolve on their own, so we can
+        // observe exactly how many are allowed to start before the global limit is hit.
         const channels = Array.from({ length: 6 }, (_, i) => ({
             id:   `channel-${i}`,
             send: mock(() => {
-                callOrder.push(`channel-${i}`);
-                return Promise.resolve({ id: `msg-${i}` } as Message);
+                started.push(`channel-${i}`);
+                return new Promise<Message>((resolve) => {
+                    releases[i] = resolve;
+                });
             }),
         } as unknown as TextChannel));
 
-        const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
+        const limiter = new DiscordRateLimiter({});
 
-        // Send to all 6 channels concurrently
-        await Promise.all(
-            channels.map(ch => limiter.sendToChannel(ch, 'test'))
-        );
+        const promises = channels.map(ch => limiter.sendToChannel(ch, 'test'));
 
-        // All 6 should have been called
-        expect(callOrder).toHaveLength(6);
+        // Flush microtasks so every send p-limit will start immediately has had the chance to.
+        await flushMicrotasks();
+
+        // Only the default concurrency (5) should have started; the 6th stays queued.
+        expect(started).toHaveLength(5);
+
+        releases[0]({ id: 'msg-0' } as Message);
+
+        await flushMicrotasks();
+
+        // Freeing one slot lets the 6th channel's send start.
+        expect(started).toHaveLength(6);
+
+        for(let i = 1; i < 6; i++) {
+            releases[i]({ id: `msg-${i}` } as Message);
+        }
+        await Promise.all(promises);
 
         limiter.stop();
     });

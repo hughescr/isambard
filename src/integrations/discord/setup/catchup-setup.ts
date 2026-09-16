@@ -346,7 +346,9 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
         const newest = channelMessages[channelMessages.length - 1]!;
         const envelope = buildDiscordEnvelope({
             messages: channelMessages.map(message => ({
+                // Stryker disable next-line llm: buildDiscordEnvelope never reads messages[].channelId, so this field has no observable effect.
                 channelId: message.channelId,
+                // Stryker disable next-line llm: buildDiscordEnvelope never reads messages[].userId, so this field's fallback order has no observable effect.
                 userId:    message.authorId ?? message.author,
                 messageId: message.id,
                 content:   `${message.author}: ${message.content}`,
@@ -364,14 +366,18 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
             resumeNote:  REPLAY_CAVEAT,
         });
         await submitAndDeliverConductorEnvelope(envelope, envelopeDeps);
+        // Stryker disable next-line llm: submitReplay groups messages by message.channelId, so newest.channelId always equals channelId here and the swap is unobservable.
         await inboxManager.recordHandled(createChannelId(channelId), newest.id, newest.timestamp);
     }
 
     async function submitReplay(messages: readonly ReplayableMessage[]): Promise<void> {
         const byChannel = new Map<string, ReplayableMessage[]>();
         for(const message of messages) {
+            // Stryker disable next-line llm: get returns a truthy array or undefined, and message.channelId is already a string, so || and + '' are equivalent mutations.
             const existing = byChannel.get(message.channelId) ?? [];
+            // Stryker disable next-line llm: spreading a fresh single-element array appends exactly the same one value.
             existing.push(message);
+            // Stryker disable next-line llm: only array contents are observed, so storing a value-equal shallow copy cannot change behavior.
             byChannel.set(message.channelId, existing);
         }
 
@@ -407,6 +413,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
         const eventsDelta = contextPolicy ? await contextPolicy.eventsDelta() : undefined;
 
         const overview = inboxManager.getUnreadOverview();
+        // Stryker disable next-line llm: InboxManager.getUnreadOverview sums filter(...).length values from zero, so totalUnread is never negative and `<= 0` is unreachable.
         const hasNothingToReport = overview.totalUnread === 0
           && lostTasks.length === 0
           && (eventsDelta?.length ?? 0) === 0
@@ -613,4 +620,3 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): Promise<void> {
         });
     });
 }
-// Stryker restore all

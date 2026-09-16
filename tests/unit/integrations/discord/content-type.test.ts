@@ -46,6 +46,15 @@ describe('inferImageContentType', () => {
             expect(inferImageContentType('photo.jpeg', 'text/image/data')).toBe('image/jpeg');
         });
 
+        it('does not accept a contentType that starts with "image" but not "image/"', () => {
+            // Kills llm mutant: startsWith('image/') -> startsWith('image')
+            // 'imagex' starts with 'image' but not 'image/', so it must NOT be trusted as-is;
+            // the function should fall through to extension-based inference for 'photo.png'.
+            const result = inferImageContentType('photo.png', 'imagex');
+            expect(result).toBe('image/png');
+            expect(result).not.toBe('imagex');
+        });
+
         it('accepts image/ prefix even without extension', () => {
             expect(inferImageContentType('README', 'image/custom')).toBe('image/custom');
         });

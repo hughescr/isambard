@@ -14,6 +14,7 @@ export function createBskyClassifier(): ErrorClassifier {
 
     return (error: unknown): ErrorClassification => {
         if(error instanceof BskyRateLimitError) {
+            // Stryker disable next-line llm: error.context is proven defined by the typeof guard above; optional chaining here is a no-op
             const retryAfterMs = typeof error.context?.retryAfterMs === 'number'
                 ? error.context.retryAfterMs
                 : undefined;

@@ -69,7 +69,6 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
 
             if(!registry.isAvailable(requiredService)) {
                 logger.info({ sagaId: saga.id, type: saga.type, service: requiredService }, 'Skipping saga — required service unavailable');
-                // Stryker restore ObjectLiteral,StringLiteral
                 continue;
             }
 
@@ -82,7 +81,6 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
                 await backend.updateState(saga.id, 'failed', { lastError: message });
                 result.failed++;
                 logger.error({ sagaId: saga.id, type: saga.type, error: message }, 'Saga execution failed');
-                // Stryker restore ObjectLiteral,StringLiteral
                 continue;
             }
 
@@ -90,7 +88,6 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
             await backend.updateState(saga.id, 'executed');
             result.executed++;
             logger.info({ sagaId: saga.id, type: saga.type }, 'Saga executed successfully');
-            // Stryker restore ObjectLiteral,StringLiteral
         }
 
         return result;

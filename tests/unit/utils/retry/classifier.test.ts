@@ -446,6 +446,15 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result).toEqual(defaultClassifier(error));
         });
 
+        it.each([null, undefined])('falls through to the default classifier without throwing when status is %s', (status) => {
+            // `'status' in error` passes but the unchecked cast leaves a nullish status; the
+            // fallback message must be built with a nullish-safe conversion, never a method call.
+            const result = createHttpStatusClassifier()({ status });
+
+            expect(result.category).toBe('transient');
+            expect(result.message).toBe('Unknown error');
+        });
+
         it('should use default classifier for non-HTTP errors', () => {
             const error = new Error('Generic error');
             const classifier = createHttpStatusClassifier();
@@ -619,6 +628,38 @@ describe.concurrent('createHttpStatusClassifier', () => {
             expect(result.category).toBe('permanent');
             expect(result.message).toContain('429');
             expect(result.retryAfterMs).toBeUndefined();
+        });
+
+        it('parses response-body retryAfter strings as base-10 integers', () => {
+            const classifier = createHttpStatusClassifier();
+
+            expect(classifier({ status: 429, retryAfter: '1.5' }).retryAfterMs).toBe(1);
+            expect(classifier({ status: 429, retryAfter: '0x10' }).retryAfterMs).toBe(0);
+        });
+
+        it.each([
+            ['1.5', 1000],
+            ['a', undefined],
+            ['9', 9000],
+            ['0x10', 0],
+        ])('parses retry-after header %s as a base-10 integer', (retryAfter, expected) => {
+            const result = createHttpStatusClassifier()({ status: 429, headers: { 'retry-after': retryAfter } });
+
+            expect(result.retryAfterMs).toBe(expected);
+        });
+
+        it('rejects retryAfter values at the negative-one boundary', () => {
+            const classifier = createHttpStatusClassifier();
+
+            expect(classifier({ status: 429, retryAfter: -1 }).retryAfterMs).toBeUndefined();
+            expect(classifier({ status: 429, headers: { 'retry-after': '-1' } }).retryAfterMs).toBeUndefined();
+        });
+
+        it('does not interpret hexadecimal status strings as HTTP status codes', () => {
+            const result = createHttpStatusClassifier()({ status: '0x1f4' });
+
+            expect(result.category).toBe('transient');
+            expect(result.message).toBe('Unknown error');
         });
     });
 });

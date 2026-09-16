@@ -183,6 +183,30 @@ describe('createNotificationBridge', () => {
         expect(DEFAULT_NOTIFICATION_DEDUPE_CAPACITY).toBeGreaterThan(0);
     });
 
+    test('the default dedupe capacity retains exactly 200 keys, evicting the oldest only on the 201st distinct key', () => {
+        // The 200 here is the default bridge's capacity written out as a literal on purpose: how
+        // many keys the unwired default retains is behaviour, not an implementation detail, so a
+        // change to that default must consciously update this test too.
+        const defaultBridge = createNotificationBridge({
+            clock, timezone: 'America/Los_Angeles', timeHeader: () => 'H', logger,
+        });
+        defaultBridge.attachConductor(conductor);
+
+        for(let i = 1; i <= 200; i++) {
+            defaultBridge.notify(baseParams({ dedupeKey: `key-${i}` }));
+        }
+        expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(200);
+
+        // At exactly the capacity the oldest key is still retained, so a repeat is suppressed...
+        defaultBridge.notify(baseParams({ dedupeKey: 'key-1' }));
+        expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(200);
+
+        // ...and it is the 201st distinct key that evicts it.
+        defaultBridge.notify(baseParams({ dedupeKey: 'key-201' }));
+        defaultBridge.notify(baseParams({ dedupeKey: 'key-1' }));
+        expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(202);
+    });
+
     test('a synchronously-rejecting conductor.submit is caught and logged, never thrown out of notify()', async () => {
         conductor.submit.mockImplementationOnce(() => Promise.reject(new Error('submit boom')));
 

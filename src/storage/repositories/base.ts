@@ -112,6 +112,7 @@ export abstract class BaseRepository<_T> {
         const command = new UpdateCommand({ TableName: this.tableName, ...params });
         if(this.timeoutMs !== undefined) {
             return withDynamoTimeout(
+                // Stryker disable next-line llm: then(r => r) forwards the same value or rejection; its extra microtask cannot change this timeout race.
                 () => this.docClient.send(command),
                 { timeoutMs: this.timeoutMs, operation }
             );
@@ -123,6 +124,7 @@ export abstract class BaseRepository<_T> {
         params: Omit<ScanCommandInput, 'TableName'>,
         operation: string
     ): Promise<R[]> {
+        // Stryker disable next-line llm: params omits TableName and tableName is a string, so reversing the spread or appending an empty string changes nothing.
         const command = new ScanCommand({ TableName: this.tableName, ...params });
         if(this.timeoutMs !== undefined) {
             const result = await withDynamoTimeout(

@@ -86,6 +86,7 @@ export class MemoryToolBackendQuery {
             const cursorSchema = z.record(z.string(), z.unknown());
             const cursorResult = cursorSchema.safeParse(parsed);
             if(!cursorResult.success) {
+                // Stryker disable next-line llm: err is only the logger.warn diagnostic payload; error.issues and the ZodError itself carry the same information and the skip-ExclusiveStartKey behaviour is identical
                 logger.warn({ err: cursorResult.error.issues, cursor: options.cursor }, 'Invalid cursor shape — skipping ExclusiveStartKey; query will restart from the beginning');
                 return;
             }
@@ -145,10 +146,12 @@ export class MemoryToolBackendQuery {
         layer?: LayerName,
         options?: ListOptions
     ): Promise<ListResult<TagIndexReadItem>> {
+        // Stryker disable next-line llm: tagIndex is declared `?: MemoryToolBackendTagIndex`, so undefined is its only absent state and !this.tagIndex already covers it
         if(!this.tagIndex) {
             throw new InvariantViolationError('MemoryToolBackendQuery.searchByTags', 'Tag index not configured');
         }
         // queryByTags still takes string[], so spread the Set
+        // Stryker disable next-line llm: tags is already a Set, so re-wrapping in a Set or Array.from yields the same array; every options consumer reads options?.x, so {...undefined} is indistinguishable from undefined
         return this.tagIndex.queryByTags([...tags], layer, options);
     }
 
@@ -299,18 +302,22 @@ export class MemoryToolBackendQuery {
     ): Promise<MemoryToolItemData[]> {
         const maxIdentityItems = options?.maxIdentityItems ?? 100;
         const maxStateItems = options?.maxStateItems ?? 50;
+        // Stryker disable next-line llm: only the ranking is returned, and a uniform clock shift scales every score by the same exp(-lambda) factor, so the order is unchanged except through the t=0 clamp, which only a fabricated future-timestamp tie could observe
         const nowMs = (options?.now ?? new Date()).getTime();
 
         // Get the newest identity items from the bounded layer query.
         const identityResult = await this.listByLayer(createLayerName('identity'), { limit: maxIdentityItems });
+        // Stryker disable next-line llm: listByLayer was called with limit: maxIdentityItems, which becomes the DynamoDB Query Limit, so a conforming backend cannot return a longer page
         const identityItems = identityResult.items;
 
         // Get state items (all items from /state layer)
         const stateResult = await this.listByLayer(createLayerName('state'), { limit: maxStateItems });
+        // Stryker disable next-line llm: listByLayer was called with limit: maxStateItems and the scored list is clamped to maxStateItems again below, so the pre-slice is unreachable for a conforming backend
         let stateItems = stateResult.items;
 
         // Score state items using sigmoid function for frequency × recency
         const scoredItems = stateItems.map((item) => {
+            // Stryker disable next-line NumberLiteralValue,llm: sigmoidScore clamps accessCount with Math.max(0, accessCount), so a -1 default is indistinguishable from 0
             const accessCount = (item.metadata.accessCount as number | undefined) ?? 0;
             const lastAccessed = (item.metadata.lastAccessed as string | undefined) ?? item.updatedAt;
             const timeSinceLastAccessMs = nowMs - new Date(lastAccessed).getTime();
@@ -334,10 +341,12 @@ export class MemoryToolBackendQuery {
         // within the maxItems*2 most-recently-touched candidates. The ×2 headroom keeps this
         // bound safe across future sigmoid parameter tuning.
         const stateResult = await this.listByLayer(createLayerName('state'), { limit: maxItems * 2 });
+        // Stryker disable next-line llm: ListResult.items is a required T[] and listByLayer always builds it from (result.Items ?? []), so the ?? [] fallback is unreachable
         const stateItems = stateResult.items;
 
         // Score items using sigmoid function for frequency × recency
         const scoredItems = stateItems.map((item) => {
+            // Stryker disable next-line NumberLiteralValue: sigmoidScore clamps accessCount with Math.max(0, accessCount), so a -1 default is indistinguishable from 0
             const accessCount = (item.metadata.accessCount as number | undefined) ?? 0;
             const lastAccessed = (item.metadata.lastAccessed as string | undefined) ?? item.updatedAt;
             const timeSinceLastAccessMs = nowMs - new Date(lastAccessed).getTime();

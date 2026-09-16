@@ -69,13 +69,13 @@ export function createRoleLogger(role: SessionRole, base: FieldLogger = logger):
 export function logResultErrors(message: { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] }): void {
     if(message.type === 'result' && message.is_error) {
         logger.error({
+            // Stryker disable next-line llm: type is a required field so 'type' in message always holds, and both branches then yield the same optional subtype value.
             subtype: 'subtype' in message ? message.subtype : undefined,
             errors:  'errors' in message ? message.errors : [],
             msg:     'Agent SDK returned error result',
         });
     }
 }
-// Stryker restore StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement,ArrayDeclaration
 
 /**
  * Logs error details from assistant events in the stream. Stateless — used only by the one-shot
@@ -90,7 +90,6 @@ export function logAssistantErrors(message: { type: string, error?: unknown }): 
         });
     }
 }
-// Stryker restore StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement
 
 /**
  * Logs tool usage from assistant messages with redacted sensitive args. Stateless — used only
@@ -108,7 +107,6 @@ export function logToolUsage(message: { type: string, message?: { content?: unkn
         });
     }
 }
-// Stryker restore StringLiteral,ObjectLiteral
 
 /** A per-instance stream-event logger: `logStreamEvent` dispatches, `reset` clears pending tool-correlation state. */
 export interface StreamEventLogger {
@@ -143,6 +141,7 @@ export function createStreamEventLogger(log: FieldLogger = logger): StreamEventL
     let pendingToolRequests: string[] = [];
 
     function logUserEvent(_message: AgentStreamEvent): void {
+        // Stryker disable next-line llm: pendingToolRequests is a closure-local array only ever assigned [] or pushed to, so it is never nullish.
         if(pendingToolRequests.length > 0) {
             // Log all pending tool responses
             for(const toolName of pendingToolRequests) {
@@ -163,7 +162,9 @@ export function createStreamEventLogger(log: FieldLogger = logger): StreamEventL
     }
 
     function logAssistantEvent(message: AgentStreamEvent): void {
+        // Stryker disable next-line llm: logAssistantEvent is reached only through logStreamEvent's switch on message.type, so message is never nullish.
         const toolUses = extractToolUses(message);
+        // Stryker disable next-line llm: an array length is a non-negative integer, so > 0, >= 1 and !== 0 coincide.
         if(toolUses.length > 0) {
             // Log each tool request and track for response correlation
             for(const toolUse of toolUses) {
@@ -208,6 +209,7 @@ export function createStreamEventLogger(log: FieldLogger = logger): StreamEventL
 
     function logSystemEvent(message: AgentStreamEvent): void {
         // Type guard: Only SystemEvent has subtype property
+        // Stryker disable next-line llm: the following `message.subtype === 'compact_boundary'` already excludes every non-string subtype, so a typeof conjunct is redundant.
         if('subtype' in message && message.subtype === 'compact_boundary') {
             const compactMessage = message as CompactBoundaryIngress;
             const preTokens = compactMessage.compact_metadata?.pre_tokens;
@@ -253,10 +255,8 @@ export function createStreamEventLogger(log: FieldLogger = logger): StreamEventL
                     status:    resultMessage.subtype,
                     msg:       'Claude LLM stream complete',
                 });
-                // Stryker restore StringLiteral,ObjectLiteral
                 break;
             }
-            // Stryker restore ConditionalExpression,BlockStatement
 
             case 'system': {
                 logSystemEvent(message);

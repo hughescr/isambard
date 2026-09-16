@@ -14,8 +14,6 @@ export type OutboxItemType = z.infer<typeof outboxItemTypeSchema>;
 const outboxPrioritySchema = z.enum(['high', 'medium', 'low']);
 export type OutboxPriority = z.infer<typeof outboxPrioritySchema>;
 
-// Stryker restore all
-
 const outboxPayloadSchema = z.object({
     text:        z.string().optional(),
     embeds:      z.array(z.unknown()).optional(),

@@ -268,6 +268,53 @@ Keep it factual and actionable. The assistant will decide whether to read full m
             });
         });
 
+        test('channelName comes from the first message in the array, not the last', async () => {
+            const messages: UnreadMessage[] = [
+                {
+                    id:          '111',
+                    channelId:   createChannelId('123456789'),
+                    channelName: 'first-channel-name',
+                    guildId:     'DM',
+                    author:      'Alice',
+                    content:     'Hello everyone!',
+                    timestamp:   '2025-01-24T10:00:00.000Z',
+                    isRead:      false,
+                },
+                {
+                    id:          '222',
+                    channelId:   createChannelId('123456789'),
+                    channelName: 'last-channel-name',
+                    guildId:     'DM',
+                    author:      'Bob',
+                    content:     'Hi Alice!',
+                    timestamp:   '2025-01-24T10:05:00.000Z',
+                    isRead:      false,
+                },
+            ];
+
+            mockInboxManager.getChannelMessages = mock(() => messages);
+            const spy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Summary');
+            spies.push(spy);
+
+            const handler = getToolHandler(createInboxMCPServer(mockInboxManager, mockChannelRegistry), 'getChannelSummary');
+            const result: CallToolResult = await handler({ channelId: '123456789' });
+
+            const text = getTextContent(result);
+            expect(text).toBeDefined();
+            const parsed = parseJSON<ChannelSummaryResponse>(text!);
+            expect(parsed.channelName).toBe('first-channel-name');
+        });
+
+        test('rejects a resolved channel ID that fails the ChannelId validation', async () => {
+            mockChannelRegistry.resolveChannelId = mock(() => '' as ReturnType<typeof createChannelId>);
+
+            const handler = getToolHandler(createInboxMCPServer(mockInboxManager, mockChannelRegistry), 'getChannelSummary');
+            const result = await handler({ channelId: '#missing' });
+
+            expect(result.isError).toBe(true);
+            expect(mockInboxManager.getChannelMessages).not.toHaveBeenCalled();
+        });
+
         test('should reject a message whose timestamp is undefined', async () => {
             const malformed = {
                 id:          '111',
@@ -288,6 +335,55 @@ Keep it factual and actionable. The assistant will decide whether to read full m
 
             expect(result.isError).toBe(true);
             expect(getTextContent(result)).toContain('Invariant violated in channelSummary tool: timestamps empty despite messages.length > 0');
+        });
+
+        test('rejects a missing latest timestamp even when the earliest timestamp exists', async () => {
+            const malformedMessages = [
+                {
+                    id:          'first',
+                    channelId:   createChannelId('123456789'),
+                    channelName: 'general',
+                    guildId:     'DM',
+                    author:      'Alice',
+                    content:     'First',
+                    timestamp:   '2025-01-01T10:00:00.000Z',
+                    isRead:      false,
+                },
+                {
+                    id:          'last',
+                    channelId:   createChannelId('123456789'),
+                    channelName: 'general',
+                    guildId:     'DM',
+                    author:      'Bob',
+                    content:     'Last',
+                    timestamp:   undefined,
+                    isRead:      false,
+                },
+            ] as unknown as UnreadMessage[];
+            mockInboxManager.getChannelMessages = mock(() => malformedMessages);
+            const summarySpy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Summary');
+            spies.push(summarySpy);
+
+            const handler = getToolHandler(createInboxMCPServer(mockInboxManager, mockChannelRegistry), 'getChannelSummary');
+            const result = await handler({ channelId: '123456789' });
+
+            expect(result.isError).toBe(true);
+            expect(getTextContent(result)).toContain('timestamps empty despite messages.length > 0');
+        });
+
+        test('reports the number of distinct authors in summary telemetry', async () => {
+            const messages: UnreadMessage[] = [
+                { id: 'one', channelId: createChannelId('123456789'), channelName: 'general', guildId: 'DM', author: 'Alice', content: 'One', timestamp: '2025-01-01T10:00:00.000Z', isRead: false },
+                { id: 'two', channelId: createChannelId('123456789'), channelName: 'general', guildId: 'DM', author: 'Alice', content: 'Two', timestamp: '2025-01-01T10:01:00.000Z', isRead: false },
+            ];
+            mockInboxManager.getChannelMessages = mock(() => messages);
+            const summarySpy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Summary');
+            spies.push(summarySpy);
+
+            const handler = getToolHandler(createInboxMCPServer(mockInboxManager, mockChannelRegistry), 'getChannelSummary');
+            await handler({ channelId: '123456789' });
+
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ authorCount: 1 }));
         });
 
         test('should handle AI summary generation failure', async () => {
@@ -447,7 +543,9 @@ Keep it factual and actionable. The assistant will decide whether to read full m
             const text = getTextContent(result);
             expect(text).toBeDefined();
             const parsed = parseJSON<{ messages: UnreadMessage[] }>(text!);
-            expect(parsed.messages).toEqual([]);
+            // Deep-equal on the whole payload (not just .messages) so an extra top-level
+            // field such as a stray `count` would fail this assertion.
+            expect(parsed).toEqual({ messages: [] });
         });
 
         test('should fetch messages by IDs', async () => {
@@ -509,6 +607,64 @@ Keep it factual and actionable. The assistant will decide whether to read full m
             });
         });
 
+        test('should preserve an empty message timestamp rather than substituting a fallback', async () => {
+            const message: UnreadMessage = {
+                id:          '111',
+                channelId:   createChannelId('123456789'),
+                channelName: 'general',
+                guildId:     'DM',
+                author:      'Alice',
+                content:     'Hello',
+                timestamp:   '',
+                isRead:      false,
+            };
+
+            mockInboxManager.getMessage = mock(() => message);
+
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
+            const handler = getToolHandler(server, 'fetchMessages');
+
+            const result: CallToolResult = await handler({
+                channelId:  '123456789',
+                messageIds: ['111'],
+            });
+
+            const text = getTextContent(result);
+            expect(text).toBeDefined();
+            const parsed = parseJSON<{ messages: UnreadMessage[] }>(text!);
+            expect(parsed.messages[0]?.timestamp).toBe('');
+        });
+
+        test('should resolve channel names through the channel registry rather than using the raw argument', async () => {
+            mockChannelRegistry.resolveChannelId = mock((nameOrId: string) => createChannelId(nameOrId === '#general' ? '123456789' : nameOrId));
+            mockInboxManager.getMessage = mock(() => undefined);
+
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
+            const handler = getToolHandler(server, 'fetchMessages');
+
+            await handler({
+                channelId:  '#general',
+                messageIds: ['111'],
+            });
+
+            expect(mockInboxManager.getMessage).toHaveBeenCalledWith(createChannelId('123456789'), '111');
+        });
+
+        test('should reject a channel id that resolves to an empty string', async () => {
+            mockChannelRegistry.resolveChannelId = mock(() => createChannelId(''));
+
+            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
+            const handler = getToolHandler(server, 'fetchMessages');
+
+            const result: CallToolResult = await handler({
+                channelId:  '#unknown',
+                messageIds: ['111'],
+            });
+
+            expect(result.isError).toBe(true);
+            expect(mockInboxManager.getMessage).not.toHaveBeenCalled();
+        });
+
         test('should skip non-existent messages', async () => {
             const message1: UnreadMessage = {
                 id:          '111',
@@ -541,6 +697,14 @@ Keep it factual and actionable. The assistant will decide whether to read full m
             const parsed = parseJSON<{ messages: UnreadMessage[] }>(text!);
             expect(parsed.messages).toHaveLength(1);
             expect(parsed.messages[0]?.id).toBe('111');
+            // requestedCount (2) and fetchedCount (1) must reflect the input and output
+            // arrays independently — neither can be substituted for the other.
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                channelId:      createChannelId('123456789'),
+                requestedCount: 2,
+                fetchedCount:   1,
+                msg:            'Messages fetched',
+            });
         });
 
         test('should return error on exception', async () => {

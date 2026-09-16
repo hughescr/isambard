@@ -646,6 +646,82 @@ describe('createTaskListReader', () => {
         expect(truncatedSubject).toHaveLength(50);
     });
 
+    test('includes a completed task finished just under two hours ago', async () => {
+        const frozenNow = new Date('2026-01-01T12:00:00.000Z');
+        setSystemTime(frozenNow);
+        // 1ms under the 2-hour cutoff: catches the twoHoursMs literals (2 * 60 * 60 * 1000)
+        // being shrunk, since a shrunk threshold would wrongly exclude this task.
+        const justUnderTwoHoursAgo = new Date(frozenNow.getTime() - (2 * 60 * 60 * 1000 - 1));
+
+        const mockFiles: Dirent[] = [
+            { name: 'task1.json', isFile: () => true } as Dirent,
+        ];
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
+            id:       'task1',
+            subject:  'Completed just under cutoff',
+            status:   'completed',
+            metadata: { completedAt: justUnderTwoHoursAgo.toISOString() },
+        })));
+
+        const reader = createTaskListReader({
+            getCurrentSessionId: mockGetCurrentSessionId,
+            logger:              mockLogger,
+            readdir:             mockReaddir,
+            readFile:            mockReadFile,
+        });
+
+        const result = await reader.buildTaskListSummary();
+
+        expect(result).toBe('Recently done: Completed just under cutoff');
+    });
+
+    test('reads up to 8 task files concurrently', async () => {
+        const fileCount = 8;
+        const mockFiles: Dirent[] = Array.from({ length: fileCount }, (_, i) => ({
+            name:   `task${i}.json`,
+            isFile: () => true,
+        } as Dirent));
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+
+        const resolvers: ((value: string) => void)[] = [];
+        mockReadFile = mock(() => new Promise<string>((resolve) => {
+            resolvers.push(resolve);
+        }));
+
+        const reader = createTaskListReader({
+            getCurrentSessionId: mockGetCurrentSessionId,
+            logger:              mockLogger,
+            readdir:             mockReaddir,
+            readFile:            mockReadFile,
+        });
+
+        const resultPromise = reader.buildTaskListSummary();
+
+        // Give p-limit's microtask chain room to dispatch every initially-admitted read.
+        // With concurrency capped below 8, only that many calls would ever appear here,
+        // since none of the reads below are resolved yet to free up a queue slot.
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(mockReadFile).toHaveBeenCalledTimes(fileCount);
+
+        for(const [i, resolve] of resolvers.entries()) {
+            resolve(JSON.stringify({
+                id:      `task${i}`,
+                subject: `Task ${i}`,
+                status:  'pending',
+            }));
+        }
+
+        const result = await resultPromise;
+
+        expect(result).toBe(`${fileCount} pending tasks`);
+    });
+
     test('should return undefined on error', async () => {
         mockGetCurrentSessionId = mock(() => {
             throw new Error('Unexpected error');

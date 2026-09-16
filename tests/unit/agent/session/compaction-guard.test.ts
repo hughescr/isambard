@@ -73,6 +73,55 @@ describe('createCompactionGuard', () => {
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_started', trigger: 'auto' }));
     });
 
+    it('context_usage_polled carries the exact clock time, not wall-clock time', async () => {
+        clock.advance(654_321);
+
+        await guard.onTurnEnd({ queueEmpty: true });
+
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'context_usage_polled', at: new Date(654_321) }));
+    });
+
+    it('compaction_failed carries the exact clock time, not wall-clock time or an off-by-one', async () => {
+        clock.advance(123_456);
+        getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
+        submitCompact.mockRejectedValueOnce(new Error('CLI refused /compact'));
+
+        await guard.onTurnEnd({ queueEmpty: true });
+
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed', at: new Date(123_456) }));
+    });
+
+    it('a NaN percentage (a degenerate maxTokens=0 SDK response) is treated as below threshold, not at/above it', async () => {
+        getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: Number.NaN }));
+
+        await guard.onTurnEnd({ queueEmpty: true });
+
+        expect(submitCompact).toHaveBeenCalledTimes(1);
+    });
+
+    it('onTurnEnd awaits submit() to completion — a still-pending submitCompact keeps onTurnEnd pending too', async () => {
+        getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
+        let resolveSubmit: (() => void) | undefined;
+        submitCompact.mockImplementation(() => new Promise<void>((resolve) => {
+            resolveSubmit = resolve;
+        }));
+
+        let settled = false;
+        const onTurnEndPromise = guard.onTurnEnd({ queueEmpty: true }).then(() => {
+            settled = true;
+            return undefined;
+        });
+
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        resolveSubmit?.();
+        await onTurnEndPromise;
+        expect(settled).toBe(true);
+    });
+
     it('at threshold with a non-empty queue: deferred to the next turn end', async () => {
         getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
 

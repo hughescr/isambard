@@ -85,7 +85,9 @@ export interface CreateCompactionThresholdTunerParams {
 }
 
 function median(values: readonly number[]): number {
+    // Stryker disable next-line llm: toSorted never mutates its receiver, so the spread copy is unobservable, and ascending vs descending order selects the same middle element(s) for the median
     const sorted = [...values].toSorted((a, b) => a - b);
+    // Stryker disable next-line llm: an array length is never negative, so Math.floor and Math.trunc agree here
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 === 0
         ? ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
@@ -136,6 +138,7 @@ function intervalsFromFinishedRecords(telemetry: CompactionTelemetry): number[] 
 
     const intervals: number[] = [];
     for(let i = 1; i < finishedStarts.length; i += 1) {
+        // Stryker disable next-line llm: the non-null assertions are erased at transpile time and the loop bounds keep both indices in range, so removing either changes nothing at runtime
         intervals.push(finishedStarts[i]! - finishedStarts[i - 1]!);
     }
     return intervals;

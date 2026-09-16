@@ -42,10 +42,12 @@ export function truncateToBytes(text: string, maxBytes: number): string {
     let cutPos = maxBytes;
     // Buffer.from(string) starts at a valid UTF-8 byte, so the walk stops at
     // index zero without a separate bound check. An absent index also stops it.
+    // Stryker disable NumberLiteralValue,llm: the `?? 0` fallback only fires when cutPos leaves the buffer (negative or non-integer maxBytes), and 0, 1 and -1 all fail `& 0xC0 === 0x80` identically, so the loop exits at the same cutPos
     // eslint-disable-next-line no-bitwise -- bit-masking idiom for UTF-8 continuation byte detection
     while(((buf[cutPos] ?? 0) & 0xC0) === 0x80) {
         cutPos--;
     }
+    // Stryker restore NumberLiteralValue,llm
     const bytesSaved = buf.length - cutPos;
     return `${buf.subarray(0, cutPos).toString('utf8')}[truncated — ${bytesSaved} bytes omitted]`;
 }
@@ -183,7 +185,6 @@ export function createBrowserMCPServer(deps: BrowserMCPServerDeps) {
                 async ({ containerSelector = 'body' }): Promise<CallToolResult> => {
                     try {
                         const expr = `Array.from(document.querySelectorAll(${JSON.stringify(containerSelector)} + ' a[href]')).map(a => ({ href: a.href, text: (a.textContent || '').trim() })).slice(0, 500)`;
-                        // Stryker restore StringLiteral
                         const links = await adapter.evaluate<{ href: string, text: string }[]>(expr);
                         return mcpJsonResult(links);
                     } catch (error) {
@@ -265,6 +266,7 @@ export function createBrowserMCPServer(deps: BrowserMCPServerDeps) {
                     try {
                         const opts: { format?: 'png' | 'jpeg', quality?: number } = {};
                         if(format !== undefined) {
+                            // Stryker disable next-line llm: the !== undefined guard plus z.enum(['png','jpeg']) narrow format to two truthy strings, so `|| 'png'` can never change it.
                             opts.format = format;
                         }
                         if(quality !== undefined) {

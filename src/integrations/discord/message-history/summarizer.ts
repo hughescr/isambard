@@ -101,6 +101,7 @@ async function summarizeBatch(messages: DiscordSearchResult[]): Promise<BatchOve
 
     const sorted = messages.toSorted((a, b) => a.timestamp.localeCompare(b.timestamp));
     return {
+        // Stryker disable next-line llm: for supported positive integer batch sizes, the batch is nonempty and its ISO timestamp is nonempty, so the optional access and fallback are unreachable
         startTimestamp: sorted.at(0)!.timestamp,
         endTimestamp:   sorted.at(-1)!.timestamp,
         messageCount:   messages.length,

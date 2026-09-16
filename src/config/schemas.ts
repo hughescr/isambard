@@ -89,7 +89,6 @@ export const idleSignalsConfigSchema = z.object({
     /** Cache TTL for activity-log results (ms, default: 15 min) */
     activityLogCacheMs:       z.number().int().positive().default(15 * 60_000),
 });
-/* Stryker restore BooleanLiteral,ArithmeticOperator */
 
 export type IdleSignalsConfig = z.infer<typeof idleSignalsConfigSchema>;
 
@@ -193,7 +192,6 @@ export const browserConfigSchema = z.object({
     chromePath:          z.string().optional(),
     allowlist:           z.array(z.string()).optional(),
 });
-/* Stryker restore BooleanLiteral,StringLiteral,ArithmeticOperator */
 
 // Bluesky config
 export const bskyConfigSchema = z.object({
@@ -231,7 +229,6 @@ export const perchConfigSchema = z.object({
         forceSlot:        z.enum(['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night']).optional(),
     }).optional(),
 }).optional();
-/* Stryker restore BooleanLiteral,StringLiteral */
 
 // Reconciliation config schemas - canonical definitions (re-exported by src/storage/memory-tool/reconciliation/types.ts)
 
@@ -244,7 +241,6 @@ const reconciliationBackoffSchema = z.object({
     /** Maximum number of retry attempts */
     maxAttempts: z.number().int().positive().default(3),
 });
-/* Stryker restore BooleanLiteral,ArithmeticOperator */
 
 /**
  * Test mode configuration for manual triggering
@@ -255,7 +251,6 @@ const reconciliationTestModeSchema = z.object({
     /** Run only once instead of on interval (for testing) */
     runOnce:          z.boolean().optional(),
 });
-/* Stryker restore BooleanLiteral */
 
 /**
  * Configuration for tag index reconciliation job
@@ -277,7 +272,6 @@ export const reconciliationConfigSchema = z.object({
     /** Test mode for manual triggering */
     testMode: reconciliationTestModeSchema.optional(),
 });
-/* Stryker restore BooleanLiteral,ArithmeticOperator */
 
 export type ReconciliationConfig = z.infer<typeof reconciliationConfigSchema>;
 
@@ -314,7 +308,6 @@ export const vectorIndexConfigSchema = z.object({
     /** Embedding model quantization level */
     modelQuant: z.enum(['Q8_0', 'Q4_K_M']).default('Q8_0'),
 });
-/* Stryker restore BooleanLiteral,StringLiteral */
 
 export type VectorIndexConfig = z.infer<typeof vectorIndexConfigSchema>;
 
@@ -340,7 +333,6 @@ export const sessionConfigSchema = z.object({
     /** Desired interval, in ms, between compactions that the tuner steps the threshold toward (Q11). Undefined makes every tuner step a no-op (target = Infinity). */
     compactTargetIntervalMs:    z.number().int().positive().optional(),
 });
-/* Stryker restore BooleanLiteral,ArithmeticOperator,StringLiteral */
 
 // Full config schema (planned integrations are optional)
 export const configSchema = z.object({

@@ -51,4 +51,21 @@ describe('registerAllCommands', () => {
             msg:   'Failed to register slash commands — bot continues without updated commands',
         });
     });
+
+    test('stringifies a non-Error rejection, preserving an empty message rather than substituting a placeholder', async () => {
+        // Rejecting with '' (not an Error) exercises the String(err) branch with a falsy
+        // stringified value, distinguishing it from a `String(err) || 'Unknown error'` fallback.
+        const set = mock(async () => {
+            throw '';
+        });
+        const client = { application: { commands: { set } } };
+
+        await expect(registerAllCommands(client as never, [() => ({ toJSON: mock(() => ({ name: 'first' })) }) as never]))
+            .resolves.toBeUndefined();
+
+        expect(mockLogger.error).toHaveBeenCalledWith({
+            error: '',
+            msg:   'Failed to register slash commands — bot continues without updated commands',
+        });
+    });
 });

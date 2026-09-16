@@ -265,4 +265,16 @@ describe('createPeerMessageHooks', () => {
 
         expect(h.logger.warn).not.toHaveBeenCalled();
     });
+
+    it('propagates the configured timezone through to the envelope stamp rather than substituting a default', async () => {
+        // An empty timezone is not a valid IANA zone, so Luxon renders "Invalid DateTime" for
+        // it — proof the value reached the stamp unchanged rather than being defaulted to 'UTC'
+        // (which would render a well-formed "... UTC" stamp instead).
+        const h = build({ timezone: '' });
+
+        await run(h);
+
+        expect(adopted(h).text).toContain('Invalid DateTime');
+        expect(adopted(h).text).not.toContain('UTC');
+    });
 });

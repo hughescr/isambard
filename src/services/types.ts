@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 export const serviceNameSchema = z.enum(['discord', 'discord-channel-registry', 'email', 'bluesky', 'caldav', 'dynamodb']);
 export type ServiceName = z.infer<typeof serviceNameSchema>;
-// Stryker restore all
 
 export type HealthState = 'disabled' | 'starting' | 'recovering' | 'online' | 'degraded' | 'offline';
 

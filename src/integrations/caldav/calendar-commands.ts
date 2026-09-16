@@ -115,6 +115,7 @@ export class CalendarCommandHandler {
 
     private requiredNonEmptyString(interaction: ChatInputCommandInteraction, option: string): string | null {
         const value = this.requiredString(interaction, option);
+        // Stryker disable next-line llm: !value is identical here because the length check already covers the only other falsy string, the empty string
         return value === null || value.length === 0 ? null : value;
     }
 
@@ -187,6 +188,7 @@ export class CalendarCommandHandler {
         calendars:   CalendarInfo[],
         retryCommand: string
     ): Promise<CalendarInfo[] | null> {
+        // Stryker disable next-line llm: length 0 is unreachable here because both callers return early on an empty calendar list
         if(calendars.length === 1) {
             return calendars;
         }
@@ -198,7 +200,9 @@ export class CalendarCommandHandler {
             .setMinValues(1)
             .setMaxValues(capped.length)
             .addOptions(capped.map((c, i) => ({
+                // Stryker disable next-line llm: for string x, x || "" is x; slice and substring coincide for fixed non-negative bounds 0 and 100
                 label: c.displayName.slice(0, 100),
+                // Stryker disable next-line llm: i is an array index and therefore a number; String(i) and i.toString() are identical
                 value: String(i),
             })));
         select.setPlaceholder('Select calendars to add');
@@ -221,11 +225,13 @@ export class CalendarCommandHandler {
                 time:          300_000,
             });
 
+            // Stryker disable next-line llm: deferUpdate() resolves to void and the value is discarded; .then(() => null) preserves fulfilment and rejection
             await response.deferUpdate();
             const selectedIndices = response.values;
             // Safe: Discord only returns values we provided (String(0)..String(capped.length-1))
             return selectedIndices.map((idx) => {
                 const cal = capped[Number(idx)];
+                // Stryker disable next-line llm: capped is CalendarInfo[], so an indexed element is undefined or a truthy object, never null or falsy
                 if(cal === undefined) {
                     throw new InvariantViolationError('selectCalendars', `Discord returned calendar index ${idx} outside provided range [0..${String(capped.length - 1)}]`);
                 }
@@ -247,7 +253,6 @@ export class CalendarCommandHandler {
             }
             return null;
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleAddServer(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
@@ -264,6 +269,7 @@ export class CalendarCommandHandler {
         try {
             const calendars = await this.caldavClient.discoverCalendars(serverUrl, username, password);
 
+            // Stryker disable next-line llm: array length is a non-negative integer, so === 0, < 1, and a falsiness check coincide
             if(calendars.length === 0) {
                 await interaction.editReply({ content: 'No calendars found on this server.' });
                 return;
@@ -297,13 +303,13 @@ export class CalendarCommandHandler {
             const message = error instanceof Error ? error.message : String(error);
             await interaction.editReply({ content: `Failed to add server: ${message}`, components: [] });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleList(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
         try {
             const record = await this.registry.getUserRecord(userId);
 
+            // Stryker disable next-line llm: strict equality treats 0 and -0 as equal, so === -0 is identical to === 0.
             if(!record || record.servers.length === 0) {
                 await interaction.editReply({ content: 'No calendars configured.' });
                 return;
@@ -319,7 +325,6 @@ export class CalendarCommandHandler {
             logger.error({ error, userId }, 'Failed to list calendars');
             await interaction.editReply({ content: 'Failed to list calendars.' });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleRemoveServer(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
@@ -331,16 +336,19 @@ export class CalendarCommandHandler {
 
         try {
             const record = await this.registry.getUserRecord(userId);
+            // Stryker disable next-line llm: getUserRecord returns an object or null, so !record and record === null coincide
             if(!record || record.servers.length === 0) {
                 await interaction.editReply({ content: 'No calendars configured.' });
                 return;
             }
             const server = resolveServer(record.servers, serverInput);
+            // Stryker disable next-line llm: resolveServer returns a CalendarServerEntry or null; objects are truthy, and its branded UUID serverId cannot be empty
             if(!server) {
                 await interaction.editReply({ content: `Server "${serverInput}" not found.` });
                 return;
             }
             const removed = await this.registry.removeServer(userId, server.serverId);
+            // Stryker disable next-line llm: removeServer returns boolean, so !removed and removed === false coincide
             if(!removed) {
                 await interaction.editReply({ content: 'Server was already removed.' });
                 return;
@@ -356,7 +364,6 @@ export class CalendarCommandHandler {
             logger.error({ error, serverInput }, 'Failed to remove server');
             await interaction.editReply({ content: 'Failed to remove server.' });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleRemoveCalendar(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
@@ -399,7 +406,6 @@ export class CalendarCommandHandler {
             logger.error({ error, serverInput, calendarInput }, 'Failed to remove calendar');
             await interaction.editReply({ content: 'Failed to remove calendar.' });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleSharedAddServer(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -416,12 +422,14 @@ export class CalendarCommandHandler {
         try {
             const calendars = await this.caldavClient.discoverCalendars(serverUrl, username, password);
 
+            // Stryker disable next-line llm: an array length is a non-negative integer, so < 1 and <= 0 are identical to === 0
             if(calendars.length === 0) {
                 await interaction.editReply({ content: 'No calendars found on this server.' });
                 return;
             }
 
             const selected = await this.selectCalendars(interaction, calendars, '/calendar shared add-server');
+            // Stryker disable next-line llm: [] is truthy, so !selected is exactly selected === null for CalendarInfo[] | null
             if(!selected) {
                 return;
             }
@@ -449,7 +457,6 @@ export class CalendarCommandHandler {
             const message = error instanceof Error ? error.message : String(error);
             await interaction.editReply({ content: `Failed to add shared server: ${message}`, components: [] });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleSharedList(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -463,6 +470,7 @@ export class CalendarCommandHandler {
 
             const lines = record.servers.map((s) => {
                 const calLines = s.calendars.map(c => `  - ${c.label} (${c.calendarPath})`).join('\n');
+                // Stryker disable next-line llm: an escaped and a literal newline inside a template literal produce the same string.
                 return `**${s.description}** (${s.serverId}):\n${calLines}`;
             });
 
@@ -471,11 +479,11 @@ export class CalendarCommandHandler {
             logger.error({ error }, 'Failed to list shared calendars');
             await interaction.editReply({ content: 'Failed to list shared calendars.' });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleSharedRemoveServer(interaction: ChatInputCommandInteraction): Promise<void> {
         const serverInput = this.requiredNonEmptyString(interaction, 'server_id');
+        // Stryker disable next-line llm: requiredNonEmptyString maps '' to null, so the extra === '' clause can never fire
         if(serverInput === null) {
             await interaction.editReply({ content: 'Missing required shared server ID.' });
             return;
@@ -483,6 +491,7 @@ export class CalendarCommandHandler {
 
         try {
             const record = await this.registry.getSharedRecord();
+            // Stryker disable next-line llm: an array length is a non-negative integer, so <= 0 and !length are identical to === 0
             if(!record || record.servers.length === 0) {
                 await interaction.editReply({ content: 'No shared calendars configured.' });
                 return;
@@ -508,12 +517,12 @@ export class CalendarCommandHandler {
             logger.error({ error, serverInput }, 'Failed to remove shared server');
             await interaction.editReply({ content: 'Failed to remove shared server.' });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleSharedRemoveCalendar(interaction: ChatInputCommandInteraction): Promise<void> {
         const serverInput   = this.requiredNonEmptyString(interaction, 'server_id');
         const calendarInput = this.requiredNonEmptyString(interaction, 'calendar_path');
+        // Stryker disable next-line llm: both operands are null or a non-empty string (requiredNonEmptyString maps '' to null), so !x is exactly x === null
         if(serverInput === null || calendarInput === null) {
             await interaction.editReply({ content: 'Missing required shared calendar details.' });
             return;
@@ -551,6 +560,5 @@ export class CalendarCommandHandler {
             logger.error({ error, serverInput, calendarInput }, 'Failed to remove shared calendar');
             await interaction.editReply({ content: 'Failed to remove shared calendar.' });
         }
-        // Stryker restore BlockStatement
     }
 }

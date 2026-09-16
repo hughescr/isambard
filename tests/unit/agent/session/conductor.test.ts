@@ -1213,6 +1213,19 @@ describe('createConductor', () => {
             ]);
         });
 
+        it('preserves an explicitly empty compaction failure reason rather than treating it as absent', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.ledgerStore.dispatch({ type: 'compaction_started', trigger: 'manual', at: new Date(h.clock.now()) });
+            h.ledgerStore.dispatch({ type: 'compaction_failed', reason: '', at: new Date(h.clock.now()) });
+            await flush();
+
+            expect(h.journal.byKind('compaction_failed')).toEqual([
+                { type: 'compaction_failed', at: expect.any(Date), error: '' },
+            ]);
+        });
+
         it('submitCompact() rejects "Conductor is shutting down" once shutdown has begun, surfaced via the guard\'s submitCompact-rejected log', async () => {
             const h = build();
             await openWith(h);
@@ -1933,6 +1946,43 @@ describe('createConductor', () => {
             const thirdOutcome = await thirdPromise;
             expect(thirdOutcome.contextUsagePercent).toBe(42);
         });
+
+        it('aborting an envelope queued BEHIND another withdraws exactly that one: the envelope ahead of it still runs next, and the withdrawn envelope never reaches the SDK', async () => {
+            const h = build();
+            await openWith(h);
+            const runningResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-A' }), { priority: 'human', requestingChannelId: 'chan-A' });
+            await flush();
+
+            // Both queue up behind chan-A's turn: `ahead` lands at index 0, the signal-bearing
+            // `behind` at index 1 — the case where "the item's own index" and "the head" differ.
+            const aheadEnvelope = discordEnvelope({ channelId: 'chan-B' });
+            const aheadResult = h.conductor.submit(aheadEnvelope, { priority: 'human', requestingChannelId: 'chan-B' });
+            await flush();
+
+            const controller = new AbortController();
+            const behindEnvelope = discordEnvelope({ channelId: 'chan-C' });
+            const behindResult = h.conductor.submit(behindEnvelope, { priority: 'human', requestingChannelId: 'chan-C', signal: controller.signal });
+            await flush();
+            expect(h.conductor.status().queueLength).toBe(2);
+
+            controller.abort();
+            const withdrawn = await behindResult;
+            expect(withdrawn).toMatchObject({ envelopeId: behindEnvelope.id, response: null, wasInterrupted: true, outcome: 'withdrawn' });
+            // Exactly one envelope left the queue — the aborted one. Withdrawing by removing the
+            // head instead of the aborted envelope's own index would have dropped `ahead` and left
+            // this already-settled envelope queued to run a turn of its own.
+            expect(h.conductor.status().queueLength).toBe(1);
+
+            h.instances[0].emit(frames.resultSuccess());
+            await runningResult;
+            await flush();
+
+            expect(h.ledgerStore.get().turn).toMatchObject({ channelId: 'chan-B' });
+
+            h.instances[0].emit(frames.resultSuccess());
+            const aheadOutcome = await aheadResult;
+            expect(aheadOutcome.envelopeId).toBe(aheadEnvelope.id);
+        });
     });
 
     describe('interruptCurrent()', () => {
@@ -2077,6 +2127,30 @@ describe('createConductor', () => {
 
             expect(h.journal.flushCount).toBe(1);
             expect(h.instances[0].closeCalls).toBe(1);
+        });
+
+        it('honors the caller-supplied turnWaitMs, not a hardcoded or dropped wait — no interrupt until it elapses', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 5000, deadlineMs: 120_000 });
+            await flush();
+
+            // Flush right after each advance (unlike the test above) so a wait shorter than
+            // requested — e.g. a dropped turnWaitMs firing at 0ms — would already show up here.
+            h.clock.advance(4999);
+            await flush();
+            expect(h.instances[0].interruptCalls).toBe(0);
+
+            h.clock.advance(1);
+            await flush();
+            expect(h.instances[0].interruptCalls).toBe(1);
+
+            h.instances[0].resolveInterrupt();
+            h.instances[0].emit(frames.resultInterrupted());
+            await shutdownPromise;
         });
 
         it('clears both shutdown timers when the running turn ends naturally before turnWaitMs', async () => {
@@ -2385,6 +2459,21 @@ describe('createConductor', () => {
             expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('undelivered:');
         });
 
+        it('includes a recovered task with an explicitly empty description in the boot bundle', async () => {
+            const buildBootBundle = jest.fn();
+            const h = build({ buildBootBundle });
+            h.journal.scriptReadSince([
+                { type: 'task_started', at: new Date(0), taskId: 'task-empty-description', description: '' },
+            ]);
+
+            await openWith(h);
+
+            expect(buildBootBundle).toHaveBeenCalledWith({
+                lostTasks:   [''],
+                undelivered: [],
+            });
+        });
+
         it('crash-and-restart: a conductor rebuilt over the same journal refuses to redeliver what the crashed one already sent, and reports its unfinished task as lost', async () => {
             const sharedJournal = new FakeJournal();
             const a = build({ journal: sharedJournal });
@@ -2609,6 +2698,35 @@ describe('createConductor', () => {
             // presence reads the LEDGER's id — so the skew is inert, not a dropped synopsis.
             expect(observed[0]).not.toBe(ledgerOpenedId);
             expect(h.ledgerStore.get().turn?.id).toBe(ledgerOpenedId);
+        });
+
+        it('the awaitingTurnEnd window dispatches spontaneous_turn_opened with the SAME captured `at` used to mint the turn id — not a second, independent clock read', async () => {
+            const h = build();
+            await openWith(h);
+            const deferredUsage = h.instances[0].deferContextUsage();
+            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            // If the dispatched `at` were a fresh `now()` call instead of the one captured for
+            // the turn id, a clock that returns a different value on the second read would
+            // produce a ledger turn whose startedAt disagrees with its own id's timestamp.
+            let call = 0;
+            jest.spyOn(h.clock, 'now').mockImplementation(() => {
+                call += 1;
+                return call === 1 ? 1000 : 2000;
+            });
+
+            h.instances[0].emit(frames.assistantText('racing the compaction decision'));
+            await flush();
+
+            expect(h.ledgerStore.get().turn?.id).toBe('notification-1000');
+            expect(h.ledgerStore.get().turn?.startedAt.getTime()).toBe(1000);
+
+            deferredUsage.resolve(frames.contextUsage({ percentage: 10 }));
+            await flush();
+            await priorResult;
         });
     });
 

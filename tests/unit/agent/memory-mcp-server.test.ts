@@ -226,6 +226,20 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(result.isError).toBe(true);
         });
 
+        test('should return error message when backend.get throws a Symbol', async () => {
+            mockBackend.get = mock(async () => {
+                throw Symbol('backend failure');
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'view');
+
+            const result = await handler({ path: '/memories/test.md' });
+
+            expect(textContent(result.content[0])).toBe('Error viewing memory: Symbol(backend failure)');
+            expect(result.isError).toBe(true);
+        });
+
         test('should call recordAccess for state-layer paths', async () => {
             mockBackend.get = mock(async () => createMockItem({
                 path:    '/state/test' as MemoryPath,
@@ -246,9 +260,9 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(recordAccess).toHaveBeenCalledWith(['/state/test']);
         });
 
-        test('should not call recordAccess for identity-layer paths', async () => {
+        test.each(['/identity/test', '/stateful/note'])('should not call recordAccess for non-state-layer path %s', async (path) => {
             mockBackend.get = mock(async () => createMockItem({
-                path:    '/identity/test' as MemoryPath,
+                path:    path as MemoryPath,
                 content: 'Test content',
             }));
 
@@ -256,7 +270,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const server = createMemoryMCPServer(mockBackend, { recordAccess });
             const handler = getToolHandler(server, 'view');
 
-            await handler({ path: '/identity/test' });
+            await handler({ path });
 
             // Flush microtask queue to let fire-and-forget promise settle
             await Promise.resolve();
@@ -783,6 +797,30 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(textContent(result.content[0])).toContain('Error logging event:');
             expect(result.isError).toBe(true);
         });
+
+        test('should reject an empty eventType instead of filing the event under a fabricated type', async () => {
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'logEvent');
+
+            const result = await handler({ eventType: '', summary: 'Orphaned event' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Error logging event:');
+            expect(mockBackend.create).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('list tool', () => {
+        test('uses directory listing for a case-distinct layer path', async () => {
+            mockBackend.list = mock(async () => ({ items: [], nextCursor: undefined }));
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'list');
+
+            await handler({ path: '/EVENTS' });
+
+            expect(mockBackend.list).toHaveBeenCalledWith('/EVENTS', undefined);
+            expect(mockBackend.listByLayer).not.toHaveBeenCalled();
+        });
     });
 
     describe('listTags tool', () => {
@@ -839,6 +877,56 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             expect(textContent(result.content[0])).toContain('Error listing tags:');
             expect(result.isError).toBe(true);
+        });
+
+        test('should include a zero-count tag in output rather than filtering it out', async () => {
+            mockBackend.listTagCounts = mock(async () => [
+                { tag: 'stale', count: 0 },
+                { tag: 'active', count: 2 },
+            ]);
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'listTags');
+
+            const result = await handler({});
+
+            expect(textContent(result.content[0])).toBe('active: 2\nstale: 0');
+        });
+
+        test('should show only the Error message, not the "Error: " wrapper, for a thrown Error', async () => {
+            mockBackend.listTagCounts = mock(async () => {
+                throw new Error('Database error');
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'listTags');
+
+            const result = await handler({});
+
+            // error.message alone, not String(error) (which would prepend "Error: ")
+            expect(textContent(result.content[0])).toBe('Error listing tags: Database error');
+        });
+
+        test('should stringify a symbol thrown by backend.listTagCounts', async () => {
+            mockBackend.listTagCounts = mock(async () => {
+                throw Symbol('tag failure');
+            });
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'listTags');
+
+            let outcome: { kind: 'result', result: CallToolResult } | { kind: 'error', error: unknown };
+            try {
+                outcome = { kind: 'result', result: await handler({}) };
+            } catch (error) {
+                outcome = { kind: 'error', error };
+            }
+
+            expect(outcome.kind).toBe('result');
+            if(outcome.kind === 'result') {
+                expect(textContent(outcome.result.content[0])).toBe('Error listing tags: Symbol(tag failure)');
+                expect(outcome.result.isError).toBe(true);
+            }
         });
     });
 
@@ -947,6 +1035,39 @@ describe.concurrent('createMemoryMCPServer', () => {
 
             expect(textContent(result.content[0])).toBe('Error deleting memory: Network timeout');
             expect(result.isError).toBe(true);
+        });
+
+        test('should display the deleted item\'s canonical path from the backend, not the raw request path', async () => {
+            mockBackend.delete = mock(async () => createMockItem({
+                path:    '/state/canonical-path' as MemoryPath,
+                content: 'Some content',
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'deleteMemory');
+
+            const result = await handler({ path: '/state/requested-path' });
+
+            expect(textContent(result.content[0])).toContain('Deleted memory at /state/canonical-path');
+            expect(textContent(result.content[0])).not.toContain('/state/requested-path');
+        });
+
+        test('should show the literal deleted content, even when missing, without substituting a placeholder', async () => {
+            mockBackend.delete = mock(async () => createMockItem({
+                path:    '/state/no-content' as MemoryPath,
+                // Bypass the MemoryToolItemData['content'] string type to simulate a backend
+                // that returns an item without content at runtime.
+                content: undefined as unknown as string,
+            }));
+
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'deleteMemory');
+
+            const result = await handler({ path: '/state/no-content' });
+
+            // Undefined content must not be silently coerced to an empty string; the
+            // literal template interpolation ("undefined") must come through unchanged.
+            expect(textContent(result.content[0])).toContain('\n\nundefined');
         });
     });
 

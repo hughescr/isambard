@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, afterEach } from 'bun:test';
+import { describe, it, expect, mock, afterEach, jest } from 'bun:test';
 import { rm, mkdir } from 'node:fs/promises';
 import { MediaProcessingError } from '@/errors';
 import { isHlsUrl, downloadVideo } from '@/utils/media/video/downloader';
@@ -38,6 +38,7 @@ describe('isHlsUrl', () => {
 
 describe('downloadVideo', () => {
     afterEach(async () => {
+        jest.restoreAllMocks();
         globalThis.fetch = originalFetch;
         try {
             await rm(TEST_DIR, { recursive: true });
@@ -74,6 +75,8 @@ describe('downloadVideo', () => {
         expect(caught).toBeInstanceOf(MediaProcessingError);
         expect((caught as MediaProcessingError).message).toContain('HLS download failed');
         expect((caught as MediaProcessingError).context.operation).toBe('ffmpeg-hls');
+        // The diagnostic detail must be ffmpeg's stderr, not its (empty) stdout.
+        expect((caught as MediaProcessingError).context.detail).toBe('HLS error');
     });
 
     it('fetches directly for non-HLS URLs and writes to disk', async () => {
@@ -89,6 +92,21 @@ describe('downloadVideo', () => {
         const resultPath = await downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/direct`, makeSuccessRunner());
         expect(resultPath).toContain('video-original.mp4');
         expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+
+        // The download must be guarded by a minutes-long timeout, not a zero-delay one:
+        // a zero-delay signal has aborted by the next event-loop turn, the real one has not.
+        await Bun.sleep(0);
+        expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+    });
+
+    it('propagates a disk-write failure from the direct download', async () => {
+        globalThis.fetch = mock(async (): Promise<Response> => new Response(Buffer.from('fake video data'), { status: 200 })) as unknown as typeof fetch;
+        jest.spyOn(Bun, 'write').mockImplementationOnce(async () => {
+            throw new Error('ENOSPC: no space left on device');
+        });
+
+        await expect(downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/write-fail`, makeSuccessRunner()))
+            .rejects.toThrow('ENOSPC: no space left on device');
     });
 
     it('throws MediaProcessingError on HTTP error during direct download', async () => {

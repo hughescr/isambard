@@ -244,8 +244,11 @@ export function buildAllowedTools(servers: SessionMcpServers): string[] {
         'Bash(ls:*)',
     ];
 
+    // Stryker disable next-line llm: baseTools is a fresh local array never read again, so aliasing it instead of copying is unobservable.
     const tools = [...baseTools];
+    // Stryker disable next-line llm: iterating this fixed array or a shallow copy visits the same elements; the loop does not mutate it.
     for(const name of OPTIONAL_MCP_SERVER_ORDER) {
+        // Stryker disable next-line llm: adding || false cannot change the condition truthiness, so both forms always take the same branch.
         if(servers[name]) {
             tools.push(`mcp__${name}__*`);
         }
@@ -311,13 +314,11 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
             autoAllowBashIfSandboxed: true,
             excludedCommands:         ['git'],
         },
-        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration
         disallowedTools:        DISALLOWED_CRON_TOOLS,
         perTaskStopAffordance:  true,
         allowedTools:           buildAllowedTools(mcpServers),
         thinking:               { type: 'adaptive' as const },
         effort:                 'high' as const,
-        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
         // 'project' is what discovers Izzy's agents and skills in scratch/.claude. It would also pull in CLAUDE.md files;
         // see CLAUDE_CODE_DISABLE_CLAUDE_MDS in env below.
         settingSources:         ['project'] as SettingSource[],
@@ -340,7 +341,6 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
             // Auto-memory would read and write ~/.claude/projects/<cwd>/memory. Izzy's memory is DynamoDB; keep ~/.claude out of it.
             CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
         },
-        // Stryker restore StringLiteral,ObjectLiteral
         stderr: (data: string) => {
             // Every branch stamps `role` so two concurrent sessions' interleaved SDK stderr can
             // be told apart in logs.
@@ -355,6 +355,5 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
                 logger.error({ role, stderr: data }, 'Agent SDK stderr');
             }
         },
-        // Stryker restore StringLiteral,ObjectLiteral
     } satisfies Options;
 }

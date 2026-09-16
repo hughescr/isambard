@@ -156,6 +156,31 @@ describe('diffAgenda', () => {
     test('empty baseline and empty current produce an empty, non-first delta', () => {
         expect(diffAgenda([], [])).toEqual({ added: [], removed: [], changed: [], isFirst: false });
     });
+
+    // Each delta list preserves the order of the list it was derived from -- `current` for
+    // added/changed, `baseline` for removed -- which is the day-ordered order `toAgenda`
+    // produced. Callers render these lists in order (`formatCalendarContext`), so reversing
+    // them is visible output, not an incidental implementation detail.
+    test('added preserves the current agenda order across multiple new entries', () => {
+        const result = diffAgenda([], [makeEntry({ uid: 'uid-a' }), makeEntry({ uid: 'uid-b' }), makeEntry({ uid: 'uid-c' })]);
+
+        expect(result.added.map(entry => entry.uid)).toEqual(['uid-a', 'uid-b', 'uid-c']);
+    });
+
+    test('changed preserves the current agenda order across multiple changed entries', () => {
+        const baseline = [makeEntry({ uid: 'uid-a', summary: 'Old A' }), makeEntry({ uid: 'uid-b', summary: 'Old B' })];
+        const current  = [makeEntry({ uid: 'uid-a', summary: 'New A' }), makeEntry({ uid: 'uid-b', summary: 'New B' })];
+
+        const result = diffAgenda(baseline, current);
+
+        expect(result.changed.map(entry => entry.uid)).toEqual(['uid-a', 'uid-b']);
+    });
+
+    test('removed preserves the baseline agenda order across multiple removed entries', () => {
+        const result = diffAgenda([makeEntry({ uid: 'uid-a' }), makeEntry({ uid: 'uid-b' })], []);
+
+        expect(result.removed.map(entry => entry.uid)).toEqual(['uid-a', 'uid-b']);
+    });
 });
 
 // tests/setup.ts's global Intl.DateTimeFormat mock gives every zone a single fixed offset (no

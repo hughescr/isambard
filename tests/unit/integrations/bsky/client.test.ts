@@ -71,6 +71,11 @@ const mockRichTextState = {
     facets:         undefined as Record<string, unknown>[] | undefined,
 };
 
+// Captures the `text` the production code actually passed to `new RichText({ text })`,
+// independent of mockRichTextState.text (which the mock's getters return regardless of
+// the constructor argument) — lets tests pin that the real input reaches the constructor.
+let lastRichTextConstructorText: string | undefined;
+
 const MOCK_API_DOUBLE = {
     AtpAgent: class MockAtpAgent {
         constructor(options: { service: string }) {
@@ -100,6 +105,10 @@ const MOCK_API_DOUBLE = {
         withProxy               = mockWithProxy;
     },
     RichText: class MockRichText {
+        constructor(opts: { text: string }) {
+            lastRichTextConstructorText = opts.text;
+        }
+
         detectFacets = mockDetectFacets;
         get graphemeLength() { return mockRichTextState.graphemeLength; }
         get text()           { return mockRichTextState.text; }
@@ -308,6 +317,7 @@ describe.concurrent('BlueskyClient', () => {
         mockRichTextState.text           = 'Hello Bluesky!';
         mockRichTextState.facets         = undefined;
         latestAgentOptions                = undefined;
+        lastRichTextConstructorText       = undefined;
         mockLogger.error.mockClear();
         mockLogger.debug.mockClear();
     });
@@ -441,6 +451,23 @@ describe.concurrent('BlueskyClient', () => {
                 const failure = await client.login().catch((error: unknown) => error);
                 expect(failure).toBeInstanceOf(BskyRateLimitError);
                 expect(Object.hasOwn((failure as BskyRateLimitError).context ?? {}, 'retryAfterMs')).toBe(false);
+            });
+
+            test('parses ratelimit-reset with radix 10, not auto-detected hex, for a hex-looking value', async () => {
+                // "0x1E" under radix 10 stops at the invalid digit 'x' and parses to 0.
+                // Under radix 0 (auto-detect) it would be read as hex and parse to 30.
+                jest.setSystemTime(new Date(0));
+                const errWithHeaders = Object.assign(new Error('Rate limited'), {
+                    status:  429,
+                    error:   'RateLimitExceeded',
+                    headers: { 'ratelimit-reset': '0x1E' },
+                });
+                mockLogin.mockRejectedValueOnce(errWithHeaders);
+                const client = new BlueskyClient(CLIENT_OPTIONS);
+
+                await expect(client.login()).rejects.toMatchObject({
+                    context: expect.objectContaining({ retryAfterMs: 0 }),
+                });
             });
         });
 
@@ -670,6 +697,21 @@ describe.concurrent('BlueskyClient', () => {
             expect(result.items[0].reply?.root).toMatchObject({ uri: POST_VIEW.uri });
         });
 
+        test('normalizes reply root from item.reply.root, not item.reply.parent, when they differ', async () => {
+            const feedItemWithDistinctRootAndParent = {
+                post:  POST_VIEW,
+                reply: {
+                    parent: POST_VIEW,
+                    root:   ROOT_POST_VIEW,
+                },
+            };
+            mockGetTimeline.mockResolvedValueOnce({ data: { feed: [feedItemWithDistinctRootAndParent], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getFeed();
+            expect(result.items[0].reply?.parent).toMatchObject({ uri: POST_VIEW.uri });
+            expect(result.items[0].reply?.root).toMatchObject({ uri: ROOT_POST_VIEW.uri });
+        });
+
         test('includes replyRef in feed item post when post record has a reply field', async () => {
             const feedItemWithReplyRefPost = { post: POST_VIEW_WITH_REPLY_REF };
             mockGetTimeline.mockResolvedValueOnce({ data: { feed: [feedItemWithReplyRefPost], cursor: undefined } });
@@ -818,6 +860,14 @@ describe.concurrent('BlueskyClient', () => {
             expect(mockGetPosts).toHaveBeenCalledWith({ uris: [POST_VIEW.uri] });
             expect(post.uri).toBe(POST_VIEW.uri);
             expect(post.text).toBe('Hello Bluesky!');
+        });
+
+        test('returns the first post when the API answers with more than one', async () => {
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_VIEW, POST_VIEW_NO_COUNTS] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.uri).toBe(POST_VIEW.uri);
+            expect(post.cid).toBe('bafypost123');
         });
 
         test('throws BskyError when post not found (empty array)', async () => {
@@ -1400,6 +1450,14 @@ describe.concurrent('BlueskyClient', () => {
                 text:   'Hello @user.bsky.social!',
                 facets: [{ $type: 'app.bsky.richtext.facet' }],
             });
+        });
+
+        test('constructs RichText with the actual input text, not a hardcoded value', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockResolvedValueOnce({ uri: 'at://uri', cid: 'cid' });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.sendPost('a distinctive post body');
+            expect(lastRichTextConstructorText).toBe('a distinctive post body');
         });
 
         test('returns uri and cid from agent.post response', async () => {
@@ -3327,6 +3385,18 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
             for(const key of ['bookmarked', 'threadMuted', 'replyDisabled', 'embeddingDisabled']) {
                 expect(Object.hasOwn(viewerWithoutFlags, key)).toBe(false);
             }
+            // null is distinct from undefined for the `=== undefined` presence checks below:
+            // a strict check keeps a literal null value, a loose (== null/undefined) check would drop it.
+            const detailedWithNullCounts = client.normalizeDetailedProfile({ ...AUTHOR_BASIC, followersCount: null, followsCount: null, postsCount: null }) as Record<string, unknown>;
+            for(const key of ['followersCount', 'followsCount', 'postsCount']) {
+                expect(Object.hasOwn(detailedWithNullCounts, key)).toBe(true);
+                expect(detailedWithNullCounts[key]).toBeNull();
+            }
+            const viewerWithNullFlags = client.normalizeViewer({ threadMuted: null, replyDisabled: null, embeddingDisabled: null }) as Record<string, unknown>;
+            for(const key of ['threadMuted', 'replyDisabled', 'embeddingDisabled']) {
+                expect(Object.hasOwn(viewerWithNullFlags, key)).toBe(true);
+                expect(viewerWithNullFlags[key]).toBeNull();
+            }
             expect(client.normalizeProfileView({ ...AUTHOR_BASIC, description: 'Bio' })).toEqual({ ...AUTHOR_BASIC, description: 'Bio' });
             const conversationMember = { did: 'did:plc:member1', handle: 'alice.bsky.social', displayName: 'Alice', avatar: 'https://cdn.bsky.app/avatar1.jpg', chatDisabled: false };
             expect(client.normalizeConversationMember(conversationMember)).toEqual(conversationMember);
@@ -3349,6 +3419,7 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
             expect(post).not.toHaveProperty('facets');
             const message = await client.normalizeMessage({ id: 'message', rev: 'revision', text: 'Hello', sender: { did: 'did:plc:member' }, sentAt: '2026-03-07T12:00:00.000Z', facets: emptyFacet });
             expect(message).not.toHaveProperty('facets');
+            expect(message).not.toHaveProperty('embed');
 
             for(const view of [
                 { cid: 'cid', author: {} },

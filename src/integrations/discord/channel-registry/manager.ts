@@ -10,7 +10,6 @@ import type { ReconnectionLoop } from '@/services';
 function isDMChannelWithRecipient(channel: unknown): channel is DMChannel {
     return typeof channel === 'object' && channel !== null && 'recipient' in channel;
 }
-// Stryker restore ConditionalExpression
 
 /**
  * Configuration for ChannelRegistryManager.
@@ -94,7 +93,6 @@ export class ChannelRegistryManager {
                 logger.error({ err, msg: 'onReady callback rejected' });
             });
         }
-        // Stryker restore BlockStatement,ArrowFunction,ConditionalExpression
         return promise;
     }
 
@@ -124,7 +122,6 @@ export class ChannelRegistryManager {
             logger.error({ err, msg: 'onReady callback rejected' });
         });
     }
-    // Stryker restore BlockStatement,ArrowFunction
 
     /**
      * Unregister a previously registered onReady callback.
@@ -136,13 +133,15 @@ export class ChannelRegistryManager {
      * @param callback - The callback function to remove
      */
     offReady(callback: () => void | Promise<void>): void {
+        // Stryker disable next-line llm: == equals === for two function references, and `|| e.cancelled` is unreachable because offReady sets cancelled and splices that entry in the same synchronous block
         const idx = this.readyCallbacks.findIndex(e => e.fn === callback);
+        // Stryker disable next-line llm: findIndex returns -1 or >= 0, so `idx > -1` is exactly `idx !== -1`
         if(idx !== -1) {
+            // Stryker disable next-line llm: dropping the non-null assertion is type-only; `!` is erased at runtime
             this.readyCallbacks[idx]!.cancelled = true;
             this.readyCallbacks.splice(idx, 1);
         }
     }
-    // Stryker restore BlockStatement,ConditionalExpression,UnaryOperator
 
     /**
      * Returns true if the registry has been successfully hydrated via warmCache().
@@ -447,6 +446,7 @@ export class ChannelRegistryManager {
      */
     shouldProcess(channelId: ChannelId, isDM: boolean, isMention: boolean, isReplyToBot: boolean): boolean {
         // Override conditions - always process
+        // Stryker disable next-line llm: isDM is a boolean parameter, so `isDM || false` is the identity.
         if(isDM) {
             return true;
         }
@@ -638,9 +638,11 @@ export class ChannelRegistryManager {
      * @returns The Discord channel or null if not found
      */
     private async fetchDiscordChannel(channelId: ChannelId): Promise<Channel | null> {
+        // Stryker disable AwaitDrop: async return adopts the fallback fetch promise, preserving its resolution and rejection
         return this.client.channels.cache.get(channelId)
           ?? await this.client.channels.fetch(channelId);
     }
+    // Stryker restore AwaitDrop
 
     /**
      * Fetch Discord channel data and cache it.

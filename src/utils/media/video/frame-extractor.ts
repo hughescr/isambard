@@ -16,14 +16,14 @@ async function mapWithConcurrency<T, R>(
         while(index < items.length) {
             const i = index++;
             const item = items[i];
+            // Stryker disable next-line llm: typeof on this declared local is behaviorally identical to direct comparison with undefined.
             if(item === undefined) {
                 throw new InvariantViolationError('mapWithConcurrency', 'items[i] undefined despite i < items.length');
             }
-            // eslint-disable-next-line no-await-in-loop -- sequential within each worker is intentional
-            results[i] = await fn(item);
+            // Stryker disable next-line llm: adding zero to this nonnegative integer index cannot change the selected result slot.
+            results[i] = await fn(item); // eslint-disable-line no-await-in-loop -- sequential within each worker is intentional
         }
     }
-    // Stryker restore BlockStatement
     await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
     return results;
 }
@@ -95,6 +95,7 @@ export async function extractFramesAtTimestamps(
 
     const frames: FetchedImage[] = [];
     for(const frame of results) {
+        // Stryker disable next-line llm: extractFrameAt returns only FetchedImage or null, so loose null comparison cannot add undefined.
         if(frame !== null) {
             frames.push(frame);
         }
@@ -114,6 +115,7 @@ export async function extractFramesInRange(
 ): Promise<FetchedImage[]> {
     const timestamps: number[] = [];
     if(count === 1) {
+        // Stryker disable next-line ArrayMethodSwap: this is the sole insertion into a fresh empty array, making push and unshift identical.
         timestamps.push((startTime + endTime) / 2);
     } else {
         const step = (endTime - startTime) / (count - 1);

@@ -6,7 +6,7 @@
  * - error handling drops job (doesn't crash worker)
  * - close drains then closes embedder
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import type { EmbedResult } from '@/storage/memory-vec';
 import { AsyncIndexer } from '@/storage/memory-vec-store/indexer';
 
@@ -327,6 +327,13 @@ describe('AsyncIndexer', () => {
     });
 
     describe('queue soft-cap warn', () => {
+        it('pins QUEUE_WARN_THRESHOLD at 1000 — the soft-cap trigger point for the growing-queue warn', () => {
+            // Direct literal pin (not derived from the constant itself): the warn tests below
+            // compute their loop counts from AsyncIndexer.QUEUE_WARN_THRESHOLD, so they would
+            // still pass even if the underlying literal changed — only this test catches that.
+            expect(AsyncIndexer.QUEUE_WARN_THRESHOLD).toBe(1000);
+        });
+
         it('logs a warn when queue depth exceeds threshold by a multiple of QUEUE_WARN_THROTTLE', async () => {
             // The warn fires when: queueLen > QUEUE_WARN_THRESHOLD AND
             // (queueLen - QUEUE_WARN_THRESHOLD) % QUEUE_WARN_THROTTLE === 0.
@@ -372,6 +379,26 @@ describe('AsyncIndexer', () => {
             await indexer.drain();
             // Should have warned exactly twice: at threshold+throttle and threshold+2*throttle
             expect(logger.warn).toHaveBeenCalledTimes(2);
+        });
+    });
+
+    describe('updatedAt stamping', () => {
+        const FIXED_NOW = 1_700_000_000_000;
+
+        beforeEach(() => {
+            jest.useFakeTimers();
+            jest.setSystemTime(FIXED_NOW);
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        it('stamps updatedAt with the clock value at upsert time', async () => {
+            indexer.enqueue({ kind: 'upsert', pk: 'pk1', sk: 'sk1', layer: 'identity', path: '/identity/foo', content: 'text' });
+            await indexer.drain();
+            const arg = mockVectorIndex.upsert.mock.calls[0][0] as { updatedAt: number };
+            expect(arg.updatedAt).toBe(FIXED_NOW);
         });
     });
 });

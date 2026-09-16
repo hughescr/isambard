@@ -195,6 +195,20 @@ describe('createCompactionTelemetry', () => {
         ]);
     });
 
+    it('retains exactly the newest 50 records when maxRecords is omitted', () => {
+        const attempts = Array.from({ length: 51 }, (_value, index) => new Date(T1.getTime() + index));
+        for(const at of attempts) {
+            telemetry.record(started(at));
+            telemetry.record(boundary(at));
+        }
+
+        const records = telemetry.getRecords();
+
+        expect(records).toHaveLength(50);
+        expect(records[0]).toEqual({ startedAt: attempts[1], thresholdAtStart: 60, finishedAt: attempts[1] });
+        expect(records.at(-1)).toEqual({ startedAt: attempts[50], thresholdAtStart: 60, finishedAt: attempts[50] });
+    });
+
     it('getThresholdPercent is invoked per-start so two compactions with a threshold change between them keep distinct thresholdAtStart values', () => {
         telemetry.record(started(T1));
         telemetry.record(boundary(T2));

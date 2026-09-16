@@ -155,10 +155,12 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
     }
 
     return async function deliverWakeTurn(envelope: Envelope, result: TurnResult): Promise<void> {
+        // Stryker disable next-line llm: TurnResult.response is string | null, so these explicit empty cases and !response are equivalent for every produced result.
         if(result.response === null || result.response === '' || result.outcome !== undefined) {
             return;
         }
         const text = result.response;
+        // Stryker disable next-line llm: Envelope.kind is a required EnvelopeKind literal, so its nullish fallback is unreachable for every constructed envelope.
         const hasKnownTarget = envelope.channelId !== undefined || ENVELOPE_KIND_TO_CHANNEL[envelope.kind] !== undefined;
 
         if(hasKnownTarget) {

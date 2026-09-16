@@ -169,6 +169,18 @@ describe('composeTaskBoards', () => {
             expect(boards[0].tasks.map(entry => entry.id)).toEqual(['task-1', 'task-2']);
         });
 
+        // These two tie on both ordering keys, so nothing but the order the ledger lists them in
+        // decides between them: the board keeps the order it was composed in, and a composer that
+        // prepended each newly-seen task would reverse it.
+        test('tasks that tie on startedAt and id keep the order they were composed in', () => {
+            const boards = composeTaskBoards([ledger([
+                task({ id: 'tie', description: 'first' }),
+                task({ id: 'tie', description: 'second' }),
+            ])], at(10));
+
+            expect(boards[0].tasks.map(entry => entry.description)).toEqual(['first', 'second']);
+        });
+
         // The turn ids run against the launch order on purpose, so a composer that sorted by key
         // alone would fail this test.
         test('boards are returned in startedAt order', () => {
@@ -262,6 +274,17 @@ describe('composeTaskBoards', () => {
 
             expect(boards[0].state).toBe('done');
             expect(boards[0].finishedAt).toBeUndefined();
+        });
+
+        test('finishedAt is not floored to the epoch — a pre-1970 finish timestamp is reported as-is', () => {
+            // Math.max over finish times must not be given a 0 floor: with only one, negative
+            // finish time in `finishes`, a 0 floor would report the epoch instead of the real
+            // (earlier) finish time.
+            const boards = composeTaskBoards([ledger([], [
+                task({ id: 'a', status: 'completed', finishedAt: new Date(-500) }),
+            ])], at(10));
+
+            expect(boards[0].finishedAt).toEqual(new Date(-500));
         });
     });
 
@@ -374,5 +397,51 @@ describe('composeTaskBoards', () => {
 
             expect(boards[0].tasks[0].workflow?.meterFraction).toBe(1);
         });
+    });
+
+    test('tasks preserve launch order when a later task has an earlier id', () => {
+        const boards = composeTaskBoards([ledger([
+            task({ id: 'z-early', startedAt: at(1) }),
+            task({ id: 'a-late', startedAt: at(2) }),
+        ])], at(10));
+
+        expect(boards[0].tasks.map(entry => entry.id)).toEqual(['z-early', 'a-late']);
+    });
+
+    test('boards preserve start order when a later board has an earlier key', () => {
+        const boards = composeTaskBoards([ledger([
+            task({ id: 'first', turnId: 'z-early', startedAt: at(1) }),
+            task({ id: 'second', turnId: 'a-late', startedAt: at(2) }),
+        ])], at(10));
+
+        expect(boards.map(board => board.key)).toEqual(['chan-1:z-early', 'chan-1:a-late']);
+    });
+
+    test('an empty channel id remains distinct from the fallback channel', () => {
+        const boards = composeTaskBoards([ledger([task({ channelId: '' })])], at(1), {
+            fallbackChannelIds: { conversation: 'fallback-1' },
+        });
+
+        expect(boards[0].key).toBe(':turn-1');
+        expect(boards[0].channelId).toBe('');
+    });
+
+    test('mixed-case channel ids retain every task in their shared board', () => {
+        const boards = composeTaskBoards([ledger([
+            task({ id: 'first', channelId: 'Chan-1', startedAt: at(1) }),
+            task({ id: 'second', channelId: 'Chan-1', startedAt: at(2) }),
+        ])], at(10));
+
+        expect(boards).toHaveLength(1);
+        expect(boards[0].tasks.map(entry => entry.id)).toEqual(['first', 'second']);
+    });
+
+    test('running tasks remain before finished tasks when launch keys tie', () => {
+        const boards = composeTaskBoards([ledger(
+            [task({ id: 'same', description: 'running first', startedAt: at(1) })],
+            [task({ id: 'same', description: 'finished second', startedAt: at(1), status: 'completed', finishedAt: at(2) })]
+        )], at(10));
+
+        expect(boards[0].tasks.map(entry => entry.description)).toEqual(['running first', 'finished second']);
     });
 });

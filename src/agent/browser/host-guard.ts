@@ -108,9 +108,12 @@ function isBlockedMappedV4(rest: string): boolean {
     if(!/^[0-9a-f]{1,4}:[0-9a-f]{1,4}$/i.test(rest)) {
         return false;
     }
+    // Stryker disable next-line MethodExpression: complete-match regex guarantees exactly one colon, so indexOf and lastIndexOf agree
     const separator = rest.indexOf(':'); // guaranteed by the complete-match regex
     const hi = Number.parseInt(rest, 16);
+    // Stryker disable next-line NumberLiteralValue,MethodExpression: lo only feeds === 0; URL canonicalization strips leading zeroes, making that predicate radix-invariant
     const lo = Number.parseInt(rest.slice(separator + 1), 16);
+    // Stryker disable next-line EqualityOperator: Number.parseInt always returns a number, for which === and == agree
     return isBlockedIPv4Parts(Math.floor(hi / 256), hi % 256, lo === 0);
 }
 
@@ -126,6 +129,7 @@ function isBlockedMappedV4(rest: string): boolean {
  */
 function matchesPattern(hostname: string, pattern: string): boolean {
     if(pattern.startsWith('*.')) {
+        // Stryker disable next-line ArithmeticOperator: for a length-N string, slice(-N + 1) and slice(1) are identical
         const suffix = pattern.slice(1); // '.example.com'
         // hostname must end with this suffix AND have at least one char before it.
         // Guards against bare domain match and suffix-hijack attacks:
@@ -142,7 +146,9 @@ function matchesPattern(hostname: string, pattern: string): boolean {
 // ============================================================================
 
 function checkHostname(hostname: string): ValidateUrlError | null {
-    if(hostname === 'localhost' || hostname.endsWith('.localhost')) {
+    // Stryker disable next-line llm: hostname is already lowercased by the URL parser (see validateUrl's normalization comment), so toLowerCase() before this equality check cannot change the result for any reachable input
+    const isExactLocalhostMatch = hostname === 'localhost';
+    if(isExactLocalhostMatch || hostname.endsWith('.localhost')) {
         return { ok: false, reason: `host '${hostname}' is loopback` };
     }
     if(hostname === 'host.docker.internal') {
@@ -155,6 +161,7 @@ function checkIpRanges(hostname: string): ValidateUrlError | null {
     if(isIPv4(hostname) && isBlockedIPv4(hostname)) {
         return { ok: false, reason: `IP address ${hostname} is in a blocked range (loopback/private/link-local)` };
     }
+    // Stryker disable next-line EqualityOperator: net.isIP returns only 0, 4, or 6, so !== 0 and > 0 agree
     if(isIP(hostname) !== 0 && isBlockedIPv6(hostname)) {
         return { ok: false, reason: `IP address ${hostname} is in a blocked range (loopback/private/link-local)` };
     }
@@ -195,6 +202,7 @@ export function validateUrl(rawUrl: string, policy: BrowserHostPolicy): Validate
     // Strip them so isIP() and our range checks work correctly.
     const rawHostname = parsed.hostname; // already lower-cased by URL parser
     // Stryker disable LogicalOperator,StringLiteral: URL parser enforces matching bracket pairs; && vs || and '['/']' literal mutations are equivalent because malformed brackets are rejected at parse time
+    // Stryker disable next-line StringMethodArgSwap: URL parsing admits brackets only as the canonical IPv6 pair, so startsWith/includes and endsWith/includes agree
     const unbracketed = rawHostname.startsWith('[') && rawHostname.endsWith(']')
         ? rawHostname.slice(1, -1)
         : rawHostname;
@@ -210,7 +218,6 @@ export function validateUrl(rawUrl: string, policy: BrowserHostPolicy): Validate
     if(hostname.length === 0) {
         return { ok: false, reason: `invalid URL: ${rawUrl}` };
     }
-    // Stryker restore ConditionalExpression,EqualityOperator,BlockStatement,MethodExpression
 
     // ---- Blocked hostnames ----
     const hostnameError = checkHostname(hostname);

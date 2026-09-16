@@ -155,6 +155,32 @@ describe('createOutboxDrainer', () => {
     });
 
     describe('drain() — delivery failure', () => {
+        test('waits for markSent failure before reporting the delivery as failed', async () => {
+            const item = makeItem();
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            outboxBackend.markSent.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Mark sent unavailable');
+            });
+
+            const result = await drainer.drain(SERVICE);
+
+            expect(result).toEqual({ delivered: 0, failed: 1, skipped: 0 });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Mark sent unavailable');
+        });
+
+        test('propagates a markFailed failure after a delivery error', async () => {
+            const item = makeItem();
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Delivery unavailable');
+            });
+            outboxBackend.markFailed.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Mark failed unavailable');
+            });
+
+            await expect(drainer.drain(SERVICE)).rejects.toThrow('Mark failed unavailable');
+        });
+
         test('marks item failed and continues to next item when deliverFn throws Error', async () => {
             const item1 = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001' });
             const item2 = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' });
@@ -184,6 +210,18 @@ describe('createOutboxDrainer', () => {
             expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'plain string error');
         });
 
+        test('records a null delivery failure as the string null', async () => {
+            const item = makeItem();
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw null;
+            });
+
+            await drainer.drain(SERVICE);
+
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'null');
+        });
+
         test('logs error when delivery fails', async () => {
             const item = makeItem();
             outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
@@ -201,6 +239,17 @@ describe('createOutboxDrainer', () => {
     });
 
     describe('drain() — epoch skipping', () => {
+        test('propagates failure to delete a future-epoch item', async () => {
+            registry.getEntry.mockImplementation(() => makeEntry(1));
+            const futureItem = makeItem({ epoch: 2 });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [futureItem]);
+            outboxBackend.markSent.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Delete unavailable');
+            });
+
+            await expect(drainer.drain(SERVICE)).rejects.toThrow('Delete unavailable');
+        });
+
         test('skips and deletes item with epoch greater than current epoch', async () => {
             registry.getEntry.mockImplementation(() => makeEntry(1));
             const futureItem = makeItem({ epoch: 2 });
@@ -266,6 +315,34 @@ describe('createOutboxDrainer', () => {
     });
 
     describe('drain() — scheduling another drain', () => {
+        test('uses default batch size and interval before scheduling the next drain', async () => {
+            const defaultDrainer = createOutboxDrainer({
+                ...deps,
+                batchSize:       undefined,
+                drainIntervalMs: undefined,
+            });
+            const items = Array.from({ length: 10 }, (_, index) => makeItem({
+                id: `aaaaaaaa-0000-4000-8000-${String(index).padStart(12, '0')}`,
+            }));
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (): Promise<OutboxItem[]> => items)
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+
+            await defaultDrainer.drain(SERVICE);
+
+            expect(outboxBackend.dequeue).toHaveBeenCalledWith(SERVICE, 10);
+            expect(jest.getTimerCount()).toBe(1);
+
+            jest.advanceTimersByTime(999);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+            defaultDrainer.stop();
+        });
+
         test('schedules another drain when batch is full', async () => {
             // batchSize is 3; return exactly 3 items
             const items = [

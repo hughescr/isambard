@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createContactsMCPServer, type ContactChangeRequest } from '../../../src/agent/contacts-mcp-server';
-import type { Contact, ContactId } from '../../../src/storage/contacts';
+import type { Contact, ContactId, ContactIdentifier } from '../../../src/storage/contacts';
 import { textContent } from '../../setup';
 
 interface RegisteredTool {
@@ -180,6 +180,61 @@ describe.concurrent('createContactsMCPServer', () => {
             expect(textContent(result.content[0])).toBe("Contact 'alice-wonderland' has no discord identifier.");
         });
 
+        test('should match a platform that is not the first identifier in the list', async () => {
+            // Default makeContact() has email first and bsky second; this proves the
+            // filter checks every identifier rather than only the first.
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const handler = getToolHandler(server, 'lookupContactId');
+
+            const result = await handler({ personId: 'alice-wonderland', platform: 'bsky' });
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { values: string[] };
+            expect(parsed.values).toEqual(['alice.bsky.social']);
+        });
+
+        test('should require an exact-case platform match', async () => {
+            mockBackend.getContact.mockImplementation(async () => makeContact({
+                identifiers: [{ platform: 'Email', value: 'alice@example.com' } as unknown as ContactIdentifier],
+            }));
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const handler = getToolHandler(server, 'lookupContactId');
+
+            const result = await handler({ personId: 'alice-wonderland', platform: 'email' });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe("Contact 'alice-wonderland' has no email identifier.");
+        });
+
+        test('should return all matching values without truncating any but the first', async () => {
+            mockBackend.getContact.mockImplementation(async () => makeContact({
+                identifiers: [
+                    { platform: 'email', value: 'alice@example.com' },
+                    { platform: 'email', value: 'alice.wonder@example.com' },
+                ],
+            }));
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const handler = getToolHandler(server, 'lookupContactId');
+
+            const result = await handler({ personId: 'alice-wonderland', platform: 'email' });
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { values: string[] };
+            expect(parsed.values).toEqual(['alice@example.com', 'alice.wonder@example.com']);
+        });
+
+        test('should return the backend contact personId, not the raw requested id', async () => {
+            mockBackend.getContact.mockImplementation(async () => makeContact({ personId: 'alice-w' as ContactId }));
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const handler = getToolHandler(server, 'lookupContactId');
+
+            const result = await handler({ personId: 'alice-wonderland', platform: 'email' });
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { personId: string };
+            expect(parsed.personId).toBe('alice-w');
+        });
+
         test('should return error result when backend throws', async () => {
             mockBackend.getContact.mockImplementation(async () => {
                 throw new Error('DynamoDB error');
@@ -280,6 +335,20 @@ describe.concurrent('createContactsMCPServer', () => {
             expect(callArgs[1].personId).toBe('alice-wonderland');
             expect(callArgs[1].addIdentifiers).toEqual([{ platform: 'discord', value: 'Alice#1234' }]);
             expect(callArgs[1].removeIdentifiers).toBeUndefined();
+        });
+
+        test('should leave notes undefined when not provided, rather than defaulting to an empty string', async () => {
+            const approvalCallback = mock(async (): Promise<void> => { /* intentionally empty */ });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: approvalCallback });
+            const handler = getToolHandler(server, 'requestContactUpdate');
+
+            await handler({
+                personId:       'alice-wonderland',
+                addIdentifiers: [{ platform: 'discord', value: 'Alice#1234' }],
+            });
+
+            const callArgs = approvalCallback.mock.calls[0] as unknown as [string, ContactChangeRequest];
+            expect(callArgs[1].notes).toBeUndefined();
         });
 
         test('should include removeIdentifiers in approval request separately', async () => {

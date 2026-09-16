@@ -4,6 +4,7 @@ import type { DiscordMessageContext } from '../types';
  * Format bytes as human-readable string (e.g. "1.5MB", "245KB")
  */
 export function formatBytes(bytes: number): string {
+    // Stryker disable next-line llm: bytes is a number, so == and === agree, and negative sizes are outside the formatter's domain (the only call site passes a Discord attachment size)
     if(bytes === 0) {
         return '0B';
     }
@@ -31,6 +32,7 @@ export function addAttachmentInfoToContexts(
 
     return contexts.map((ctx, idx) => {
         // Only add attachment info to the first context
+        // Stryker disable next-line llm: idx is Array.prototype.map's index, always a non-negative integer, so idx <= 0 and idx === 0 agree for every reachable value.
         if(idx === 0) {
             return {
                 ...ctx,

@@ -179,6 +179,19 @@ describe('createLedgerStreamEventHandler', () => {
         }));
     });
 
+    it('redacts a sensitive key in the tool input stored for the tool synopsis', () => {
+        const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+        onStreamEvent({
+            type:    'assistant',
+            message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Bash', input: { apiKey: 'sk-live-abcdef', command: 'ls' } }] },
+        } as unknown as AgentStreamEvent);
+
+        expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+            phase: 'using_tool', toolInput: { apiKey: '[REDACTED]', command: 'ls' },
+        }));
+    });
+
     it('dispatches phase_synopsis for a responding transition', async () => {
         const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
 
@@ -343,7 +356,7 @@ describe('createLedgerStreamEventHandler', () => {
         await flushPromises();
 
         expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
-            phase: 'thinking', recentToolCalls: ['Read'],
+            phase: 'thinking', recentToolCalls: ['Read'], thinkingContent: undefined,
         }));
         expect(sink.dispatch).toHaveBeenCalledWith(expect.objectContaining({ phaseType: 'thinking', text: 'Generated synopsis' }));
     });
@@ -880,6 +893,160 @@ describe('createLedgerStreamEventHandler', () => {
             expect(sink.dispatch).toHaveBeenCalledWith(expect.objectContaining({
                 phaseType: 'thinking', text: 'Pre-generated thinking synopsis',
             }));
+        });
+    });
+
+    describe('dropped guards and unobservable-fallback coverage', () => {
+        it('passes accumulatedText: undefined (not empty string) to a using_tool synopsis when no prior response text has accumulated', () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            } as unknown as AgentStreamEvent);
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                phase: 'using_tool', accumulatedText: undefined,
+            }));
+        });
+
+        it('carries the latest sub-agent summary into a using_tool synopsis without an intervening result', async () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'system', subtype: 'task_progress', task_id: 't1', summary: 'sub-agent said this',
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+            (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockClear();
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            } as unknown as AgentStreamEvent);
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                phase: 'using_tool', subagentSummary: 'sub-agent said this',
+            }));
+        });
+
+        it('carries the latest sub-agent summary into a responding synopsis without an intervening result', async () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'system', subtype: 'task_progress', task_id: 't1', summary: 'sub-agent said this',
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+            (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockClear();
+
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as unknown as AgentStreamEvent);
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                phase: 'responding', subagentSummary: 'sub-agent said this',
+            }));
+        });
+
+        it('captures an isolated snapshot of recentToolCalls for live thinking regeneration, unaffected by a later tool call', async () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+            (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockClear();
+
+            onStreamEvent({ type: 'assistant', message: { content: [] } } as unknown as AgentStreamEvent);
+            const thinkingCallArgs = (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mock.calls[0][0] as { recentToolCalls?: string[] };
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool2', name: 'Bash', input: {} }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(thinkingCallArgs.recentToolCalls).toEqual(['Read']);
+        });
+
+        it('carries the latest sub-agent summary into a live thinking regeneration synopsis', async () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'system', subtype: 'task_progress', task_id: 't1', summary: 'sub-agent said this',
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+            (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockClear();
+
+            onStreamEvent({ type: 'assistant', message: { content: [] } } as unknown as AgentStreamEvent);
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                phase: 'thinking', subagentSummary: 'sub-agent said this',
+            }));
+        });
+
+        it('concatenates accumulated thinking content across multiple thinking blocks instead of overwriting it', () => {
+            const capturedUpdates: string[] = [];
+            const { onStreamEvent } = createLedgerStreamEventHandler({
+                ...baseDeps,
+                onThinkingContentUpdate: (content) => {
+                    capturedUpdates.push(content);
+                },
+            });
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'first part ' }] },
+            } as unknown as AgentStreamEvent);
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'second part' }] },
+            } as unknown as AgentStreamEvent);
+
+            expect(capturedUpdates.at(-1)).toBe('first part second part');
+        });
+
+        it('accumulates a text block by its own .text field even when a stray .thinking property is also present', () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type:    'assistant',
+                message: { content: [{ type: 'text', text: 'the real reply', thinking: 'stray field' }] },
+            } as unknown as AgentStreamEvent);
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                phase: 'responding', accumulatedText: 'the real reply',
+            }));
+        });
+
+        it('passes thinkingContent: undefined (not empty string) to a task_progress synopsis with no accumulated thinking yet', () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'system', subtype: 'task_progress', task_id: 't1', summary: 'still working',
+            } as unknown as AgentStreamEvent);
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                thinkingContent: undefined,
+            }));
+        });
+
+        it('captures an isolated snapshot of recentToolCalls in a task_progress synopsis, unaffected by a later tool call', async () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+            (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockClear();
+
+            onStreamEvent({
+                type: 'system', subtype: 'task_progress', task_id: 't1', summary: 'still working',
+            } as unknown as AgentStreamEvent);
+            const taskProgressArgs = (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mock.calls[0][0] as { recentToolCalls?: string[] };
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool2', name: 'Bash', input: {} }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(taskProgressArgs.recentToolCalls).toEqual(['Read']);
         });
     });
 });

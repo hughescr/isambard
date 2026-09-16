@@ -97,6 +97,13 @@ describe('assertLlamaCppCompatible', () => {
         await expect(assertLlamaCppCompatible()).resolves.toBeUndefined();
     });
 
+    it('throws when build is one below the supported minimum', async () => {
+        mockFsPromises.readFile.mockImplementation(async (_path, _opts) =>
+            JSON.stringify({ tag: 'b8949', llamaCppGithubRepo: 'ggml-org/llama.cpp' })
+        );
+        await expect(assertLlamaCppCompatible()).rejects.toBeInstanceOf(IncompatibleLlamaCppError);
+    });
+
     it('does not throw when build is above 8950', async () => {
         mockFsPromises.readFile.mockImplementation(async (_path, _opts) =>
             JSON.stringify({ tag: 'b8953', llamaCppGithubRepo: 'ggml-org/llama.cpp' })

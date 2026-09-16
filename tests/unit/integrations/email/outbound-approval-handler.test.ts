@@ -348,6 +348,21 @@ describe('OutboundApprovalHandler', () => {
             expect(deferUpdate).not.toHaveBeenCalled();
         });
 
+        test('should read the customId uid as decimal, never as a 0x-prefixed hexadecimal number', async () => {
+            const deps    = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction } = makeButtonInteraction('email-send-approve:0x2a');
+
+            await handler.handleButton(interaction);
+
+            const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                params: Record<string, unknown>
+            };
+            // parseInt('0x2a', 10) stops at 'x' and yields 0; a radix of 0 would read it as hex (42)
+            // and approve a draft the admin never selected.
+            expect(createArg.params.uid).toBe(0);
+        });
+
         describe('approve (email-send-approve)', () => {
             test('should deferUpdate, create saga, show success embed', async () => {
                 const deps    = makeDeps();
@@ -628,6 +643,42 @@ describe('OutboundApprovalHandler', () => {
                 expect(replyArg.components[0].components[0].data.placeholder).toBe('Select recipients to add to allowlist');
                 expect(replyArg.components[0].components[0].data.min_values).toBe(0);
                 expect(replyArg.components[0].components[0].options[0].data.value).toBe('recipient@example.com');
+            });
+
+            test('should omit to/cc entries that carry no address instead of offering them as recipients', async () => {
+                const deps = makeDeps();
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
+                    id: 42,
+                    // Address-less entries are what a draft with a malformed recipient looks like —
+                    // they must not become selectable allowlist options.
+                    to: [{ address: 'to@example.com' }, { name: 'To Without Address' }],
+                    cc: [{ address: 'cc@example.com' }, { name: 'Cc Without Address' }],
+                });
+                const handler = new OutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
+
+                await handler.handleButton(interaction);
+
+                const replyArg = editReply.mock.calls[0]?.[0] as { components: { components: { options: { data: { value: string } }[] }[] }[] };
+                const options = replyArg.components[0]?.components[0]?.options ?? [];
+                expect(options.map(option => option.data.value)).toEqual(['to@example.com', 'cc@example.com']);
+            });
+
+            test('should offer to-recipients before cc-recipients in the select menu', async () => {
+                const deps = makeDeps();
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
+                    id: 42,
+                    to: [{ address: 'to1@example.com' }, { address: 'to2@example.com' }],
+                    cc: [{ address: 'cc1@example.com' }],
+                });
+                const handler = new OutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
+
+                await handler.handleButton(interaction);
+
+                const replyArg = editReply.mock.calls[0]?.[0] as { components: { components: { options: { data: { value: string } }[] }[] }[] };
+                const options = replyArg.components[0]?.components[0]?.options ?? [];
+                expect(options.map(option => option.data.value)).toEqual(['to1@example.com', 'to2@example.com', 'cc1@example.com']);
             });
 
             test('should log the failed draft lookup before falling back to plain approval', async () => {
@@ -1117,6 +1168,44 @@ describe('OutboundApprovalHandler', () => {
             expect(createArg.type).toBe('email_send');
             expect(createArg.state).toBe('approved');
             expect(createArg.params.uid).toBe(99);
+        });
+
+        test('should read the customId uid as decimal, never as a 0x-prefixed hexadecimal number', async () => {
+            const deps    = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction } = makeSelectMenuInteraction('email-allowlist-select:0x2a', []);
+
+            await handler.handleSelectMenu(interaction);
+
+            const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                params: Record<string, unknown>
+            };
+            // parseInt('0x2a', 10) stops at 'x' and yields 0; a radix of 0 would read it as hex (42).
+            expect(createArg.params.uid).toBe(0);
+        });
+
+        test('should create the saga with a fresh UUID id, not the id parsed from the customId', async () => {
+            const deps    = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com']);
+
+            await handler.handleSelectMenu(interaction);
+
+            const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as { id: string };
+            // Every saga row is keyed by this id; reusing the draft uid would collide across approvals.
+            expect(createArg.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        });
+
+        test('should stamp the saga createdAt and updatedAt as ISO-8601 timestamps', async () => {
+            const deps    = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com']);
+
+            await handler.handleSelectMenu(interaction);
+
+            const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as { createdAt: string, updatedAt: string };
+            expect(createArg.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+            expect(createArg.updatedAt).toBe(createArg.createdAt);
         });
 
         test('should create saga and kick off allowlist saga for each selected recipient (person-based saga flow)', async () => {

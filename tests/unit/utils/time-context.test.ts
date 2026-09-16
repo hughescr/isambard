@@ -182,6 +182,11 @@ describe('resolveTimezone', () => {
         // Note: Can't easily test logger.warn was called without mocking
     });
 
+    test('rejects a valid zone padded with whitespace rather than returning an invalid zone string', () => {
+        const expectedServerTz = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+        expect(resolveTimezone(' America/Los_Angeles ')).toBe(expectedServerTz);
+    });
+
     test('should return UTC when Intl.DateTimeFormat throws', () => {
         // Save original DateTimeFormat
         const originalDateTimeFormat = Intl.DateTimeFormat;

@@ -5,7 +5,6 @@ import { BaseRepository, createPrefixedKey } from '@/storage';
 
 const SAGA_PK        = 'ALLOWLIST#SAGA';
 const SAGA_SK_PREFIX = 'SAGA';
-// Stryker restore StringLiteral
 
 const TTL_DAYS = 30;
 
@@ -52,7 +51,6 @@ export class AllowlistSagaBackend extends BaseRepository<AllowlistSaga> {
         const saga = await this.get(id);
         if(saga === undefined) {
             logger.warn({ id, updates }, 'AllowlistSagaBackend.update: saga not found');
-            // Stryker restore ObjectLiteral,StringLiteral
             return;
         }
 
@@ -79,6 +77,5 @@ export class AllowlistSagaBackend extends BaseRepository<AllowlistSaga> {
             ExpressionAttributeNames:  { '#state': 'state' },
             ExpressionAttributeValues: { ':expectedState': saga.state },
         }));
-        // Stryker restore StringLiteral,ObjectLiteral
     }
 }

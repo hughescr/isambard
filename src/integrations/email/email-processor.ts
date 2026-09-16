@@ -73,9 +73,7 @@ export class EmailProcessor {
                 `Failed to move allowlist-bypassed email (uid=${email.uid}): ${err instanceof Error ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address }
             );
-            // Stryker restore StringLiteral,ObjectLiteral
         }
-        // Stryker restore BlockStatement
         logger.info({
             uid:               email.uid,
             from:              email.from.address,
@@ -84,7 +82,6 @@ export class EmailProcessor {
             allowlistBypassed: true,
             msg:               'Email routed (allowlist bypass)',
         });
-        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
         return {
             verdict:           null,
             destinationFolder: EmailFolder.CleanInbox,
@@ -101,9 +98,7 @@ export class EmailProcessor {
                 `Classification failed (uid=${email.uid}): ${err instanceof Error ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address }
             );
-            // Stryker restore StringLiteral,ObjectLiteral
         }
-        // Stryker restore BlockStatement
 
         const destination = this.verdictToFolder(verdict.verdict);
 
@@ -114,16 +109,13 @@ export class EmailProcessor {
                 `Failed to move email (uid=${email.uid}, destination=${destination}): ${err instanceof Error ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address, destination }
             );
-            // Stryker restore StringLiteral,ObjectLiteral
         }
-        // Stryker restore BlockStatement
 
         // onSafe is suppressed for allowlisted senders — onAuthFailed already handles that case.
         // onReview/onUnsafe still fire regardless: admin must know about suspicious emails even from known senders.
         if(!(verdict.verdict === 'safe' && senderAllowed)) {
             await this.invokeCallback(email, verdict);
         }
-        // Stryker restore ConditionalExpression,EqualityOperator,BlockStatement
 
         logger.info({
             uid:        email.uid,
@@ -134,7 +126,6 @@ export class EmailProcessor {
             destination,
             msg:        'Email routed',
         });
-        // Stryker restore ObjectLiteral,StringLiteral
 
         return {
             verdict,

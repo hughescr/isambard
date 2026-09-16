@@ -265,6 +265,17 @@ describe('reduceLedger: sdk_frame assistant + latency', () => {
         expect(typeof ledger.turn?.id).toBe('string');
         expect(ledger.turn?.id.length).toBeGreaterThan(0);
     });
+
+    // The id is not decoration: it must be the very expression the conductor mints through
+    // `bareNotificationTurnId`, because presence matches every `phase_synopsis` against the
+    // ledger's id and a mismatch is a silent drop — a bare `'notification'` here while the
+    // conductor holds `notification-<ms>` is exactly how spontaneous turns lost their synopsis
+    // before (see conductor.ts's `bareNotificationTurnId` doc comment).
+    it('mints the notification turn id as notification-<epochMs>, matching the conductor\'s own id', () => {
+        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('unsolicited'), at: T1 }));
+
+        expect(ledger.turn?.id).toBe(`notification-${T1.getTime()}`);
+    });
 });
 
 describe('reduceLedger: spontaneous_turn_opened', () => {
@@ -582,6 +593,18 @@ describe('reduceLedger: sdk_frame result', () => {
         const ledger = reduceLedger(secondTurn, frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess({ total_cost_usd: 0.08 }), at: T3 }));
 
         expect(ledger.cost).toEqual({ cumulativeUsd: 0.08, lastTurnUsd: 0.03 });
+    });
+
+    // A resumed or otherwise restarted session can report a cumulative below the one already
+    // folded in, which would make the delta negative. The clamp is the whole reason the ledger
+    // does not report a negative turn cost, so it is asserted at the boundary it protects.
+    it('clamps lastTurnUsd at 0 when a result reports a cumulative below the running total', () => {
+        const afterFirstTurn = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess({ total_cost_usd: 0.05 }), at: T2 }));
+        const secondTurn = reduceLedger(afterFirstTurn, frozenEvent({ type: 'turn_submitted', envelope: envelope({ id: 'env-2' }), at: T2 }));
+
+        const ledger = reduceLedger(secondTurn, frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess({ total_cost_usd: 0.02 }), at: T3 }));
+
+        expect(ledger.cost).toEqual({ cumulativeUsd: 0.02, lastTurnUsd: 0 });
     });
 
     it('updates cumulativeUsd only, leaving lastTurnUsd untouched, when no turn is open (a bare result)', () => {
@@ -1177,6 +1200,38 @@ describe('reduceLedger: tasks', () => {
         expect(ledger.tasks.map(task => task.id)).toEqual(['fg-1', 'bg-1']);
         expect(ledger.tasks[0]).toBe(withBoth.tasks[0]);
         expect(ledger.finishedTasks).toEqual([]);
+    });
+
+    // The array's order is what the boot bundle renders its `Background tasks` list in
+    // (`ledgerStore.get().tasks.map(task => task.description)`, joined in order), so the reducer
+    // preserves it. The task left untouched has to sit AFTER the one refreshed from the payload
+    // for that to be visible: with it first, pushing and unshifting coincide.
+    it('background_tasks_changed preserves the ledger\'s task order', () => {
+        const first = startTask(initialLedger('conversation'), { task_id: 'task-1', description: 'in the payload' }, T1);
+        const withBoth = startTask(first, { task_id: 'task-2', is_backgrounded: false, description: 'absent from the payload' }, T1);
+
+        const ledger = reduceLedger(withBoth, frozenEvent({
+            type:  'sdk_frame', at:    T3,
+            frame: frames.backgroundTasksChanged([{ task_id: 'task-1', task_type: 'local_agent', description: 'in the payload' }]),
+        }));
+
+        expect(ledger.tasks.map(task => task.id)).toEqual(['task-1', 'task-2']);
+    });
+
+    // An entry this frame creates exists only for as long as it can be attributed to the turn that
+    // spawned it: `composeTaskBoards` drops any task whose `turnId` is undefined from the board
+    // entirely, and files the rest under `${channelId}:${turnId}`.
+    it('background_tasks_changed stamps a new entry with the open turn\'s channelId and turnId', () => {
+        const opened = reduceLedger(initialLedger('conversation'), frozenEvent({
+            type: 'turn_submitted', at: T1, envelope: envelope({ id: 'turn-7', channelId: 'chan-9' }),
+        }));
+
+        const ledger = reduceLedger(opened, frozenEvent({
+            type: 'sdk_frame', at: T2, frame: frames.backgroundTasksChanged([{ task_id: 'task-2', task_type: 'local_agent', description: 'new task' }]),
+        }));
+
+        expect(ledger.tasks[0]?.channelId).toBe('chan-9');
+        expect(ledger.tasks[0]?.turnId).toBe('turn-7');
     });
 
     it('background_tasks_changed backgrounds a foreground task that shows up in the payload', () => {

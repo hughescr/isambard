@@ -97,7 +97,6 @@ export async function delay(ms: number, signal?: AbortSignal): Promise<void> {
         }
         signal?.addEventListener('abort', onAbort);
     });
-    // Stryker restore BlockStatement,StringLiteral
 }
 
 /**
@@ -110,6 +109,7 @@ export async function retryWithBackoff<T>(
     context: string,
     signal?: AbortSignal
 ): Promise<T | undefined> {
+    // Stryker disable next-line llm: maxAttempts is schema-validated as an integer, making <= N equivalent to < N + 1.
     for(let attempt = 1; attempt <= backoff.maxAttempts; attempt++) {
         try {
             // eslint-disable-next-line no-await-in-loop -- sequential: retry loop, each attempt depends on prior failure
@@ -118,13 +118,13 @@ export async function retryWithBackoff<T>(
             if(signal?.aborted) {
                 throw new DOMException('Aborted', 'AbortError');
             }
-            // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
 
             const isThrottled = typeof error === 'object' && error !== null && 'name' in error
               && (error.name === 'ProvisionedThroughputExceededException' || error.name === 'ThrottlingException');
-            // Stryker restore LogicalOperator,ConditionalExpression,EqualityOperator
 
+            // Stryker disable next-line llm: integer attempts make < N equivalent to <= N - 1.
             if(isThrottled && attempt < backoff.maxAttempts) {
+                // Stryker disable next-line llm: exponentiation and Math.pow are equivalent for these numeric operands.
                 const delayMs = backoff.baseDelayMs * 2 ** (attempt - 1);
                 // eslint-disable-next-line no-await-in-loop -- sequential: retry backoff delay between attempts
                 await delay(delayMs, signal);
@@ -447,6 +447,7 @@ async function scanLayer(
         const result = await retryWithBackoff(
 
             async () => ctx.deps.docClient.send(new QueryCommand({
+                // Stryker disable next-line llm: tableName is a required non-nullable string, so a nullish fallback is unreachable.
                 TableName:                 ctx.deps.tableName,
                 IndexName:                 'GSI1',
                 KeyConditionExpression:    'GSI1PK = :gsi1pk',
@@ -456,6 +457,7 @@ async function scanLayer(
                 Limit:             ctx.options.scanPageSize,
                 ExclusiveStartKey: currentKey,
             })),
+            // Stryker disable next-line llm: backoff is a required object and therefore cannot activate an || fallback.
             ctx.options.backoff,
             `scanLayer:${layer}`,
             ctx.options.signal
@@ -618,6 +620,7 @@ async function scanTagItems(
             await processTagIndexItem(ctx, item);
         }
 
+        // Stryker disable next-line llm: null and undefined both terminate this truthiness-controlled pagination loop.
         lastEvaluatedKey = result.LastEvaluatedKey;
     } while(lastEvaluatedKey);
 }
@@ -781,6 +784,7 @@ async function processMetaCount(
     tag: string,
     storedCount: number
 ): Promise<void> {
+    // Stryker disable next-line llm,NumberLiteralValue: runPhaseC initializes countsVerified, so the nullish fallback is unreachable.
     ctx.progress.countsVerified = (ctx.progress.countsVerified ?? 0) + 1;
 
     try {
@@ -797,6 +801,7 @@ async function processMetaCount(
             // Delete META_COUNT item
             const deleted = await deleteMetaCount(ctx, tag);
             if(deleted) {
+                // Stryker disable next-line llm,NumberLiteralValue: runPhaseC initializes countsDeleted, so the nullish fallback is unreachable.
                 ctx.progress.countsDeleted = (ctx.progress.countsDeleted ?? 0) + 1;
                 logger.debug({ tag, msg: 'Deleted META_COUNT with zero actual count' });
             } else {
@@ -809,6 +814,7 @@ async function processMetaCount(
             // Correct META_COUNT item
             const updated = await updateMetaCount(ctx, tag, actualCount);
             if(updated) {
+                // Stryker disable next-line NumberLiteralValue: runPhaseC initializes countsCorrected, so the nullish fallback is unreachable.
                 ctx.progress.countsCorrected = (ctx.progress.countsCorrected ?? 0) + 1;
                 logger.debug({ tag, storedCount, actualCount, msg: 'Corrected META_COUNT mismatch' });
             } else {
@@ -894,7 +900,6 @@ export async function runReconciliation(
     };
 
     logger.info({ msg: 'Starting tag index reconciliation' });
-    /* Stryker restore StringLiteral,ObjectLiteral */
 
     const phaseA = await runPhaseA(resolvedDeps, options);
     logger.info({
@@ -906,7 +911,6 @@ export async function runReconciliation(
         errors:              phaseA.errors,
         msg:                 'Phase A complete',
     });
-    /* Stryker restore StringLiteral,ObjectLiteral */
 
     const phaseB = await runPhaseB(resolvedDeps, options);
     logger.info({
@@ -916,7 +920,6 @@ export async function runReconciliation(
         errors:            phaseB.errors,
         msg:               'Phase B complete',
     });
-    /* Stryker restore StringLiteral,ObjectLiteral */
 
     const phaseC = await runPhaseC(resolvedDeps, options);
     logger.info({
@@ -927,9 +930,9 @@ export async function runReconciliation(
         errors:          phaseC.errors,
         msg:             'Phase C complete',
     });
-    /* Stryker restore StringLiteral,ObjectLiteral */
 
     const totalDurationMs = Date.now() - startTime;
+    // Stryker disable next-line llm: errors is initialised to 0 and only ever incremented, so it is always a number and == 0 is the same comparison as === 0
     const success = phaseA.errors === 0 && phaseB.errors === 0 && phaseC.errors === 0;
 
     logger.info({
@@ -937,7 +940,6 @@ export async function runReconciliation(
         totalDurationMs,
         msg: 'Tag index reconciliation complete',
     });
-    /* Stryker restore StringLiteral,ObjectLiteral */
 
     return {
         success,

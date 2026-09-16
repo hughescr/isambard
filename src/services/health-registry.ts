@@ -33,6 +33,7 @@ function buildRetryPart(nextRetryAt: Date, now: Date): string | undefined {
         return undefined;
     }
     const retrySec = Math.ceil(retryMs / 1000);
+    // Stryker disable next-line llm: Math.floor is the identity because retrySec is already an integer
     return retrySec >= 60
         ? `retry in ~${Math.ceil(retrySec / 60)}m`
         : `retry in ~${retrySec}s`;
@@ -46,6 +47,7 @@ function buildServiceStatusLine(name: ServiceName, entry: ServiceHealthEntry, no
     const parts: string[] = [`${name}: ${entry.state}`];
 
     if(entry.lastOfflineAt !== undefined) {
+        // Stryker disable next-line llm: omitted now defaults to the same instant at the formatter's whole-second precision
         parts.push(`(offline ${formatShortRelativeTime(entry.lastOfflineAt, now)})`);
     }
 
@@ -85,6 +87,7 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
     constructor(private readonly deps: ServiceHealthRegistryDeps) {
         this.actors = {} as Record<ServiceName, ServiceLifecycleActor>;
 
+        // Stryker disable next-line llm: serviceNameSchema.options is a non-nullable, non-empty tuple, so a fallback can never be selected
         for(const name of SERVICE_NAMES) {
             const actor = createServiceActor();
             this.actors[name] = actor;
@@ -121,7 +124,6 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
                 listener(change);
             } catch (error) {
                 this.deps.logger.error({ error }, 'Error in health change listener');
-                // Stryker restore ObjectLiteral,StringLiteral
             }
         }
     }
@@ -136,7 +138,9 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
 
     getAll(): Readonly<Record<ServiceName, ServiceHealthEntry>> {
         const result = {} as Record<ServiceName, ServiceHealthEntry>;
+        // Stryker disable next-line llm: a shallow copy preserves this immutable list's elements and order
         for(const name of SERVICE_NAMES) {
+            // Stryker disable next-line llm: string interpolation is identical, and constructor-populated actor records are always truthy and non-nullish
             result[name] = snapshotToEntry(this.actors[name]);
         }
         return Object.freeze(result);
@@ -171,6 +175,7 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
             const entry = snapshotToEntry(this.actors[name]);
             const line = buildServiceStatusLine(name, entry, now);
             if(line !== undefined) {
+                // Stryker disable next-line llm: status lines always start with a non-empty service name and state
                 lines.push(line);
             }
         }

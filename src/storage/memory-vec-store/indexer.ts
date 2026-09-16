@@ -96,7 +96,6 @@ export class AsyncIndexer {
                 sk:  job.sk,
             });
         }
-        // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,ArithmeticOperator,BlockStatement,ObjectLiteral,StringLiteral
     }
 
     /**

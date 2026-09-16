@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { afterEach, describe, test, expect, beforeEach, jest, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
 import { createBskyMCPServer } from '../../../src/agent/bsky-mcp-server';
@@ -71,6 +71,11 @@ const mockConversation = (overrides: Partial<BskyConversation> = {}): BskyConver
     unreadCount: 0,
     ...overrides,
 });
+
+/** Fixed clock for the notification checkpoint-seen tests — paired with jest.useRealTimers() in afterEach. */
+const NOW = new Date('2026-03-18T12:00:00.000Z');
+
+afterEach(() => jest.useRealTimers());
 
 describe('createBskyMCPServer', () => {
     let mockClient: BlueskyClient;
@@ -957,6 +962,67 @@ describe('createBskyMCPServer', () => {
             const seenAtArg = (mockClient.updateNotificationsSeen as ReturnType<typeof mock>).mock.calls[0][0] as string;
             // Since futureDate > Date.now(), Math.max should pick futureDate
             expect(new Date(seenAtArg).getTime()).toBeGreaterThanOrEqual(new Date(futureDate).getTime());
+        });
+
+        test('should mark seen at the current time when the checkpoint timestamp is older', async () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(NOW);
+            const mockCheckpointManager = createMockCheckpointManager();
+            mockCheckpointManager.processNotifications.mockImplementation(async () => ({
+                newNotifications:      [mockNotification({ indexedAt: '2025-01-01T00:00:00.000Z' })],
+                totalFetched:          1,
+                lastSeenAt:            '2025-01-01T00:00:00.000Z',
+                hadExistingCheckpoint: true,
+            }));
+
+            const server = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
+            await getToolHandler(server, 'getNotifications')({});
+
+            // Math.max must pick the current time, not the stale checkpoint timestamp
+            expect(mockClient.updateNotificationsSeen).toHaveBeenCalledWith(NOW.toISOString());
+        });
+
+        test('should report the cursor returned by the client, not the requested cursor', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            mockCheckpointManager.processNotifications.mockImplementation(async () => ({
+                newNotifications:      [],
+                totalFetched:          0,
+                lastSeenAt:            undefined,
+                hadExistingCheckpoint: true,
+            }));
+            (mockClient.getNotifications as ReturnType<typeof mock>).mockResolvedValueOnce({
+                notifications: [],
+                cursor:        'next-page',
+            });
+
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
+            const handler = getToolHandler(server, 'getNotifications');
+
+            const result = await handler({ cursor: 'requested-page' });
+
+            const parsed = JSON.parse(textContent(result.content[0])) as { cursor: string };
+            expect(parsed.cursor).toBe('next-page');
+        });
+
+        test('should surface a failure from updateNotificationsSeen', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            mockCheckpointManager.processNotifications.mockImplementation(async () => ({
+                newNotifications:      [mockNotification()],
+                totalFetched:          1,
+                lastSeenAt:            undefined,
+                hadExistingCheckpoint: true,
+            }));
+            (mockClient.updateNotificationsSeen as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('seen update failed');
+            });
+
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
+            const handler = getToolHandler(server, 'getNotifications');
+
+            const result = await handler({});
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: seen update failed');
         });
     });
 
@@ -2139,6 +2205,32 @@ describe('createBskyMCPServer', () => {
             const hint = textContent(result.content[1]);
             expect(hint).toContain('contains video embeds');
             expect(hint).toBe('Note: This response contains video embeds. Use the analyzeVideoFromUrl tool to analyze:\n  - https://video.bsky.app/watch/one/playlist.m3u8\n  - https://video.bsky.app/watch/two/playlist.m3u8');
+        });
+
+        test('should list playlists from a single message in embed order', async () => {
+            const mockEmbedWithVideos: BskyEmbeddedRecord = {
+                uri:       'at://did:plc:abc123/app.bsky.feed.post/vidposts',
+                cid:       'bafyvid2',
+                author:    { did: 'did:plc:abc123', handle: 'alice.bsky.social', displayName: 'Alice' },
+                text:      'Two videos',
+                createdAt: '2025-01-10T08:00:00.000Z',
+                indexedAt: '2025-01-10T08:00:01.000Z',
+                embeds:    [
+                    { type: 'video', video: { cid: 'vidcid1', playlist: 'https://video.bsky.app/watch/first/playlist.m3u8' } },
+                    { type: 'video', video: { cid: 'vidcid2', playlist: 'https://video.bsky.app/watch/second/playlist.m3u8' } },
+                ],
+            };
+            (mockClient.getMessages as ReturnType<typeof mock>).mockResolvedValueOnce({
+                messages: [mockDirectMessage({ senderDid: 'did:plc:abc123', embed: mockEmbedWithVideos })],
+                cursor:   undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            const hint = textContent(result.content[1]);
+            expect(hint).toBe('Note: This response contains video embeds. Use the analyzeVideoFromUrl tool to analyze:\n  - https://video.bsky.app/watch/first/playlist.m3u8\n  - https://video.bsky.app/watch/second/playlist.m3u8');
         });
     });
 

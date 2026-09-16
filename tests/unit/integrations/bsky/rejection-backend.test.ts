@@ -386,6 +386,41 @@ describe('BskyRejectionBackend', () => {
             expect(batchCalls[1].args[0].input.RequestItems?.TestTable).toHaveLength(1);
         });
 
+        test('accumulates failedCount across multiple failing batches rather than overwriting it', async () => {
+            jest.useFakeTimers();
+            // 26 items produce 2 batches (25 + 1); every attempt on every batch reports
+            // its whole submitted set as unprocessed, so both batches exhaust retries
+            // and fail entirely. A correct implementation sums the two batches'
+            // failures (25 + 1 = 26 failed, 0 deleted); an implementation that
+            // overwrites failedCount instead of accumulating it would report only
+            // the last batch's failure count (1 failed, 25 deleted).
+            const items = Array.from({ length: 26 }, (_, i) => ({
+                PK: 'BSKY#REJECTED',
+                SK: `REJECTION#gggggggg-${String(i).padStart(4, '0')}-4222-8333-444444444444`,
+            }));
+            ddbMock.on(QueryCommand).resolves({ Items: items });
+            ddbMock.on(BatchWriteCommand).callsFake((input: { RequestItems?: Record<string, unknown[]> }) => ({
+                UnprocessedItems: { TestTable: input.RequestItems?.TestTable },
+            }));
+
+            const promise = backend.clearAll();
+
+            // Two batches, each exhausting MAX_RETRIES (3) attempts with a backoff
+            // delay between attempts, needs more drain cycles than a single batch.
+            for(let i = 0; i < 30; i++) {
+                jest.runAllTimers();
+                // eslint-disable-next-line no-await-in-loop -- sequential: must run timers then flush microtasks each tick
+                await Promise.resolve();
+                // eslint-disable-next-line no-await-in-loop -- sequential: a second flush lets the awaited send() settle
+                await Promise.resolve();
+            }
+
+            const count = await promise;
+
+            expect(count).toBe(0);
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(6); // MAX_RETRIES (3) x 2 batches
+        });
+
         test('does not send an empty batch at the 25-item boundary', async () => {
             const items = Array.from({ length: 25 }, (_, i) => ({ PK: 'BSKY#REJECTED', SK: `REJECTION#${i}` }));
             ddbMock.on(QueryCommand).resolves({ Items: items });

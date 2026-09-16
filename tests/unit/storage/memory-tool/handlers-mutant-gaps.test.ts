@@ -1,8 +1,8 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, jest, mock, test } from 'bun:test';
 import { ContentTooLargeError, TextNotFoundError, TextNotUniqueError } from '@/errors/storage';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
-import { consolidate, create, insert, recall, rename, search, str_replace as strReplace } from '@/storage/memory-tool/handlers';
-import type { ContentType, MemoryPath, MemoryToolItemData } from '@/storage/memory-tool/types';
+import { consolidate, create, insert, list_by_layer, recall, rename, search, str_replace as strReplace } from '@/storage/memory-tool/handlers';
+import { createLayerName, type ContentType, type MemoryPath, type MemoryToolItemData } from '@/storage/memory-tool/types';
 
 const timestamp = '2025-01-01T00:00:00.000Z';
 
@@ -186,5 +186,82 @@ describe('memory handler public contract boundaries', () => {
         created.resolve(item('/state/summary.json', '{}', 'application/json'));
         await operation;
         expect(store.delete).toHaveBeenCalledWith('/state/source.md');
+    });
+});
+
+/**
+ * User-visible output contracts that the `toContain` assertions in
+ * handlers-search.test.ts cannot distinguish from their mutants.
+ */
+describe('memory handler output formatting contracts', () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    function layerBackend(items: MemoryToolItemData[]): MemoryToolBackend {
+        const store = backend();
+        store.listByLayer = mock(async () => ({ items, nextCursor: undefined }));
+        return store;
+    }
+
+    function layerItem(createdAt: string, updatedAt: string, content: string): MemoryToolItemData {
+        return {
+            path:        '/state/note.md' as MemoryPath,
+            content,
+            contentType: 'text/markdown',
+            metadata:    {},
+            createdAt,
+            updatedAt,
+        };
+    }
+
+    test('create measures UTF-8 bytes rather than UTF-16 code units', async () => {
+        const store = backend();
+        // 175_001 UTF-16 code units, but 350_002 UTF-8 bytes: only the byte count crosses the limit.
+        await expect(create(store, { path: '/state/big.md', file_text: 'é'.repeat(175_001) }))
+            .rejects.toThrow(ContentTooLargeError);
+        expect(store.create).not.toHaveBeenCalled();
+    });
+
+    test('the empty-layer message names the requested layer', async () => {
+        const store = layerBackend([]);
+
+        expect(await list_by_layer(store, { layer: createLayerName('events') })).toBe('No items found in layer: events');
+    });
+
+    test('the rendered timestamp comes from updatedAt, not createdAt', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-05-10T12:00:00.000Z'));
+        const store = layerBackend([
+            layerItem('2026-04-01T12:00:00.000Z', '2026-05-10T09:00:00.000Z', 'note'),
+        ]);
+
+        expect(await list_by_layer(store, { layer: createLayerName('state') })).toBe('/state/note.md (3h ago)');
+    });
+
+    test('a content listing prints the path line before the content', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-05-10T12:00:00.000Z'));
+        const store = layerBackend([
+            layerItem('2026-04-01T12:00:00.000Z', '2026-05-10T09:00:00.000Z', 'Line 1\nLine 2'),
+        ]);
+
+        expect(await list_by_layer(store, { layer: createLayerName('state'), include_content: true }))
+            .toBe('/state/note.md (3h ago)\n1:Line 1\n2:Line 2');
+    });
+
+    test('a preview that reaches 100 characters with trailing whitespace still gets the truncation marker', async () => {
+        const store = backend();
+        // generateContentPreview slices the first 100 characters verbatim, so a
+        // truncated preview can end in whitespace; trimming before measuring the
+        // length would drop the marker on a preview that really was truncated.
+        const preview = `${'T'.repeat(98)}  `;
+        store.searchByTimeRange = mock(async () => [
+            { ...item('/state/padded.md', 'unused'), contentPreview: preview },
+        ]);
+
+        const ranged = await search(store, { time_range: { start: timestamp, end: timestamp } });
+
+        expect(ranged).toContain(`${preview}...`);
     });
 });

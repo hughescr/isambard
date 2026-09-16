@@ -78,15 +78,18 @@ describe('bsky-dm-poller', () => {
         expect(notify).not.toHaveBeenCalled();
     });
 
-    it('calls notify exactly once for a non-empty batch, keyed and worded on the newest lastMessage.id even when it is not the last array element', async () => {
+    it('calls notify exactly once for a non-empty batch, keyed and worded on the newest lastMessage.id even when it is neither the first nor the last array element', async () => {
         processDirectMessages.mockImplementation(async () => ({
-            // Newest message listed FIRST — pins that selection sorts by sentAt rather than
-            // trusting array order (`.at(-1)` on unsorted input would pick 'msg-old' here).
+            // Newest message listed in the MIDDLE — pins that selection sorts by sentAt rather
+            // than trusting array position: `newConvos[0]` would pick 'msg-mid', and `.at(-1)` on
+            // unsorted input would pick 'msg-old', so only an actual sort-by-sentAt lands on
+            // 'msg-new' here.
             newConvos: [
-                makeConvo({ id: 'b', lastMessage: { id: 'msg-new', rev: 'r', text: 't', senderDid: 'd', sentAt: '2026-01-02T00:00:00.000Z' } }),
-                makeConvo({ id: 'a', lastMessage: { id: 'msg-old', rev: 'r', text: 't', senderDid: 'd', sentAt: '2026-01-01T00:00:00.000Z' } }),
+                makeConvo({ id: 'a', lastMessage: { id: 'msg-mid', rev: 'r', text: 't', senderDid: 'd', sentAt: '2026-01-02T00:00:00.000Z' } }),
+                makeConvo({ id: 'b', lastMessage: { id: 'msg-new', rev: 'r', text: 't', senderDid: 'd', sentAt: '2026-01-03T00:00:00.000Z' } }),
+                makeConvo({ id: 'c', lastMessage: { id: 'msg-old', rev: 'r', text: 't', senderDid: 'd', sentAt: '2026-01-01T00:00:00.000Z' } }),
             ],
-            totalFetched: 2, lastSeenSentAt: '2026-01-02T00:00:00.000Z', hadExistingCheckpoint: true,
+            totalFetched: 3, lastSeenSentAt: '2026-01-03T00:00:00.000Z', hadExistingCheckpoint: true,
         }));
         const poller = createBskyDmPoller(options);
 
@@ -99,7 +102,7 @@ describe('bsky-dm-poller', () => {
         expect(notify).toHaveBeenCalledTimes(1);
         expect(notify.mock.calls[0]?.[0]).toMatchObject({
             source:    'bluesky-dm',
-            text:      '2 new unread Bluesky conversation(s)',
+            text:      '3 new unread Bluesky conversation(s)',
             wake:      false,
             dedupeKey: 'bsky-dm:msg-new',
         });
@@ -122,6 +125,23 @@ describe('bsky-dm-poller', () => {
 
         expect(unprocessDirectMessages).toHaveBeenCalledTimes(1);
         expect(unprocessDirectMessages).toHaveBeenCalledWith(['msg-a', 'msg-b']);
+    });
+
+    it('propagates a rejection from unprocessDirectMessages into the tick\'s catch handler (proves the await is not dropped)', async () => {
+        notify.mockImplementation(() => false);
+        unprocessDirectMessages.mockImplementation(async () => {
+            throw new Error('unprocess failed');
+        });
+        const poller = createBskyDmPoller(options);
+
+        poller.start();
+        jest.advanceTimersByTime(1000);
+        await flushMicrotasks();
+
+        expect(mockLogger.error).toHaveBeenCalledWith({
+            err: expect.any(Error),
+            msg: 'Bluesky DM poll tick failed',
+        });
     });
 
     it('does not unprocess anything when notify() delivers successfully', async () => {
@@ -218,7 +238,7 @@ describe('bsky-dm-poller', () => {
         expect(mockLogger.error).not.toHaveBeenCalled();
     });
 
-    it('exports a default poll interval', () => {
-        expect(DEFAULT_DM_POLL_INTERVAL_MS).toBeGreaterThan(0);
+    it('exports a default poll interval of exactly 2 minutes', () => {
+        expect(DEFAULT_DM_POLL_INTERVAL_MS).toBe(120_000);
     });
 });

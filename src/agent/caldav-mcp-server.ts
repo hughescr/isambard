@@ -49,6 +49,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
         const result = await resolveUser(user);
         switch(result.status) {
             case 'resolved': {
+                // Stryker disable next-line llm: `?? ''` is unreachable — UserResolveResult declares userId: string and dm-tracker always supplies createUserId(...); only a type-violating cast could observe it
                 return result.user.userId;
             }
             case 'ambiguous': {

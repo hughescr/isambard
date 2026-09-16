@@ -264,6 +264,32 @@ describe('setupTaskBoard', () => {
             board.stop();
         });
 
+        // The fallback is stored under the exact ledger role string `composeTaskBoards` looks up on
+        // the next tick, so the write must hand the role through untouched: keyed by anything else
+        // (a normalised spelling, say), that role's channel-less tasks lose their board silently.
+        test('keys the fallback by the ledger role exactly as composed, whatever its spelling', async () => {
+            const store = fakeStore({
+                role: 'Perch', tasks: [runningTask({ channelId: undefined })], finishedTasks: [],
+            } as unknown as Ledger);
+
+            const board = setupTaskBoard({
+                readyClient,
+                rateLimiter,
+                ledgers:                  [store.store],
+                config:                   CONFIG,
+                timeZone:                 'UTC',
+                logger,
+                now:                      () => T0,
+                resolveFallbackChannelId: async () => 'fallback-1',
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(applied().at(-1)?.map(view => view.key)).toEqual(['fallback-1:turn-1']);
+
+            board.stop();
+        });
+
         test('resolves once per distinct ledger role', async () => {
             const conversation = fakeStore(ledgerWith([]));
             const perch = fakeStore({ role: 'perch', tasks: [], finishedTasks: [] } as unknown as Ledger);

@@ -185,6 +185,22 @@ describe('runBootSequence', () => {
         expect(result.catchUpSubmitted).toBe(true);
     });
 
+    it('propagates a catch-up submission rejection when unread messages require it', async () => {
+        const journal = new FakeJournal();
+        const boom = new Error('catch-up boom');
+
+        await expect(runBootSequence<ReplayedItem>({
+            recovery:        { undelivered: [] },
+            deliver:         async () => undefined,
+            replayUnhandled: async () => [],
+            submitReplay:    async () => undefined,
+            submitCatchUp:   async () => { throw boom; },
+            unreadCount:     () => 1,
+            ingressGate:     { open: () => undefined },
+            journal,
+        })).rejects.toThrow(boom);
+    });
+
     it('skips the catch-up envelope when unreadCount() is zero', async () => {
         const journal = new FakeJournal();
         const submitCatchUp = mock(async () => undefined);

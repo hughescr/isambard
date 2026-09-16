@@ -204,6 +204,10 @@ describe.concurrent('resolveCalendar()', () => {
         expect(resolveCalendar(server, '')).toBeNull();
     });
 
+    test('returns null for null input at the runtime boundary', () => {
+        expect(resolveCalendar(server, null as unknown as string)).toBeNull();
+    });
+
     test('does not resolve an empty input to a malformed persisted calendar label', () => {
         const rawPersistedServer = makeServer({
             serverId:    SERVER_UUID_1,

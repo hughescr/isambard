@@ -97,6 +97,7 @@ export class Embedder {
         // Each option is independently overridable; all have well-tested defaults.
         // Options: { slug, quant, contextSize, gpuLayers } — any subset can be specified.
         const slug: ModelSlug = opts?.slug ?? '0.6b';
+        // Stryker disable next-line llm: slug is exactly opts?.slug ?? '0.6b', making opts?.slug ?? slug identical to slug.
         const quant: ModelQuant = opts?.quant ?? DEFAULT_QUANT[slug];
         // Defaults expressed as named constants so mutations alter identifiable named values (not bare literals)
         const DEFAULT_CONTEXT_SIZE = 32_768;
@@ -165,8 +166,10 @@ export class Embedder {
             // Base offset for this batch's floats in allFloats
             const floatOffset = i * EMBED_DIM;
             const outputSlot = allFloats.subarray(floatOffset, floatOffset + EMBED_DIM);
+            // Stryker disable next-line llm: outputSlot vs vec.entries() only differ in length; out-of-bounds TypedArray writes are spec no-ops and unwritten slots default to 0 (== FLOAT_FALLBACK), so results are identical either way
             for(const [j] of outputSlot.entries()) {
                 // Fallback to 0 for any undefined element (pplx returns exactly 1024 floats; fallback is defensive only)
+                // Stryker disable next-line NumberLiteralValue: the buffer is private and only feeds packSignBits, which encodes 0 and any negative fallback as the same clear sign bit
                 const FLOAT_FALLBACK = 0;
                 outputSlot[j] = vec[j] ?? FLOAT_FALLBACK;
             }
@@ -200,10 +203,13 @@ export class Embedder {
 
     async #disposeAll(): Promise<void> {
         const failures = await disposeOwnedResources(this.#llama, this.#model, this.#ctx);
+        // Stryker disable next-line llm: array length is integral, so > 1 and >= 2 select the same failures
         if(failures.length > 1) {
             throw new AggregateError(failures, 'Failed to close embedder resources');
         }
+        // Stryker disable next-line llm: the > 1 branch above has thrown, so length is 0 or 1 and >= 1 equals === 1
         if(failures.length === 1) {
+            // Stryker disable next-line llm: guarded by length === 1, so index 0 and index length - 1 are the same sole error
             throw failures[0]!;
         }
     }

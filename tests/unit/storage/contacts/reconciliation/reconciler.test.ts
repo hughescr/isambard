@@ -174,6 +174,8 @@ describe('runContactReconciliation', () => {
             expect(phaseAInput).toMatchObject({
                 IndexName:                 'GSI2',
                 ExpressionAttributeValues: { ':gsi2pk': 'CONTACT_LOOKUPS' },
+                // Limit must be the configured page size exactly (not pageSize ± 1)
+                Limit:                     FAST_OPTIONS.scanPageSize,
             });
         });
 
@@ -451,6 +453,22 @@ describe('runContactReconciliation', () => {
             expect(result.phaseA.orphanLookupsDeleted).toBe(0);
             // QueryCommand called 3 times: 2 for Phase A pagination + 1 for Phase B profiles
             expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(3);
+        });
+
+        test('debug log for a deleted lookup carries the row PK and SK in their own fields', async () => {
+            const orphanLookup = { ...BOB_EMAIL_LOOKUP, createdAt: '2026-01-01T00:00:00.000Z' };
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [orphanLookup] }).resolvesOnce({ Items: [] });
+            // Profile is missing → true orphan → deleted
+            ddbMock.on(GetCommand).resolves({});
+            ddbMock.on(DeleteCommand).resolves({});
+
+            await runContactReconciliation(deps, FAST_OPTIONS);
+
+            expect(mockLogger.debug).toHaveBeenCalledWith({
+                pk:  orphanLookup.PK,
+                sk:  orphanLookup.SK,
+                msg: 'ContactReconciler Phase A: deleted orphan/stray lookup',
+            });
         });
     });
 
@@ -784,6 +802,27 @@ describe('runContactReconciliation', () => {
             // totalDurationMs should be roughly equal to elapsed time (not Date.now() + startTime which would be ~2x Date.now())
             expect(result.totalDurationMs).toBeLessThan(elapsed + 500);
         });
+
+        test('totalDurationMs is exactly end minus start (sign and offset are correct)', async () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2026-05-01T12:00:00.000Z'));
+
+            const orphanLookup = { ...BOB_EMAIL_LOOKUP, createdAt: '2026-01-01T00:00:00.000Z' };
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [orphanLookup] }).resolvesOnce({ Items: [] });
+            ddbMock.on(GetCommand).resolves({});
+            ddbMock.on(DeleteCommand).resolves({});
+
+            // Advance the (faked) clock 500ms partway through the run, inside a rate-limit sleep.
+            mockSleep.mockImplementation(async () => {
+                jest.setSystemTime(new Date('2026-05-01T12:00:00.500Z'));
+            });
+
+            const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, operationDelayMs: 10 });
+
+            // Start was 12:00:00.000, end 12:00:00.500 → elapsed is exactly 500ms.
+            // start - end would be -500; end - start + 1 would be 501.
+            expect(result.totalDurationMs).toBe(500);
+        });
     });
 
     // ======================================================================
@@ -817,7 +856,8 @@ describe('runContactReconciliation', () => {
 
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
-            expect(result.phaseB.errors).toBeGreaterThanOrEqual(1);
+            // Exactly one failing scan → exactly one error (not two)
+            expect(result.phaseB.errors).toBe(1);
             expect(result.success).toBe(false);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 msg: 'ContactReconciler Phase B: failed to scan profiles',
@@ -1271,6 +1311,47 @@ describe('runContactReconciliation', () => {
                 } }),
             }));
         });
+
+        test('reports zero remaining items when the unprocessed payload holds an empty list', async () => {
+            const profile = { ...ALICE_PROFILE_ITEM, identifiers: [ALICE_PROFILE_ITEM.identifiers[0]] };
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [] }).resolvesOnce({ Items: [profile] });
+            ddbMock.on(GetCommand).resolves({});
+            // Table key present but with no unprocessed rows → the remaining count is zero
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: { TestTable: [] } });
+
+            const result = await runContactReconciliation(deps, FAST_OPTIONS);
+
+            expect(result.phaseB.errors).toBe(1);
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(3);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                error: expect.objectContaining({ context: {
+                    operation: 'ContactReconciler.batchWriteWithRetry', remainingCount: 0, maxRetries: 3,
+                } }),
+            }));
+        });
+
+        test('a failing backoff sleep aborts the retry: no further batch write is sent', async () => {
+            const profile = { ...ALICE_PROFILE_ITEM, identifiers: [ALICE_PROFILE_ITEM.identifiers[0]] };
+            const pending = [{ PutRequest: { Item: { PK: 'one', SK: 'one' } } }];
+            ddbMock.on(QueryCommand).resolvesOnce({ Items: [] }).resolvesOnce({ Items: [profile] });
+            ddbMock.on(GetCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: { TestTable: pending } });
+
+            mockSleep.mockImplementation(async () => {
+                throw new Error('sleep failed');
+            });
+
+            // operationDelayMs 0 keeps the rate-limit sleep out of the picture, so the
+            // only sleep is the retry backoff inside batchWriteWithRetry.
+            const result = await runContactReconciliation(deps, FAST_OPTIONS);
+
+            // The rejection from the awaited backoff propagates out of batchWriteWithRetry
+            // and is counted as a single identifier error.
+            expect(result.phaseB.errors).toBe(1);
+            expect(result.phaseB.missingLookupsCreated).toBe(0);
+            // Only the first attempt was sent — the retry must wait for (and fail on) the backoff sleep.
+            expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
+        });
         test('retries when BatchWriteCommand returns UnprocessedItems', async () => {
             ddbMock.on(QueryCommand)
                 // Phase A: no lookup rows
@@ -1508,6 +1589,40 @@ describe('runContactReconciliation', () => {
             // Result must indicate abort
             expect(result.aborted).toBe(true);
             expect(result.success).toBe(true);
+        });
+    });
+
+    // ======================================================================
+    // Send options when no signal is configured
+    // ======================================================================
+    describe('DynamoDB send options without a signal', () => {
+        test('omits the send options argument entirely when no signal is provided', async () => {
+            const profile = { ...ALICE_PROFILE_ITEM, identifiers: [ALICE_PROFILE_ITEM.identifiers[0]] };
+            ddbMock.on(QueryCommand)
+                // Phase A: one orphan lookup
+                .resolvesOnce({ Items: [BOB_EMAIL_LOOKUP] })
+                // Phase B: alice profile with a missing lookup
+                .resolvesOnce({ Items: [profile] });
+            ddbMock.on(GetCommand).resolves({});
+            ddbMock.on(DeleteCommand).resolves({});
+            ddbMock.on(BatchWriteCommand).resolves({});
+
+            const result = await runContactReconciliation(deps, FAST_OPTIONS);
+
+            // Exercise all four send sites: query, get, delete, batch write
+            expect(result.phaseA.orphanLookupsDeleted).toBe(1);
+            expect(result.phaseB.missingLookupsCreated).toBe(1);
+
+            const sends = [
+                ...ddbMock.commandCalls(QueryCommand),
+                ...ddbMock.commandCalls(GetCommand),
+                ...ddbMock.commandCalls(DeleteCommand),
+                ...ddbMock.commandCalls(BatchWriteCommand),
+            ];
+            expect(sends).toHaveLength(6);
+            // No signal → the options argument must be omitted (undefined), never an empty object
+            expect(sends.map(call => (call.args as unknown as unknown[])[1]))
+                .toEqual(sends.map(() => undefined));
         });
     });
 });

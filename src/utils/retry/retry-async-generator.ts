@@ -79,6 +79,7 @@ export async function* retryAsyncGenerator<T>(
             // Take the larger of the server's retry-after hint and the exponential backoff so that:
             // - A zero-valued server hint (clock skew / just-rolled-over window) does not bypass backoff.
             // - A large server hint (long rate-limit window) is respected even when backoff is smaller.
+            // Stryker disable next-line NumberLiteralValue: the validated policy (baseDelayMs >= 100, multiplier >= 1, jitter <= 0.5, maxDelayMs >= 1000) makes calculateDelay >= 50ms, so any fallback below that is unobservable
             const delayMs = Math.max(retryAfterMs ?? 0, calculateDelay(attempt, policy));
 
             // Log retry attempt

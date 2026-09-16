@@ -47,6 +47,7 @@ const TASK_KIND_EMOJI: readonly (readonly [string, string])[] = [
  * an open turn. Nothing reads `since` on this path — idle presence is driven by `view.prefix`
  * and the idle status generator, not by this phase — so the value itself is inert.
  */
+// Stryker disable next-line NumberLiteralValue: the idle phase sentinel is never read on the composePresence production path; its Date value is inert
 const IDLE_SINCE_SENTINEL = new Date(0);
 
 /**
@@ -71,11 +72,16 @@ function renderTaskCounts(ledgers: readonly Ledger[]): string {
     const counts = new Map<string, number>();
     for(const ledger of ledgers) {
         for(const task of ledger.tasks) {
+            // Stryker disable next-line llm: get() is undefined or >=1, making || equivalent to ??; concatenating the string kind with an empty string is inert
             counts.set(task.kind, (counts.get(task.kind) ?? 0) + 1);
         }
     }
     return TASK_KIND_EMOJI
-        .filter(([kind]) => (counts.get(kind) ?? 0) > 0)
+        .filter(([kind]) => {
+            // Stryker disable next-line NumberLiteralValue: get(kind) is undefined or >=1, so the 0 versus -1 fallback is unobservable under > 0
+            const count = counts.get(kind) ?? 0;
+            return count > 0;
+        })
         .map(([kind, emoji]) => `${counts.get(kind)} ${emoji}`)
         .join(' ');
 }
@@ -125,6 +131,7 @@ export function composePresence(ledgers: readonly Ledger[], costPaused = false):
 
     const live: PresenceRole[] = [];
     if(turnOf(conversation) !== null) {
+        // Stryker disable next-line ArrayMethodSwap: live is empty at this first insertion, so push and unshift are equivalent
         live.push('conversation');
     }
     if(turnOf(perch) !== null) {
@@ -133,6 +140,7 @@ export function composePresence(ledgers: readonly Ledger[], costPaused = false):
 
     const indicator = live.length === 0 ? IDLE_EMOJI : live.map(role => LIVE_EMOJI[role]).join('');
     const counts = renderTaskCounts(ledgers);
+    // Stryker disable next-line llm, NumberLiteralValue: segment lengths are 0 or >=3, so >0, >=1, and >1 are equivalent
     const segments = [counts, costPaused ? COST_PAUSED_MARKER : ''].filter(segment => segment.length > 0);
     const prefix = segments.length === 0 ? indicator : `${indicator}${SEPARATOR}${segments.join(SEPARATOR)}`;
 
@@ -241,6 +249,7 @@ export function planPresenceUpdate(view: PresenceView, throttle: PresenceThrottl
         return { kind: 'idle' };
     }
 
+    // Stryker disable next-line llm: shouldUpdate is declared () => boolean, so !x and x === false coincide
     if(!throttle.shouldUpdate()) {
         return null;
     }

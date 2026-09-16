@@ -35,6 +35,7 @@ export function packSignBits(input: Float32Array, batchSize: number, dim: number
         for(const bit of BIT_POSITIONS) {
             // Missing trailing floats retain their old zero-bit behavior.
             const value = input[inputOffset + bit];
+            // Stryker disable next-line ConditionalExpression,llm: equivalent — for undefined or null, `value > 0` is false; every other value reaches the identical comparison, so all replacements preserve the branch.
             if(value !== undefined && value > 0) {
                 // eslint-disable-next-line no-bitwise -- sign-bit packing requires bitwise OR and left-shift; this is the canonical ubinary implementation
                 byte |= (1 << (7 - bit));

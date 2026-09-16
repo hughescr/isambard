@@ -1,7 +1,8 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { mockHeicConvert, setHeicConvertImpl, resetHeicConvertImpl, mockFsPromises, resetMockFs } from '../../../../setup';
 import { fetchImage, fetchImages, saveNonImageAttachment } from '@/integrations/discord/attachments/fetcher';
 import { type AttachmentMetadata, MAX_IMAGE_SIZE_BYTES  } from '@/integrations/discord/attachments/types';
+import { MediaFetchTimeoutMs } from '@/utils';
 
 // Mock global fetch
 const mockFetch = mock(async (_url: string, _options?: RequestInit): Promise<Response> => {
@@ -26,6 +27,7 @@ describe('Attachment Fetcher', () => {
         resetMockFs();
         // Restore original fetch
         globalThis.fetch = originalFetch;
+        jest.useRealTimers();
     });
 
     describe('fetchImage', () => {
@@ -495,9 +497,31 @@ describe('Attachment Fetcher', () => {
 
             expect(mockFsPromises.mkdir).toHaveBeenCalledWith('/tmp/scratch/attachments/discord-msg123', { recursive: true });
             expect(mockFsPromises.writeFile).toHaveBeenCalledWith('/tmp/scratch/attachments/discord-msg123/document.pdf', fileData);
+            expect(mockFetch.mock.calls[0]?.[0]).toBe(metadata.url);
             const fetchOptions = mockFetch.mock.calls[0]?.[1];
             expect(fetchOptions?.signal).toBeInstanceOf(AbortSignal);
             expect(fetchOptions?.signal?.aborted).toBe(false);
+        });
+
+        test('uses the configured media timeout exactly', async () => {
+            jest.useFakeTimers();
+            const metadata: AttachmentMetadata = {
+                url:         'https://example.com/document.pdf',
+                filename:    'document.pdf',
+                contentType: 'application/pdf',
+                size:        4096,
+            };
+            const fileData = Buffer.from('pdf-content');
+            mockFetch.mockResolvedValueOnce({ ok: true, arrayBuffer: async () => fileData.buffer } as Response);
+
+            await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
+
+            const fetchOptions = mockFetch.mock.calls[0]?.[1];
+            expect(fetchOptions?.signal?.aborted).toBe(false);
+            jest.advanceTimersByTime(MediaFetchTimeoutMs - 1);
+            expect(fetchOptions?.signal?.aborted).toBe(false);
+            jest.advanceTimersByTime(1);
+            expect(fetchOptions?.signal?.aborted).toBe(true);
         });
 
         test('creates nested directory structure', async () => {
@@ -517,6 +541,22 @@ describe('Attachment Fetcher', () => {
             await saveNonImageAttachment(metadata, '/some/deep/path', 'msg456');
 
             expect(mockFsPromises.mkdir).toHaveBeenCalledWith('/some/deep/path/attachments/discord-msg456', { recursive: true });
+        });
+
+        test('returns null without fetching when creating the attachment directory fails', async () => {
+            const metadata: AttachmentMetadata = {
+                url:         'https://example.com/document.pdf',
+                filename:    'document.pdf',
+                contentType: 'application/pdf',
+                size:        4096,
+            };
+
+            mockFsPromises.mkdir.mockRejectedValueOnce(new Error('Directory creation failed'));
+
+            const result = await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
+
+            expect(result).toBeNull();
+            expect(mockFetch).not.toHaveBeenCalled();
         });
 
         test('handles fetch errors gracefully (returns null)', async () => {
@@ -577,6 +617,7 @@ describe('Attachment Fetcher', () => {
             // The sanitized filename must not contain path separators or dotdot
             expect(result?.localPath).not.toContain('..');
             expect(result?.localPath).not.toMatch(/\/etc\/passwd/);
+            expect(mockFsPromises.writeFile).toHaveBeenCalledWith('/tmp/scratch/attachments/discord-msg789/______etc_passwd', fileData);
             // originalFilename preserves the original for reference
             expect(result?.originalFilename).toBe('../../../etc/passwd');
         });

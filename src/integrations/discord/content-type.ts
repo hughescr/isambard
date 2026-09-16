@@ -15,6 +15,7 @@ export function inferImageContentType(filename: string, discordContentType: stri
     }
 
     // Try to infer from file extension
+    // Stryker disable next-line llm: mrmime's lookup() already lowercases its argument internally, so this .toLowerCase() cannot change the result.
     const ext = filename.toLowerCase().split('.').at(-1);
     if(ext) {
         const mime = lookup(ext);

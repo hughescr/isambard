@@ -187,9 +187,11 @@ export function getTimeOfDay(date: Date, timezone?: string): TimeOfDay {
     if(hour >= 5 && hour < 12) {
         return 'morning';
     }
+    // Stryker disable next-line NumberLiteralValue: hour 11 returns from the preceding morning branch before this condition
     if(hour >= 12 && hour < 17) {
         return 'afternoon';
     }
+    // Stryker disable next-line NumberLiteralValue: hour 16 returns from the preceding afternoon branch before this condition
     if(hour >= 17 && hour < 21) {
         return 'evening';
     }

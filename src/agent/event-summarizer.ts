@@ -37,10 +37,10 @@ export async function summarizeEventBatches(
             const formattedEvents = batch.map((event) => {
                 const eventDate = new Date(event.updatedAt);
                 const relativeAge = formatShortRelativeTime(eventDate, now);
+                // Stryker disable next-line llm: slice and substring agree for a string with non-negative bounds.
                 const preview = event.content.slice(0, CONTENT_PREVIEW_LENGTH);
                 return `[${event.path}] (${relativeAge}): ${preview}`;
             }).join('\n');
-            // Stryker restore StringLiteral
 
             // Generate summary
             const prompt = `Summarize these events in 2-3 sentences (~75 words max). Focus on: key activities, decisions, topics discussed.

@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn, jest } from 'bun:test';
+import { Settings } from 'luxon';
 import { mockLogger } from '../../setup';
 import {
     timeContextSchema,
@@ -6,6 +7,7 @@ import {
     dayOfWeekSchema,
     formatRelativeTime,
     formatShortRelativeTime,
+    formatMemoryTimestamp,
     getCurrentTimeContext,
     formatTimeSince,
     formatTimeHeader,
@@ -349,6 +351,16 @@ describe('resolveTimezone', () => {
         expect(result).toBeTruthy();
         expect(typeof result).toBe('string');
     });
+    test('returns the configured local zone rather than UTC when no user zone is provided', () => {
+        const originalDefaultZone = Settings.defaultZone;
+        Settings.defaultZone = 'America/New_York';
+
+        try {
+            expect(resolveTimezone()).toBe('America/New_York');
+        } finally {
+            Settings.defaultZone = originalDefaultZone;
+        }
+    });
 });
 
 describe('formatTimeHeader', () => {
@@ -433,6 +445,42 @@ describe('formatTimeHeader', () => {
         expect(izzyLine).toMatch(/\((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday) (?:morning|afternoon|evening|night)\)/);
     });
 
+    test('derives Izzy header day and time from the captured UTC context', () => {
+        const originalTimezone = process.env.TZ;
+        process.env.TZ = 'UTC';
+        let noArgCalls = 0;
+        const laterTime = new RealDate('2026-02-10T12:30:00.000Z');
+        // eslint-disable-next-line sonarjs/function-return-type -- DateMock intentionally mirrors Date constructor signature
+        const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- DateMock must support both constructor and function calls like Date
+            if(new.target) {
+                if(args.length === 0) {
+                    noArgCalls++;
+                    return noArgCalls === 1 ? FIXED_TIME : laterTime;
+                }
+                return Reflect.construct(RealDate, args) as Date;
+            }
+            return FIXED_TIME.toString();
+        };
+        DateMock.prototype = RealDate.prototype;
+        Object.setPrototypeOf(DateMock, RealDate);
+        DateMock.now = () => FIXED_TIME.getTime();
+        DateMock.parse = RealDate.parse;
+        DateMock.UTC = RealDate.UTC;
+        globalThis.Date = DateMock as DateConstructor;
+
+        try {
+            const result = formatTimeHeader('Pacific/Kiritimati');
+            expect(result).toContain('- Izzy: 2026-02-09T22:30:00 UTC (Monday night)');
+        } finally {
+            if(originalTimezone === undefined) {
+                delete process.env.TZ;
+            } else {
+                process.env.TZ = originalTimezone;
+            }
+        }
+    });
+
     test('should format User line with local time, timezone, day of week, and time of day when different from server', () => {
         const serverTz = resolveTimezone();
         const differentTz = serverTz === 'Europe/London' ? 'America/New_York' : 'Europe/London';
@@ -444,5 +492,17 @@ describe('formatTimeHeader', () => {
         expect(userLine).toContain(differentTz);
         // Should contain day of week and time of day
         expect(userLine).toMatch(/\((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday) (?:morning|afternoon|evening|night)\)/);
+    });
+});
+
+describe('time defaults', () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('uses the current clock when no memory timestamp reference time is provided', () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-02-09T22:30:00.000Z'));
+        expect(formatMemoryTimestamp('2026-02-09T20:30:00.000Z')).toBe('(2 hours ago, 2026-02-09T20:30:00.000Z)');
     });
 });

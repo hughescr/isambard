@@ -139,6 +139,18 @@ describe('validateUrl — localhost hostnames', () => {
         // turn an otherwise public hostname into a loopback rejection.
         expectOk('https://evil.localhost.attacker.example');
     });
+
+    test('allows a hostname ending in "localhost" with no separating dot', () => {
+        // The suffix check requires '.localhost', not merely 'localhost' — a
+        // hostname like 'evillocalhost' must not be treated as loopback.
+        expectOk('http://evillocalhost');
+    });
+
+    test('allows a *.docker.internal subdomain — only the exact host.docker.internal alias is blocked', () => {
+        // Only the literal alias is a container-internal loopback; an
+        // arbitrary subdomain of docker.internal is an ordinary public host.
+        expectOk('http://foo.docker.internal');
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -214,6 +226,7 @@ describe('validateUrl — RFC1918 private ranges', () => {
     test.each([
         ['http://10.0.0.1',        true],
         ['http://10.255.255.255',  true],
+        ['http://11.0.0.1',        false],  // a=11, just past a===10 — must be ACCEPTED (kills a===10||a===11 mutation)
         ['http://172.16.0.1',      true],
         ['http://172.31.255.255',  true],
         ['http://172.32.0.1',      false],  // just outside 172.16-31 range — must be ACCEPTED
@@ -221,7 +234,9 @@ describe('validateUrl — RFC1918 private ranges', () => {
         ['http://192.168.1.1',     true],
         ['http://192.168.255.255', true],
         ['http://192.167.255.255', false],  // just below 192.168 — must be ACCEPTED
+        ['http://192.169.0.1',     false],  // a=192, b>168 — must be ACCEPTED (kills a===192&&b>=168 mutation)
         ['http://1.16.0.0',        false],  // a≠172 but b=16 — must be ACCEPTED (kills a===172→true mutation)
+        ['http://173.16.0.1',      false],  // a=173 with b inside 16-31 — must be ACCEPTED (kills a===172→a===172||a===173)
         ['http://1.168.0.0',       false],  // a≠192 but b=168 — must be ACCEPTED (kills a===192→true mutation)
     ] as const)('%s → blocked=%s', (url, shouldBlock) => {
         if(shouldBlock) {
@@ -510,6 +525,21 @@ describe('validateUrl — allowlist wildcard', () => {
 
     test('rejects https://evil.com with *.example.com allowlist', () => {
         expectDenied('https://evil.com', policy);
+    });
+
+    test('does not treat a pattern starting with "*" but not "*." as a wildcard', () => {
+        // Pattern '*a.com' starts with '*' but not '*.', so it must be compared
+        // as an exact (literal) pattern, not treated as a wildcard subdomain match.
+        // A hostname ending in 'a.com' must NOT be let through via a broadened
+        // startsWith('*') check.
+        expectDenied('https://ba.com', { allowlist: ['*a.com'] });
+    });
+
+    test('allowlist suffix matching is case-sensitive on the pattern', () => {
+        // The hostname is already lower-cased by the URL parser, but the allowlist
+        // pattern is user-supplied and not normalised. A pattern authored with
+        // different case must not match via an incidental case-insensitive compare.
+        expectDenied('https://foo.example.com', { allowlist: ['*.Example.com'] });
     });
 });
 

@@ -348,20 +348,25 @@ describe('syncAgentsAndSkills', () => {
             await mockFsPromises.mkdir(child, { recursive: true });
             await mockFsPromises.writeFile(path.join(child, 'AGENT.md'), '# Agent');
         }));
+        const releaseCopies = Promise.withResolvers<void>();
         let active = 0;
         let peak = 0;
         mockFsPromises.readFile.mockImplementation(async () => {
             active++;
             peak = Math.max(peak, active);
-            await Bun.sleep(1);
+            await releaseCopies.promise;
             active--;
             return '# Agent';
         });
 
-        await syncAgentsAndSkills(tempSourceRoot, tempTargetRoot);
-
-        expect(peak).toBeGreaterThan(1);
-        expect(peak).toBeLessThanOrEqual(8);
+        const operation = syncAgentsAndSkills(tempSourceRoot, tempTargetRoot);
+        try {
+            await waitForEventLoopCheckpoint();
+            expect(peak).toBe(8);
+        } finally {
+            releaseCopies.resolve();
+            await operation;
+        }
         const listings = await Promise.all(Array.from({ length: 12 }, (_, index) =>
             mockFsPromises.readdir(path.join(tempTargetRoot, 'agents', `nested-${index}`))));
         expect(listings.every(names => names.includes('AGENT.md'))).toBe(true);

@@ -584,6 +584,20 @@ describe('Discord Event Handlers', () => {
             expect(result[0].contentType).not.toBe('application/octet-stream');
         });
 
+        it('should map a null height/width to undefined, not 0', () => {
+            // Kills llm mutant: attachment.height ?? undefined -> attachment.height ?? 0
+            // (attachment.width/height are number | null in discord.js; the helper's mock sets
+            // both to null). A fallback of 0 is observably different from undefined: 0 is a
+            // meaningful "zero-size" value, whereas undefined means "size unknown".
+            const message = createMockMessageForExtraction([
+                { name: 'photo.png', contentType: 'image/png' }
+            ]);
+            const result = extractAttachmentMetadata(message);
+            expect(result).toHaveLength(1);
+            expect(result[0].height).toBeUndefined();
+            expect(result[0].width).toBeUndefined();
+        });
+
         it('should handle multiple attachments', () => {
             const message = createMockMessageForExtraction([
                 { name: 'photo1.jpg', contentType: 'image/jpeg' },
@@ -712,6 +726,36 @@ describe('Discord Event Handlers', () => {
             await handler(message);
 
             // shouldProcess(channelId, isDM, isMention, isReplyToBot)
+            expect(mockShouldProcess).toHaveBeenCalled();
+            expect(shouldProcessArgs[3]).toBe(false); // isReplyToBot should be false
+            expect(fetchReference).not.toHaveBeenCalled();
+        });
+
+        it('should not call fetchReference when message.reference exists but has no messageId', async () => {
+            // Kills llm mutant: message.reference?.messageId -> message.reference
+            // (a truthy reference object with no messageId must still short-circuit — otherwise
+            // the mutant enters the fetchReference branch on a reference object that Discord
+            // itself never sends without a messageId, but a defensive guard should not fire on it)
+            let shouldProcessArgs: unknown[] = [];
+            const mockShouldProcess = mock((...args: unknown[]) => {
+                shouldProcessArgs = args;
+                return true;
+            });
+
+            const handler = createMessageHandler({
+                channelRegistry: { shouldProcess: mockShouldProcess, getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                botUserId,
+                coordinator:     createMockCoordinator(),
+                ingressGate:     createPassingIngressGate(),
+            });
+
+            const message = createMockMessageForReply(false, null, false);
+            // A truthy reference object with no messageId (distinct from `reference: undefined`).
+            (message as unknown as Record<string, unknown>).reference = {};
+            const fetchReference = mock(async () => ({ author: { id: botUserId } }));
+            Object.defineProperty(message, 'fetchReference', { value: fetchReference });
+            await handler(message);
+
             expect(mockShouldProcess).toHaveBeenCalled();
             expect(shouldProcessArgs[3]).toBe(false); // isReplyToBot should be false
             expect(fetchReference).not.toHaveBeenCalled();

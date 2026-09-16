@@ -63,6 +63,19 @@ describe('event-summarizer', () => {
         });
     });
 
+    it('uses updatedAt rather than createdAt when describing event age', async () => {
+        const event = {
+            ...createMockEvent('/events/edited', '2025-01-15T11:00:00Z', 'Updated content'),
+            createdAt: '2025-01-14T12:00:00Z',
+        };
+
+        await summarizeEventBatches([event], 5, now);
+
+        const prompt = mockGenerateText.mock.calls[0]?.[0];
+        expect(prompt).toContain('1h ago');
+        expect(prompt).not.toContain('1d ago');
+    });
+
     describe('batching logic', () => {
         it('creates correct number of batches for evenly divisible events', async () => {
             const events = Array.from({ length: 10 }, (_, i) =>
@@ -174,7 +187,10 @@ describe('event-summarizer', () => {
             const contentMatch = /1h ago\): (.+)/u.exec(promptText);
             const contentInPrompt = contentMatch?.[1];
             expect(contentInPrompt).toBeDefined();
-            expect(contentInPrompt!.length).toBeLessThanOrEqual(200);
+            // Exact boundary: content is 300 chars, so the preview must be exactly
+            // 200 chars (not 199, not <=200) to pin the CONTENT_PREVIEW_LENGTH constant.
+            expect(contentInPrompt).toHaveLength(200);
+            expect(contentInPrompt).toBe('A'.repeat(200));
         });
     });
 
@@ -194,6 +210,51 @@ describe('event-summarizer', () => {
             expect(mockGenerateText).toHaveBeenCalledTimes(7);
             // All batches should have summaries
             expect(result.every(item => item.summary === 'Mock summary')).toBe(true);
+        });
+
+        it('runs at most 4 batches concurrently, pinning CONCURRENCY_LIMIT', async () => {
+            // Flush the microtask queue enough times for p-limit's internal
+            // promise chain (enqueue -> internal resolve -> .then(run)) to settle.
+            const flushMicrotasks = async (): Promise<void> => {
+                for(let i = 0; i < 20; i++) {
+                    // eslint-disable-next-line no-await-in-loop -- deterministic microtask-drain helper used only in tests, not a real async loop
+                    await Promise.resolve();
+                }
+            };
+
+            const resolvers: ((value: string) => void)[] = [];
+            mockGenerateText.mockImplementation(async () => new Promise<string>((resolve) => {
+                resolvers.push(resolve);
+            }));
+
+            // batchSize=1 with 6 events yields 6 batches, more than CONCURRENCY_LIMIT.
+            const events = Array.from({ length: 6 }, (_, i) =>
+                createMockEvent(`/events/e${i}`, `2025-01-15T${String(11 + i).padStart(2, '0')}:00:00Z`, `Event ${i}`)
+            );
+
+            const resultPromise = summarizeEventBatches(events, 1, now);
+
+            await flushMicrotasks();
+            // Exactly 4 batches should have started (called generateText); the
+            // remaining 2 stay queued behind the concurrency limit.
+            expect(mockGenerateText).toHaveBeenCalledTimes(4);
+
+            // Completing one in-flight batch should release a slot and start the next.
+            resolvers[0]('Summary 0');
+            await flushMicrotasks();
+            expect(mockGenerateText).toHaveBeenCalledTimes(5);
+
+            // Resolve the rest one at a time; each resolution frees a slot and
+            // starts the next queued batch, until all 6 have run.
+            for(let resolved = 1; resolved < 6; resolved++) {
+                resolvers[resolved](`Summary ${resolved}`);
+                // eslint-disable-next-line no-await-in-loop -- sequential by construction: each iteration must observe the previous resolution's freed slot before continuing
+                await flushMicrotasks();
+            }
+
+            const result = await resultPromise;
+            expect(result).toHaveLength(6);
+            expect(mockGenerateText).toHaveBeenCalledTimes(6);
         });
     });
 

@@ -54,6 +54,35 @@ describe('classifyDiscordError', () => {
         expect(result.message).toBe('String error');
     });
 
+    test('classifies Error with empty message as permanent with default message', () => {
+        const error = new Error('placeholder');
+        error.message = '';
+
+        const result = classifyDiscordError(error);
+
+        expect(result.category).toBe('permanent');
+        expect(result.message).toBe('Unknown error');
+    });
+
+    test('classifies Error with falsy non-string message as permanent with default message', () => {
+        const error = new Error('placeholder');
+        // Error#message is typed string, but a JS caller can leave any falsy non-string value there;
+        // the guard must treat it as "no usable message" rather than adopting it.
+        Object.defineProperty(error, 'message', { value: null, writable: true });
+
+        const result = classifyDiscordError(error);
+
+        expect(result.category).toBe('permanent');
+        expect(result.message).toBe('Unknown error');
+    });
+
+    test('classifies empty string error as permanent with default message', () => {
+        const result = classifyDiscordError('');
+
+        expect(result.category).toBe('permanent');
+        expect(result.message).toBe('Unknown error');
+    });
+
     test('classifies network error without message as transient with default message', () => {
         const error = { code: 'ETIMEDOUT' };
 

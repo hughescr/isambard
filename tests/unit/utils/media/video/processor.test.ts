@@ -108,6 +108,30 @@ describe('processLocalVideo', () => {
         }
     });
 
+    it('rejects when the output directory cannot be created', async () => {
+        const run = makeOrchestrationRunner(FFPROBE_OUTPUT, WHISPERKIT_OUTPUT);
+        mockFsPromises.mkdir.mockImplementationOnce(async () => {
+            throw new Error('EACCES: permission denied');
+        });
+
+        await expect(processLocalVideo(`${TEST_DIR}/input/video.mp4`, `${TEST_DIR}/mkdir-fail`, {
+            run,
+            binaryRun: makeBinaryRunner(),
+        })).rejects.toThrow('EACCES: permission denied');
+    });
+
+    it('rejects when the metadata markdown cannot be written', async () => {
+        const run = makeOrchestrationRunner(FFPROBE_OUTPUT, WHISPERKIT_OUTPUT);
+        mockFsPromises.writeFile.mockImplementationOnce(async () => {
+            throw new Error('ENOSPC: no space left on device');
+        });
+
+        await expect(processLocalVideo(`${TEST_DIR}/input/video.mp4`, `${TEST_DIR}/write-fail`, {
+            run,
+            binaryRun: makeBinaryRunner(),
+        })).rejects.toThrow('ENOSPC: no space left on device');
+    });
+
     it('creates the output directory before processing', async () => {
         const run = makeOrchestrationRunner(FFPROBE_OUTPUT, WHISPERKIT_OUTPUT);
         const outputDir = `${TEST_DIR}/mkdir-test-output`;
@@ -148,6 +172,34 @@ describe('processLocalVideo', () => {
 
         expect(result.metadataMarkdown).toContain('## Description');
         expect(result.metadataMarkdown).toContain('A documentary about ocean life');
+    });
+
+    it('uses metadata duration for the final scene frame timestamp', async () => {
+        const frameCommands: string[][] = [];
+        const binaryRun: BinarySpawnRunner = async (cmd) => {
+            frameCommands.push(cmd);
+            return { stdout: FAKE_PNG, stderr: '', exitCode: 0 };
+        };
+        await processLocalVideo('/test/video.mp4', `${TEST_DIR}/duration`, {
+            run: makeOrchestrationRunner(FFPROBE_OUTPUT, WHISPERKIT_OUTPUT),
+            binaryRun,
+        });
+        const timestamps = frameCommands.map(command => command[command.indexOf('-ss') + 1]);
+        expect(timestamps).toContain(String(20 - (1 / 30)));
+    });
+
+    it('uses metadata frame rate for the opening scene frame offset', async () => {
+        const frameCommands: string[][] = [];
+        const binaryRun: BinarySpawnRunner = async (cmd) => {
+            frameCommands.push(cmd);
+            return { stdout: FAKE_PNG, stderr: '', exitCode: 0 };
+        };
+        await processLocalVideo('/test/video.mp4', `${TEST_DIR}/frame-rate`, {
+            run: makeOrchestrationRunner(FFPROBE_OUTPUT, WHISPERKIT_OUTPUT),
+            binaryRun,
+        });
+        const timestamps = frameCommands.map(command => command[command.indexOf('-ss') + 1]);
+        expect(timestamps).toContain(String(1 / 30));
     });
 
     it('extracts subtitles from embedded subtitle tracks', async () => {

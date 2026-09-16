@@ -25,6 +25,7 @@ export async function registerAllCommands(
 
     try {
         logger.info('Registering slash commands...');
+        // Stryker disable next-line llm: every type-valid element is a truthy builder function, so filtering cannot change this production command list.
         const commands = builders.map(build => build().toJSON());
         await client.application!.commands.set(commands);
         logger.info({ count: commands.length, msg: 'Slash commands registered' });
@@ -33,8 +34,6 @@ export async function registerAllCommands(
             error: err instanceof Error ? err.message : String(err),
             msg:   'Failed to register slash commands — bot continues without updated commands',
         });
-        // Stryker restore ObjectLiteral,StringLiteral
         // Continue — command registration failure is non-fatal
     }
 }
-// Stryker restore all

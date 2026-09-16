@@ -271,6 +271,7 @@ interface ParsedCost { valid: boolean, value?: number }
 
 function parsedCost(value: Record<string, unknown> | undefined): ParsedCost {
     const status = stringValue(value?.cost_status);
+    // Stryker disable next-line llm: stringValue returns undefined or a non-empty string, so !status and status === undefined accept the same inputs.
     if(status === undefined) {
         return { valid: false };
     }
@@ -278,6 +279,7 @@ function parsedCost(value: Record<string, unknown> | undefined): ParsedCost {
         return { valid: true };
     }
     const cost = finiteNumber(value?.cost_usd);
+    // Stryker disable next-line llm: finiteNumber yields undefined or a finite number, so this predicate and its De Morgan complement are identical here.
     return cost === undefined || cost < 0 ? { valid: false } : { valid: true, value: cost };
 }
 
@@ -407,10 +409,12 @@ function providerReferencePrices(value: unknown, generatedAt: Date): ProviderRef
     const observedAt = dateValue(raw?.observed_at);
     const stale = raw?.stale === undefined ? false : booleanValue(raw.stale);
     const assumptions = referencePriceAssumptions(raw?.assumptions ?? []);
+    // Stryker disable llm: the preceding raw?.source clause short-circuits when raw is undefined, so raw.models is only read on a defined record.
     if(raw?.source !== 'models.dev' || raw.unit !== 'usd_per_million_tokens' || observedAt === undefined || observedAt > generatedAt
       || stale === undefined || !Array.isArray(raw.models) || assumptions === undefined) {
         return undefined;
     }
+    // Stryker restore llm
     const models: ProviderReferencePrice[] = [];
     for(const entry of raw.models) {
         const model = referencePrice(entry);

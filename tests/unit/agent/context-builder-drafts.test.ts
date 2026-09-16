@@ -89,3 +89,69 @@ describe('draft context subsections', () => {
         ]);
     });
 });
+
+describe('draft fetch concurrency and escalation count', () => {
+    test('starts the configured eight rejected-draft fetches before any completes', async () => {
+        const uids = Array.from({ length: 8 }, (_, index) => index + 1);
+        const releases: (() => void)[] = [];
+        const getMessage = mock((_mailbox: string, uid: number) => new Promise<{
+            id:       number
+            subject:  string
+            to:       { address: string }[]
+            metaData: Record<string, unknown>
+        }>((resolve) => {
+            releases.push(() => resolve({
+                id:       uid,
+                subject:  `subject-${uid}`,
+                to:       [{ address: `user${uid}@example.com` }],
+                metaData: { rejectedAt: 'now', reason: 'denied' },
+            }));
+        }));
+
+        const resultPromise = buildAdminRejectedSubsection(uids, makeWildDuck(getMessage));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(getMessage).toHaveBeenCalledTimes(8);
+        for(const release of releases) {
+            release();
+        }
+        expect(await resultPromise).toContain('Messages You Attempted to Send');
+    });
+
+    test('starts exactly eight of nine gave-up-draft fetches before any completes', async () => {
+        const uids = Array.from({ length: 9 }, (_, index) => index + 1);
+        const releases: (() => void)[] = [];
+        const getMessage = mock((_mailbox: string, uid: number) => {
+            const message = { id: uid, subject: `subject-${uid}`, to: [{ address: `user${uid}@example.com` }] };
+            if(uid === 9) {
+                return Promise.resolve(message);
+            }
+            return new Promise<typeof message>((resolve) => {
+                releases.push(() => resolve(message));
+            });
+        });
+
+        const resultPromise = buildGaveUpSubsection(uids, makeWildDuck(getMessage));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(getMessage).toHaveBeenCalledTimes(8);
+        for(const release of releases) {
+            release();
+        }
+        expect(await resultPromise).toContain('CRITICAL: 9 draft(s)');
+    });
+
+    test('counts all gave-up UIDs even when a draft can no longer be fetched', async () => {
+        const text = await buildGaveUpSubsection([10, 11], makeWildDuck(async (_mailbox, uid) => {
+            if(uid === 10) {
+                return null;
+            }
+            return { id: uid, subject: 'available', to: [{ address: 'available@example.com' }] };
+        }));
+
+        expect(text).toContain('CRITICAL: 2 draft(s)');
+        expect(text).toContain('Drafts:11');
+    });
+});

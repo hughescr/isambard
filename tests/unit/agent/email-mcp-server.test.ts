@@ -117,8 +117,28 @@ describe('createEmailMCPServer', () => {
         } catch (error) {
             expect(error).toMatchObject({
                 message: 'Attachment file not found: /tmp/missing-003.txt',
-                context: { filePath: '/tmp/missing-003.txt' },
             });
+            // toEqual (not toMatchObject) on context: it must contain exactly {filePath},
+            // never leak the raw settled-read result as an extra field.
+            expect((error as { context?: unknown }).context).toEqual({ filePath: '/tmp/missing-003.txt' });
+        }
+    });
+
+    test('attachment failure reports the specific file that failed, not always the first path', async () => {
+        mockFsPromises.readFile.mockImplementation(async (filePath: string) => {
+            if(filePath === '/tmp/ok-001.txt') {
+                return Buffer.from('ok') as unknown as string;
+            }
+            throw new Error('ENOENT');
+        });
+        try {
+            await buildAttachments(['/tmp/ok-001.txt', '/tmp/missing-002.txt']);
+            throw new Error('Expected attachment read to fail');
+        } catch (error) {
+            expect(error).toMatchObject({
+                message: 'Attachment file not found: /tmp/missing-002.txt',
+            });
+            expect((error as { context?: unknown }).context).toEqual({ filePath: '/tmp/missing-002.txt' });
         }
     });
 
@@ -1614,6 +1634,28 @@ describe('createEmailMCPServer', () => {
             expect(mockWildDuck.moveMessage).not.toHaveBeenCalled();
         });
 
+        test('should treat only the final colon as the mailbox/uid separator', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'archiveEmail');
+
+            const result: CallToolResult = await handler({ message: 'Foo:Bar:42' });
+
+            expect(result.isError).toBe(true);
+            expect(getText(result)).toContain('Foo:Bar');
+            expect(mockWildDuck.moveMessage).not.toHaveBeenCalled();
+        });
+
+        test('should not trim whitespace from the parsed mailbox name', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'archiveEmail');
+
+            const result: CallToolResult = await handler({ message: 'CleanInbox :42' });
+
+            expect(result.isError).toBe(true);
+            expect(getText(result)).toContain('CleanInbox ');
+            expect(mockWildDuck.moveMessage).not.toHaveBeenCalled();
+        });
+
         test('should allow archive from Archive mailbox', async () => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
@@ -1722,6 +1764,16 @@ describe('createEmailMCPServer', () => {
 
             const params = mockSearch.mock.calls[0]?.[0];
             expect(params.query?.correspondent).toBe('alice@example.com');
+        });
+
+        test('should leave correspondent undefined in search query when omitted', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
+            const handler = getToolHandler(server, 'searchEmail');
+
+            await handler({});
+
+            const params = mockSearch.mock.calls[0]?.[0];
+            expect(params.query?.correspondent).toBeUndefined();
         });
 
         test('should pass content to search query', async () => {
@@ -2292,6 +2344,66 @@ describe('createEmailMCPServer', () => {
             });
             // No flag setting — outbox handles retry now
             expect(mockSendWildDuck.updateMessageFlags).not.toHaveBeenCalledWith('Drafts', 99, { addFlags: ['DiscordNotifyFailed'] });
+        });
+
+        test('should log the string form of a non-Error sendApprovalRequest failure', async () => {
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
+            mockSendApprovalRequest = mock(async () => {
+                throw 'transient outbox failure';
+            });
+
+            const server = createEmailMCPServer({
+                wildDuckClient:      mockSendWildDuck,
+                allowlist:           mockAllowlist,
+                sendApprovalRequest: mockSendApprovalRequest,
+            });
+            const handler = getToolHandler(server, 'sendEmail');
+
+            await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', identity: 'formal' });
+
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                error: 'transient outbox failure', msg: 'Failed to send outbound approval request',
+            });
+        });
+
+        test('should append the rate limit warning when notifying admin of the draft fails', async () => {
+            mockAllowlist.isAllowed         = mock((_platform: string, _value: string) => false);
+            mockRateLimiter.isAtLimit       = mock(() => true);
+            mockRateLimiter.tokensRemaining = mock(() => 0);
+            mockSendApprovalRequest = mock(async () => {
+                throw new Error('Discord unavailable');
+            });
+
+            const server = createEmailMCPServer({
+                wildDuckClient:      mockSendWildDuck,
+                rateLimiter:         mockRateLimiter,
+                allowlist:           mockAllowlist,
+                sendApprovalRequest: mockSendApprovalRequest,
+            });
+            const handler = getToolHandler(server, 'sendEmail');
+
+            const result: CallToolResult = await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', identity: 'formal' });
+
+            expect(getText(result)).toContain('check pending drafts manually');
+            expect(getText(result)).toContain('send rate limit reached');
+        });
+
+        test('should append the rate limit warning when saved to Drafts pending admin approval', async () => {
+            mockAllowlist.isAllowed         = mock((_platform: string, _value: string) => false);
+            mockRateLimiter.isAtLimit       = mock(() => true);
+            mockRateLimiter.tokensRemaining = mock(() => 0);
+
+            const server = createEmailMCPServer({
+                wildDuckClient: mockSendWildDuck,
+                rateLimiter:    mockRateLimiter,
+                allowlist:      mockAllowlist,
+            });
+            const handler = getToolHandler(server, 'sendEmail');
+
+            const result: CallToolResult = await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', identity: 'formal' });
+
+            expect(getText(result)).toContain('pending admin approval');
+            expect(getText(result)).toContain('send rate limit reached');
         });
 
         test('should NOT store metaData with to address in upload payload (to is a message field)', async () => {
@@ -3532,7 +3644,8 @@ describe('createEmailMCPServer', () => {
             const pending = buildAttachments(['/tmp/a0.txt', '/tmp/a1.txt', '/tmp/a2.txt']);
             try {
                 await Bun.sleep(0);
-                expect(maxActive).toBeLessThanOrEqual(2);
+                // Exactly 2 (not 1, not 3): proves the concurrency limit is 2, not merely "at most 2".
+                expect(maxActive).toBe(2);
                 gate.resolve();
                 expect(await pending).toEqual([
                     { filename: 'a0.txt', contentType: 'text/plain', content: Buffer.from('/tmp/a0.txt').toString('base64') },

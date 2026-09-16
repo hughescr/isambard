@@ -329,6 +329,25 @@ describe('TaskBoardManager', () => {
             await settle();
             expect(editMessage).toHaveBeenCalledTimes(2);
         });
+
+        test('defers an edit when exactly one millisecond remains in the throttle window', async () => {
+            const manager = makeManager();
+
+            manager.applyViews([distinct('first')]);
+            await settle();
+            manager.applyViews([distinct('second')]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(1);
+
+            advance(2999);
+            manager.applyViews([distinct('third')]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(1);
+
+            advance(1);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(2);
+        });
     });
 
     describe('terminal boards', () => {
@@ -448,6 +467,23 @@ describe('TaskBoardManager', () => {
             manager.applyViews([distinct('first')]);
             await settle();
             expect(sendPayloadToChannel).toHaveBeenCalledTimes(2);
+        });
+
+        test('does not forget a board whose key has uppercase letters, when the same view (same key) is reapplied', async () => {
+            const manager = makeManager();
+            const view = boardView({ key: 'Chan-1:Turn-1', channelId: 'Chan-1' });
+
+            manager.applyViews([view]);
+            await settle();
+            expect(sendPayloadToChannel).toHaveBeenCalledTimes(1);
+
+            // If the live-key set were lowercased before checking `this.boards.keys()` (which
+            // keeps the view's original-case key), this key would wrongly look absent from
+            // `live`, the board would be forgotten, and this second apply would post it again
+            // as brand new instead of leaving it alone.
+            manager.applyViews([view]);
+            await settle();
+            expect(sendPayloadToChannel).toHaveBeenCalledTimes(1);
         });
     });
 

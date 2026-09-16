@@ -16,9 +16,11 @@ function formatIdentifiers(identifiers: ContactIdentifier[]): string {
  * Format a Contact into a Discord embed.
  */
 function buildContactEmbed(contact: Contact): EmbedBuilder {
+    // Stryker disable next-line llm: independent EmbedBuilder setters serialize identically regardless of call order
     const embed = new EmbedBuilder().setTitle(contact.displayName).setColor(GREEN);
     embed.addFields({ name: 'Person ID', value: contact.personId, inline: true });
 
+    // Stryker disable next-line llm: identifiers is a typed non-null array, so the null guard is unreachable and integral length makes > 0 equal >= 1
     if(contact.identifiers.length > 0) {
         embed.addFields({ name: 'Identifiers', value: formatIdentifiers(contact.identifiers), inline: false });
     }
@@ -268,7 +270,6 @@ export function buildContactCommand(): SlashCommandBuilder {
                         .setRequired(true)
                 )
         ) as SlashCommandBuilder;
-    // Stryker restore all
 }
 
 /**
@@ -332,6 +333,7 @@ export class ContactCommandHandler {
             return;
         }
 
+        // Stryker disable next-line llm: discord.js getSubcommand() throws rather than returning undefined, so a fallback is unreachable
         const subcommand = interaction.options.getSubcommand();
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -414,7 +416,6 @@ export class ContactCommandHandler {
             logger.error({ err, displayName, msg: 'Failed to create contact' });
             await interaction.editReply({ content: `Failed to create contact: ${err instanceof Error ? err.message : String(err)}` });
         }
-        // Stryker restore BlockStatement
     }
 
     private extractLinkOptions(interaction: ChatInputCommandInteraction): { personRaw: string, platformRaw: string, idValue: string } {
@@ -438,7 +439,6 @@ export class ContactCommandHandler {
             } catch (error) {
                 logger.warn({ err: error, personId, msg: 'Failed to refresh allowlist cache after link' });
             }
-            // Stryker restore BlockStatement
             await interaction.editReply({ content: `Added ${platformRaw}: ${idValue} to contact \`${personRaw}\`.` });
         } catch (err: unknown) {
             logger.error({ err, personRaw, msg: 'Failed to link identifier' });
@@ -446,7 +446,6 @@ export class ContactCommandHandler {
             const replyContent = err instanceof ContactNotFoundError ? `Contact \`${personRaw}\` not found.` : `Failed to link identifier: ${errMsg}`;
             await interaction.editReply({ content: replyContent });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleUnlink(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -461,21 +460,21 @@ export class ContactCommandHandler {
             } catch (error) {
                 logger.warn({ err: error, personId, msg: 'Failed to refresh allowlist cache after unlink' });
             }
-            // Stryker restore BlockStatement
             await interaction.editReply({ content: `Removed ${platformRaw}: ${idValue} from contact \`${personRaw}\`.` });
         } catch (err: unknown) {
             logger.error({ err, personRaw, msg: 'Failed to unlink identifier' });
             const errMsg = err instanceof Error ? err.message : String(err);
+            // Stryker disable next-line llm: ContactNotFoundError extends StorageError extends IsambardError extends Error, so a preceding `instanceof Error` conjunct is redundant.
             const replyContent = err instanceof ContactNotFoundError ? `Contact \`${personRaw}\` not found.` : `Failed to remove identifier: ${errMsg}`;
             await interaction.editReply({ content: replyContent });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleList(interaction: ChatInputCommandInteraction): Promise<void> {
         try {
             const contacts = await this.backend.listContacts();
 
+            // Stryker disable next-line llm: listContacts() is typed Promise<Contact[]>, so a `!contacts ||` guard is always false and the two expressions are identical on every array
             if(contacts.length === 0) {
                 await interaction.editReply({ content: 'No contacts in the address book.' });
                 return;
@@ -490,7 +489,6 @@ export class ContactCommandHandler {
             logger.error({ err, msg: 'Failed to list contacts' });
             await interaction.editReply({ content: 'Failed to list contacts.' });
         }
-        // Stryker restore BlockStatement
     }
 
     private async resolveContact(interaction: ChatInputCommandInteraction, personRaw: string): Promise<Contact | undefined> {
@@ -510,6 +508,7 @@ export class ContactCommandHandler {
 
         if(!contact) {
             const results = await this.backend.fuzzyLookup(personRaw);
+            // Stryker disable next-line llm: Contact objects are truthy and at(0) equals index zero, so both rewrites yield the same first result
             contact = results[0];
         }
 
@@ -530,13 +529,13 @@ export class ContactCommandHandler {
                 return;
             }
 
+            // Stryker disable next-line llm: `contact` is already narrowed non-null by the guard above, so a `|| {}` fallback is unreachable
             const embed = buildContactEmbed(contact);
             await interaction.editReply({ embeds: [embed] });
         } catch (err: unknown) {
             logger.error({ err, personRaw, msg: 'Failed to show contact' });
             await interaction.editReply({ content: `Failed to show contact: ${err instanceof Error ? err.message : String(err)}` });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleEdit(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -555,6 +554,7 @@ export class ContactCommandHandler {
                 return;
             }
 
+            // Stryker disable next-line llm: mapping through a null name only recreates equal identifier objects; identity is not observable
             const updatedIdentifiers = name === null
                 ? contact.identifiers
                 : contact.identifiers.map(id => (id.platform === 'name' ? { platform: 'name' as const, value: name } : id));
@@ -577,7 +577,6 @@ export class ContactCommandHandler {
             logger.error({ err, personRaw, msg: 'Failed to edit contact' });
             await interaction.editReply({ content: `Failed to edit contact: ${err instanceof Error ? err.message : String(err)}` });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleDelete(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -602,7 +601,6 @@ export class ContactCommandHandler {
             logger.error({ err, personRaw, msg: 'Failed to delete contact' });
             await interaction.editReply({ content: `Failed to delete contact: ${err instanceof Error ? err.message : String(err)}` });
         }
-        // Stryker restore BlockStatement
     }
 }
 
@@ -683,9 +681,7 @@ export class ContactApprovalHandler {
             } catch (replyError) {
                 logger.error({ err: replyError, msg: 'Failed to send error editReply for contact approval' });
             }
-            // Stryker restore BlockStatement
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleApprove(interaction: ButtonInteraction, uuid: string): Promise<void> {
@@ -733,10 +729,12 @@ export class ContactApprovalHandler {
             throw new InvariantViolationError('applyContactUpdate', 'Contact update request is missing personId');
         }
         const personId = createContactId(request.personId);
+        // Stryker disable next-line llm: addIdentifiers is undefined or a (truthy) array, so ?? and || iterate the same input
         for(const identifier of request.addIdentifiers ?? []) {
             // eslint-disable-next-line no-await-in-loop -- sequential: each add depends on prior state
             await this.backend.addIdentifier(personId, identifier);
         }
+        // Stryker disable next-line llm: removeIdentifiers is undefined or a (truthy) array, so ?? and || iterate the same input
         for(const identifier of request.removeIdentifiers ?? []) {
             // eslint-disable-next-line no-await-in-loop -- sequential: each remove depends on prior state
             await this.backend.removeIdentifier(personId, identifier.platform, identifier.value);
@@ -753,7 +751,6 @@ export class ContactApprovalHandler {
         } catch (error) {
             logger.warn({ err: error, personId, msg: 'Failed to refresh allowlist cache after contact update' });
         }
-        // Stryker restore BlockStatement
         logger.info({ personId, msg: 'Contact updated via admin approval' });
     }
 
@@ -798,7 +795,6 @@ export class ContactApprovalHandler {
         } catch (error) {
             logger.warn({ err: error, personId, msg: 'Failed to remove person from allowlist after contact deletion' });
         }
-        // Stryker restore BlockStatement
 
         const deletedEmbed = new EmbedBuilder()
             .setTitle('Deleted \u2713')

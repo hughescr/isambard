@@ -93,8 +93,11 @@ export interface ResolvedDiscordNames {
  */
 export function resolveNames(registry: ChannelRegistryManager, client: Client): (context: DiscordMessageContext) => Promise<ResolvedDiscordNames> {
     return async (context) => {
+        // Stryker disable next-line llm: guildId is a branded string, so == and === against the 'DM' literal are the same comparison.
         const isDM = context.guildId === 'DM';
+        // Stryker disable next-line llm: createChannelId is a brand-only schema parse (no transform) on an already-validated ChannelId, so it returns context.channelId unchanged (covers 29300 and 29301).
         const channel = await registry.getChannel(createChannelId(context.channelId));
+        // Stryker disable next-line llm: channelName is z.string().min(1) in channelMetadataSchema and the registry builds it from Discord's non-empty name or a literal fallback, so the '' case || would additionally catch cannot occur.
         const channelName = channel?.channelName ?? context.channelId;
 
         let guildName: string | undefined;
@@ -107,6 +110,7 @@ export function resolveNames(registry: ChannelRegistryManager, client: Client): 
         }
 
         return {
+            // Stryker disable next-line llm: username is discord.js author.username stamped by the sole DiscordMessageContext producer (handlers.ts) and can never be the empty string, so ?? and || pick the same value.
             channelName, guildName, authorName: context.username ?? context.userId, isDM,
         };
     };

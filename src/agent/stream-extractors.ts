@@ -63,6 +63,7 @@ export interface ParsedToolName {
  * @returns ParsedToolName with module and tool components
  */
 export function parseToolName(toolName: string | undefined): ParsedToolName {
+    // Stryker disable next-line llm: loose equality differs only for null, excluded by the parameter type and all callers.
     if(toolName === undefined) {
         return { module: 'claude', tool: 'unknown' };
     }
@@ -70,6 +71,7 @@ export function parseToolName(toolName: string | undefined): ParsedToolName {
     if(toolName.startsWith('mcp__')) {
         const parts = toolName.slice(5).split('__');
         if(parts.length >= 2) {
+            // Stryker disable next-line llm: non-null assertions are erased, and indexed strings remain string without noUncheckedIndexedAccess.
             const module = parts[0]!; // length >= 2 above
             const tool = parts.slice(1).join('__');
             return { module, tool };
@@ -121,6 +123,7 @@ export function redactSensitiveArgs(input: unknown): unknown {
     }
 
     // Handle objects - check keys and recurse
+    // Stryker disable next-line llm: isPlainObject(null) is false, so the added null check cannot change this branch.
     if(isPlainObject(input)) {
         const result: Record<string, unknown> = {};
         for(const [key, value] of Object.entries(input as Record<string, unknown>)) {

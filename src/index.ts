@@ -126,7 +126,6 @@ async function wireDynamoDBHealth(
                     }
                 }
             }
-            // Stryker restore BlockStatement,BooleanLiteral,ConditionalExpression
         },
     });
     registerCleanup({ name: 'DynamoDB reconnection loop', run: () => dynamoDBReconnectionLoop.stop() });
@@ -138,7 +137,6 @@ async function wireDynamoDBHealth(
         }
     });
     registerCleanup({ name: 'DynamoDB reconnect subscription', run: unsubscribeDynamoDBReconnect });
-    // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral
 
     // Wire the DynamoDB health notifier so any network-classified errors thrown by
     // withDynamoTimeout (in BaseRepository) also signal CONNECTION_LOST to the
@@ -150,7 +148,6 @@ async function wireDynamoDBHealth(
         });
     });
     registerCleanup({ name: 'DynamoDB health notifier', run: () => setDynamoHealthNotifier(undefined) });
-    // Stryker restore BlockStatement,StringLiteral,ObjectLiteral
 
     // Perform initial DynamoDB health probe against the live client.
     // On success: mark online. On failure: start reconnection loop.
@@ -165,10 +162,8 @@ async function wireDynamoDBHealth(
             error: err instanceof Error ? err.message : String(err),
             msg:   'DynamoDB probe failed at startup, starting reconnection loop',
         });
-        // Stryker restore ObjectLiteral,StringLiteral
         dynamoDBReconnectionLoop.start();
     }
-    // Stryker restore BlockStatement
 
     // Periodic DynamoDB background probe — detects post-startup connection failures
     // that would otherwise go unnoticed until the next operation fails.
@@ -179,7 +174,6 @@ async function wireDynamoDBHealth(
         void runDynamoDBProbe(storage.holder.getClient(), dynamoDBConfig.tableName, healthRegistry, logger);
     }, dynamoDBProbeIntervalMs);
     registerCleanup({ name: 'DynamoDB probe', run: () => clearInterval(dynamoDBProbeInterval) });
-    // Stryker restore BlockStatement
 
     return { dynamoDBReconnectionLoop, unsubscribeDynamoDBReconnect, dynamoDBProbeInterval };
 }
@@ -297,7 +291,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
     const onIdentityWrite = (): void => {
         identityCacheSlot.cache?.invalidate();
     };
-    // Stryker restore all
 
     // Create infrastructure layers
     const storage = await createStorageLayer(
@@ -458,7 +451,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
             });
             const stableWildDuckClient = eagerWildDuckClient;
             registerCleanup({ name: 'WildDuck client', run: shutdownEmailClient });
-            // Stryker restore ObjectLiteral,StringLiteral
 
             // Create reconnection loop eagerly so post-connect drops are also handled.
             emailReconnectionLoop = createReconnectionLoop({
@@ -480,7 +472,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                 }
             });
             registerCleanup({ name: 'email reconnect subscription', run: () => unsubscribeEmailReconnect?.() });
-            // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral
 
             // Wire all downstream objects now (before init succeeds).
             // Health guards on MCP tools prevent usage until init() succeeds.
@@ -510,7 +501,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                     error: err instanceof Error ? err.message : String(err),
                     msg:   'Email integration setup failed (non-WildDuck), email unavailable for this session',
                 });
-                // Stryker restore ObjectLiteral,StringLiteral
             }
 
             // Attempt to authenticate the WildDuck client (init = authenticate + load mailboxes).
@@ -526,13 +516,10 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                     error: err instanceof Error ? err.message : String(err),
                     msg:   'WildDuck init failed, starting reconnection loop',
                 });
-                // Stryker restore ObjectLiteral,StringLiteral
                 // Retry only init() — downstream objects already hold stable refs to the same client.
                 emailReconnectionLoop.start();
             }
-            // Stryker restore BlockStatement
         }
-        // Stryker restore BlockStatement
     }
     await initializeEmailIntegration();
 
@@ -551,7 +538,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                 serviceUrl:  config.bsky.serviceUrl,
                 healthRegistry,
             });
-            // Stryker restore ObjectLiteral,StringLiteral
 
             // Capture a stable reference for the reconnection closure — TS cannot narrow
             // the outer mutable variable inside an async callback.
@@ -574,7 +560,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                 }
             });
             registerCleanup({ name: 'Bluesky reconnect subscription', run: () => unsubscribeBskyReconnect?.() });
-            // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral
 
             try {
                 logger.info('Logging into Bluesky...');
@@ -587,14 +572,11 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                     error: err instanceof Error ? err.message : String(err),
                     msg:   'Bluesky login failed, starting reconnection loop',
                 });
-                // Stryker restore ObjectLiteral,StringLiteral
                 // Keep bskyClient alive so reconnection can retry login on the same client.
                 // Health guards on MCP tools will prevent usage until login succeeds.
                 bskyReconnectionLoop.start();
             }
-            // Stryker restore BlockStatement
         }
-        // Stryker restore BlockStatement
     }
     await initializeBlueskyIntegration();
 
@@ -625,11 +607,8 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                     error: err instanceof Error ? err.message : String(err),
                     msg:   'Bluesky safety rails setup failed, disabling Bluesky integration',
                 });
-                // Stryker restore ObjectLiteral,StringLiteral
             }
-            // Stryker restore BlockStatement
         }
-        // Stryker restore BlockStatement
 
         // If bsky client exists and login succeeded (health=online) but safety rails were not set up,
         // disable Bluesky for the current session to prevent unguarded posting.
@@ -639,7 +618,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
             logger.warn({ msg: 'Bluesky client available but safety rails not configured — disabling Bluesky writes for this session' });
             bskyClient = undefined;
         }
-        // Stryker restore ConditionalExpression,BooleanLiteral,BlockStatement
     }
     await initializeBlueskySafetyRails();
 
@@ -667,8 +645,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
         }
     });
     registerCleanup({ name: 'Discord reconnect subscription', run: unsubscribeDiscordReconnect });
-    // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,BooleanLiteral
-    // Stryker restore BlockStatement
 
     // Outbox drainer — delivers queued Discord messages when Discord comes back online
     const outboxDrainer: OutboxDrainer = createOutboxDrainer({
@@ -694,7 +670,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
         logger,
     });
     registerCleanup({ name: 'outbox drainer', run: () => outboxDrainer.stop() });
-    // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator
 
     // Zod schemas for saga executor param validation
     const bskyReplyParamsSchema = z.object({
@@ -706,7 +681,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
     });
 
     const bskyDMParamsSchema = z.object({ text: z.string(), convoId: z.string() });
-    // Stryker restore ObjectLiteral,StringLiteral
 
     // Saga executor — re-executes approved bsky/email actions after service recovery
     const sagaExecutor: SagaExecutor = createSagaExecutor({
@@ -745,7 +719,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
         logger,
     });
     registerCleanup({ name: 'saga executor', run: () => sagaExecutor.stop() });
-    // Stryker restore BlockStatement,ObjectLiteral
 
     function createHistoryCoordinator(): PersonHistoryCoordinator {
         // History providers
@@ -780,7 +753,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
         }
 
         // History coordinator
-        // Stryker restore ObjectLiteral,ConditionalExpression,StringLiteral,BlockStatement
 
         return new PersonHistoryCoordinator({
             contactBackend:       storage.contactBackend,
@@ -827,10 +799,8 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                 { embeds: [embed], components: [actionRow] },
                 { priority: 'high', type: 'contact_approval' }
             );
-            // Stryker restore BlockStatement,StringLiteral,ObjectLiteral
         })
         : undefined;
-    // Stryker restore BlockStatement
 
     const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService, calendarService, bskySetup?.rejectionBackend, healthRegistry);
 
@@ -853,7 +823,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
         } else if(config.browser) {
             logger.warn('Browser config present but Bun.WebView is only supported on macOS — browser tools will be unavailable');
         }
-        // Stryker restore all
 
         return { browserAdapter, browserPolicy };
     }
@@ -921,7 +890,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
     if(identityContext !== undefined) {
         identityCacheSlot.cache.set(identityContext);
     }
-    // Stryker restore all
 
     // P9: build (never open) the long-lived conversation conductor — after the OAuth env write
     // (top of this function) and mcpSharedDeps (above), and before createDiscordBot so the bot
@@ -990,7 +958,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
         conversationBootLostTasks = builtConductor.bootLostTasks;
         conversationSetWakeTurnDelivery = builtConductor.setWakeTurnDelivery;
     }
-    // Stryker restore all
 
     // P12: build (never open) the perch conductor, AFTER the conversation conductor above and
     // only when perch is actually configured/enabled — an unused conductor would still spend a
@@ -1040,7 +1007,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
         perchSetWakeTurnDelivery = builtPerchConductor.setWakeTurnDelivery;
         perchSlotHooks = builtPerchConductor.slotHooks;
     }
-    // Stryker restore all
 
     // Q3 / plan amendment B4: a day-bucketed spend ceiling that pauses perch (never Discord) once
     // config.session.dailyCostCeilingUsd is crossed, fed by both session ledgers' cumulativeUsd
@@ -1175,7 +1141,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
         }
     });
     registerCleanup({ name: 'outbox subscription', run: unsubscribeOutboxDrain });
-    // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator
 
     // Subscribe to health changes: reset failed sagas when a service comes back online
     const unsubscribeSagaRetry = healthRegistry.subscribe((change) => {
@@ -1212,7 +1177,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
         })();
     });
     registerCleanup({ name: 'saga subscription', run: unsubscribeSagaRetry });
-    // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,ObjectLiteral
 
     // Q6 / plan amendments B1-B2: health-outage notification source. Same unconditional
     // composition-root scope as unsubscribeOutboxDrain/unsubscribeSagaRetry above — this wiring
@@ -1263,7 +1227,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                 });
                 discordReconnectionLoop.start();
             }
-            // Stryker restore BlockStatement,ObjectLiteral
 
             // Register recovery subscriber now — after initial bot.start() — so it only fires on reconnects.
             // Catch-up on first connection is handled by runConductorInboxInit inside bot.ts
@@ -1289,7 +1252,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                     });
                 }
             }
-            // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
             // Register slash commands (non-fatal — Discord may be connected but commands fail)
             try {
@@ -1300,7 +1262,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                     msg:   'Slash command registration failed, will retry on next startup',
                 });
             }
-            // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
             // These start regardless of Discord availability
             if(storage.reconciliationScheduler) {
@@ -1328,7 +1289,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
 
             logger.info('Isambard application started successfully');
         },
-        // Stryker restore BlockStatement
 
         stop: () => {
             if(stopPromise !== null) {
@@ -1392,7 +1352,6 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
             });
             return stopPromise;
         },
-        // Stryker restore BlockStatement
         config,
     };
 }
@@ -1623,4 +1582,3 @@ if(import.meta.main) {
         });
     }
 }
-// Stryker restore all

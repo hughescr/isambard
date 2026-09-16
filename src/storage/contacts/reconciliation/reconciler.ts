@@ -65,15 +65,18 @@ async function batchWriteWithRetry(
         }
 
         const nextPending: NonNullable<BatchWriteCommandInput['RequestItems']> = {};
+        // Stryker disable next-line llm: the truthiness guard above already returned for every falsy UnprocessedItems value, so ?? and || are identical here.
         for(const table of Object.keys(result.UnprocessedItems ?? {})) {
             const unprocessed = result.UnprocessedItems?.[table];
             if(unprocessed !== undefined) {
                 nextPending[table] = unprocessed;
             }
         }
+        // Stryker disable next-line llm: DynamoDB cannot return an undefined table value, so nextPending reproduces every returned unprocessed item.
         pending = nextPending;
     }
 
+    // Stryker disable next-line llm: pending is initialized and reassigned only to object literals, so the nullish fallback is unreachable.
     const remainingCount = Object.values(pending).reduce((count, items) => count + items.length, 0);
     throw new BatchWriteExhaustedError('ContactReconciler.batchWriteWithRetry', remainingCount, RECONCILER_BATCH_WRITE_MAX_RETRIES);
 }
@@ -206,21 +209,18 @@ async function sleepAndCheckAbort(
     if(options.signal?.aborted) {
         return true;
     }
-    // Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral
     if(options.operationDelayMs === 0) {
         return false;
     }
-    // Stryker restore ConditionalExpression,EqualityOperator,BlockStatement,BooleanLiteral
     try {
         await sleepWithOptionalSignal(deps.sleep, options.operationDelayMs, options.signal);
     } catch (error) {
         if(isAbortError(error)) {
             return true; // Graceful abort — caller must break without counting error
         }
-        // Stryker restore ConditionalExpression,BooleanLiteral
         throw error; // Re-throw unexpected errors
     }
-    // Stryker restore BlockStatement
+    // Stryker disable next-line llm: AbortSignal.aborted is boolean, so === true and ?? false agree for boolean or undefined.
     return options.signal?.aborted === true;
 }
 
@@ -258,7 +258,6 @@ function isLookupOrphanOrStray(
                 return false; // Too young: may be an in-flight write (putContact step 1 completed, step 2 pending)
             }
         }
-        // Stryker restore ConditionalExpression,BlockStatement,LogicalOperator,EqualityOperator
         return true;
     }
     // Fix 2: stray check — profile exists but may no longer claim this identifier
@@ -269,7 +268,6 @@ function isLookupOrphanOrStray(
     const normalizedValue = value.toLowerCase().trim(); // normalize for comparison
     const profileClaims = (rawIdentifiers as { platform: unknown, value: unknown }[])
         .some(id => id.platform === platform && typeof id.value === 'string' && id.value.toLowerCase().trim() === normalizedValue);
-    // Stryker restore ConditionalExpression,BlockStatement,LogicalOperator,MethodExpression
     if(profileClaims) {
         return false; // Valid lookup — profile still claims it
     }
@@ -281,7 +279,6 @@ function isLookupOrphanOrStray(
             return false; // Too young: may be an in-flight write
         }
     }
-    // Stryker restore ConditionalExpression,BlockStatement,LogicalOperator
     return true; // stray if profile does not claim this lookup
 }
 
@@ -298,6 +295,7 @@ async function processPhaseAPage(
     let orphansDeleted = 0;
     let errors = 0;
 
+    // Stryker disable next-line llm: items is a required array parameter and its only call site already coalesces `result.Items ?? []`, so the fallback is unreachable.
     for(const item of items) {
         try {
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB op per lookup row
@@ -346,7 +344,6 @@ async function processPhaseAItem(
     if(options.signal?.aborted) {
         return false;
     }
-    // Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral
 
     const { platform, value } = ContactKeyGenerator.parseLookupPK(item.PK);
     const shouldDelete = isLookupOrphanOrStray(
@@ -354,6 +351,7 @@ async function processPhaseAItem(
         platform,
         value,
         item.createdAt,
+        // Stryker disable next-line llm: strayLookupAgeThresholdMs is required and populated by the validated configuration default.
         options.strayLookupAgeThresholdMs
     );
 
@@ -396,6 +394,7 @@ async function runPhaseA(
     let lastKey: Record<string, unknown> | undefined;
 
     do {
+        // Stryker disable next-line llm: in this condition, undefined and false are equally falsy, so ?? false cannot affect control flow.
         if(options.signal?.aborted) {
             break;
         }
@@ -412,7 +411,6 @@ async function runPhaseA(
                 IndexName:                 'GSI2',
                 KeyConditionExpression:    'GSI2PK = :gsi2pk',
                 ExpressionAttributeValues: { ':gsi2pk': 'CONTACT_LOOKUPS' },
-                // Stryker restore StringLiteral,ObjectLiteral
                 Limit:                     options.scanPageSize,
                 ExclusiveStartKey:         currentKey,
             }), phaseAQuerySignalOpts);
@@ -466,13 +464,12 @@ async function repairIdentifierLookup(
         Key:            { PK: lookupKeys.PK, SK: lookupKeys.SK },
         ConsistentRead: true,
     }), phaseBGetSignalOpts);
-    // Stryker restore ObjectLiteral,BooleanLiteral
 
     // Fix 4: check abort after the read, before the write
+    // Stryker disable next-line llm: optional chaining and guarded signal access have identical truthiness.
     if(options.signal?.aborted) {
         return false;
     }
-    // Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral
 
     if(!lookupResult.Item) {
         // Missing lookup: create it with all keys including GSI2
@@ -483,7 +480,6 @@ async function repairIdentifierLookup(
         };
         // Fix 3 + Fix 5: use batchWriteWithRetry (handles UnprocessedItems) and pass signal for abort propagation
         await batchWriteWithRetry(deps.docClient, deps.tableName, deps.sleep, [{ PutRequest: { Item: lookupItem } }], options.signal);
-        // Stryker restore ObjectLiteral
         logger.debug({ pk: lookupKeys.PK, sk: lookupKeys.SK, personId, msg: 'ContactReconciler Phase B: created missing lookup' });
         return true;
     }
@@ -556,6 +552,7 @@ async function processPhaseBPage(
         try {
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB operations
             const repairResult = await repairProfileLookups(deps, options, rawItem);
+            // Stryker disable next-line llm: lookupsCreated is always a numeric counter, for which n || 0 equals n.
             lookupsCreated += repairResult.lookupsCreated;
             errors += repairResult.errors;
         } catch (error) {
@@ -606,7 +603,6 @@ async function runPhaseB(
                 IndexName:                 'GSI2',
                 KeyConditionExpression:    'GSI2PK = :gsi2pk',
                 ExpressionAttributeValues: { ':gsi2pk': 'CONTACTS' },
-                // Stryker restore StringLiteral,ObjectLiteral
                 Limit:                     options.scanPageSize,
                 ExclusiveStartKey:         currentKey,
             }), phaseBQuerySignalOpts);
@@ -621,12 +617,12 @@ async function runPhaseB(
 
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB operations per page
         const pageResult = await processPhaseBPage(deps, options, rawItems);
+        // Stryker disable next-line llm: pageResult.lookupsCreated is always a numeric counter, for which n || 0 equals n.
         progress.missingLookupsCreated += pageResult.lookupsCreated;
         progress.errors += pageResult.errors;
 
         lastKey = result.LastEvaluatedKey; // undefined signals end of pagination
     } while(lastKey !== undefined);
-    // Stryker restore ConditionalExpression,EqualityOperator
 
     return progress;
 }
@@ -664,7 +660,6 @@ export async function runContactReconciliation(
     };
 
     logger.info({ msg: 'Starting contact reconciliation' });
-    /* Stryker restore StringLiteral,ObjectLiteral */
 
     const phaseA = await runPhaseA(resolvedDeps, options);
 
@@ -675,7 +670,6 @@ export async function runContactReconciliation(
         errors:               phaseA.errors,
         msg:                  'Contact reconciliation Phase A complete',
     });
-    /* Stryker restore StringLiteral,ObjectLiteral */
 
     const phaseB = await runPhaseB(resolvedDeps, options);
 
@@ -686,11 +680,12 @@ export async function runContactReconciliation(
         errors:                phaseB.errors,
         msg:                   'Contact reconciliation Phase B complete',
     });
-    /* Stryker restore StringLiteral,ObjectLiteral */
 
     const endTime = Date.now();
     const totalDurationMs = endTime - startTime;
+    // Stryker disable next-line llm: wasAborted is only used as an if condition, where boolean-or-undefined has the same truthiness as === true.
     const wasAborted = options.signal?.aborted === true;
+    // Stryker disable next-line llm: both error counts start at zero and only increase, so === 0 and <= 0 are equivalent.
     const success = phaseA.errors === 0 && phaseB.errors === 0;
 
     logger.info({
@@ -698,7 +693,6 @@ export async function runContactReconciliation(
         totalDurationMs,
         msg: 'Contact reconciliation complete',
     });
-    /* Stryker restore StringLiteral,ObjectLiteral */
 
     if(wasAborted) {
         return {
@@ -709,7 +703,6 @@ export async function runContactReconciliation(
             totalDurationMs,
         };
     }
-    // Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral,ObjectLiteral
 
     return {
         success,

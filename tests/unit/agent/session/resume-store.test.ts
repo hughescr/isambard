@@ -103,4 +103,20 @@ describe('createResumeStore', () => {
 
         expect(backend.setSessionIdForRole).toHaveBeenCalledTimes(2);
     });
+
+    test('save() propagates a backend write rejection to its caller', async () => {
+        const backend = createFakeBackend();
+        backend.setSessionIdForRole.mockImplementationOnce(() => Promise.reject(new Error('write boom')));
+        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+
+        await expect(store.save(SESSION_ID_A)).rejects.toThrow('write boom');
+    });
+
+    test('clear() propagates a backend clear rejection to its caller', async () => {
+        const backend = createFakeBackend();
+        backend.clearSessionIdForRole.mockImplementationOnce(() => Promise.reject(new Error('clear boom')));
+        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+
+        await expect(store.clear()).rejects.toThrow('clear boom');
+    });
 });

@@ -129,6 +129,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             return;
         }
 
+        // Stryker disable next-line llm: deps.isCostPaused is an optional function only (never a non-function falsy value), so `?.()` and `&& ...()` are equivalent for every reachable value
         if(deps.isCostPaused?.()) {
             logger.debug('Perch trigger skipped - cost ceiling reached');
             scheduleNextTrigger();
@@ -168,6 +169,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         // as the previous trigger (H is re-randomised per parser instance).
         if(lastScheduledTime) {
             const lastHourStart = Math.floor(lastScheduledTime.getTime() / 3_600_000) * 3_600_000;
+            // Stryker disable next-line NumberLiteralValue: cron 'H * * * *' candidates are minute-aligned (ms zeroed), so a 1ms shift of the hour bound is unreachable; the whole-hour guard is pinned by the hour-seed and previous-hour tests
             while(nextTime.getTime() < lastHourStart + 3_600_000) {
                 nextTime = expression.next().toDate();
             }
@@ -213,6 +215,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             }
 
             // Skip cron scheduling if test mode is enabled
+            // Stryker disable next-line llm: this value is read only inside an `if(...)` condition, where undefined and false are equally falsy, so `?? false` cannot change control flow
             if(config.testMode?.triggerOnStartup) {
                 logger.info('Perch scheduler in test mode - cron scheduling disabled');
 
@@ -267,6 +270,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
                 logger.info({ slot }, 'Triggering test perch with forced slot');
             } else {
                 // Cycle through slots
+                // Stryker disable next-line llm: the non-null assertion is erased at compile time, and the index is only ever written as (i + 1) % TEST_SLOTS.length, so both dropping the `!` and adding a second modulo are no-ops
                 slot = TEST_SLOTS[nextTestSlotIndex]!;
                 nextTestSlotIndex = (nextTestSlotIndex + 1) % TEST_SLOTS.length;
                 logger.info({ slot, nextIndex: nextTestSlotIndex }, 'Triggering test perch with cycling slot');

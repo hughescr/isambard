@@ -218,6 +218,7 @@ export function createTaskLaunchRegistry(params: CreateTaskLaunchRegistryParams 
         }
         byTaskId.delete(taskId);
         byToolUseId.delete(launch.toolUseId);
+        // Stryker disable next-line llm: order has unique task IDs, so first/last indexes match; indexOf returns integers with 0 as its sole falsy value, making || 0 an identity.
         const index = order.indexOf(taskId);
         // Every byTaskId entry was inserted into order exactly once.
         order.splice(index, 1);

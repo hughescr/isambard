@@ -46,6 +46,22 @@ describe('calendarEntrySchema', () => {
             calendarPath: '/calendars/user/default/',
         })).toThrow();
     });
+
+    test('should accept single-character calendarPath', () => {
+        const entry = calendarEntrySchema.parse({
+            calendarPath: '/',
+            label:        'Personal',
+        });
+        expect(entry.calendarPath).toBe('/');
+    });
+
+    test('should accept single-character label', () => {
+        const entry = calendarEntrySchema.parse({
+            calendarPath: '/calendars/user/default/',
+            label:        'P',
+        });
+        expect(entry.label).toBe('P');
+    });
 });
 
 describe('createCalendarServerId', () => {
@@ -158,6 +174,30 @@ describe('calendarServerEntrySchema', () => {
     test('should reject missing required fields', () => {
         expect(() => calendarServerEntrySchema.parse({})).toThrow();
     });
+
+    test('should accept single-character description', () => {
+        const entry = calendarServerEntrySchema.parse({
+            serverId:    VALID_UUID,
+            description: 'S',
+            serverUrl:   VALID_URL,
+            username:    'alice',
+            password:    'secret',
+            calendars:   [{ calendarPath: '/cal/', label: 'Cal' }],
+        });
+        expect(entry.description).toBe('S');
+    });
+
+    test('should accept single-character username', () => {
+        const entry = calendarServerEntrySchema.parse({
+            serverId:    VALID_UUID,
+            description: 'Server',
+            serverUrl:   VALID_URL,
+            username:    'a',
+            password:    'secret',
+            calendars:   [{ calendarPath: '/cal/', label: 'Cal' }],
+        });
+        expect(entry.username).toBe('a');
+    });
 });
 
 describe('calendarRegistryRecordSchema', () => {
@@ -222,6 +262,16 @@ describe('calendarRegistryRecordSchema', () => {
 
     test('should reject missing required fields', () => {
         expect(() => calendarRegistryRecordSchema.parse({})).toThrow();
+    });
+
+    test('should accept single-character userId', () => {
+        const record = calendarRegistryRecordSchema.parse({
+            userId:    'u',
+            servers:   [],
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        });
+        expect(record.userId).toBe('u');
     });
 });
 

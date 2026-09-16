@@ -5,6 +5,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
+import { sigmoidScore } from '@/storage/memory-tool/sigmoid';
 import type { MemoryToolItem, MemoryPath, LayerName } from '@/storage/memory-tool/types';
 
 describe('MemoryToolBackend - Date Filtering', () => {
@@ -1522,6 +1523,33 @@ describe('MemoryToolBackend - Date Filtering', () => {
             expect(result).toHaveLength(10);
             // Should return top 10 by score (highest accessCount items)
             expect(result[0].item.path).toBe('/state/item0.md' as MemoryPath);
+        });
+
+        test('should score an item by sigmoidScore of its accessCount and the time elapsed from lastAccessed to `now`', async () => {
+            const stateItems: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#week-old.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/week-old.md' as MemoryPath,
+                    content:     'Week old',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 5, lastAccessed: '2024-01-01T00:00:00.000Z' },
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: stateItems });
+
+            // `now` is exactly one week after lastAccessed; the score must be computed against
+            // that reference clock, not against the wall clock or an offset of it.
+            const result = await backend.getStateItemsScored({ now: new Date('2024-01-08T00:00:00.000Z') });
+
+            const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+            expect(result).toHaveLength(1);
+            expect(result[0].score).toBe(sigmoidScore(5, oneWeekMs));
         });
 
         test('should handle empty state layer', async () => {

@@ -119,5 +119,40 @@ describe('HEIC Image Converter', () => {
             expect(caughtError?.message).toBe('HEIC conversion failed: Underlying HEIC parse failure');
             expect(caughtError?.cause).toBe(originalError);
         });
+
+        test('wraps the input in a plain Uint8Array copy rather than passing the Buffer through', async () => {
+            // Kills the llm mutant that drops `new Uint8Array(buffer)` down to bare `buffer`:
+            // a Buffer is-a Uint8Array, so a type check alone can't tell them apart — but
+            // Buffer.isBuffer distinguishes the wrapped copy (plain Uint8Array) from the
+            // original Buffer instance flowing straight through unwrapped.
+            const inputBuffer = Buffer.from('fake-heic-data');
+
+            await convert(inputBuffer, 'image/heic');
+
+            expect(mockHeicConvert).toHaveBeenCalledTimes(1);
+            const passedBuffer = mockHeicConvert.mock.calls[0][0].buffer;
+            expect(Buffer.isBuffer(passedBuffer)).toBe(false);
+            expect(passedBuffer).toBeInstanceOf(Uint8Array);
+            expect([...(passedBuffer as unknown as Uint8Array)]).toEqual([...inputBuffer]);
+        });
+
+        test('reports the stringified error when heicConvert rejects with a non-Error value', async () => {
+            // Kills the llm mutant that replaces `String(error)` with `''` in the catch
+            // branch's non-Error fallback: a rejection that isn't an Error instance must
+            // still surface its stringified value in the wrapped error message.
+            mockHeicConvert.mockRejectedValueOnce('raw string failure');
+
+            const inputBuffer = Buffer.from('corrupt-heic-data');
+
+            let caughtError: unknown;
+            try {
+                await convert(inputBuffer, 'image/heic');
+            } catch (err) {
+                caughtError = err;
+            }
+
+            expect(caughtError).toBeInstanceOf(MediaProcessingError);
+            expect((caughtError as MediaProcessingError).message).toBe('HEIC conversion failed: raw string failure');
+        });
     });
 });

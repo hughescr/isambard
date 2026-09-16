@@ -24,7 +24,6 @@ const PREFIX_GUILD     = 'GUILD';
 const PREFIX_WELLKNOWN = 'WELLKNOWN';
 const SK_METADATA      = 'METADATA';
 const GSI2SK_CHANNEL   = 'CHANNEL';
-// Stryker restore StringLiteral
 
 /**
  * Generates DynamoDB keys for Channel Registry items

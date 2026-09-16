@@ -94,6 +94,7 @@ export function configureCustomSQLite(deps: SQLiteConfigurationDeps = defaultSQL
         return;
     }
 
+    // Stryker disable next-line llm: `undefined !== 'darwin'` is already true, so appending `|| deps.platform === undefined` cannot change the guard for any platform value
     if(deps.platform !== 'darwin') {
         deps.state.configured = true;
         return;
@@ -344,6 +345,7 @@ export class VectorIndex {
                 )
                 .get(pk, sk);
 
+            // Stryker disable next-line llm: SQLite returns null for a miss and RowIdRow is an object, so a falsiness check has identical results.
             if(rowIdRow === null) {
                 return; // No-op: entry does not exist
             }

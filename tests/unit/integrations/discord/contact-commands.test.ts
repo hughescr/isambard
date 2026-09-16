@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, mock, type Mock } from 'bun:test';
-import { MessageFlags, type ButtonInteraction, type ChatInputCommandInteraction, type EmbedBuilder } from 'discord.js';
+import { MessageFlags, type ActionRowBuilder, type ButtonBuilder, type ButtonInteraction, type ChatInputCommandInteraction, type EmbedBuilder } from 'discord.js';
 import { z } from 'zod';
 import {
     buildContactCommand,
@@ -766,6 +766,61 @@ describe('ContactCommandHandler - link subcommand', () => {
             expect.objectContaining({ content: expect.stringContaining('Added') as unknown as string })
         );
     });
+
+    test('replies with the exact link confirmation naming the linked value and the person', async () => {
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'link', {
+            person:   'alice-wonderland',
+            platform: 'email',
+            id:       'alice@example.com',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith({ content: 'Added email: alice@example.com to contact `alice-wonderland`.' });
+    });
+
+    test('unwraps an Error message rather than stringifying the error object in the link failure reply', async () => {
+        backend.addIdentifier.mockImplementation(async () => {
+            throw new Error('Unknown failure');
+        });
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'link', {
+            person:   'alice-wonderland',
+            platform: 'email',
+            id:       'bad@bad.com',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith({ content: 'Failed to link identifier: Unknown failure' });
+    });
+
+    test('rejects an invalid contact id before adding an identifier', async () => {
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'link', {
+            person:   'Alice Wonderland',
+            platform: 'email',
+            id:       'alice@example.com',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(backend.addIdentifier).not.toHaveBeenCalled();
+        expect(editReply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('ContactId must be lowercase') as unknown as string }));
+    });
+
+    test('renders a non-Error link failure with its string value', async () => {
+        backend.addIdentifier.mockImplementation(async () => {
+            throw 'backend unavailable';
+        });
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'link', {
+            person:   'alice-wonderland',
+            platform: 'email',
+            id:       'alice@example.com',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith({ content: 'Failed to link identifier: backend unavailable' });
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -834,6 +889,21 @@ describe('ContactCommandHandler - unlink subcommand', () => {
             personRaw: 'alice-wonderland',
             msg:       'Failed to unlink identifier',
         }));
+    });
+
+    test('renders a non-Error unlink failure with its string value', async () => {
+        backend.removeIdentifier.mockImplementation(async () => {
+            throw 'backend unavailable';
+        });
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'unlink', {
+            person:   'alice-wonderland',
+            platform: 'email',
+            id:       'alice@example.com',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith({ content: 'Failed to remove identifier: backend unavailable' });
     });
 
     test('calls refreshPerson after successful removeIdentifier', async () => {
@@ -1126,6 +1196,32 @@ describe('ContactCommandHandler - show subcommand', () => {
 
         expect(backend.fuzzyLookup).toHaveBeenCalledWith('a');
     });
+
+    test('unwraps an Error message rather than its name or the stringified error in the show failure reply', async () => {
+        backend.getContact.mockImplementation(async () => {
+            throw new Error('Backend error');
+        });
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'show', {
+            person: 'alice-wonderland',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith({ content: 'Failed to show contact: Backend error' });
+    });
+
+    test('stringifies a non-Error rejection rather than naming the queried person in the show failure reply', async () => {
+        backend.getContact.mockImplementation(async () => {
+            throw 'dead'; // a non-Error rejection is exactly what this branch stringifies
+        });
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'show', {
+            person: 'alice-wonderland',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith({ content: 'Failed to show contact: dead' });
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -1182,6 +1278,18 @@ describe('ContactApprovalHandler - handleButton()', () => {
             displayName: 'Bob Smith',
             msg:         'Contact created via admin approval',
         });
+    });
+
+    test('approve — titles the embed Approved rather than Denied', async () => {
+        const uuid = 'test-uuid-approve-title';
+        handler.storePendingRequest(uuid, { action: 'create', personId: 'bob-smith', displayName: 'Bob Smith' });
+
+        const { interaction, editReply } = makeButtonInteraction(`contact-approve:${uuid}`);
+
+        await handler.handleButton(interaction);
+
+        const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        expect(callArgs.embeds[0].toJSON().title).toBe('Approved \u2713');
     });
 
     test('approve — creates a contact with Unknown and a name identifier when both optional fields are absent', async () => {
@@ -2427,5 +2535,125 @@ describe('Contact command public response contracts', () => {
                 content: 'An error occurred processing your request. Please try again.',
             }));
         }));
+    });
+});
+
+describe('Contact command mutation regression contracts', () => {
+    test('renders the contact title, success color, and most recent update timestamp', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        const contact: Contact = {
+            ...SAMPLE_CONTACT,
+            createdAt: '2020-01-01T00:00:00.000Z',
+            updatedAt: '2025-02-03T04:05:06.000Z',
+        };
+        backend.getContact.mockResolvedValue(contact);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'show', { person: 'alice-wonderland' });
+
+        await handler.handle(asChatInput);
+
+        const reply = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const embed = reply.embeds[0].toJSON();
+        expect(embed.title).toBe('Alice Wonderland');
+        expect(embed.color).toBe(0x00_AA_00);
+        expect(embed.fields).toContainEqual({ name: 'Updated', value: '2025-02-03T04:05:06.000Z', inline: true });
+    });
+
+    test('preserves an absent note and writes an ISO update timestamp while editing', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        backend.getContact.mockResolvedValue({ ...SAMPLE_CONTACT, notes: undefined });
+        const { asChatInput } = createMockInteraction(ADMIN_USER_ID, 'edit', { person: 'alice-wonderland', name: 'Alice Smith' });
+
+        await handler.handle(asChatInput);
+
+        const updated = (backend.putContact.mock.calls[0] as [Contact])[0];
+        expect(updated.notes).toBeUndefined();
+        expect(updated.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    });
+
+    test('uses one generated deletion token consistently in the button and pending request', async () => {
+        const backend = createMockBackend();
+        const approvals = new ContactApprovalHandler(backend as unknown as ContactBackend);
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID, approvals);
+        const storePendingDeletion = mock((_uuid: string, _personId: Contact['personId']) => {});
+        approvals.storePendingDeletion = storePendingDeletion;
+        backend.getContact.mockResolvedValue(SAMPLE_CONTACT);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'delete', { person: 'alice-wonderland' });
+
+        await handler.handle(asChatInput);
+
+        const uuid = storePendingDeletion.mock.calls[0][0];
+        const reply = (editReply.mock.calls[0] as [{ components: ActionRowBuilder<ButtonBuilder>[] }])[0];
+        const button = reply.components[0].toJSON().components[0] as unknown as { custom_id: string };
+        expect(uuid).toMatch(/^[0-9a-f-]{36}$/);
+        expect(button.custom_id).toBe(`contact-delete-confirm:${uuid}`);
+        expect(reply.components).toHaveLength(1);
+    });
+
+    test('returns the generic deletion failure message for ordinary errors', async () => {
+        const backend = createMockBackend();
+        const approvals = new ContactApprovalHandler(backend as unknown as ContactBackend);
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID, approvals);
+        backend.getContact.mockRejectedValue(new Error('storage offline'));
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'delete', { person: 'alice-wonderland' });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith({ content: 'Failed to delete contact: storage offline' });
+    });
+
+    test('refreshes the update timestamp when approval changes stored notes', async () => {
+        const backend = createMockBackend();
+        const approvals = new ContactApprovalHandler(backend as unknown as ContactBackend);
+        backend.getContact.mockResolvedValue(SAMPLE_CONTACT);
+        approvals.storePendingRequest('notes-update', { action: 'update', personId: 'alice-wonderland', notes: 'Updated notes' });
+        const { interaction } = makeButtonInteraction('contact-approve:notes-update');
+
+        await approvals.handleButton(interaction);
+
+        const updated = (backend.putContact.mock.calls[0] as [Contact])[0];
+        expect(updated.notes).toBe('Updated notes');
+        expect(updated.updatedAt).not.toBe(SAMPLE_CONTACT.updatedAt);
+    });
+});
+
+describe('Contact command error response contracts', () => {
+    test('returns the message from an unlink failure and identifies the missing contact', async () => {
+        const backend = createMockBackend();
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        backend.removeIdentifier.mockRejectedValueOnce(new Error('storage offline'));
+        const generic = createMockInteraction(ADMIN_USER_ID, 'unlink', { person: 'alice', platform: 'email', id: 'alice@example.com' });
+
+        await handler.handle(generic.asChatInput);
+
+        expect(generic.editReply).toHaveBeenCalledWith({ content: 'Failed to remove identifier: storage offline' });
+
+        backend.removeIdentifier.mockRejectedValueOnce(new ContactNotFoundError('missing-person'));
+        const missing = createMockInteraction(ADMIN_USER_ID, 'unlink', { person: 'missing-person', platform: 'email', id: 'alice@example.com' });
+
+        await handler.handle(missing.asChatInput);
+
+        expect(missing.editReply).toHaveBeenCalledWith({ content: 'Contact `missing-person` not found.' });
+    });
+
+    test('sends exactly one delete embed and stringifies non-Error failures', async () => {
+        const backend = createMockBackend();
+        const approvals = new ContactApprovalHandler(backend as unknown as ContactBackend);
+        const handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID, approvals);
+        backend.getContact.mockResolvedValueOnce(SAMPLE_CONTACT);
+        const success = createMockInteraction(ADMIN_USER_ID, 'delete', { person: 'alice-wonderland' });
+
+        await handler.handle(success.asChatInput);
+
+        const successReply = (success.editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        expect(successReply.embeds).toHaveLength(1);
+
+        backend.getContact.mockRejectedValueOnce('storage offline');
+        const failure = createMockInteraction(ADMIN_USER_ID, 'delete', { person: 'alice-wonderland' });
+
+        await handler.handle(failure.asChatInput);
+
+        expect(failure.editReply).toHaveBeenCalledWith({ content: 'Failed to delete contact: storage offline' });
     });
 });

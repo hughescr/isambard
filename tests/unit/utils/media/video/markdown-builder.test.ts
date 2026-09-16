@@ -129,6 +129,32 @@ describe('buildMetadataMarkdown', () => {
         expect(md).toContain('fra');
     });
 
+    it('rounds the video bitrate to the nearest kbps rather than truncating', () => {
+        const md = buildMetadataMarkdown({ ...MINIMAL_METADATA, videoBitrate: 4_000_501 });
+        expect(md).toContain('- **Video Bitrate**: 4001 kbps');
+    });
+
+    it('floors (rather than rounds or ceils) a fractional segment-time remainder', () => {
+        // Kills the llm mutants swapping Math.floor for Math.ceil/Math.round on the
+        // seconds-within-minute remainder: 65.7s is minute 1, second floor(5.7)=5 — a
+        // ceil or round would both yield 6, producing "01:06" instead of "01:05".
+        const transcription: TranscriptionResult = {
+            segments: [{ startTime: 65.7, endTime: 66, text: 'fractional boundary' }],
+            fullText: 'fractional boundary',
+        };
+        const md = buildMetadataMarkdown(MINIMAL_METADATA, undefined, transcription);
+        expect(md).toContain('[01:05] fractional boundary');
+    });
+
+    it('renders segment text verbatim, preserving its surrounding whitespace', () => {
+        const transcription: TranscriptionResult = {
+            segments: [{ startTime: 5, endTime: 8, text: '  padded  ' }],
+            fullText: '  padded  ',
+        };
+        const md = buildMetadataMarkdown(MINIMAL_METADATA, undefined, transcription);
+        expect(md).toContain('[00:05]   padded  ');
+    });
+
     it('omits optional fields when not present', () => {
         const md = buildMetadataMarkdown(MINIMAL_METADATA);
         expect(md).not.toContain('Video Bitrate');
@@ -161,6 +187,20 @@ describe('buildMetadataMarkdown', () => {
     it('omits description section when alt is not provided', () => {
         const md = buildMetadataMarkdown(MINIMAL_METADATA);
         expect(md).not.toContain('## Description');
+    });
+
+    it('includes the description section for an empty-string alt (presence, not truthiness, gates it)', () => {
+        // Kills the llm mutant `alt !== undefined` → `alt`: an empty string is
+        // defined-but-falsy, so a truthiness check would wrongly skip the section.
+        const md = buildMetadataMarkdown(MINIMAL_METADATA, undefined, undefined, '');
+        expect(md).toContain('## Description');
+    });
+
+    it('includes the subtitles section for an empty-string subtitles value (presence, not truthiness, gates it)', () => {
+        // Kills the llm mutant `subtitles !== undefined` → `subtitles`: an empty string is
+        // defined-but-falsy, so a truthiness check would wrongly skip the section.
+        const md = buildMetadataMarkdown(MINIMAL_METADATA, '');
+        expect(md).toContain('## Subtitles');
     });
 
     it('shows full text for transcription with no segments', () => {

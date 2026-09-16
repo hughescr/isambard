@@ -18,6 +18,8 @@ describe('parseToolName', () => {
         ['regular_tool', { module: 'claude', tool: 'regular_tool' }],
         ['some__other__tool', { module: 'claude', tool: 'some__other__tool' }],
         ['mcp_memory_search', { module: 'claude', tool: 'mcp_memory_search' }],
+        // A single-underscore 'mcp_' prefix is not the MCP namespace separator 'mcp__', even with a later '__'
+        ['mcp_memory__view', { module: 'claude', tool: 'mcp_memory__view' }],
         ['foo__bar__baz', { module: 'claude', tool: 'foo__bar__baz' }],
         // Edge cases
         ['', { module: 'claude', tool: '' }],

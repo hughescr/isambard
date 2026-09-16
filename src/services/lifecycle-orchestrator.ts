@@ -52,7 +52,6 @@ export const serviceLifecycleMachine = setup({
 }).createMachine({
     id:      'serviceLifecycle',
     initial: 'disabled',
-    // Stryker restore StringLiteral
     context: {
         epoch:         0,
         failureCount:  0,
@@ -107,7 +106,9 @@ export const serviceLifecycleMachine = setup({
 export type ServiceLifecycleActor = ReturnType<typeof createActor<typeof serviceLifecycleMachine>>;
 
 export function createServiceActor(initialState?: HealthState): ServiceLifecycleActor {
+    // Stryker disable next-line llm: HealthState has no falsy members, so this is equivalent for every valid input.
     if(initialState === undefined) {
+        // Stryker disable next-line llm: XState spreads omitted and empty actor options into identical defaults.
         return createActor(serviceLifecycleMachine);
     }
 

@@ -134,7 +134,6 @@ export class DiscordCapabilityImpl implements DiscordCapability {
                     { error: err instanceof Error ? err.message : String(err), channelId },
                     'Discord send failed, attempting outbox queue'
                 );
-                // Stryker restore ObjectLiteral,StringLiteral
             }
         }
 
@@ -148,6 +147,7 @@ export class DiscordCapabilityImpl implements DiscordCapability {
     }
 
     async fetchChannel(channelId: string): Promise<TextChannel | null> {
+        // Stryker disable next-line llm: this.client is Client | undefined and never null, and !isReady() already short-circuits when it is undefined, so loose nullish and strict undefined checks coincide.
         if(!this.isReady() || this.client === undefined) {
             return null;
         }
@@ -162,7 +162,6 @@ export class DiscordCapabilityImpl implements DiscordCapability {
                 { error: err instanceof Error ? err.message : String(err), channelId },
                 'Discord fetchChannel failed, returning null'
             );
-            // Stryker restore ObjectLiteral,StringLiteral
             return null;
         }
     }

@@ -71,6 +71,7 @@ export class AllowlistCommandHandler {
 
     async handle(interaction: ChatInputCommandInteraction): Promise<void> {
         // Permission check — only the admin may manage the allowlist
+        // Stryker disable next-line llm: adminDiscordUserId is typed string and validated z.string().min(1) at the only construction site, so appending '' is an identity no-op.
         if(interaction.user.id !== this.adminDiscordUserId) {
             await interaction.reply({
                 content: 'Only the admin can manage the allowlist.',
@@ -79,6 +80,7 @@ export class AllowlistCommandHandler {
             return;
         }
 
+        // Stryker disable next-line llm: getSubcommand() (required=true by default) throws CommandInteractionOptionNoSubcommand rather than returning a falsy value, so a || 'list' fallback is unreachable.
         const subcommand = interaction.options.getSubcommand();
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -126,7 +128,6 @@ export class AllowlistCommandHandler {
         const displayName = nicknames.length > 0
             ? `${contact.displayName} (${nicknameLabel}: ${nicknames.join(', ')})`
             : contact.displayName;
-        // Stryker restore StringLiteral
         return { name: displayName, value: parts.join('\n') };
     }
 
@@ -160,6 +161,7 @@ export class AllowlistCommandHandler {
             const shownCount = MAX_EMBEDS * FIELDS_PER_EMBED;
             const omittedCount = totalCount - shownCount;
             embeds.length = MAX_EMBEDS;
+            // Stryker disable next-line llm: embeds.length was just assigned MAX_EMBEDS, so embeds[embeds.length - 1] and embeds[MAX_EMBEDS - 1] are the same element.
             embeds[MAX_EMBEDS - 1]!.setFooter({ text: `… and ${omittedCount} more not shown` });
         }
         return embeds;
@@ -175,6 +177,7 @@ export class AllowlistCommandHandler {
             }
 
             const fields = await this.buildEntryFields(entries);
+            // Stryker disable next-line llm: buildEntryFields maps one-to-one over entries via mapBounded (which fills every index or rejects), so fields.length equals entries.length.
             const embeds = this.buildEmbeds(fields, entries.length);
 
             await interaction.editReply({ embeds });
@@ -182,7 +185,6 @@ export class AllowlistCommandHandler {
             logger.error({ err, msg: 'Failed to list allowlist entries' });
             await interaction.editReply({ content: 'Failed to list allowlist entries.' });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleAdd(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -199,6 +201,7 @@ export class AllowlistCommandHandler {
         try {
             const contact = await this.contactBackend.getContact(contactId);
             if(!contact) {
+                // Stryker disable next-line llm: createContactId only validates (contactIdSchema has no transform), so contactId and personIdStr are the same string here
                 await interaction.editReply({ content: `Contact "${personIdStr}" not found. Create it first with /contact add.` });
                 return;
             }
@@ -214,7 +217,6 @@ export class AllowlistCommandHandler {
             logger.error({ err, personIdStr, msg: 'Failed to add to allowlist' });
             await interaction.editReply({ content: `Failed to add "${personIdStr}" to allowlist.` });
         }
-        // Stryker restore BlockStatement
     }
 
     private async handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -240,6 +242,5 @@ export class AllowlistCommandHandler {
             logger.error({ err, personIdStr, msg: 'Failed to remove from allowlist' });
             await interaction.editReply({ content: `Failed to remove "${personIdStr}" from allowlist.` });
         }
-        // Stryker restore BlockStatement
     }
 }

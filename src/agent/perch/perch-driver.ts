@@ -183,6 +183,7 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
      */
     function armInterruptTimer(now: Date, endsAt: Date): void {
         const fireAt = endsAt.getTime() + interruptGraceMinutes * 60_000;
+        // Stryker disable next-line NumberLiteralValue: maxSessionMinutes and interruptGraceMinutes are schema-validated positive integers, so the floor is unreachable
         const delayMs = Math.max(0, fireAt - now.getTime());
         interruptTimer = clock.setTimer(() => {
             interruptTimer = undefined;

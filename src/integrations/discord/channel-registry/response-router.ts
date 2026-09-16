@@ -66,6 +66,7 @@ export class ResponseRouter {
     ): Promise<EnvelopeRoutingResult> {
         const { shouldSend, content } = processResponse(response);
 
+        // Stryker disable next-line llm: mapped values are non-empty strings or undefined, and the following truthiness branch makes the added fallback inert.
         const wellKnownType = ENVELOPE_KIND_TO_CHANNEL[kind];
         if(wellKnownType) {
             const wellKnownChannel = await this.config.manager.getWellKnownChannel(wellKnownType);

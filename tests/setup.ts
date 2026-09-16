@@ -316,7 +316,7 @@ interface MockFsEntry { type: 'file' | 'dir' | 'symlink', content?: string, targ
 const mockFs = new Map<string, MockFsEntry>();
 
 // Define original implementations
-const originalAccessImpl = async (path: string) => {
+const originalAccessImpl = async (path: string, _mode?: number) => {
     if(!mockFs.has(path)) {
         const err = new Error(`ENOENT: no such file or directory, access '${path}'`) as NodeJS.ErrnoException;
         err.code = 'ENOENT';

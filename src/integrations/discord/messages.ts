@@ -72,6 +72,7 @@ function splitUnits(
             pushNonEmpty(chunks, currentChunk);
             currentChunk = unit;
         } else {
+            // Stryker disable next-line llm: `=== ''` and `.length === 0` are the same predicate for a string-typed value
             currentChunk = currentChunk === '' ? unit : currentChunk + separator + unit;
         }
     }
@@ -91,6 +92,7 @@ function extractSentences(text: string): string[] {
 
     while(sentenceBoundary.exec(text) !== null) {
         const boundaryEnd = sentenceBoundary.lastIndex;
+        // Stryker disable next-line llm: 0 <= sentenceStart <= boundaryEnd (lastIndex strictly increases per match), so substring and slice are identical here
         sentences.push(text.slice(sentenceStart, boundaryEnd).trim());
         sentenceStart = boundaryEnd;
     }

@@ -6,7 +6,6 @@ import type { AllowlistSagaStarter, SagaWriter } from '@/services';
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
 const AMBER = 0xFF_AA_00;
-// Stryker restore all
 
 /**
  * Minimal interface for activity logging used by outbound approval handlers.
@@ -143,10 +142,8 @@ export abstract class BaseOutboundApprovalHandler<TId> {
                 } catch (error) {
                     logger.error({ err: error, msg: 'Failed to send error editReply' });
                 }
-                // Stryker restore BlockStatement
             }
         }
-        // Stryker restore BlockStatement
     }
 
     async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
@@ -178,7 +175,6 @@ export abstract class BaseOutboundApprovalHandler<TId> {
             logger.error(this.buildRejectionFailedLog(err, id));
             await this.replyWithErrorEmbed(interaction);
         }
-        // Stryker restore BlockStatement
     }
 
     // ---------------------------------------------------------------------------
@@ -203,7 +199,6 @@ export abstract class BaseOutboundApprovalHandler<TId> {
         } catch (replyError) {
             logger.error({ err: replyError, msg: 'Failed to send error editReply for missing embed' });
         }
-        // Stryker restore BlockStatement
     }
 
     /**
@@ -257,9 +252,11 @@ export abstract class BaseOutboundApprovalHandler<TId> {
                 .setTitle('Rejection failed — please retry')
                 .setDescription('Could not save rejection to backend.')
                 .setColor(AMBER);
+            // Stryker disable next-line llm: interaction.message is Message | null, but Message#embeds is a non-nullable Embed[] that its constructor always populates
             const firstEmbed = interaction.message?.embeds[0];
             await interaction.editReply({
                 embeds: [
+                    // Stryker disable next-line llm: EmbedBuilder.from(embed) and Embed both serialize to the same APIEmbed payload
                     ...(firstEmbed ? [EmbedBuilder.from(firstEmbed)] : []),
                     errorEmbed,
                 ],
@@ -268,6 +265,5 @@ export abstract class BaseOutboundApprovalHandler<TId> {
         } catch (replyError) {
             logger.error({ err: replyError, msg: 'Failed to send error editReply for rejection' });
         }
-        // Stryker restore BlockStatement
     }
 }

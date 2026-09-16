@@ -173,6 +173,7 @@ export function createWebViewAdapter(
     // Returns { promise, view: updatedView } — view may change if a reinit occurred.
     //
     function startAttempt(attempt: number, v: RawWebView, url: string): { promise: Promise<void>, view: RawWebView } {
+        // Stryker disable next-line llm: attempt comes only from the [0, 1, 2] loop, so === 0 and <= 0 select the same attempt
         if(attempt === 0) {
             return { promise: v.navigate(url), view: v };
         }
@@ -180,7 +181,9 @@ export function createWebViewAdapter(
         try {
             return { promise: v.reload(), view: v };
         } catch (error) {
+            // Stryker disable next-line llm: the empty-string fallback cannot change the /pending/i outcome, and the original error is what gets rethrown
             const msg = error instanceof Error ? error.message : String(error);
+            // Stryker disable next-line llm: test() and exec() have identical truthiness here and the match result is not otherwise observed
             if(/pending/i.test(msg)) {
                 // Bun.WebView pending-slot conflict: reload() threw synchronously.
                 // Close the stuck view, reinit, and fall back to navigate(url).
@@ -195,6 +198,7 @@ export function createWebViewAdapter(
                 }
                 view = null;
                 const fresh = ensureView();
+                // Stryker disable next-line llm: url is declared string, so String(url) is identical for every valid caller
                 return { promise: fresh.navigate(url), view: fresh };
             }
             throw error;

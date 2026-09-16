@@ -473,4 +473,38 @@ describe('createContactReconciliationScheduler', () => {
         expect(runReconciliation).toHaveBeenCalledTimes(2);
         scheduler.stop();
     });
+
+    test('a scheduled trigger awaits its run before scheduling the next interval', async () => {
+        let resolveRun!: (result: ContactReconciliationResult) => void;
+        runReconciliation.mockImplementationOnce(() => new Promise<ContactReconciliationResult>((resolve) => {
+            resolveRun = resolve;
+        }));
+
+        const scheduler = createContactReconciliationScheduler(deps);
+        scheduler.start();
+
+        // First interval fires at t=60_000; the run it starts is held open by the test
+        jest.advanceTimersByTime(60_000);
+        expect(runReconciliation).toHaveBeenCalledTimes(1);
+
+        // The held-open run completes 30s into its interval, before the next one would be due
+        jest.advanceTimersByTime(30_000);
+        resolveRun(SUCCESS_RESULT);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // The next interval is measured from run completion (90_000 + 60_000), not from the
+        // trigger that started the run (60_000 + 60_000) — a dropped await fires it early.
+        jest.advanceTimersByTime(30_000);
+        expect(runReconciliation).toHaveBeenCalledTimes(1);
+
+        jest.advanceTimersByTime(30_000);
+        expect(runReconciliation).toHaveBeenCalledTimes(2);
+
+        scheduler.stop();
+    });
 });

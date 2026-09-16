@@ -129,6 +129,29 @@ describe('backfill CLI wiring', () => {
         expect(output.at(-1)).toContain('Errors: 1');
     });
 
+    test('CLI wires the circuit-breaker threshold and backoff base into runBackfillLoop', async () => {
+        const docClient = { send: mock(async () => {
+            throw new Error('query failed');
+        }) } as unknown as DynamoDBDocumentClient;
+        const retryAsyncSpy = spyOn(retryMod, 'retryAsync').mockImplementation(async op => op());
+        const sleepCalls: number[] = [];
+        const fakeSleep = async (ms: number): Promise<void> => {
+            sleepCalls.push(ms);
+        };
+        try {
+            await expect(runBackfillCli(['bun', 'backfill'], {
+                loadRuntime: () => ({ docClient, tableName: 'test-table' }),
+                sleep:       fakeSleep,
+                write:       () => {},
+            })).rejects.toThrow('Backfill aborted: 5 consecutive query failures at cursor undefined');
+        } finally {
+            retryAsyncSpy.mockRestore();
+        }
+        // Confirms the CLI's base backoff (CONSECUTIVE_FAILURE_BASE_BACKOFF_MS) is wired through unchanged:
+        // the first retry's backoff equals baseBackoffMs * 2^0 = baseBackoffMs.
+        expect(sleepCalls[0]).toBe(5000);
+    });
+
     test('real backfill sleep resolves after its timer fires', async () => {
         const outcome = await Promise.race([
             backfillSleep(1).then(() => 'resolved'),
@@ -218,6 +241,24 @@ test('update rate limiter rebases after an event-loop stall instead of bursting'
     timers.shift()?.release();
     await Promise.all(tasks);
     expect(starts).toEqual([0, 1000, 1250]);
+});
+
+test('update rate limiter honours a one-millisecond remaining wait', async () => {
+    let clock = 1000;
+    const waits: number[] = [];
+    const pace = createUpdateRateLimiter(() => clock, async (ms) => {
+        waits.push(ms);
+        clock += ms;
+    });
+    // First ticket holds no reservation: nextStart is 0, so it starts immediately
+    // and reserves clock + 250 = 1250 for the next request.
+    await pace();
+    expect(waits).toEqual([]);
+
+    // One millisecond before the reservation expires, the wait is real and must be slept.
+    clock = 1249;
+    await pace();
+    expect(waits).toEqual([1]);
 });
 
 describe('runBackfillLoop', () => {
@@ -411,6 +452,35 @@ describe('runBackfillLoop', () => {
         expect(sleepCalls).toEqual([1000, 2000, 4000]);
     });
 
+    test('backoff sleep is awaited — the retry does not start until the backoff resolves', async () => {
+        // Sleep that only settles when the test releases it, so an unawaited backoff
+        // would let the loop issue the retried query immediately.
+        const releases: (() => void)[] = [];
+        const backoffSleep = (_ms: number): Promise<void> => new Promise<void>((resolve) => {
+            releases.push(resolve);
+        });
+        let queryCalls = 0;
+        const queryPage: QueryPageFn = async () => {
+            queryCalls++;
+            if(queryCalls === 1) {
+                throw new Error('Query failure 1');
+            }
+            return { items: [], lastEvaluatedKey: undefined };
+        };
+
+        const task = runBackfillLoop(queryPage, makeProcessContacts(), () => {}, backoffSleep, 5, 1000);
+        await flushMicrotasks(10);
+
+        // Parked on the backoff: exactly one query attempted, one sleep in flight.
+        expect(queryCalls).toBe(1);
+        expect(releases).toHaveLength(1);
+
+        releases.shift()?.();
+        await flushMicrotasks(10);
+        await expect(task).resolves.toEqual({ totalScanned: 0, totalUpdated: 0, totalSkipped: 0, totalErrors: 1 });
+        expect(queryCalls).toBe(2);
+    });
+
     test('empty query result — no items processed, loop exits cleanly', async () => {
         const queryPage = makeQueryPage([{ items: [], lastEvaluatedKey: undefined }]);
         const processOnePage = makeProcessContacts();
@@ -576,6 +646,20 @@ describe('parseArgs', () => {
         const opts = parseArgs(['node', 'script.ts', '-x']);
         expect(opts.dryRun).toBe(false);
         expect(opts.showHelp).toBe(false);
+    });
+
+    test('arg containing dashes but not starting with them is silently ignored', () => {
+        // Tests the else-if(arg.startsWith('--')) guard: only a leading '--' marks an unknown option.
+        const opts = parseArgs(['node', 'script.ts', 'value--with-dashes']);
+        expect(opts.dryRun).toBe(false);
+        expect(opts.showHelp).toBe(false);
+    });
+
+    test('argv[1] is stripped even when it is flag-shaped — only args from argv[2] are parsed', () => {
+        // process.argv is [runtime, scriptPath, ...userArgs]; the script path must never be parsed.
+        const opts = parseArgs(['node', '--dry-run', '--help']);
+        expect(opts.dryRun).toBe(false);
+        expect(opts.showHelp).toBe(true);
     });
 });
 
@@ -925,5 +1009,18 @@ describe('processContacts', () => {
         expect(result.skipped).toBe(1);
         expect(result.errors).toBe(1);
         expect(sendMock).toHaveBeenCalledTimes(2);
+    });
+
+    test('pace rejection fails the update before any send — counted as an error, no write', async () => {
+        const item = makeContact('alice-id', [{ platform: 'email', value: 'alice@example.com' }]);
+        const pace = async (): Promise<void> => {
+            throw new Error('pacer failed');
+        };
+
+        const result = await processContacts([item], TABLE_NAME, docClient, false, pace);
+
+        expect(result.errors).toBe(1);
+        expect(result.updated).toBe(0);
+        expect(sendMock).not.toHaveBeenCalled();
     });
 });

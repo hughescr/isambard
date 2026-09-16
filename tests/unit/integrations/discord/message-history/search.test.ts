@@ -263,6 +263,28 @@ describe('createMessageSearchService', () => {
                 expect(result.messages.some(m => m.content === 'HELLO again')).toBe(true);
             });
 
+            test('should match query occurring anywhere within content, not only at the start', async () => {
+                const messages = [
+                    createMockSearchResult({ id: '100000000000000001', content: 'Please say hello to the team' }),
+                    createMockSearchResult({ id: '100000000000000002', content: 'Goodbye for now' }),
+                ];
+
+                (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({
+                        messages,
+                        hasMore: false,
+                    })
+                );
+
+                const result = await service.searchMessages({
+                    channelId: createChannelId(testChannelId),
+                    query:     'hello',
+                });
+
+                expect(result.messages).toHaveLength(1);
+                expect(result.messages[0].content).toBe('Please say hello to the team');
+            });
+
             test('should include query in response metadata', async () => {
                 const result = await service.searchMessages({
                     channelId: createChannelId(testChannelId),
@@ -757,6 +779,25 @@ describe('createMessageSearchService', () => {
                 expect(result.messages[0].content).toBe('First');
                 expect(result.messages[1].content).toBe('Second');
                 expect(result.messages[2].content).toBe('Third');
+            });
+
+            test('should not mutate the fetched message array while sorting', async () => {
+                const messages = [
+                    createMockSearchResult({ id: '100000000000000003', content: 'Third' }),
+                    createMockSearchResult({ id: '100000000000000001', content: 'First' }),
+                    createMockSearchResult({ id: '100000000000000002', content: 'Second' }),
+                ];
+                const originalOrder = messages.map(message => message.id);
+
+                (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({ messages, hasMore: false })
+                );
+
+                await service.searchMessages({
+                    channelId: createChannelId(testChannelId),
+                });
+
+                expect(messages.map(message => message.id)).toEqual(originalOrder);
             });
         });
 

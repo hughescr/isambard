@@ -66,6 +66,12 @@ describe('ApprovalSagaBackend', () => {
             expect(item.TTL as number).toBeLessThanOrEqual(after + thirtyDays);
         });
 
+        test('propagates rejection from the underlying put', async () => {
+            ddbMock.on(PutCommand).rejects(new Error('put failed'));
+
+            await expect(backend.create(BASE_SAGA)).rejects.toThrow('put failed');
+        });
+
         test('stores saga with optional fields when present', async () => {
             ddbMock.on(PutCommand).resolves({});
 
@@ -216,6 +222,19 @@ describe('ApprovalSagaBackend', () => {
             loggerWarnSpy.mockRestore();
         });
 
+        test('propagates rejection from the underlying put', async () => {
+            ddbMock.on(GetCommand).resolves({
+                Item: {
+                    PK: 'APPROVAL#SAGA',
+                    SK: `SAGA#${SAGA_UUID}`,
+                    ...BASE_SAGA,
+                },
+            });
+            ddbMock.on(PutCommand).rejects(new Error('put failed'));
+
+            await expect(backend.updateState(SAGA_UUID, 'executed')).rejects.toThrow('put failed');
+        });
+
         test('preserves all existing saga fields in the update', async () => {
             const sagaWithOptionals: ApprovalSaga = {
                 ...BASE_SAGA,
@@ -320,7 +339,7 @@ describe('ApprovalSagaBackend', () => {
             expect(results).toHaveLength(1);
             expect(results[0]).toEqual(BASE_SAGA);
             expect(loggerWarnSpy).toHaveBeenCalledWith(
-                expect.objectContaining({ item: expect.objectContaining({ SK: 'SAGA#bad-item' }) }),
+                expect.objectContaining({ item: expect.objectContaining({ SK: 'SAGA#bad-item' }), error: expect.any(String) }),
                 expect.stringContaining('failed to parse saga')
             );
 

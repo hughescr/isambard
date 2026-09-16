@@ -233,12 +233,14 @@ export function createSessionAmbience(params: CreateSessionAmbienceParams): Sess
         let noteShown = false;
         return (userTimezone?: string): string => {
             const header = formatTimeHeader(userTimezone);
+            // Stryker disable next-line llm: role is SessionRole (conversation or perch), so role || empty is always role.
             const self = ledgers.get(role)?.get();
             if(self === undefined) {
                 return header;
             }
             const lines = composeAmbientLines({
                 self,
+                // Stryker disable next-line llm: LedgerStore.get() returns a Ledger object, so appending || undefined cannot change this optional lookup.
                 other:                ledgers.get(otherRole(role))?.get(),
                 now:                  new Date(clock.now()),
                 timezone,
@@ -248,6 +250,7 @@ export function createSessionAmbience(params: CreateSessionAmbienceParams): Sess
             });
             // Spent only when a quota line actually rendered: a header built before the first
             // rate_limit_event or poll must not burn the one-time note on nothing.
+            // Stryker disable next-line llm: Array.some() is already false for an empty array, so a length guard cannot change the result.
             if(lines.some(line => line.startsWith(QUOTA_LINE_PREFIX))) {
                 noteShown = true;
             }
@@ -258,6 +261,7 @@ export function createSessionAmbience(params: CreateSessionAmbienceParams): Sess
     return {
         register(ledgerStore: LedgerStore): void {
             ledgers.set(ledgerStore.get().role, ledgerStore);
+            // Stryker disable next-line ArrayMethodSwap: quotaTargets is only iterated by the poller, which dispatches the same quota_polled event to every ledger, so registration order is unobservable.
             quotaTargets.push(ledgerStore);
             ledgerStore.subscribe((_ledger, event) => {
                 if(event.type === 'sdk_frame' && event.frame.type === 'result') {
@@ -427,6 +431,7 @@ export async function createConversationConductor(params: CreateConversationCond
     // is whoever calls submit(), so this module wraps the conductor's own submit() to capture it.
     let recentAuthors: string[] = [];
     function recordRecentAuthor(authorId: string | undefined): void {
+        // Stryker disable next-line llm: authorId is a non-empty Discord snowflake (or a min(1) display name on replay) or undefined, never null or '', so the loose-undefined and falsy variants of this guard coincide with the strict one.
         if(authorId === undefined) {
             return;
         }
@@ -961,6 +966,7 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
                 if(nextSystemPrompt === systemPrompt) {
                     return;
                 }
+                // Stryker disable next-line llm: buildSessionSystemPrompt returns a primitive string, so concatenating an empty string is the identity.
                 systemPrompt = nextSystemPrompt;
                 subagentSystemPrompt = buildSubagentSystemPrompt({ identity: next });
                 identityReopenPending = true;

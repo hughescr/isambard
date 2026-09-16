@@ -328,13 +328,17 @@ export class CheckpointManager {
         const result = await this.backend.list('/state/services/discord/channels');
         const checkpoints: DiscordChannelCheckpoint[] = [];
 
+        // Stryker disable next-line llm: an empty path never ends with '/checkpoint', so filtering falsy paths cannot change the output.
         for(const item of result.items) {
             // Only include checkpoint files (not other items in channel directories) - tested with non-checkpoint path test
             if(item.path.endsWith('/checkpoint')) {
                 try {
                     // Parse and validate with Zod
+                    // Stryker disable next-line llm: empty content falls back to '{}' which the schema rejects like a parse error, and JSON.parse ignores surrounding whitespace, so both are skipped identically.
                     const parsed: unknown = JSON.parse(item.content);
+                    // Stryker disable next-line llm: reparsing the unchanged JSON string yields the same value.
                     const checkpoint = discordChannelCheckpointSchema.parse(parsed);
+                    // Stryker disable next-line llm: spreading a one-element array into push is equivalent.
                     checkpoints.push(checkpoint);
                 } catch{
                     // Malformed or schema-invalid checkpoint data is skipped. Reaching the next

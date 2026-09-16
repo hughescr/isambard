@@ -10,6 +10,7 @@ export async function generateSpectrogram(
     videoPath: string,
     run:       BinarySpawnRunner
 ): Promise<FetchedImage> {
+    // Stryker disable next-line ArrayDeclaration: command array initializer is structural
     const result = await run([
         'ffmpeg',
         '-i', videoPath,
@@ -19,7 +20,6 @@ export async function generateSpectrogram(
         '-vcodec', 'png',
         'pipe:1',
     ]);
-    // Stryker restore StringLiteral
 
     if(result.exitCode !== 0 || result.stdout.length === 0) {
         throw new MediaProcessingError(

@@ -103,6 +103,17 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result).toEqual(expected);
             });
 
+            test('keeps a paragraph of exactly maxLength verbatim', () => {
+                // Tests the strict boundary in splitUnits (exceedsLimit(unit.length, maxLength)):
+                // a unit of exactly maxLength is not oversize, so it is emitted as-is. Treating it
+                // as oversize re-runs it through splitBySentences -> splitByWords, which re-joins
+                // words on single spaces and would silently rewrite the paragraph's whitespace.
+                const para1 = 'Alpha.  Beta'; // 12 chars — exactly maxLength, double space kept
+                const para2 = 'Gamma tail';
+                const result = splitMessage(`${para1}\n\n${para2}`, 12);
+                expect(result).toEqual(['Alpha.  Beta', 'Gamma tail']);
+            });
+
             test('should check overflow including 2-char separator', () => {
                 // Tests: separator.length (which is 2 for '\n\n')
                 // Tests arithmetic: currentChunk.length + separator.length + paragraph.length

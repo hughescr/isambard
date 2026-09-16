@@ -307,10 +307,14 @@ export function setupConductorPresence(params: {
         presenceManager,
         dynamicStatusGenerators,
         unsubscribeLedgers: (): void => {
+            // Stryker disable next-line llm: ledger and synopsis teardown callbacks are independent, so swapping the two groups has no observable effect.
             for(const unsubscribe of [...unsubscribes, ...detachSynopses]) {
+                // Stryker disable next-line llm: every concatenated element is a required function return value and therefore cannot be nullish.
                 unsubscribe();
             }
+            // Stryker disable next-line llm: idleSettleTimer is Timeout | null and never undefined, so != null and !== null are equivalent.
             if(idleSettleTimer !== null) {
+                // Stryker disable next-line llm: Node and Bun use the same timer cancellation mechanism for clearTimeout and clearInterval.
                 clearTimeout(idleSettleTimer);
                 idleSettleTimer = null;
             }

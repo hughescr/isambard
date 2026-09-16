@@ -146,6 +146,15 @@ describe('ChannelRegistryBackend', () => {
             await expect(backend.upsertChannel(invalidRecord as ChannelStorageRecord)).rejects.toThrow(ValidationError);
             expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
         });
+
+        test('should propagate PutCommand rejection out of upsertChannel', async () => {
+            const record = createStorageRecord();
+            const putError = new Error('put failed');
+
+            ddbMock.on(PutCommand).rejects(putError);
+
+            await expect(backend.upsertChannel(record)).rejects.toThrow('put failed');
+        });
     });
 
     describe('getChannel', () => {
@@ -519,6 +528,22 @@ describe('ChannelRegistryBackend', () => {
             );
         });
 
+        test('should record an ISO 8601 updatedAt timestamp', async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+
+            const before = new Date().toISOString();
+            await backend.unmuteChannel(channelId);
+            const after = new Date().toISOString();
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            const command = calls[0].args[0].input;
+            const updatedAt = command.ExpressionAttributeValues?.[':now'] as string | undefined;
+
+            expect(updatedAt).toBeDefined();
+            expect(updatedAt! >= before).toBe(true);
+            expect(updatedAt! <= after).toBe(true);
+        });
+
         test('should throw ItemNotFoundError when channel does not exist', async () => {
             const conditionalCheckError = new Error('ConditionalCheckFailedException');
             (conditionalCheckError as { name: string }).name = 'ConditionalCheckFailedException';
@@ -563,6 +588,22 @@ describe('ChannelRegistryBackend', () => {
                 expect.any(Function),
                 expect.objectContaining({ operation: 'ChannelRegistry.markAsWellKnown' })
             );
+        });
+
+        test('should record an ISO 8601 updatedAt timestamp', async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+
+            const before = new Date().toISOString();
+            await backend.markAsWellKnown(channelId, 'general');
+            const after = new Date().toISOString();
+
+            const calls = ddbMock.commandCalls(UpdateCommand);
+            const command = calls[0].args[0].input;
+            const updatedAt = command.ExpressionAttributeValues?.[':now'] as string | undefined;
+
+            expect(updatedAt).toBeDefined();
+            expect(updatedAt! >= before).toBe(true);
+            expect(updatedAt! <= after).toBe(true);
         });
 
         test('should throw ItemNotFoundError when channel does not exist', async () => {
@@ -676,16 +717,30 @@ describe('ChannelRegistryBackend', () => {
 
             await expect(backend.deleteChannel(channelId)).resolves.toBeUndefined();
         });
+
+        test('should propagate DeleteCommand rejection out of deleteChannel', async () => {
+            const deleteError = new Error('delete failed');
+
+            ddbMock.on(DeleteCommand).rejects(deleteError);
+
+            await expect(backend.deleteChannel(channelId)).rejects.toThrow('delete failed');
+        });
     });
 
     describe('timeout configuration', () => {
-        test('should use default timeout when not specified', () => {
+        test('should use a 10000ms default timeout when not specified', async () => {
             const defaultBackend = new ChannelRegistryBackend(
                 ddbMock as unknown as DynamoDBDocumentClient,
                 tableName
             );
 
-            expect(defaultBackend).toBeDefined();
+            ddbMock.on(PutCommand).resolves({});
+            await defaultBackend.upsertChannel(createStorageRecord());
+
+            expect(withDynamoTimeoutSpy).toHaveBeenCalledWith(
+                expect.any(Function),
+                expect.objectContaining({ timeoutMs: 10_000, operation: 'ChannelRegistry.upsertChannel' })
+            );
         });
 
         test('should use custom timeout when specified', () => {
@@ -697,5 +752,17 @@ describe('ChannelRegistryBackend', () => {
 
             expect(customBackend).toBeDefined();
         });
+    });
+
+    test('includes schema issues in invalid-record errors', async () => {
+        const invalidRecord = createStorageRecord({ channelId: '' as ReturnType<typeof createChannelId> });
+
+        try {
+            await backend.upsertChannel(invalidRecord);
+            throw new Error('Expected validation failure');
+        } catch (error) {
+            expect(error).toBeInstanceOf(ValidationError);
+            expect((error as ValidationError).context.issues).toHaveLength(1);
+        }
     });
 });

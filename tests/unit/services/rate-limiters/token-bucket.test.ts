@@ -32,6 +32,22 @@ describe('TokenBucketRateLimiter', () => {
             const limiter = new TokenBucketRateLimiter({ capacity: 5 });
             expect(limiter.isAtLimit()).toBe(false);
         });
+
+        test('should use default refillRatePerHour of 1 per hour', () => {
+            const limiter = new TokenBucketRateLimiter();
+            for(let i = 0; i < 24; i++) {
+                limiter.increment();
+            }
+            expect(limiter.tokensRemaining()).toBe(0);
+
+            // One elapsed hour refills exactly 1 token at the default rate
+            jest.setSystemTime(new Date('2025-06-15T11:00:00.000Z'));
+            expect(limiter.tokensRemaining()).toBe(1);
+
+            // A second elapsed hour refills exactly 1 more
+            jest.setSystemTime(new Date('2025-06-15T12:00:00.000Z'));
+            expect(limiter.tokensRemaining()).toBe(2);
+        });
     });
 
     describe('isAtLimit()', () => {
@@ -180,6 +196,20 @@ describe('TokenBucketRateLimiter', () => {
             expect(limiter.tokensRemaining()).toBe(2);
             now = 60 * 60 * 1000;
             expect(limiter.tokensRemaining()).toBe(3);
+        });
+
+        test('rounds fractional millisecond refill boundaries to avoid an early token', () => {
+            let now = 0;
+            const limiter = new TokenBucketRateLimiter({ capacity: 10, refillRatePerHour: 7, now: () => now });
+            for(let index = 0; index < 10; index++) {
+                limiter.increment();
+            }
+
+            now = 514_286;
+            expect(limiter.tokensRemaining()).toBe(1);
+
+            now = 1_028_571;
+            expect(limiter.tokensRemaining()).toBe(1);
         });
 
         test('should refill 1 token per hour with default rate', () => {

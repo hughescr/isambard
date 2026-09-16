@@ -134,6 +134,18 @@ describe('provider report parsing', () => {
         });
     });
 
+    it('takes a quota display name from its own field rather than borrowing the identifier', () => {
+        const body = providerReport({ quota_after: {
+            source:       'anthropic', collected_at: GENERATED,
+            quotas:       [{ id: 'session', kind: 'session', group: 'session', used_percent: 31.5, unit: 'percent_0_100', name: 'Claude session' }],
+        } });
+
+        expect(parseProviderSnapshot(body)?.providers[0]?.quotaAfter?.quotas[0]).toMatchObject({
+            id:   'session',
+            name: 'Claude session',
+        });
+    });
+
     it('parses compact history inputs and models.dev reference prices from the report contract', () => {
         const snapshot = parseProviderSnapshot(providerReport({
             history: historyReport(), reference_prices: referencePrices(),
@@ -293,6 +305,17 @@ describe('provider report parsing', () => {
 
         expect(parseProviderSnapshot(providerReport({ history: missingStatus }))?.providers[0]?.history).toBeUndefined();
         expect(parseProviderSnapshot(providerReport({ history: negativeCost }))?.providers[0]?.history).toBeUndefined();
+    });
+
+    it.each([
+        ['a numeric', 1],
+        ['an empty', ''],
+    ])('rejects %s cost status without admitting the sample', (_description, costStatus) => {
+        const history = historyReport();
+        const model: Record<string, unknown> = { ...history.seven_days.models[0], cost_status: costStatus };
+        history.seven_days.models = [model as typeof history.seven_days.models[number]];
+
+        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
     });
 
     it('accepts an unavailable cost status without inventing a cost sample', () => {
@@ -580,6 +603,15 @@ describe('direct Anthropic fallback parsing', () => {
         });
     });
 
+    it('ignores an invalid percentage on a kind that merely shares the seven_day prefix', () => {
+        // 'seven_days' is not a unified window (only 'seven_day' and 'seven_day_<model>' are), so
+        // its percentage must be skipped outright rather than validated and flagged as rejected.
+        expect(parseUsageWindows({ limits: [{ kind: 'seven_days', percent: 101 }] })).toEqual({
+            windows:  undefined,
+            rejected: false,
+        });
+    });
+
     it('rejects an empty legacy id instead of silently accepting its percentage', () => {
         expect(parseUsageWindows({ '': { utilization: 42 } })).toEqual({ windows: undefined, rejected: true });
     });
@@ -622,6 +654,21 @@ describe('provider polling', () => {
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith({
             type:  'quota_polled', at:    new Date(GENERATED),
             quota: { fiveHour: { utilization: 42, resetsAt: new Date(RESET) } },
+        });
+    });
+
+    it('prefers a reported unified quota kind over the raw provider id when both are present', async () => {
+        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
+            source:       'anthropic', collected_at: GENERATED,
+            quotas:       [{ id: 'weekly_all', kind: 'session', used_percent: 42, unit: 'percent_0_100' }],
+        } })) });
+
+        poller.start();
+        await poller.poll();
+
+        expect(ledgers[0]?.dispatch).toHaveBeenCalledWith({
+            type:  'quota_polled', at:    new Date(GENERATED),
+            quota: { fiveHour: { utilization: 42 } },
         });
     });
 

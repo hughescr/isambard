@@ -107,6 +107,25 @@ describe('sendEnvelopeResponse', () => {
         expect(mockSendToChannel).toHaveBeenCalledTimes(2);
     });
 
+    test('sends the response router content rather than the source text', async () => {
+        mockResolveEnvelopeTarget.mockResolvedValue({
+            targetChannelId: 'target-channel-456' as ChannelId,
+            shouldSend:      true,
+            content:         'Sanitized response',
+        });
+
+        await sendEnvelopeResponse({
+            envelopeId:     'env-routed-content',
+            kind:           'catchup',
+            text:           'Source response',
+            responseRouter: mockResponseRouter,
+            client:         mockClient,
+            rateLimiter:    mockRateLimiter,
+        });
+
+        expect(mockSendToChannel).toHaveBeenCalledWith(mockTargetChannel, 'Sanitized response');
+    });
+
     test('passes channelId through to resolveEnvelopeTarget as the originChannelId', async () => {
         mockResolveEnvelopeTarget.mockResolvedValue({
             targetChannelId: 'origin-channel-123' as ChannelId,
@@ -262,6 +281,32 @@ describe('sendEnvelopeResponse', () => {
         expect(mockLogger.warn).toHaveBeenCalledTimes(1);
     });
 
+    test('a non-Error send rejection preserves its message in the warning', async () => {
+        mockResolveEnvelopeTarget.mockResolvedValue({
+            targetChannelId: 'target-channel-456' as ChannelId,
+            shouldSend:      true,
+            content:         'Digest text',
+        });
+        mockSendToChannel.mockRejectedValue('network down');
+
+        const result = await sendEnvelopeResponse({
+            envelopeId:     'env-non-error',
+            kind:           'catchup',
+            text:           'Digest text',
+            responseRouter: mockResponseRouter,
+            client:         mockClient,
+            rateLimiter:    mockRateLimiter,
+        });
+
+        expect(result).toEqual({ sent: false });
+        expect(mockLogger.warn).toHaveBeenCalledWith({
+            error:      new Error('network down'),
+            envelopeId: 'env-non-error',
+            kind:       'catchup',
+            msg:        'Envelope response send failed, no outbox to queue to: network down',
+        });
+    });
+
     test('with a discordCapability, a chunk queued to the outbox resolves to sent:false queued:true and never touches the raw client', async () => {
         mockResolveEnvelopeTarget.mockResolvedValue({
             targetChannelId: 'target-channel-456' as ChannelId,
@@ -342,6 +387,37 @@ describe('sendEnvelopeResponse', () => {
 
         expect(result).toEqual({ sent: false, queued: true });
         expect(mockSendToChannelCapability).toHaveBeenCalledWith('perch-channel-1', 'Perch report', { priority: 'high', type: 'perch_output' });
+    });
+
+    test('with a discordCapability, multiple chunks are sent in original order, not reversed', async () => {
+        // Kills llm mutant: chunks.entries() -> chunks.reverse().entries()
+        // Build content that splits into exactly two chunks, distinguishable by content, so a
+        // reversed send order is observable via the call order on the capability mock.
+        const firstChunkWord  = 'A'.repeat(1200);
+        const secondChunkWord = 'B'.repeat(1200);
+        mockResolveEnvelopeTarget.mockResolvedValue({
+            targetChannelId: 'target-channel-456' as ChannelId,
+            shouldSend:      true,
+            content:         `${firstChunkWord} ${secondChunkWord}`,
+        });
+        const mockSendToChannelCapability = mock(async () => ({ status: 'sent' as const }));
+        const mockDiscordCapability = {
+            sendToChannel: mockSendToChannelCapability,
+        } as unknown as DiscordCapability;
+
+        await sendEnvelopeResponse({
+            envelopeId:        'env-order',
+            kind:              'catchup',
+            text:              `${firstChunkWord} ${secondChunkWord}`,
+            responseRouter:    mockResponseRouter,
+            client:            mockClient,
+            rateLimiter:       mockRateLimiter,
+            discordCapability: mockDiscordCapability,
+        });
+
+        expect(mockSendToChannelCapability).toHaveBeenCalledTimes(2);
+        expect((mockSendToChannelCapability.mock.calls[0] as unknown[])[1]).toBe(firstChunkWord);
+        expect((mockSendToChannelCapability.mock.calls[1] as unknown[])[1]).toBe(secondChunkWord);
     });
 
     test('does not thread replies: always sends to the target channel directly, never message.reply', async () => {

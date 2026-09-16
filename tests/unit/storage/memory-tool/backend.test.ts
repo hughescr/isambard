@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -260,6 +260,30 @@ describe('MemoryToolBackend', () => {
         });
     });
 
+    describe('delete propagates core delete failures', () => {
+        const testPath = '/test/file.md' as MemoryPath;
+        const existingItem: MemoryToolItem = {
+            PK:          'DIR#/test',
+            SK:          'FILE#file.md',
+            GSI1PK:      'LAYER#test',
+            GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+            path:        testPath,
+            content:     'Content',
+            contentType: 'text/markdown',
+            metadata:    {},
+
+            createdAt: '2024-01-01T00:00:00.000Z',
+            updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        test('rejects when the underlying delete fails, instead of resolving with tag cleanup only', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: existingItem });
+            ddbMock.on(DeleteCommand).rejects(new Error('DynamoDB delete failed'));
+
+            await expect(backend.delete(testPath)).rejects.toThrow('DynamoDB delete failed');
+        });
+    });
+
     describe('optional chaining for undefined options', () => {
         test('should NOT throw TypeError with undefined options (kills options?.startDate/endDate mutants in getDateBounds)', async () => {
             // CRITICAL: This test targets mutants on backend-query.ts:42,44 (lines with optional chaining)
@@ -468,6 +492,39 @@ describe('MemoryToolBackend', () => {
                 const batchWrite = batchWriteCalls[0].args[0].input;
                 const putRequests = batchWrite.RequestItems?.TestTable.filter(item => item.PutRequest);
                 expect(putRequests?.length).toBe(2); // One for each tag
+                expect(putRequests?.map(request => request.PutRequest?.Item?.contentPreview)).toEqual([
+                    'Test content with tags',
+                    'Test content with tags',
+                ]);
+                expect(putRequests?.map(request => request.PutRequest?.Item?.layer)).toEqual(['state', 'state']);
+                const mainItem = putCalls[0].args[0].input.Item;
+                expect(putRequests?.map(request => request.PutRequest?.Item?.updatedAt)).toEqual([
+                    mainItem?.updatedAt,
+                    mainItem?.updatedAt,
+                ]);
+            });
+
+            test('propagates the creation result timestamp into tag index rows', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                // Luxon does not use Date.prototype.toISOString, so this detects a
+                // stray native clock read instead of the core create timestamp.
+                const isoSpy = spyOn(Date.prototype, 'toISOString').mockReturnValue('1999-12-31T23:59:59.999Z');
+                try {
+                    const result = await backend.create({
+                        path:        testPath,
+                        content:     'Timestamp propagation',
+                        contentType: 'text/markdown',
+                        tags:        new Set(['important']),
+                    });
+                    const putRequests = ddbMock.commandCalls(BatchWriteCommand)
+                        .flatMap(call => call.args[0].input.RequestItems?.TestTable ?? [])
+                        .filter(item => item.PutRequest);
+                    expect(putRequests).toHaveLength(1);
+                    expect(putRequests[0]?.PutRequest?.Item?.updatedAt).toBe(result.updatedAt);
+                    expect(putRequests[0]?.PutRequest?.Item?.updatedAt).not.toBe('1999-12-31T23:59:59.999Z');
+                } finally {
+                    isoSpy.mockRestore();
+                }
             });
 
             test('should NOT create tag index items when no tags', async () => {
@@ -606,6 +663,52 @@ describe('MemoryToolBackend', () => {
                 const batchWrite = batchWriteCalls[0].args[0].input;
                 const putRequests = batchWrite.RequestItems?.TestTable.filter(item => item.PutRequest);
                 expect(putRequests?.length).toBeGreaterThanOrEqual(1);
+            });
+
+            test('refreshes tag index items with the new content preview, not an empty string', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                ddbMock.on(PutCommand).resolves({});
+
+                await backend.update(testPath, {
+                    content: 'Refreshed content for tag index preview',
+                });
+
+                const batchWriteCalls = ddbMock.commandCalls(BatchWriteCommand);
+                const putRequests = batchWriteCalls
+                    .flatMap(call => call.args[0].input.RequestItems?.TestTable ?? [])
+                    .filter(item => item.PutRequest);
+                expect(putRequests.length).toBeGreaterThanOrEqual(1);
+                for(const request of putRequests) {
+                    expect(request.PutRequest?.Item?.contentPreview).toBe('Refreshed content for tag index preview');
+                }
+            });
+
+            test('refreshes tag index items with the update result updatedAt, not a freshly generated timestamp', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItem });
+                ddbMock.on(PutCommand).resolves({});
+
+                // Distinguish luxon's DateTime.utc().toISO() (used to compute result.updatedAt)
+                // from a mutant `new Date().toISOString()` call site: Date.prototype.toISOString
+                // is not part of luxon's own ISO formatting, so forcing it to a sentinel only
+                // affects a stray `new Date().toISOString()` call, not the real updatedAt.
+                const isoSpy = spyOn(Date.prototype, 'toISOString').mockReturnValue('1999-12-31T23:59:59.999Z');
+                try {
+                    const result = await backend.update(testPath, {
+                        content: 'Content for updatedAt propagation check',
+                    });
+
+                    const batchWriteCalls = ddbMock.commandCalls(BatchWriteCommand);
+                    const putRequests = batchWriteCalls
+                        .flatMap(call => call.args[0].input.RequestItems?.TestTable ?? [])
+                        .filter(item => item.PutRequest);
+                    expect(putRequests.length).toBeGreaterThanOrEqual(1);
+                    for(const request of putRequests) {
+                        expect(request.PutRequest?.Item?.updatedAt).toBe(result.updatedAt);
+                        expect(request.PutRequest?.Item?.updatedAt).not.toBe('1999-12-31T23:59:59.999Z');
+                    }
+                } finally {
+                    isoSpy.mockRestore();
+                }
             });
 
             test('should NOT update tag index items for metadata-only updates (even when item has tags)', async () => {
@@ -924,7 +1027,7 @@ describe('MemoryToolBackend', () => {
                 expect(job.kind).toBe('upsert');
                 expect(job.path).toBe('/identity/foo');
                 expect(job.content).toBe('hello world');
-                expect(job.layer).toBeDefined();
+                expect(job.layer).toBe('identity');
             });
 
             test('does not call indexer.enqueue when no indexer is provided', async () => {
@@ -1019,6 +1122,7 @@ describe('MemoryToolBackend', () => {
                 expect(enqueueMock).toHaveBeenCalledTimes(1);
                 const job = enqueueMock.mock.calls[0][0];
                 expect((job as { kind: string }).kind).toBe('delete');
+                expect(job).toMatchObject({ pk: 'DIR#/identity', sk: 'FILE#foo' });
             });
 
             test('does not propagate indexer.enqueue error on delete', async () => {

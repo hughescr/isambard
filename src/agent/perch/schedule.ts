@@ -46,7 +46,6 @@ const MID_MORNING: PerchSlotConfig = {
 - If someone there is consistently posting things you find interesting, consider following them. Be thoughtful: a follow from an account labeled as a bot is a visible social act, and some people find unsolicited bot follows unwelcome. Prefer following people whose posts engage with ideas you'd actually want to discuss, and skip if the account profile suggests they'd rather not be followed by automated accounts.
 
 Self-check: if your last 2-3 perches have been on the same thread, deliberately pivot to something unrelated this time. Pattern-breaking matters — don't orbit the same attractor every slot.`,
-    // Stryker restore StringLiteral
 };
 
 /**
@@ -217,6 +216,7 @@ export function getNextSlot(currentHour: number): PerchSlot {
  * the established lookup behavior because both comparisons are false.
  */
 function validateHour(hour: number): void {
+    // Stryker disable next-line llm: JavaScript comparisons treat -0 and 0 identically at both hour-validation bounds.
     if(hour < 0 || hour > 23) {
         throw new RangeError(`Hour must be between 0 and 23, got ${hour}`);
     }

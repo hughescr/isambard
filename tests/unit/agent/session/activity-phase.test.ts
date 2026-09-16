@@ -236,6 +236,14 @@ describe('phaseFromFrame', () => {
         expect(phase).toEqual({ type: 'thinking', startedAt: AT });
     });
 
+    it('maps an assistant frame with a one-character text block to responding', () => {
+        const frame = frames.assistantText('.');
+
+        const phase = phaseFromFrame(frame, null, AT);
+
+        expect(phase).toEqual({ type: 'responding', startedAt: AT });
+    });
+
     it('maps a stream_event content_block_delta text_delta to responding', () => {
         const frame: SDKPartialAssistantMessage = {
             type:               'stream_event',

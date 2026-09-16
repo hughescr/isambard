@@ -81,6 +81,7 @@ export class MemoryToolBackendCore {
         // boundary cast: spreading a branded MemoryToolItem into a plain DynamoDB Record for putItem; branded MemoryPath/ContentType are runtime-compatible strings
         const ddbItem: Record<string, unknown> = { ...(item as unknown as Record<string, unknown>) };
         if(input.ttl !== undefined) {
+            // Stryker disable next-line llm: ttl is a defined number here, so || 0 assigns the same value for every valid epoch-seconds TTL (0 included); only NaN differs and is invalid DynamoDB input
             ddbItem.TTL = input.ttl;
         }
 

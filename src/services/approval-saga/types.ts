@@ -17,8 +17,6 @@ const approvalSagaTypeSchema = z.enum([
 ]);
 export type ApprovalSagaType = z.infer<typeof approvalSagaTypeSchema>;
 
-// Stryker restore all
-
 /**
  * Minimal interface for creating approval sagas.
  * Satisfies ApprovalSagaBackend without crossing the services boundary into discord/email/bsky.

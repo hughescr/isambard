@@ -197,6 +197,25 @@ describe('buildDiscordEnvelope', () => {
         expect(envelope.text).toContain('[Calendar]\n09:00–10:00 Standup');
     });
 
+    test('keeps a one-character agenda, the tightest non-empty part, instead of filtering it out with the empties', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:        [makeMessage()],
+            authorId:        'a',
+            authorName:      'craig',
+            channelId:       'c',
+            channelName:     'general',
+            isDM:            false,
+            now,
+            timezone,
+            timeHeader,
+            // The section body is `[change lines, agenda]` with the empty parts filtered out. The
+            // bound is `length > 0`: this single-character agenda is a non-empty part and must be
+            // kept, however short it is.
+            calendarChanged: { agenda: 'x', added: [], removed: [], changed: [], isFirst: false },
+        });
+
+        expect(envelope.text).toContain('[Calendar]\nx');
+    });
     test('omits [State changed] when stateChanged is explicitly undefined', () => {
         const envelope = buildDiscordEnvelope({
             messages:     [makeMessage()],
@@ -825,5 +844,24 @@ describe('synopsisSeed', () => {
 
     test('an empty source yields undefined rather than an empty string', () => {
         expect(buildResumeEnvelope('', now).synopsisSeed).toBeUndefined();
+    });
+});
+
+describe('surviving-mutant boundaries', () => {
+    test('preserves the complete UUID generated for a perch envelope', () => {
+        const uuid = '12345678-1234-4abc-8def-123456789abc';
+        spyOn(crypto, 'randomUUID').mockReturnValue(uuid);
+
+        expect(buildPerchEnvelope({
+            slotName: 'evening', now, timezone, endsAt: new Date('2026-09-05T02:45:00Z'), suggestionLevel: 2, slotHint: 'hint', perchContext: 'context', timeHeader,
+        }).id).toBe(uuid);
+    });
+
+    test('preserves trailing whitespace in a catch-up item verbatim', () => {
+        const envelope = buildCatchupEnvelope({
+            channelCount: 0, now, timezone, timeHeader, eventsDelta: ['event with intentional trailing spaces  '],
+        });
+
+        expect(envelope.text).toContain('## Events while you were away\nevent with intentional trailing spaces  ');
     });
 });

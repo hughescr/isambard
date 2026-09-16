@@ -113,7 +113,6 @@ export async function withDynamoTimeout<T>(
             reject(error);
         }, timeoutMs);
     });
-    // Stryker restore BlockStatement
 
     // Race between operation and timeout
     try {

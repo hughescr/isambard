@@ -458,7 +458,6 @@ class ContextBuilderImpl implements ContextBuilder {
             logger.warn({ error, userId }, 'Failed to load calendar context');
             return `[Calendar unavailable: ${classifyCalendarError(error)}]`;
         }
-        // Stryker restore BlockStatement
     }
 
     /**
@@ -510,7 +509,6 @@ class ContextBuilderImpl implements ContextBuilder {
             logger.warn({ error }, 'Failed to load perch calendar context');
             return `[Calendar unavailable: ${classifyCalendarError(error)}]`;
         }
-        // Stryker restore BlockStatement
     }
 
     /**
@@ -554,7 +552,6 @@ class ContextBuilderImpl implements ContextBuilder {
         } catch (error) {
             logger.warn({ error, msg: 'Email inbox fetch failed, skipping inbox section' });
         }
-        // Stryker restore BlockStatement
         return undefined;
     }
 
@@ -589,7 +586,6 @@ class ContextBuilderImpl implements ContextBuilder {
         } catch (err) {
             logger.warn({ err, msg: 'Failed to load rejected draft context' });
         }
-        // Stryker restore BlockStatement
         return undefined;
     }
 
@@ -604,6 +600,7 @@ class ContextBuilderImpl implements ContextBuilder {
 
         try {
             const result = await this.#bskyDMService.client.listConversations(undefined, undefined, 'unread');
+            // Stryker disable next-line llm: convos is only read (length, reduce, map) and never escapes, so a shallow copy is observationally equivalent
             const convos = result.conversations;
 
             if(convos.length === 0) {
@@ -630,7 +627,6 @@ class ContextBuilderImpl implements ContextBuilder {
         } catch (error) {
             logger.warn({ error, msg: 'Bluesky DM fetch failed, skipping DM section' });
         }
-        // Stryker restore BlockStatement
         return undefined;
     }
 
@@ -674,7 +670,6 @@ class ContextBuilderImpl implements ContextBuilder {
         } catch (err) {
             logger.warn({ err, msg: 'Failed to load rejected Bluesky posts context' });
         }
-        // Stryker restore BlockStatement
         return undefined;
     }
 

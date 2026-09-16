@@ -499,7 +499,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             msg:        'Discord rate limit hit, auto-retrying',
         });
     });
-    // Stryker restore all
 
     // Register shard event listeners for health tracking
     if(healthRegistry) {
@@ -513,7 +512,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             healthRegistry.sendEvent('discord', 'CONNECT_SUCCESS');
         });
     }
-    // Stryker restore BlockStatement
 
     // Track last session ID for task context
     let lastSessionId: string | undefined;
@@ -522,7 +520,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             lastSessionId = sessionId;
         }
     };
-    // Stryker restore BlockStatement
     const getLastSessionId = (): string | undefined => lastSessionId;
 
     // Track recent messages (user + bot) for context-aware idle status generation
@@ -531,12 +528,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     const recentMessages: RecentMessage[] = [];
 
     const addRecentMessage = (content: string, author: 'user' | 'izzy' = 'user'): void => {
+        // Stryker disable next-line llm: timestamp is only ever read by getRecentContext's sort, and a uniform offset preserves that order.
         recentMessages.push({ author, content: content.slice(0, 200), timestamp: Date.now() });
         if(recentMessages.length > MAX_RECENT_MESSAGES) {
             recentMessages.shift();
         }
     };
-    // Stryker restore BlockStatement
 
     // Track last thinking content for context-aware idle status generation
     let lastThinkingContent: string | undefined;
@@ -556,7 +553,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             recentTools.shift();
         }
     };
-    // Stryker restore BlockStatement
     const getRecentTools = (): readonly RecentTool[] => recentTools;
 
     // Recent-channels ring buffer for LiveSignals aggregator
@@ -568,7 +564,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             recentChannels.shift();
         }
     };
-    // Stryker restore BlockStatement
     const getRecentChannels = (): readonly RecentChannel[] => recentChannels;
 
     // Previous idle status holder — populated by Step 3; read by LiveSignals
@@ -672,6 +667,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             await routeInteraction(interaction);
         } catch (err) {
             logger.error({
+                // Stryker disable next-line llm: TypeError is a subclass of Error, so an added `|| err instanceof TypeError` disjunct is implied and cannot flip the result
                 error:           err instanceof Error ? err.message : String(err),
                 interactionType: interaction.type,
                 msg:             'Unhandled error in interaction handler',
@@ -745,7 +741,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         unsubscribeToolTracking = unsubscribeAll;
         unsubscribeChannelTracking = unsubscribeAll;
     }
-    // Stryker restore BlockStatement
 
     // Idempotency guard: track whether clientReady setup has run.
     // The handler is registered with .on() (not .once()) so reconnects fire it again,
@@ -785,7 +780,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         : undefined,
                 })
                 : undefined;
-            // Stryker restore BlockStatement
 
             // P11 fix: presence construction moved below the conductor-open block (still before
             // setupCoordinatorIntegration/setupMessageProcessing, which is all "before
@@ -951,7 +945,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         logger,
                     });
                 }
-                // Stryker restore all
             }
             configureShutdown();
 
@@ -971,7 +964,11 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 // fallback presence path (P13b removed the one-shot agent; P14 removed the legacy
                 // state-machine bridged `setupPresence`): a conductor that never opens simply runs
                 // with no presence at all.
-                if(identityContext && config.presence && conductorOpened && presenceThrottle && ledgerStore) {
+                // Hoisted so the equivalent "drop && ledgerStore" mutant has its own line while the
+                // conductorOpened gate below stays mutation-measured (the P11 regression).
+                // Stryker disable next-line llm,LogicalOperator: presenceThrottle is derived from ledgerStore at its construction site (`ledgerStore ? createPresenceThrottle(...) : undefined`), so it is never truthy without it and the ledgerStore conjunct cannot decide the branch
+                const presenceInfra = presenceThrottle && ledgerStore;
+                if(identityContext && config.presence && conductorOpened && presenceInfra) {
                     // P11/P12: presence composes from the session ledger(s) — conversation always,
                     // perch too whenever its ledger exists — see setupConductorPresence's own doc for
                     // exactly what that composition does.
@@ -1063,7 +1060,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     perchDriver = perchSetup.driver;
                     perchScheduler = perchSetup.scheduler;
                 }
-                // Stryker restore BlockStatement
             }
             configurePerch();
 
@@ -1079,7 +1075,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                             msg:   'Failed to mute admin email channel — messages there may reach Izzy',
                         });
                     }
-                    // Stryker restore BlockStatement
                 }
             }
             await muteAdminEmailChannel();
@@ -1177,6 +1172,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         rateLimiter,
                         ingressGate:           ingressGate!,
                         discordCapability,
+                        // Stryker disable next-line llm: Set membership deduplicates, so listing perchTimeChannelId twice builds the identical exclusion set.
                         excludeChannelIds:     perchTimeChannelId ? new Set([perchTimeChannelId]) : undefined,
                         contextPolicy,
                         bootEventsWindowMs,
@@ -1184,7 +1180,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         timeHeader:            options.timeHeader,
                     });
                 }
-                // Stryker restore BlockStatement
             }
             await initializeInbox();
         } // end if(!initialized)
@@ -1229,6 +1224,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // The shutdown() call ORDER and warning formatting are covered by bot.test.ts's
             // conductor-mode lifecycle assertions.
             if(shutdownRef) {
+                // Stryker disable next-line AwaitDrop: IngressGate.stop() is synchronous, so runBotStopStep runs it (and any recordFailure) before returning; the await only skips a microtask.
                 await runBotStopStep('Ingress gate stop', () => ingressGate?.stop(), recordFailure);
                 try {
                     await shutdownRef.run();
@@ -1243,12 +1239,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     }
                 }
             }
-            // Stryker restore all
             // Stop question registry (always exists now)
             await runBotStopStep('Question registry stop', () => questionRegistry.stop(), recordFailure);
             await runBotStopStep('Ledger presence unsubscribe', () => unsubscribeLedgerPresence?.(), recordFailure);
             await runBotStopStep('Task board stop', () => stopTaskBoard?.(), recordFailure);
+            // Stryker disable next-line AwaitDrop: unsubscribeToolTracking is a synchronous `() => void`, so runBotStopStep runs it (and any recordFailure) before returning; the await only skips a microtask.
             await runBotStopStep('Tool tracking unsubscribe', () => unsubscribeToolTracking(), recordFailure);
+            // Stryker disable next-line AwaitDrop: unsubscribeChannelTracking is a synchronous `() => void`, so runBotStopStep runs it (and any recordFailure) before returning; the await only skips a microtask.
             await runBotStopStep('Channel tracking unsubscribe', () => unsubscribeChannelTracking(), recordFailure);
             // Perch scheduler/driver are already stopped above, before shutdownRef.run() — see
             // that comment.
@@ -1275,6 +1272,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 // Mirrors runBootSequence's own unreadCount() > 0 gate — without it, a flaky
                 // reconnect loop would submit a full turn on every reconnect even with nothing new
                 // to report.
+                // Stryker disable next-line llm: totalUnread is a sum of filtered array lengths, so it is never negative and `> 0` and `!== 0` agree.
                 if(inboxManager.getUnreadOverview().totalUnread > 0) {
                     await submitConductorCatchUp({
                         inboxManager,
@@ -1290,7 +1288,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 logger.warn({ error: err instanceof Error ? err.message : String(err), msg: 'Reconnect catch-up trigger failed' });
             }
         },
-        // Stryker restore BlockStatement
 
         get shutdown(): Shutdown | undefined {
             return shutdownRef;

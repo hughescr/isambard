@@ -120,6 +120,7 @@ export function createQuotaNotes(params: CreateQuotaNotesParams): QuotaNotes {
         if(previous !== undefined) {
             // Checked BEFORE the same-instance test, so `<` is the only comparison that can hold
             // here: an equal `resetsAt` falls through and raises the peak, as it must.
+            // Stryker disable next-line llm: appending `&& true` is a logical identity.
             if(previous.resetsAtMs !== undefined && resetsAtMs !== undefined && resetsAtMs < previous.resetsAtMs) {
                 return previous;
             }
@@ -190,11 +191,14 @@ export function createQuotaNotes(params: CreateQuotaNotesParams): QuotaNotes {
                 return;
             }
             for(const name of TRACKED_WINDOWS) {
+                // Stryker disable next-line llm: name iterates the const TRACKED_WINDOWS tuple and is never nullish.
                 const window = quota[name];
                 if(window === undefined) {
                     continue;
                 }
+                // Stryker disable next-line llm: the guard above narrows window to a defined QuotaWindow, so `?? undefined` is inert.
                 const state = advance(name, window);
+                // Stryker disable next-line llm: LedgerQuota.at is a required Date, so the `?? 0` fallback is unreachable.
                 noteReset(name, state, quota.at);
                 noteThresholds(name, state, quota.at);
             }

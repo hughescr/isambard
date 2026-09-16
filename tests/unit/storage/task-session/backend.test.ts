@@ -87,5 +87,17 @@ describe('TaskSessionBackend', () => {
             const keys = calls.map(call => call.args[0].input.Item?.PK);
             expect(keys).toEqual(['TASK_SESSION#conversation', 'TASK_SESSION#perch']);
         });
+
+        test('setSessionIdForRole propagates a rejection from the underlying put', async () => {
+            ddbMock.on(PutCommand).rejects(new Error('put failed'));
+
+            await expect(backend.setSessionIdForRole('conversation', sessionId)).rejects.toThrow('put failed');
+        });
+
+        test('clearSessionIdForRole propagates a rejection from the underlying delete', async () => {
+            ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
+
+            await expect(backend.clearSessionIdForRole('conversation')).rejects.toThrow('delete failed');
+        });
     });
 });

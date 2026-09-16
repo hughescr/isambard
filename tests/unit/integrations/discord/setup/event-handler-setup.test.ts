@@ -249,6 +249,33 @@ describe('initializeChannelRegistry', () => {
         expect(calledContent).toContain('Channel Registry Error');
     });
 
+    test('a non-Error discovery rejection reaches the operator as its plain text, not its JSON encoding', async () => {
+        // The catch's `String(error)` fallback is the text the operator reads in the Discord
+        // notification, so a string rejection must arrive raw, never quoted as `"dns failure"`.
+        const registry       = makeRegistry(Promise.resolve());
+        const client         = makeClient();
+        const responseRouter = makeResponseRouter();
+
+        spies.push(
+            spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue('dns failure'),
+            spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+        );
+
+        const rateLimiter = { sendToChannel: mock(async () => ({} as Message)) } as unknown as DiscordRateLimiter;
+
+        initializeChannelRegistry(client, registry, responseRouter, rateLimiter);
+
+        // Flush: ready → discovery catch → sendRegistryErrorNotification
+        for(let i = 0; i < 8; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential microtask draining; each await is independent and order matters
+            await Promise.resolve();
+        }
+
+        const routeToFallbackMock = responseRouter.routeToFallback as ReturnType<typeof mock>;
+        const calledContent: string = routeToFallbackMock.mock.calls[0]?.[0] ?? '';
+        expect(calledContent).toContain('Error: dns failure');
+    });
+
     test('does not send a fallback notification when routing says not to send', async () => {
         const registry = makeRegistry(Promise.resolve());
         const client = makeClient();
@@ -265,6 +292,63 @@ describe('initializeChannelRegistry', () => {
 
         expect((client.channels as unknown as { fetch: ReturnType<typeof mock> }).fetch).not.toHaveBeenCalled();
         expect(rateLimiter.sendToChannel).not.toHaveBeenCalled();
+    });
+
+    test('does not attempt a send when Discord returns no channel for the fallback id', async () => {
+        const registry = makeRegistry(Promise.resolve());
+        const client = makeClient();
+        const errorSpy = spyOn(loggerModule.logger, 'error');
+        (client.channels as unknown as { fetch: ReturnType<typeof mock> }).fetch.mockResolvedValue(null);
+        const rateLimiter = { sendToChannel: mock(async () => ({} as Message)) } as unknown as DiscordRateLimiter;
+        spies.push(errorSpy, spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+        initializeChannelRegistry(client, registry, makeResponseRouter(), rateLimiter);
+        for(let i = 0; i < 12; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential microtask draining; each await is independent and order matters
+            await Promise.resolve();
+        }
+
+        expect(rateLimiter.sendToChannel).not.toHaveBeenCalled();
+        // A null fetch result is not itself a notification failure, so only the discovery error is logged.
+        expect(errorSpy).not.toHaveBeenCalledWith(expect.objectContaining({ msg: 'Failed to send channel registry error notification to owner' }));
+    });
+
+    test('sends the router-provided content, not the notification text, to the fallback channel', async () => {
+        const registry = makeRegistry(Promise.resolve());
+        const client = makeClient();
+        const fetchedChannel = { send: mock(async () => ({} as Message)) };
+        (client.channels as unknown as { fetch: ReturnType<typeof mock> }).fetch.mockResolvedValue(fetchedChannel);
+        const rateLimiter = { sendToChannel: mock(async () => ({} as Message)) } as unknown as DiscordRateLimiter;
+        spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+        initializeChannelRegistry(client, registry, makeResponseRouter(), rateLimiter);
+        for(let i = 0; i < 12; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential microtask draining; each await is independent and order matters
+            await Promise.resolve();
+        }
+
+        expect(rateLimiter.sendToChannel).toHaveBeenCalledWith(fetchedChannel, 'error message');
+    });
+
+    test('logs a non-Error send rejection by its plain text', async () => {
+        const registry = makeRegistry(Promise.resolve());
+        const client = makeClient();
+        const errorSpy = spyOn(loggerModule.logger, 'error');
+        const rateLimiter = { sendToChannel: mock(async () => ({} as Message)) } as unknown as DiscordRateLimiter;
+        (rateLimiter.sendToChannel as ReturnType<typeof mock>).mockRejectedValue('send exploded');
+        spies.push(errorSpy, spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+
+        initializeChannelRegistry(client, registry, makeResponseRouter(), rateLimiter);
+        for(let i = 0; i < 12; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential microtask draining; each await is independent and order matters
+            await Promise.resolve();
+        }
+
+        // The rejection's own text (not its JSON encoding, not an empty string) reaches the operator log.
+        expect(errorSpy).toHaveBeenCalledWith({
+            error: 'send exploded',
+            msg:   'Failed to send channel registry error notification to owner',
+        });
     });
 
     test('does not send when the fetched fallback channel has no send method', async () => {
@@ -297,6 +381,69 @@ describe('initializeChannelRegistry', () => {
         }
 
         expect(infoSpy).toHaveBeenCalledWith({ targetChannelId: 'fallback-ch', msg: 'Channel registry error notification sent to fallback channel' });
+    });
+
+    test('a failing rateLimiter.sendToChannel is awaited, so its rejection is caught and logged', async () => {
+        // The awaited send must reject into sendRegistryErrorNotification()'s own catch block.
+        // Dropping the await leaves that rejection unhandled and the send failure is never logged.
+        const registry       = makeRegistry(Promise.resolve());
+        const client         = makeClient();
+        const responseRouter = makeResponseRouter();
+        const errorSpy       = spyOn(loggerModule.logger, 'error');
+
+        spies.push(
+            errorSpy,
+            spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('dns failure')),
+            spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+        );
+
+        const rateLimiter = {
+            sendToChannel: mock(() => Promise.reject(new Error('send exploded'))),
+        } as unknown as DiscordRateLimiter;
+
+        initializeChannelRegistry(client, registry, responseRouter, rateLimiter);
+        for(let i = 0; i < 8; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential microtask draining; each await is independent and order matters
+            await Promise.resolve();
+        }
+
+        // The Error's own message (not its stack, not an `Error: `-prefixed toString) reaches the operator log.
+        expect(errorSpy).toHaveBeenCalledWith({
+            error: 'send exploded',
+            msg:   'Failed to send channel registry error notification to owner',
+        });
+    });
+
+    test('the awaited operator notification is dispatched before channel event handlers are wired', async () => {
+        // Awaiting the notification keeps handler wiring behind it. The hydration-failure
+        // notification in the reconnection loop uses `void` for the deliberate fire-and-forget
+        // form, so this `await` is intentional sequencing, not an accident of style.
+        const registry       = makeRegistry(Promise.resolve());
+        const client         = makeClient();
+        const responseRouter = makeResponseRouter();
+        const callOrder: string[] = [];
+
+        spies.push(
+            spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('dns failure')),
+            spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockImplementation(() => {
+                callOrder.push('setupChannelEventHandlers');
+            })
+        );
+
+        const rateLimiter = {
+            sendToChannel: mock(() => {
+                callOrder.push('sendToChannel');
+                return Promise.resolve({} as Message);
+            }),
+        } as unknown as DiscordRateLimiter;
+
+        initializeChannelRegistry(client, registry, responseRouter, rateLimiter);
+        for(let i = 0; i < 8; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential microtask draining; each await is independent and order matters
+            await Promise.resolve();
+        }
+
+        expect(callOrder).toEqual(['sendToChannel', 'setupChannelEventHandlers']);
     });
 
     // ---------------------------------------------------------------------------
@@ -508,6 +655,46 @@ describe('initializeChannelRegistry', () => {
         // No notification — hydration succeeded before hitting 3 consecutive failures
         const routeToFallbackMock = responseRouter.routeToFallback as ReturnType<typeof mock>;
         expect(routeToFallbackMock).not.toHaveBeenCalled();
+    });
+
+    test('Bug 2: the notification embeds the raw Error message, not its String(err) fallback', async () => {
+        const registry       = makeRegistry(new Promise<void>((_resolve) => { /* pending */ }));
+        const client         = makeClient();
+        const responseRouter = makeResponseRouter();
+        const healthRegistry = makeHealthRegistry();
+
+        // A plain Error — NOT a TypeError — so `err instanceof Error` is the only branch that reads .message.
+        (registry.warmCache as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB down'));
+        // Pin the backoff jitter so the retry delays are exactly 1000 / 2000 / 4000ms.
+        spies.push(
+            spyOn(Math, 'random').mockReturnValue(0.5),
+            spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({ discovered: 0, updated: 0, errors: [] }),
+            spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+        );
+
+        const rateLimiter = { sendToChannel: mock(() => Promise.resolve({} as Message)) } as unknown as DiscordRateLimiter;
+
+        initializeChannelRegistry(client, registry, responseRouter, rateLimiter, healthRegistry);
+
+        const receivedLoop = (registry.startHydration as ReturnType<typeof mock>).mock.calls[0]?.[0] as Record<string, unknown>;
+        (receivedLoop.start as () => void)();
+
+        // Three consecutive CONNECT_FAILs fire the one-time operator notification.
+        for(const retryDelayMs of [0, 2000, 4000]) {
+            jest.advanceTimersByTime(retryDelayMs);
+            for(let i = 0; i < 6; i++) {
+                // eslint-disable-next-line no-await-in-loop -- drains the connect attempt and notification microtasks in order
+                await Promise.resolve();
+            }
+        }
+
+        const routeToFallbackMock = responseRouter.routeToFallback as ReturnType<typeof mock>;
+        expect(routeToFallbackMock).toHaveBeenCalledTimes(1);
+        const calledContent: string = routeToFallbackMock.mock.calls[0]?.[0] ?? '';
+        // String(err) would append the class name, yielding `Error: Error: DynamoDB down`.
+        expect(/resolved\. Error: (.*)$/.exec(calledContent)?.[1]).toBe('DynamoDB down');
+
+        (receivedLoop.stop as () => void)();
     });
 
     // ---------------------------------------------------------------------------

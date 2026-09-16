@@ -47,7 +47,6 @@ export function registerErrorBoundaries(boundaryLogger: ErrorBoundaryLogger): Er
             },
             'unhandledRejection: a Promise was rejected without a rejection handler'
         );
-        // Stryker restore ObjectLiteral,StringLiteral
     };
 
     const exceptionHandler = (err: Error): void => {
@@ -58,7 +57,6 @@ export function registerErrorBoundaries(boundaryLogger: ErrorBoundaryLogger): Er
             },
             'uncaughtException: an uncaught synchronous exception was thrown'
         );
-        // Stryker restore ObjectLiteral,StringLiteral
         // Exit with failure code after logging — uncaughtException means the process
         // is in an indeterminate state and cannot continue safely.
         // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- uncaughtException leaves the process in an indeterminate state; exit is mandatory

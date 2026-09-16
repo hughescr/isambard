@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterEach, describe, expect, it, jest, spyOn } from 'bun:test';
 import { createBinarySpawnRunner, createSpawnRunner } from '@/utils/media/video/spawn-runner';
 
 const originalSpawn = Bun.spawn;
@@ -15,6 +15,7 @@ function stream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 describe('video subprocess runners', () => {
     afterEach(() => {
         Bun.spawn = originalSpawn;
+        jest.useRealTimers();
     });
 
     it('decodes text output, preserves binary output, and forwards cwd', async () => {
@@ -54,6 +55,17 @@ describe('video subprocess runners', () => {
         });
         await expect(createSpawnRunner()(['blocked'])).rejects.toThrow('permission denied');
         await expect(createBinarySpawnRunner()(['blocked'])).rejects.toThrow('permission denied');
+    });
+
+    it('does not infer a missing command from an Error display name', async () => {
+        const error = new Error('permission denied');
+        error.name = 'ENOENTError';
+        spyOn(Bun, 'spawn').mockImplementation(() => {
+            throw error;
+        });
+
+        await expect(createSpawnRunner()(['blocked'])).rejects.toBe(error);
+        await expect(createBinarySpawnRunner()(['blocked'])).rejects.toBe(error);
     });
 
     it.each([
@@ -134,5 +146,59 @@ describe('video subprocess runners', () => {
         const result = await createBinarySpawnRunner()(['tool'], { timeout: 5 });
         expect(result.exitCode).toBe(143);
         expect(killed).toBe(1);
+    });
+
+    it('kills the process at the 120 s default timeout boundary', async () => {
+        jest.useFakeTimers();
+        let killed = 0;
+        let finish!: (exitCode: number) => void;
+        Bun.spawn = (() => ({
+            stdout: stream(new Uint8Array()), stderr: stream(new Uint8Array()),
+            exited: new Promise<number>((resolve) => { finish = resolve; }),
+            kill() {
+                killed++;
+                finish(143);
+            },
+        })) as unknown as typeof Bun.spawn;
+
+        const task = createSpawnRunner()(['tool']);
+        jest.advanceTimersByTime(119_999);
+        expect(killed).toBe(0);
+        jest.advanceTimersByTime(1);
+        expect(killed).toBe(1);
+        const result = await task;
+        expect(result.exitCode).toBe(143);
+    });
+
+    it('leaves the subprocess cwd unset so it inherits the process working directory', async () => {
+        const calls: unknown[][] = [];
+        Bun.spawn = ((cmd: string[], options: unknown) => {
+            calls.push([cmd, options]);
+            return {
+                stdout: stream(new Uint8Array()),
+                stderr: stream(new Uint8Array()),
+                exited: Promise.resolve(0),
+                kill() {},
+            };
+        }) as typeof Bun.spawn;
+
+        await createSpawnRunner()(['tool']);
+
+        expect(calls).toHaveLength(1);
+        const options = calls[0]?.[1] as { cwd?: string };
+        expect(options.cwd).toBeUndefined();
+    });
+
+    it('decodes binary-runner stderr as UTF-8', async () => {
+        Bun.spawn = (() => ({
+            stdout: stream(new Uint8Array()),
+            stderr: stream(new TextEncoder().encode('café — résumé')),
+            exited: Promise.resolve(0),
+            kill() {},
+        })) as unknown as typeof Bun.spawn;
+
+        const result = await createBinarySpawnRunner()(['tool']);
+
+        expect(result.stderr).toBe('café — résumé');
     });
 });

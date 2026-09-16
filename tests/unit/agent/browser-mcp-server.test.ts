@@ -627,6 +627,9 @@ describe('browserMcpServer — screenshot', () => {
         const server = createBrowserMCPServer({ adapter, policy: noPolicy, ...policy2mb });
         const result = await callTool(server, 'screenshot');
         expect(result.isError).toBe(true);
+        // The adapter's own message must reach the agent verbatim: a generic
+        // placeholder would hide the real cause from the model.
+        expect(textContent(result.content[0])).toContain('screenshot failed');
     });
 });
 

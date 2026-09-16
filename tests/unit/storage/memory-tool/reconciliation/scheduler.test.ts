@@ -203,6 +203,37 @@ describe('ReconciliationScheduler', () => {
             expect(mockRunReconciliation).toHaveBeenCalled();
             expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Reconciliation scheduler in test mode - triggering on startup' });
         });
+
+        test('should NOT trigger immediately when testMode is present but triggerOnStartup is false', async () => {
+            const config: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       1000,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+                testMode: {
+                    triggerOnStartup: false,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliation,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+            scheduler.start();
+
+            // Past the test-mode startup delay; a falsy triggerOnStartup must not fire it
+            jest.advanceTimersByTime(50);
+            await Promise.resolve();
+
+            expect(mockRunReconciliation).not.toHaveBeenCalled();
+        });
     });
 
     describe('stop()', () => {
@@ -314,6 +345,73 @@ describe('ReconciliationScheduler', () => {
                 resolveReconciliation();
                 await Promise.resolve();
             }
+        });
+
+        test('does not re-abort a completed run\'s controller on a later stop()', async () => {
+            let capturedSignal: AbortSignal | undefined;
+
+            const mockRunReconciliationCapture = mock(
+                async (_deps: ReconcilerDeps, options: ReconcilerOptions) => {
+                    capturedSignal = options.signal;
+                    return {
+                        success: true,
+                        phaseA:  {
+                            phase:               'phaseA' as const,
+                            itemsScanned:        0,
+                            indexItemsCreated:   0,
+                            indexItemsRefreshed: 0,
+                            indexItemsDeleted:   0,
+                            metadataCleaned:     0,
+                            errors:              0,
+                            startTime:           new Date(),
+                            endTime:             new Date(),
+                        },
+                        phaseB: {
+                            phase:               'phaseB' as const,
+                            itemsScanned:        0,
+                            indexItemsCreated:   0,
+                            indexItemsRefreshed: 0,
+                            indexItemsDeleted:   0,
+                            metadataCleaned:     0,
+                            errors:              0,
+                            startTime:           new Date(),
+                            endTime:             new Date(),
+                        },
+                        totalDurationMs: 100,
+                    } as ReconciliationResult;
+                }
+            );
+
+            const config: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       1000,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliationCapture,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+
+            // Run to completion (not aborted) — finishRun must clear the tracked
+            // controller back to null so a later, unrelated stop() has nothing to abort.
+            const result = await scheduler.triggerNow();
+            expect(result?.success).toBe(true);
+            expect(capturedSignal?.aborted).toBe(false);
+
+            // No run is active now — stop() must be a no-op with respect to the
+            // already-completed run's controller.
+            scheduler.stop();
+
+            expect(capturedSignal?.aborted).toBe(false);
         });
 
         test('should reset state to not running', async () => {
@@ -1345,6 +1443,32 @@ describe('ReconciliationScheduler', () => {
         }
     });
 
+    test('a repeated startup-mode start discards the prior generation\'s pending drift trigger', async () => {
+        const config: ReconciliationConfig = {
+            enabled:          true, intervalMs:       10_000, operationDelayMs: 0, scanPageSize:     25,
+            backoff:          { baseDelayMs: 100, maxAttempts: 3 },
+            testMode:         { triggerOnStartup: true },
+        };
+        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler.start();
+        // Drift replaces the startup timer with an immediate trigger bound to the first generation
+        scheduler.notifyDrift();
+        // A startup-mode restart arms a fresh startup timer without clearing the drift timer
+        scheduler.start();
+        expect(jest.getTimerCount()).toBe(2);
+
+        // The stale drift trigger fires but belongs to the old generation, so it must not run
+        jest.advanceTimersByTime(0);
+        await Promise.resolve();
+        expect(mockRunReconciliation).not.toHaveBeenCalled();
+
+        // Only the new generation's startup trigger runs, and it does not reschedule a periodic cycle
+        jest.advanceTimersByTime(10);
+        await Promise.resolve();
+        expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
     test('a stopped run cannot schedule another cycle after restart', async () => {
         const result = await mockRunReconciliation() as ReconciliationResult;
         mockRunReconciliation.mockClear();
@@ -1467,5 +1591,74 @@ describe('ReconciliationScheduler', () => {
         expect(mockLogger.info).toHaveBeenCalledTimes(2); // Starting scheduled reconciliation is the second info log.
         finish(result);
         await Promise.resolve();
+    });
+
+    test('uses the documented startup initialization delay', () => {
+        const config: ReconciliationConfig = {
+            enabled:          true, intervalMs:       10_000, operationDelayMs: 0, scanPageSize:     25,
+            backoff:          { baseDelayMs: 100, maxAttempts: 3 },
+            testMode:         { triggerOnStartup: true },
+        };
+        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        const timerSpy = jest.spyOn(globalThis, 'setTimeout');
+        try {
+            scheduler.start();
+            expect(timerSpy).toHaveBeenCalledTimes(1);
+            expect(timerSpy.mock.calls[0]?.[1]).toBe(10);
+        } finally {
+            timerSpy.mockRestore();
+        }
+    });
+
+    test('queues a drift reconciliation on the next timer turn', () => {
+        const config: ReconciliationConfig = {
+            enabled:          true, intervalMs:       10_000, operationDelayMs: 0, scanPageSize:     25,
+            backoff:          { baseDelayMs: 100, maxAttempts: 3 },
+        };
+        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler.start();
+        const timerSpy = jest.spyOn(globalThis, 'setTimeout');
+        try {
+            scheduler.notifyDrift();
+            expect(timerSpy).toHaveBeenCalledTimes(1);
+            expect(timerSpy.mock.calls[0]?.[1]).toBe(0);
+        } finally {
+            timerSpy.mockRestore();
+        }
+    });
+
+    test('waits for a running scheduled reconciliation before calculating its next cycle', async () => {
+        const result = await mockRunReconciliation() as ReconciliationResult;
+        mockRunReconciliation.mockClear();
+        let resolveRun!: (value: ReconciliationResult) => void;
+        mockRunReconciliation.mockImplementationOnce(() => new Promise<ReconciliationResult>((resolve) => {
+            resolveRun = resolve;
+        }));
+        const config: ReconciliationConfig = {
+            enabled:          true, intervalMs:       50, operationDelayMs: 0, scanPageSize:     25,
+            backoff:          { baseDelayMs: 100, maxAttempts: 3 },
+        };
+        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler.start();
+        jest.advanceTimersByTime(50);
+        expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
+
+        jest.advanceTimersByTime(75);
+        await Promise.resolve();
+        resolveRun(result);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        jest.advanceTimersByTime(24);
+        expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
+        jest.advanceTimersByTime(1);
+        await Promise.resolve();
+        expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
+        jest.advanceTimersByTime(24);
+        expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
+        jest.advanceTimersByTime(1);
+        await Promise.resolve();
+        expect(mockRunReconciliation).toHaveBeenCalledTimes(2);
     });
 });

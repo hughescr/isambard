@@ -53,6 +53,23 @@ describe('stopPreviousHotReloadInstance', () => {
         expect(logger.warn).toHaveBeenCalledWith({ error: 'boom', msg: 'Hot reload: previous instance failed to stop cleanly' });
     });
 
+    test('logs a rejected non-Error reason as readable text', async () => {
+        const host: Record<string, unknown> = {};
+        const logger = makeLogger();
+        registerHotReloadInstance(host, {
+            stop: async () => {
+                throw 'stopping failed';
+            },
+        });
+
+        await stopPreviousHotReloadInstance(host, logger);
+
+        expect(logger.warn).toHaveBeenCalledWith({
+            error: 'stopping failed',
+            msg:   'Hot reload: previous instance failed to stop cleanly',
+        });
+    });
+
     test.each([
         ['null', null],
         ['a string', 'stop'],

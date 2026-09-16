@@ -84,6 +84,7 @@ export class ReviewHandler {
     }
 
     private async dispatchReviewAction(prefix: string, interaction: ButtonInteraction, uid: number, sourceFolder: EmailFolder): Promise<void> {
+        // Stryker disable next-line llm: prefix is typed string, so `prefix + ''` is the identity and the switch selects the same branch.
         switch(prefix) {
             case 'email-trash': {
                 await this.handleTrash(interaction, uid, sourceFolder);
@@ -147,7 +148,6 @@ export class ReviewHandler {
         const email = await this.wildDuckClient.getFullMessage(sourceFolder, uid);
         if(!email) {
             throw new EmailProcessingError(`Message UID ${uid} not found in ${sourceFolder}`, { uid, sourceFolder });
-            // Stryker restore StringLiteral,ObjectLiteral
         }
 
         await this.wildDuckClient.moveMessage(sourceFolder, uid, EmailFolder.CleanInbox);

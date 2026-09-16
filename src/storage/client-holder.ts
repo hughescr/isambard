@@ -74,6 +74,7 @@ export class DynamoDBClientHolder {
             // Eagerly destroy the previously-pending client: a newer displaced client is
             // taking its place in the queue, so there is no reason to keep it alive any
             // longer (it was about to be destroyed when the timer fired anyway).
+            // Stryker disable next-line llm: pendingDestroyClient is non-null whenever its timer is non-null; swap() sets both and timer and destroy callbacks clear both.
             this.pendingDestroyClient!.destroy();
             this.pendingDestroyClient = null;
         }

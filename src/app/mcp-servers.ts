@@ -445,6 +445,7 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
             }
             browserMcpServer = createBrowserMCPServer({
                 adapter:            options.browserAdapter,
+                // Stryker disable next-line llm: browserPolicy is typed BrowserHostPolicy | undefined (object or nullish), so || and ?? select the same value.
                 policy:             options.browserPolicy ?? { allowlist: undefined },
                 maxScreenshotBytes: options.browserMaxScreenshotBytes,
                 maxTextBytes:       options.browserMaxTextBytes,

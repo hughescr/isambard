@@ -27,7 +27,10 @@ export function cacheDir(): string {
     }
     // Linux (XDG or fallback)
     const xdgCache = process.env.XDG_CACHE_HOME;
-    const cacheBase = xdgCache ?? path.join(home, '.cache');
+    // An empty XDG_CACHE_HOME must be treated as unset (XDG Base Directory spec): with `??` the empty
+    // value would win and yield the relative path 'llama.cpp', resolved against the process cwd.
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty XDG_CACHE_HOME must fall back to ~/.cache per the XDG Base Directory spec, so `||` is intentional here
+    const cacheBase = xdgCache || path.join(home, '.cache');
     return path.join(cacheBase, 'llama.cpp');
 }
 

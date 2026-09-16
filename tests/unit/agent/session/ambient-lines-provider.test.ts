@@ -102,7 +102,7 @@ function quotaLineJson(line: string): JsonObject {
 }
 
 describe('provider quota JSON', () => {
-    it.each([[1_209_600, '2w'], [172_800, '2d'], [7200, '2h'], [90, '90s']] as const)(
+    it.each([[1_209_600, '2w'], [172_800, '2d'], [7200, '2h'], [90, '90s'], [-1800, '-1800s']] as const)(
         'renders a %s-second duration as %s', (durationSeconds, window) => {
             const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota({ durationSeconds })] }) })]));
             expect(object(array(data.quotas)[0]).window).toBe(window);
@@ -1365,5 +1365,12 @@ describe('direct Anthropic fallback', () => {
     it('does not replace a provider snapshot with SDK ledger data', () => {
         const data = renderJson(snapshot([]));
         expect(object(object(data.anthropic).quota_lookup).error).toBe('quota_api_no_reading');
+    });
+});
+
+describe('mutation regression boundaries', () => {
+    it('serializes quota headroom to ten decimal places', () => {
+        const line = render(snapshot([provider({ quotaAfter: observation({ quotas: [quota({ usedPercent: 33.333_333_333_33 })] }) })]));
+        expect(line).toContain('"remaining_percent": 66.6666666667,');
     });
 });

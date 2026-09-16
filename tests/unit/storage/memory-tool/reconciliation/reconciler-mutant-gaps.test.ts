@@ -275,4 +275,77 @@ describe('reconciler public progress and producer contracts', () => {
         expect(result.phaseC.countsCorrected).toBe(0);
         expect(update).not.toHaveBeenCalled();
     });
+
+    test('does not read a rename target off an array-valued metadata field', async () => {
+        // An array is typeof 'object' and not null, so a naive object-shape check would let it
+        // through; the array-typed field must still be treated as absent metadata ({}), not as a
+        // source of a previouslyKnownAs rename target. Give the array an own `previouslyKnownAs`
+        // property (arrays can carry arbitrary own properties) so a dropped Array.isArray guard
+        // would leak it through and trigger a second GSI2 TAG_COUNTS enumeration (Phase A's
+        // backward-compat rename-cleanup path), on top of Phase B's unconditional one.
+        const arrayMetadata = Object.assign([], { previouslyKnownAs: '/identity/old.md' }) as unknown as Record<string, unknown>;
+        const item: MemoryToolItem = { ...memoryItem, tags: new Set(), metadata: arrayMetadata };
+        const gsi2Calls: Record<string, unknown>[] = [];
+        const deps = makeDeps(async (command) => {
+            const input = commandInput(command);
+            const values = input.ExpressionAttributeValues as Record<string, unknown> | undefined;
+            if(input.IndexName === 'GSI1') {
+                return { Items: values?.[':gsi1pk'] === 'LAYER#identity' ? [item] : [] };
+            }
+            if(input.IndexName === 'GSI2') {
+                gsi2Calls.push(input);
+                return { Items: [] };
+            }
+            return { Items: [] };
+        });
+
+        await runReconciliation(deps, options);
+
+        expect(gsi2Calls).toHaveLength(1); // Only Phase B's unconditional tag enumeration
+    });
+
+    test('sends the configured scanPageSize as Limit for both the GSI1 layer scan and the Phase B tag-index scan', async () => {
+        const inputs: Record<string, unknown>[] = [];
+        const deps = makeDeps(async (command) => {
+            const input = commandInput(command);
+            inputs.push(input);
+            if(input.IndexName === 'GSI1') {
+                return { Items: [] };
+            }
+            if(input.IndexName === 'GSI2') {
+                return { Items: [{ GSI2SK: 'TAG#alpha' }] };
+            }
+            return { Items: [] };
+        });
+
+        await runReconciliation(deps, { ...options, scanPageSize: 7 });
+
+        const gsi1Query = inputs.find(input => input.IndexName === 'GSI1');
+        expect(gsi1Query?.Limit).toBe(7);
+
+        const tagScanQuery = inputs.find(input => input.KeyConditionExpression === 'PK = :pk AND begins_with(SK, :skPrefix)');
+        expect(tagScanQuery?.Limit).toBe(7);
+    });
+});
+
+/**
+ * Phase A must cover every memory layer: the layer list is the only producer of
+ * the GSI1 partition keys that Phase A scans.
+ */
+describe('reconciler phase A layer coverage', () => {
+    test('scans identity, state and events exactly once each', async () => {
+        const scannedPartitions: string[] = [];
+        const deps = makeDeps(async (command) => {
+            const values = commandInput(command).ExpressionAttributeValues as Record<string, string> | undefined;
+            const partition = values?.[':gsi1pk'];
+            if(partition) {
+                scannedPartitions.push(partition);
+            }
+            return { Items: [] };
+        });
+
+        await runReconciliation(deps, options);
+
+        expect(scannedPartitions).toEqual(['LAYER#identity', 'LAYER#state', 'LAYER#events']);
+    });
 });

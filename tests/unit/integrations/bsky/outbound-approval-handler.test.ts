@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import type { ButtonInteraction, ModalSubmitInteraction } from 'discord.js';
 import type { BlueskyClient } from '../../../../src/integrations/bsky/client';
 import { BskyOutboundApprovalHandler, type BskyOutboundApprovalHandlerDeps } from '../../../../src/integrations/bsky/outbound-approval-handler';
@@ -195,6 +195,10 @@ describe('BskyOutboundApprovalHandler', () => {
         mockLogger.error.mockClear();
         mockLogger.info.mockClear();
         mockLogger.debug.mockClear();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
     });
 
     describe('async completion contracts', () => {
@@ -1405,11 +1409,13 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(deps.rejectionBackend.recordRejection).not.toHaveBeenCalled();
             // Should show error embed (NOT "Rejected")
             expect(editReply).toHaveBeenCalledTimes(1);
-            const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title: string } }[], components: unknown[] };
+            const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title: string, color?: number } }[], components: unknown[] };
             expect(replyArg.embeds).toHaveLength(1);
             expect(replyArg.embeds[0]?.data?.title).toContain('Rejection failed');
             // Should NOT show "Rejected"
             expect(replyArg.embeds[0]?.data?.title).not.toBe('Rejected');
+            // Missing-embed error uses the amber color constant (pins src/integrations/bsky/outbound-approval-handler.ts AMBER)
+            expect(replyArg.embeds[0]?.data?.color).toBe(0xFF_AA_00);
             // Should log error about missing embed
             expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
                 msg: 'Missing embed on Bluesky rejection modal — cannot extract rejection data',
@@ -2140,6 +2146,135 @@ describe('BskyOutboundApprovalHandler', () => {
                 const { editReply } = interaction as unknown as { editReply: ReturnType<typeof mock> };
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
                 expect(replyArg.embeds[0]?.data?.title).toContain('Approved');
+            });
+        });
+
+        describe('mutation regression coverage', () => {
+            test('uses the amber color for a recoverable missing-embed reply', async () => {
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
+                (interaction.message.embeds as unknown as unknown[]).length = 0;
+
+                await handler.handleButton(interaction);
+
+                const reply = editReply.mock.calls[0]?.[0] as { embeds: { data: { color?: number } }[] };
+                expect(reply.embeds[0]?.data.color).toBe(0xFF_AA_00);
+            });
+
+            test('uses an ISO-8601 timestamp for reply approval sagas', async () => {
+                jest.useFakeTimers({ now: new Date('2026-01-02T03:04:05.678Z') });
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                const created = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0];
+                expect(created.createdAt).toBe('2026-01-02T03:04:05.678Z');
+                expect(created.updatedAt).toBe('2026-01-02T03:04:05.678Z');
+            });
+
+            test.each([
+                ['reply', `bsky-send-approve:${TEST_UUID}`, false],
+                ['DM',    `bsky-dm-approve:${TEST_UUID}`,   true],
+            ])('persists a complete UUID for %s approvals', async (_kind, customId, isDM) => {
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = isDM ? makeDMButtonInteraction(customId) : makeButtonInteraction(customId);
+
+                await handler.handleButton(interaction);
+
+                const created = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0];
+                expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+            });
+
+            test('shows the complete reply approval status', async () => {
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                const reply = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
+                expect(reply.embeds[0]?.data.title).toBe('Approved ✓ — posting shortly');
+            });
+
+            test('hands the reply target value to the allowlist saga', async () => {
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                expect(deps.allowlistInteractionHandler.startFromApproval).toHaveBeenCalledWith(interaction, 'bsky', TEST_HANDLE);
+            });
+
+            test('rejects an empty DM conversation ID', async () => {
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`, { convoId: '' });
+
+                await handler.handleButton(interaction);
+
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(editReply).toHaveBeenCalledTimes(1);
+            });
+
+            test('uses one current instant for both DM saga timestamps', async () => {
+                jest.useFakeTimers({ now: new Date('2026-01-02T03:04:05.678Z') });
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                const created = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0];
+                expect(created.createdAt).toBe('2026-01-02T03:04:05.678Z');
+                expect(created.updatedAt).toBe('2026-01-02T03:04:05.678Z');
+            });
+
+            test('shows the complete DM approval status', async () => {
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                const reply = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
+                expect(reply.embeds[0]?.data.title).toBe('DM Approved ✓ — sending shortly');
+            });
+
+            test('uses the first DM approval embed when a message contains several embeds', async () => {
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeDMButtonInteraction(`bsky-dm-approveallowlist:${TEST_UUID}`);
+                (interaction.message.embeds as unknown as { description: string, fields: { name: string, value: string, inline: boolean }[] }[]).push({
+                    description: 'unrelated later embed',
+                    fields:      [
+                        { name: 'Recipients', value: JSON.stringify([DM_HANDLE_BOB]), inline: false },
+                        { name: 'Conversation ID', value: 'later-conversation', inline: true },
+                    ],
+                });
+
+                await handler.handleButton(interaction);
+
+                const created = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0];
+                expect(created.params).toMatchObject({ text: DM_TEXT, convoId: DM_CONVO_ID });
+                expect(deps.allowlistInteractionHandler.startFromApproval).toHaveBeenCalledWith(interaction, 'bsky', DM_HANDLE_ALICE);
+            });
+
+            test('hands every DM recipient value to the allowlist saga', async () => {
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeDMButtonInteraction(
+                    `bsky-dm-approveallowlist:${TEST_UUID}`, { recipientHandles: [DM_HANDLE_ALICE, DM_HANDLE_BOB] }
+                );
+
+                await handler.handleButton(interaction);
+
+                expect(deps.allowlistInteractionHandler.startFromApproval).toHaveBeenNthCalledWith(1, interaction, 'bsky', DM_HANDLE_ALICE);
+                expect(deps.allowlistInteractionHandler.startFromApproval).toHaveBeenNthCalledWith(2, interaction, 'bsky', DM_HANDLE_BOB);
             });
         });
     });

@@ -38,6 +38,7 @@ export function resolveChannelId(input: string, channelRegistry: ChannelRegistry
     const channelName = input.slice(1);
     const allChannels = channelRegistry.getAllChannels();
 
+    // Stryker disable next-line llm: filter(...)[0] and find(...) select the same first match (undefined when none) and the predicate is pure, so the two are indistinguishable.
     const matchingChannel = allChannels.find(ch => ch.channelName === channelName);
 
     if(!matchingChannel) {

@@ -170,7 +170,6 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
                 totalDurationMs: result.totalDurationMs,
                 msg:             'Reconciliation complete',
             });
-            /* Stryker restore StringLiteral,ObjectLiteral */
 
             return result;
         } catch (error) {
@@ -236,6 +235,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
 
     return {
         start(): void {
+            // Stryker disable next-line llm: config.enabled is a required boolean (zod schema default), so !config.enabled and config.enabled === false are equivalent for every value
             if(!config.enabled) {
                 logger.info({ msg: 'Reconciliation scheduler disabled' });
                 return;
@@ -245,13 +245,16 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
             started = true;
 
             // Check for test mode
+            // Stryker disable next-line llm: testMode.triggerOnStartup is boolean|undefined (zod optional), so this truthy check and === true are equivalent for every value
             if(config.testMode?.triggerOnStartup) {
                 logger.info({ msg: 'Reconciliation scheduler in test mode - triggering on startup' });
                 // Small delay to ensure initialization
                 const runGeneration = generation;
                 schedulerTimeout = setTimeout(() => {
+                    // Stryker disable next-line llm: started and generation change together, making the started guard redundant; both generation values are objects, so == and === both use reference equality
                     if(started && runGeneration === generation) {
                         schedulerTimeout = null;
+                        // Stryker disable next-line llm: void only documents an intentionally-unhandled promise; dropping it leaves the promise unawaited and unconsumed either way
                         void doTrigger();
                     }
                 }, 10);
@@ -265,7 +268,6 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
                 intervalMs: config.intervalMs,
                 msg:        'Reconciliation scheduler started',
             });
-            /* Stryker restore StringLiteral,ObjectLiteral */
         },
 
         stop(): void {
@@ -279,6 +281,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
 
             // Abort running reconciliation
             if(abortController) {
+                // Stryker disable next-line llm: reconciler.ts and scheduler.ts only ever check signal.aborted, never signal.reason, so passing an abort reason here is unobservable
                 abortController.abort();
                 abortController = null;
             }
@@ -317,6 +320,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
 
             // Clear current scheduled timeout and reschedule immediately
             if(schedulerTimeout) {
+                // Stryker disable next-line llm: clearInterval and clearTimeout cancel the same timer handle identically in Bun and Node; only a spy on the function name could tell them apart
                 clearTimeout(schedulerTimeout);
                 schedulerTimeout = null;
             }

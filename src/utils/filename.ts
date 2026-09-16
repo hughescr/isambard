@@ -27,10 +27,12 @@ export function deduplicateFilename(filename: string, used: Set<string>): string
         return filename;
     }
     const dotIdx  = filename.lastIndexOf('.');
+    // Stryker disable next-line llm: slice(0, n) and substring(0, n) are identical for n >= 0, and dotIdx is guaranteed >= 0 in this branch (the -1 case takes the other ternary arm).
     const base    = dotIdx === -1 ? filename  : filename.slice(0, dotIdx);
     const ext     = dotIdx === -1 ? ''     : filename.slice(dotIdx);
     // Each occupied candidate is a distinct member of the finite `used` set, so a
     // monotonically increasing suffix must eventually find an available name.
+    // Stryker disable next-line llm: the for-update expression value is discarded, so prefix and postfix increment of the local counter are indistinguishable.
     for(let counter = 1; ; counter++) {
         const candidate = `${base}-(${counter})${ext}`;
         if(!used.has(candidate)) {

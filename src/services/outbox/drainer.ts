@@ -61,7 +61,6 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                 // Re-check availability after each item
                 if(!registry.isAvailable(service)) {
                     logger.info({ service }, 'Service went offline mid-drain, stopping');
-                    // Stryker restore ObjectLiteral,StringLiteral
                     break;
                 }
 
@@ -69,7 +68,6 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                 if(item.epoch > currentEpoch) {
                     result.skipped += 1;
                     logger.warn({ service, itemId: item.id, itemEpoch: item.epoch, currentEpoch }, 'Deleting outbox item from future epoch');
-                    // Stryker restore ObjectLiteral,StringLiteral
                     // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
                     await outboxBackend.markSent(item);
                     continue;
@@ -84,7 +82,6 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                 } catch (err: unknown) {
                     const message = err instanceof Error ? err.message : String(err);
                     logger.error({ service, itemId: item.id, error: message }, 'Failed to deliver outbox item');
-                    // Stryker restore ObjectLiteral,StringLiteral
                     // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
                     await outboxBackend.markFailed(item, message);
                     result.failed += 1;
@@ -92,9 +89,12 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
             }
 
             // If the batch was full and the service is still up, schedule another drain
+            // Stryker disable next-line llm: dequeue issues one DynamoDB Query with Limit = batchSize and never paginates, so items.length cannot exceed batchSize and === and >= coincide.
+            const batchFull = items.length === batchSize;
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stopped can be set true by stop() between awaits
-            if(items.length === batchSize && registry.isAvailable(service) && !stopped) {
+            if(batchFull && registry.isAvailable(service) && !stopped) {
                 pendingTimer = setTimeout(() => {
+                    // Stryker disable next-line llm: pendingTimer is only read by stop()'s clearTimeout, which is a no-op on a fired timer, and the next schedule overwrites it, so a retained handle is unobservable.
                     pendingTimer = undefined;
                     void drain(service);
                 }, drainIntervalMs);

@@ -2591,6 +2591,61 @@ The channel must always be given explicitly — there is no ambient conversation
             // Should return error since thread creation threw
             expect(result.isError).toBe(true);
         });
+
+        test('falls back to the original channel when createThread is true but the channel type has no threads collection', async () => {
+            const send = mock(async (_content: unknown) => ({ id: 'question-message-id' }));
+            const dmChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => true,
+                send,
+                // DM channels have no `threads` property at all - 'threads' in channel is
+                // false even though createThread is true, so this must not attempt to
+                // create one.
+            };
+            mockClient.channels.fetch = mock(async () => dmChannel);
+
+            const result = await getToolHandler(createServer(), 'askUserQuestion')({
+                channelId:    '123456789012345678',
+                question:     'DM question?',
+                createThread: true,
+                threadName:   'Some Thread',
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(send).toHaveBeenCalledTimes(1);
+        });
+
+        test('creates the thread with the exact supplied name, even an empty one (no upstream validation on this path)', async () => {
+            const mockThread = {
+                id:          'thread-id',
+                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+            };
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                threads:     { create: mock(async (_options: unknown) => mockThread) },
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            // Unlike sendDiscordMessage, askUserQuestion never runs threadName through
+            // validateThreadCreation, so an empty string reaches prepareQuestionChannel
+            // as-is and must not be coalesced away.
+            await getToolHandler(createServer(), 'askUserQuestion')({
+                channelId:    '123456789012345678',
+                question:     'Thread question?',
+                createThread: true,
+                threadName:   '',
+            });
+
+            expect(mockChannel.threads.create).toHaveBeenCalledWith({ name: '' });
+        });
     });
 
     describe('fetchAndValidateChannel helper', () => {
@@ -2615,6 +2670,28 @@ The channel must always be given explicitly — there is no ambient conversation
                 { channelId: '123456789012345678' },
                 'Discord tool returned error: Channel is not text-based'
             );
+        });
+
+        test('fetches the channel through the retry helper', async () => {
+            const mockVoiceChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => false,
+            };
+            mockClient.channels.fetch = mock(async () => mockVoiceChannel);
+
+            const server = createServer();
+            const handler = getToolHandler(server, 'sendDiscordMessage');
+
+            await handler({
+                channelId: '123456789012345678',
+                content:   'Test message',
+            });
+
+            // Nothing else in this flow calls retryHelper.withRetry before the
+            // not-text-based error short-circuits, so exactly one call proves the
+            // channel fetch itself was wrapped in the retry helper rather than
+            // calling client.channels.fetch directly.
+            expect(mockRetryHelper.withRetry).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -3452,6 +3529,167 @@ The channel must always be given explicitly — there is no ambient conversation
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toBe('Error: Registry unavailable');
+        });
+    });
+
+    describe('surviving mutant regressions', () => {
+        test('addReaction reports a single failed emoji and flags the result as an error', async () => {
+            const mockMessage = {
+                id:    'message-123',
+                react: mock(async (emoji: string) => {
+                    if(emoji === '❤️') {
+                        throw new Error('Invalid emoji');
+                    }
+                }),
+            };
+            const mockChannel = {
+                id:          '123456789012345678',
+                messages:    { fetch: mock(async () => mockMessage) },
+                isTextBased: () => true,
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const result = await getToolHandler(createServer(), 'addReaction')({
+                channelId: '123456789012345678',
+                messageId: 'message-123',
+                emoji:     ['👍', '❤️'],
+            });
+
+            expect(result.isError).toBe(true);
+
+            const parsed = JSON.parse(textContent(result.content[0]));
+            expect(parsed.success).toBe(false);
+            expect(parsed.addedEmojis).toEqual(['👍']);
+            expect(parsed.failedEmojis).toEqual([{ emoji: '❤️', error: 'Invalid emoji' }]);
+            expect(mockLogger.warn).toHaveBeenCalled();
+        });
+
+        test('normalizeChannelId falls back to the requested channel id when a thread has no parent', async () => {
+            const mockThread = {
+                id:          'thread-id',
+                parentId:    null,
+                isThread:    () => true,
+                isTextBased: () => true,
+            };
+            const mockParentChannel = {
+                id:          'resolved-channel-id',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                send:        mock(async () => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async (channelId: string) => {
+                if(channelId === 'resolved-channel-id') {
+                    return mockThread;
+                }
+                return mockParentChannel;
+            });
+
+            await getToolHandler(createServer(), 'askUserQuestion')({
+                channelId: 'resolved-channel-id',
+                question:  'Test question?',
+            });
+
+            expect(mockQuestionRegistry.register).toHaveBeenCalled();
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.channelId).toBe('resolved-channel-id');
+        });
+
+        test('logs hasOptions false when an empty options array is supplied', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                send:        mock(async () => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            await getToolHandler(createServer(), 'askUserQuestion')({
+                channelId: '123456789012345678',
+                question:  'Empty options?',
+                options:   [],
+            });
+
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                hasOptions:  false,
+                optionCount: 0,
+            }));
+        });
+
+        test('separates the target mention from the question with a single space', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                send:        mock(async (_options: MessageCreateOptions | string) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            await getToolHandler(createServer(), 'askUserQuestion')({
+                channelId:    '123456789012345678',
+                question:     'What is your favorite color?',
+                targetUserId: 'user-123',
+            });
+
+            const sendCall = mockChannel.send.mock.calls[0][0] as { content?: string };
+            expect(sendCall.content).toBe('<@user-123> What is your favorite color?');
+        });
+
+        test('retries a transient fetch failure when replying to a message', async () => {
+            let fetchAttempts = 0;
+            const originalMessage = {
+                id:    'original-message-id',
+                reply: mock(async () => ({ id: 'reply-message-id' })),
+            };
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                send:        mock(async () => ({ id: 'sent-message-id' })),
+                messages:    {
+                    fetch: mock(async () => {
+                        fetchAttempts++;
+                        if(fetchAttempts === 1) {
+                            throw new Error('transient fetch failure');
+                        }
+                        return originalMessage;
+                    }),
+                },
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+            mockRetryHelper.withRetry = mock((fn: () => Promise<unknown>) => fn().catch(() => fn()));
+
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId:        '123456789012345678',
+                content:          'replying',
+                replyToMessageId: 'original-message-id',
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(originalMessage.reply).toHaveBeenCalled();
+            expect(fetchAttempts).toBe(2);
+        });
+
+        test('treats an @ as a DM marker only when it is the first character', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                send:        mock(async () => ({ id: 'sent-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId: '#games@night',
+                content:   'hello',
+            });
+
+            expect(mockDMTracker.getOrCreateDMByUsername).not.toHaveBeenCalled();
+            expect(mockChannelRegistry.resolveChannelId).toHaveBeenCalledWith('#games@night');
         });
     });
 });

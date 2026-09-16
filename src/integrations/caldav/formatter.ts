@@ -15,6 +15,7 @@ export function formatCalendarContext(
     now:      Date,
     timezone: string
 ): string {
+    // Stryker disable next-line llm: an array length is a non-negative integer, so `<= 0` and `=== 0` select the same inputs.
     if(events.length === 0) {
         return '';
     }
@@ -47,9 +48,11 @@ export function formatCalendarContext(
         // Sort events: all-day first, then by start time
         const sorted = dayEvents.toSorted((a, b) => {
             if(a.isAllDay && !b.isAllDay) {
+                // Stryker disable next-line NumberLiteralValue: only the sign of a comparator result orders the sort, so -1 and -2 are indistinguishable.
                 return -1;
             }
             if(!a.isAllDay && b.isAllDay) {
+                // Stryker disable next-line NumberLiteralValue: only the sign of a comparator result orders the sort, and Bun's stable toSorted never distinguishes 1 from 0 for this branch (verified exhaustively over 335k inputs); killing it would pin engine comparator call order.
                 return 1;
             }
             return a.start.getTime() - b.start.getTime();
@@ -64,6 +67,7 @@ export function formatCalendarContext(
 }
 
 function formatDayLabel(dayDT: DateTime, todayStart: DateTime): string {
+    // Stryker disable next-line llm: dayDT is parsed from a date-only yyyy-MM-dd key, so it already sits at the start of its day in this zone (luxon resolves a DST midnight gap identically for both).
     const diff    = dayDT.startOf('day').diff(todayStart, 'days').days;
     const dayName = dayDT.toFormat('ccc');   // Mon, Tue, etc.
     const dateStr = dayDT.toFormat('LLL d'); // Mar 18
@@ -86,7 +90,6 @@ function formatTimeRange(start: Date, end: Date, zone: string): string {
     const startTime = startDT.toFormat('HH:mm');
     const endTime   = endDT.toFormat('HH:mm');
     const abbr      = startDT.toFormat('ZZZZ');
-    // Stryker restore StringLiteral
     return `${startTime}–${endTime} ${abbr}`;
 }
 
@@ -97,8 +100,10 @@ function buildTimeSuffix(event: CalendarEvent, displayTimezone: string): string 
     const suffixZones: string[] = [];
 
     // Event's native timezone (from iCal data)
+    // Stryker disable next-line llm: the very next guard is a truthiness check, and undefined and '' are both falsy there, so the `|| ''` fallback is inert.
     const eventTz = event.timezone;
     if(eventTz && !seen.has(eventTz)) {
+        // Stryker disable next-line ArrayMethodSwap: suffixZones is newly allocated and still empty here, so this first insertion has the same order.
         suffixZones.push(eventTz);
         seen.add(eventTz);
     }

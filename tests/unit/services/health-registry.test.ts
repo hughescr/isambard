@@ -141,6 +141,29 @@ describe('ServiceHealthRegistryImpl', () => {
             }).toThrow();
         });
 
+        test('should not let a caller replace an existing entry on the returned record', () => {
+            const all = registry.getAll();
+
+            expect(Object.isFrozen(all)).toBe(true);
+            expect(() => {
+                (all as Record<string, unknown>).discord = {};
+            }).toThrow();
+        });
+
+        test('should list services in the canonical SERVICE_NAMES order on every call', () => {
+            const canonicalOrder = [
+                'discord',
+                'discord-channel-registry',
+                'email',
+                'bluesky',
+                'caldav',
+                'dynamodb',
+            ];
+
+            expect(Object.keys(registry.getAll())).toEqual(canonicalOrder);
+            expect(Object.keys(registry.getAll())).toEqual(canonicalOrder);
+        });
+
         test('should reflect current state for each service', () => {
             registry.sendEvent('discord', 'CONFIGURE');
             registry.sendEvent('discord', 'CONNECT_SUCCESS');
@@ -584,6 +607,83 @@ describe('ServiceHealthRegistryImpl', () => {
             expect(summary).toBeDefined();
             // No trailing newline
             expect(summary.endsWith('\n')).toBe(false);
+        });
+
+        test('should list offline services in SERVICE_NAMES order', () => {
+            for(const service of ['discord', 'email'] as ServiceName[]) {
+                registry.sendEvent(service, 'CONFIGURE');
+                registry.sendEvent(service, 'CONNECT_FAIL');
+            }
+
+            const lines = registry.buildStatusSummary()!.split('\n');
+            expect(lines).toHaveLength(2);
+            expect(lines[0]).toContain('discord: offline');
+            expect(lines[1]).toContain('email: offline');
+        });
+
+        test('should include the offline duration, error and retry parts in that order', () => {
+            const now = new Date('2026-01-01T00:00:00.000Z');
+            jest.setSystemTime(now);
+
+            registry.sendEvent('discord', 'CONFIGURE');
+            registry.sendEvent('discord', 'CONNECT_FAIL', {
+                error:       'Timeout',
+                nextRetryAt: new Date(now.getTime() + 61_000),
+            });
+
+            expect(registry.buildStatusSummary()).toBe(
+                'discord: offline (offline now) [CONNECTION_FAILED: Timeout] retry in ~2m'
+            );
+        });
+
+        test('should report how long a service has been offline', () => {
+            const now = new Date('2026-01-01T00:00:00.000Z');
+            jest.setSystemTime(now);
+
+            registry.sendEvent('discord', 'CONFIGURE');
+            registry.sendEvent('discord', 'CONNECT_FAIL');
+
+            jest.setSystemTime(new Date(now.getTime() + 90_000));
+
+            expect(registry.buildStatusSummary()).toBe('discord: offline (offline 1m ago)');
+        });
+
+        describe('retry deadline formatting', () => {
+            const NOW = new Date('2026-01-01T00:00:00.000Z');
+
+            function goOfflineWithRetryIn(retryInMs: number): void {
+                jest.setSystemTime(NOW);
+                registry.sendEvent('discord', 'CONFIGURE');
+                registry.sendEvent('discord', 'CONNECT_FAIL', {
+                    nextRetryAt: new Date(NOW.getTime() + retryInMs),
+                });
+            }
+
+            test('should report a retry deadline one millisecond away as one second', () => {
+                goOfflineWithRetryIn(1);
+
+                expect(registry.buildStatusSummary()).toContain('retry in ~1s');
+            });
+
+            test('should round sub-second remainders up to whole seconds', () => {
+                goOfflineWithRetryIn(1001);
+
+                expect(registry.buildStatusSummary()).toContain('retry in ~2s');
+            });
+
+            test('should report 59s as seconds and 60s as one minute', () => {
+                goOfflineWithRetryIn(59_000);
+                expect(registry.buildStatusSummary()).toContain('retry in ~59s');
+
+                goOfflineWithRetryIn(59_001);
+                expect(registry.buildStatusSummary()).toContain('retry in ~1m');
+            });
+
+            test('should round partial minutes up to whole minutes', () => {
+                goOfflineWithRetryIn(61_000);
+
+                expect(registry.buildStatusSummary()).toContain('retry in ~2m');
+            });
         });
     });
 

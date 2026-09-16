@@ -43,7 +43,6 @@ export function createCompactionHooks(sink: CompactionSink): Partial<Record<Hook
                             trigger:         preInput.trigger,
                             msg:             'Context compaction starting',
                         });
-                        // Stryker restore StringLiteral,ObjectLiteral
 
                         // Report to the sink so it can do whatever it does (e.g. fold the trigger
                         // into the session ledger).
@@ -55,7 +54,6 @@ export function createCompactionHooks(sink: CompactionSink): Partial<Record<Hook
                             // stale state, but compaction must continue — stalling compaction to
                             // surface a sink error would be worse than the silent degradation.
                         }
-                        // Stryker restore BlockStatement
                         return { 'continue': true };
                     },
                 ],
@@ -78,7 +76,6 @@ export function createCompactionHooks(sink: CompactionSink): Partial<Record<Hook
                             summaryLength:   postInput.compact_summary.length,
                             msg:             'Context compaction completed',
                         });
-                        // Stryker restore StringLiteral,ObjectLiteral
 
                         // Report to the sink (e.g. record the compaction summary in the session
                         // ledger).
@@ -90,7 +87,6 @@ export function createCompactionHooks(sink: CompactionSink): Partial<Record<Hook
                             // showing stale state, but the agent session must continue — a stale
                             // cosmetic phase is preferable to blocking post-compaction processing.
                         }
-                        // Stryker restore BlockStatement
                         return { 'continue': true };
                     },
                 ],

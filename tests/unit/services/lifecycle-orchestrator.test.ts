@@ -172,6 +172,13 @@ describe('serviceLifecycleMachine', () => {
             actor.stop();
         });
 
+        test('should retain an explicit empty error string on CONNECT_FAIL', () => {
+            const actor = actorInState('starting');
+            actor.send({ type: 'CONNECT_FAIL', error: '' });
+            expect(actor.getSnapshot().context.lastError).toEqual({ code: 'CONNECTION_FAILED', message: '' });
+            actor.stop();
+        });
+
         test('should set nextRetryAt from event on CONNECT_FAIL', () => {
             const retryAt = new Date(Date.now() + 5000);
             const actor = actorInState('starting');

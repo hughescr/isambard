@@ -7,7 +7,6 @@ import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integration
 import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
 
 const AMBER = 0xFF_AA_00;
-// Stryker restore all
 
 export interface BskyOutboundApprovalHandlerDeps {
     client:                      BlueskyClient
@@ -89,6 +88,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
     }
 
     protected async dispatchApprovedButton(prefix: string, interaction: ButtonInteraction, _uuid: string): Promise<void> {
+        // Stryker disable next-line llm: prefix is typed string, so `prefix + ''` is the identity and the switch selects the same branch.
         switch(prefix) {
             case 'bsky-send-approve': {
                 await this.handleApprove(interaction);
@@ -244,7 +244,9 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
             await this.replyWithApprovalError(interaction, 'Approval failed — please retry');
             return;
         }
+        // Stryker disable next-line llm: description is string | null, so nullish and logical fallbacks to '' are equivalent
         const text   = embed.description ?? '';
+        // Stryker disable next-line llm: the discord.js Embed.fields getter always returns an array, so the nullish fallback is inert
         const fields = embed.fields;
 
         const parentUri = fields.find(f => f.name === 'Parent URI')?.value;
@@ -313,6 +315,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
             return;
         }
         const text   = embed.description ?? '';
+        // Stryker disable next-line llm: the discord.js Embed.fields getter always returns an array, so the nullish fallback is inert
         const fields = embed.fields;
 
         const convoId = fields.find(f => f.name === 'Conversation ID')?.value;

@@ -65,9 +65,11 @@ Classification:`;
 }
 
 function parseClassificationResponse(response: string): ClassificationResult {
+    // Stryker disable next-line llm: trim and toLowerCase commute — lowercasing never adds or removes whitespace, so the order is unobservable.
     const normalized = response.trim().toLowerCase();
 
     // Extract first word if response contains explanation
+    // Stryker disable next-line llm: String.prototype.split ignores the global flag, so /[\s-]/g splits identically to /[\s-]/.
     const firstWord = normalized.split(/[\s-]/)[0];
 
     // Try to parse as valid classification result

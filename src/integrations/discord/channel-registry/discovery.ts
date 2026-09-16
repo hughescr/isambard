@@ -78,6 +78,7 @@ export async function discoverAllChannels(
         result.updated += value.updated;
         if(value.error) {
             result.errors.push({
+                // Stryker disable next-line llm: guildId is a guild cache key, typed as a Snowflake string by Discord.js, so the nullish fallback is unreachable
                 guildId: value.guildId,
                 error:   value.error,
             });
@@ -185,6 +186,7 @@ export function setupChannelEventHandlers(
         }
 
         const metadata = createChannelMetadata(channel, channel.guild);
+        // Stryker disable next-line llm: `void` only satisfies no-floating-promises; Discord's emitter ignores listener return values, so the unobserved upsert promise behaves identically either way
         void manager.upsertChannel(metadata);
     });
 

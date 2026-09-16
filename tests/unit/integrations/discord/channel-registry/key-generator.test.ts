@@ -306,4 +306,11 @@ describe('ChannelRegistryKeyGenerator', () => {
             expect(channelId).toBe(originalChannelId);
         });
     });
+
+    it('requires separators in both guild index key prefixes', () => {
+        expect(() => ChannelRegistryKeyGenerator.parseGuildKeys('GUILD123', 'CHANNEL#456'))
+            .toThrow('Invalid GSI1PK format: expected GUILD#..., got GUILD123');
+        expect(() => ChannelRegistryKeyGenerator.parseGuildKeys('GUILD#123', 'CHANNEL456'))
+            .toThrow('Invalid GSI1SK format: expected CHANNEL#..., got CHANNEL456');
+    });
 });

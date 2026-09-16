@@ -24,7 +24,6 @@ export {
  * Phase identifier for reconciliation job
  */
 const reconciliationPhaseSchema = z.enum(['phaseA', 'phaseB', 'phaseC']);
-/* Stryker restore StringLiteral */
 
 /**
  * Runtime state for reconciliation job

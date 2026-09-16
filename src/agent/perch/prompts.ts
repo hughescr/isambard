@@ -41,5 +41,6 @@ export function formatSlotName(slot: PerchSlot): string {
     }
     // TypeScript exhaustiveness - this line should be unreachable
 
+    // Stryker disable next-line llm: slot is the exhausted string union, so String(slot) and slot interpolate identically; only a Symbol would differ and the typed API cannot supply one.
     throw new InvariantViolationError('getSlotDescription', `Unknown slot: ${String(slot)}`);
 }

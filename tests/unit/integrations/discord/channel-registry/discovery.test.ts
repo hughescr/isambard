@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock, type Mock, afterEach, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, mock, type Mock, afterEach, spyOn, jest } from 'bun:test';
 import type { Client, Guild, GuildChannel } from 'discord.js';
 import { mockLogger } from '../../../../setup';
 import {
@@ -43,6 +43,7 @@ describe('discovery', () => {
     });
 
     afterEach(() => {
+        jest.useRealTimers();
         // Clear all mocks
         (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockClear();
         (mockManager.upsertChannel as Mock<(metadata: ChannelMetadata) => Promise<void>>).mockClear();
@@ -145,6 +146,36 @@ describe('discovery', () => {
             expect(metadata.discoveredAt).toBe('2025-01-01T00:00:00.000Z');
             expect(metadata.lastSeenAt).not.toBe('2025-01-01T00:00:00.000Z');
             expect(metadata.updatedAt).not.toBe('2025-01-01T00:00:00.000Z');
+        });
+
+        it('records failures while refreshing existing channel metadata', async () => {
+            const mockChannel = {
+                id:   'channel-1',
+                name: 'general-renamed',
+                send: mock(noop),
+            } as unknown as GuildChannel;
+            mockGuild.channels.fetch = mock(async () => new Map([['channel-1', mockChannel]])) as unknown as typeof mockGuild.channels.fetch;
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+            (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue({
+                channelId:    createChannelId('channel-1'),
+                guildId:      createGuildId('guild-123'),
+                channelName:  'general',
+                isMuted:      false,
+                discoveredAt: '2025-01-01T00:00:00.000Z',
+                lastSeenAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:    '2025-01-01T00:00:00.000Z',
+            });
+            mockManager.upsertChannel = mock(async () => {
+                throw new Error('metadata write failed');
+            });
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result).toEqual({
+                discovered: 0,
+                updated:    0,
+                errors:     [{ guildId: 'guild-123', error: 'metadata write failed' }],
+            });
         });
 
         it('should preserve user settings when updating channels', async () => {
@@ -279,6 +310,73 @@ describe('discovery', () => {
                 guildId: 'guild-123',
                 error:   'Network error',
             });
+        });
+
+        it('preserves cache order when collecting guild discovery errors', async () => {
+            const firstGuild = {
+                id:       'guild-first',
+                channels: {
+                    fetch: mock(async () => {
+                        throw new Error('first failure');
+                    }),
+                },
+            } as unknown as Guild;
+            const secondGuild = {
+                id:       'guild-second',
+                channels: {
+                    fetch: mock(async () => {
+                        throw new Error('second failure');
+                    }),
+                },
+            } as unknown as Guild;
+            mockClient.guilds.cache.set('guild-first', firstGuild);
+            mockClient.guilds.cache.set('guild-second', secondGuild);
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result.errors).toEqual([
+                { guildId: 'guild-first', error: 'first failure' },
+                { guildId: 'guild-second', error: 'second failure' },
+            ]);
+        });
+
+        it('limits concurrent guild channel fetches to three', async () => {
+            let releaseFetches!: () => void;
+            const fetchesReleased = new Promise<void>((resolve) => {
+                releaseFetches = resolve;
+            });
+            let fetchesStarted = 0;
+            const createBlockedGuild = (id: string): Guild => ({
+                id,
+                channels: {
+                    fetch: mock(async () => {
+                        fetchesStarted++;
+                        await fetchesReleased;
+                        return new Map();
+                    }),
+                },
+            }) as unknown as Guild;
+
+            for(let index = 1; index <= 4; index++) {
+                mockClient.guilds.cache.set(`guild-${index}`, createBlockedGuild(`guild-${index}`));
+            }
+
+            const pending = discoverAllChannels(mockClient, mockManager);
+
+            expect(fetchesStarted).toBe(3);
+            releaseFetches();
+            await pending;
+        });
+
+        it('stringifies null failures from guild discovery', async () => {
+            mockGuild.channels.fetch = mock(async () => {
+                throw null;
+            });
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+
+            const result = await discoverAllChannels(mockClient, mockManager);
+
+            expect(result.errors).toEqual([{ guildId: 'guild-123', error: 'null' }]);
         });
 
         it('waits for admitted upserts after failure and starts no queued write', async () => {
@@ -674,5 +772,32 @@ describe('discovery', () => {
                 expect(client2.on).toHaveBeenCalledTimes(3);
             });
         });
+    });
+
+    it('records refreshed channel timestamps as ISO datetimes', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2025-02-03T04:05:06.789Z'));
+        try {
+            const channel = { id: 'channel-1', name: 'general', send: mock(noop) } as unknown as GuildChannel;
+            mockGuild.channels.fetch = mock(async () => new Map([['channel-1', channel]])) as unknown as typeof mockGuild.channels.fetch;
+            mockClient.guilds.cache.set('guild-123', mockGuild);
+            (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue({
+                channelId:    createChannelId('channel-1'),
+                guildId:      createGuildId('guild-123'),
+                channelName:  'old-name',
+                isMuted:      false,
+                discoveredAt: '2025-01-01T00:00:00.000Z',
+                lastSeenAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:    '2025-01-01T00:00:00.000Z',
+            });
+
+            await discoverAllChannels(mockClient, mockManager);
+
+            const metadata = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0]?.[0] as ChannelMetadata;
+            expect(metadata.lastSeenAt).toBe('2025-02-03T04:05:06.789Z');
+            expect(metadata.updatedAt).toBe('2025-02-03T04:05:06.789Z');
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });

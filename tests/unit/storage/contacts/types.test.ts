@@ -47,6 +47,16 @@ describe.concurrent('contactIdentifierSchema', () => {
         const result = contactIdentifierSchema.safeParse({ platform: 'name', value: 'a'.repeat(501) });
         expect(result.success).toBe(false);
     });
+
+    test('accepts value at the 1-char minimum', () => {
+        const result = contactIdentifierSchema.safeParse({ platform: 'name', value: 'a' });
+        expect(result.success).toBe(true);
+    });
+
+    test('accepts value at the 500-char maximum', () => {
+        const result = contactIdentifierSchema.safeParse({ platform: 'name', value: 'a'.repeat(500) });
+        expect(result.success).toBe(true);
+    });
 });
 
 describe.concurrent('contactIdSchema', () => {
@@ -81,6 +91,19 @@ describe.concurrent('contactIdSchema', () => {
     test('rejects id over 100 chars', () => {
         const result = contactIdSchema.safeParse('a'.repeat(101));
         expect(result.success).toBe(false);
+    });
+
+    test('accepts id at the 100-char maximum', () => {
+        const result = contactIdSchema.safeParse('a'.repeat(100));
+        expect(result.success).toBe(true);
+    });
+
+    test('rejects empty id with a too-small issue for the 1-char minimum', () => {
+        const result = contactIdSchema.safeParse('');
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues.some(issue => issue.code === 'too_small')).toBe(true);
+        }
     });
 
     test('rejects id with uppercase letters', () => {
@@ -181,6 +204,16 @@ describe.concurrent('contactSchema', () => {
     test('rejects contact with displayName over 200 chars', () => {
         const result = contactSchema.safeParse({ ...VALID_CONTACT, displayName: 'a'.repeat(201) });
         expect(result.success).toBe(false);
+    });
+
+    test('accepts contact with displayName at the 1-char minimum', () => {
+        const result = contactSchema.safeParse({ ...VALID_CONTACT, displayName: 'a' });
+        expect(result.success).toBe(true);
+    });
+
+    test('accepts contact with displayName at the 200-char maximum', () => {
+        const result = contactSchema.safeParse({ ...VALID_CONTACT, displayName: 'a'.repeat(200) });
+        expect(result.success).toBe(true);
     });
 
     test('rejects contact with empty identifiers array', () => {

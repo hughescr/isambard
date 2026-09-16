@@ -5,7 +5,6 @@ import { z } from 'zod';
  * Extensible — new platforms can be added here as they are integrated.
  */
 export const platformTypeSchema = z.enum(['name', 'nickname', 'discord', 'email', 'bsky']);
-// Stryker restore all
 
 export type PlatformType = z.infer<typeof platformTypeSchema>;
 
@@ -25,7 +24,6 @@ export type ContactIdentifier = z.infer<typeof contactIdentifierSchema>;
  * E.g., "craig-hughes" or "alice-wonderland"
  */
 const CONTACT_ID_REGEX = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/;
-// Stryker restore Regex
 
 export const contactIdSchema = z
     .string()
@@ -38,7 +36,6 @@ export const contactIdSchema = z
         }
     )
     .brand<'ContactId'>();
-// Stryker restore ObjectLiteral,StringLiteral
 
 export type ContactId = z.infer<typeof contactIdSchema>;
 

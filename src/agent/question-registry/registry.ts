@@ -78,7 +78,6 @@ export class QuestionRegistry {
                 msg:        'Question registered',
             });
         });
-        // Stryker restore BlockStatement
     }
 
     /**

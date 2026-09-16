@@ -23,6 +23,7 @@ interface MemoryToolKeys {
  * @returns Content truncated to 100 characters
  */
 export function generateContentPreview(content: string): string {
+    // Stryker disable next-line llm: substring(0, 100) and slice(0, 100) are identical for in-range non-negative bounds
     return content.slice(0, 100);
 }
 
@@ -33,7 +34,9 @@ export function generateContentPreview(content: string): string {
  * @returns Normalized, deduplicated, lowercase tags as Set
  */
 export function normalizeTags(tags: Set<string> | undefined): Set<string> {
+    // Stryker disable next-line llm: !tags vs tags === undefined / tags == null differ only for null, '', 0 and false, none of which the declared Set<string> | undefined type or memoryToolItemSchema (types.ts) admits
     if(!tags) {
+        // Stryker disable next-line llm: the guard above proves tags is undefined here, and new Set(undefined) is the same empty Set as new Set()
         return new Set();
     }
     return new Set([...tags].map(tag => tag.toLowerCase()));
@@ -63,6 +66,7 @@ export const MemoryToolKeyGenerator = {
    */
     createKeys(path: MemoryPath, timestamp?: string): MemoryToolKeys {
         const lastSlashIndex = path.lastIndexOf('/');
+        // Stryker disable next-line llm: MemoryPath starts with '/', so lastSlashIndex cannot be negative and <= 0 is equivalent to === 0.
         const parentPath = lastSlashIndex === 0 ? '/' : path.slice(0, lastSlashIndex);
         const filename = path.slice(lastSlashIndex + 1);
 
@@ -70,6 +74,7 @@ export const MemoryToolKeyGenerator = {
 
         // Extract layer from path (identity, state, events) or use first path segment as fallback
         const layer = extractLayerFromPath(path);
+        // Stryker disable next-line llm: layer is the non-empty validated fallback value or null, so both proposed replacements preserve the result.
         const layerStr = layer ?? path.split('/')[1];
 
         return {

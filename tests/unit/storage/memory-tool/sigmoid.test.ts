@@ -131,3 +131,25 @@ describe.concurrent('sigmoidScore', () => {
         });
     });
 });
+
+/**
+ * Change detector for the exported defaults table. If a maintainer deliberately changes a
+ * documented default, this literal copy and the source table must be updated together.
+ */
+describe.concurrent('DEFAULT_SIGMOID_PARAMS', () => {
+    test('pins the documented default parameters', () => {
+        const sevenDaysMs = 604_800_000; // 7 days in milliseconds
+
+        expect(DEFAULT_SIGMOID_PARAMS).toEqual({
+            steepness: 0.5,
+            midpoint:  5,
+            lambda:    Math.LN2 / sevenDaysMs,
+        });
+    });
+
+    test('lambda gives the documented 7-day half-life', () => {
+        const sevenDaysMs = 604_800_000;
+
+        expect(Math.exp(-DEFAULT_SIGMOID_PARAMS.lambda * sevenDaysMs)).toBeCloseTo(0.5, 12);
+    });
+});

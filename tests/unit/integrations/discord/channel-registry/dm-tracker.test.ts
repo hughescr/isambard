@@ -49,6 +49,10 @@ describe('DM Tracker Utilities', () => {
         test('should return false for case variation', () => {
             expect(isDMChannelName('dm - alice')).toBe(false);
         });
+
+        test('should return false when the at-sign is not the first character', () => {
+            expect(isDMChannelName('user@example.com')).toBe(false);
+        });
     });
 });
 
@@ -186,6 +190,30 @@ describe('DMTracker', () => {
             expect(upsertCall.lastSeenAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
             expect(upsertCall.updatedAt).toBeDefined();
             expect(upsertCall.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        });
+
+        test('should propagate a registry upsert rejection', async () => {
+            const userId = createUserId('123456789');
+            const channelId = createChannelId('987654321');
+
+            const mockDMChannel = {
+                id: channelId,
+            } as unknown as DMChannel;
+
+            const mockUser = {
+                id:       userId,
+                username: 'alice',
+                createDM: mock(async () => mockDMChannel),
+            } as unknown as { id: string, username: string, createDM: () => Promise<DMChannel> };
+
+            mockClient.users = {
+                fetch: mock(async () => mockUser),
+            } as unknown as typeof mockClient.users;
+            mockManager.upsertChannel = mock(() => Promise.reject(new Error('registry unavailable')));
+
+            // The registry write is part of the operation: its failure must reject the
+            // caller rather than vanish into an unhandled rejection while this resolves.
+            await expect(tracker.getOrCreateDM(userId)).rejects.toThrow('registry unavailable');
         });
     });
 
@@ -465,6 +493,15 @@ describe('DMTracker', () => {
             const upsertCall = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0][0] as Record<string, unknown>;
             expect(upsertCall.channelName).toBe('@alice_123');
         });
+
+        test('should propagate a registry upsert rejection', async () => {
+            const userId = createUserId('123456789');
+            const channelId = createChannelId('987654321');
+
+            mockManager.upsertChannel = mock(() => Promise.reject(new Error('registry unavailable')));
+
+            await expect(tracker.trackFromMessage(userId, channelId, 'alice')).rejects.toThrow('registry unavailable');
+        });
     });
 
     describe('resolveUserByName', () => {
@@ -706,6 +743,42 @@ describe('DMTracker', () => {
             expect(user.username).toBe('dana');
             expect(user.displayName).toBe('Dana');
             expect(user.nickname).toBe('D');
+        });
+
+        test('should resolve a member matched by username alone', async () => {
+            const userId = '121212121';
+            const members: MockMember[] = [{
+                user:        { id: userId, username: 'craig', tag: 'craig_old#0000' },
+                displayName: 'C. Hughes',
+                nickname:    null,
+            }];
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [makeMockGuild(members)]) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('craig');
+
+            expect(result.status).toBe('resolved');
+            const resolved = result as Extract<UserResolveResult, { status: 'resolved' }>;
+            expect(resolved.user.username).toBe('craig');
+        });
+
+        test('should normalize a member with no nickname property to null', async () => {
+            // A partial member object (no nickname key at all) must still surface the
+            // declared ResolvedUser shape: nickname is `string | null`, never undefined.
+            const members = [{
+                user:        { id: '131313131', username: 'erin', tag: 'erin#0000' },
+                displayName: 'Erin',
+            }] as unknown as MockMember[];
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [makeMockGuild(members)]) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('erin');
+
+            expect(result.status).toBe('resolved');
+            const resolved = result as Extract<UserResolveResult, { status: 'resolved' }>;
+            expect(resolved.user.nickname).toBeNull();
         });
     });
 });

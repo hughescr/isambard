@@ -10,8 +10,6 @@ const allowlistSagaStateSchema = z.enum([
 const allowlistSagaPlatformSchema = z.enum(['email', 'bsky']);
 export type AllowlistSagaPlatform = z.infer<typeof allowlistSagaPlatformSchema>;
 
-// Stryker restore all
-
 export const allowlistSagaSchema = z.object({
     id:               z.uuid(),
     state:            allowlistSagaStateSchema,

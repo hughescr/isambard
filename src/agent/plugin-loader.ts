@@ -24,6 +24,7 @@ type PluginsConfig = z.infer<typeof PluginsConfigSchema>;
  */
 export function resolveExternalPath(inputPath: string): string {
     if(inputPath.startsWith('~/')) {
+        // Stryker disable next-line llm: substring(2) and slice(2, inputPath.length) are equivalent to slice(2) for every string
         return path.join(homedir(), inputPath.slice(2));
     }
     if(inputPath === '~') {
@@ -99,6 +100,7 @@ export async function findLatestMarketplaceVersion(marketplacePath: string, plug
         version: semver.valid(dir.name),
     }));
 
+    // Stryker disable next-line llm: semver.valid returns string | null, never undefined, so an extra undefined check is redundant.
     const withSemver = withVersionInfo.filter(v => v.version !== null);
 
     // Check each directory for validity in parallel
@@ -113,9 +115,11 @@ export async function findLatestMarketplaceVersion(marketplacePath: string, plug
 
     // Sort by semver ascending and return the last (latest)
     const sorted = validVersions.toSorted((a, b) => {
+        // Stryker disable next-line llm: a.version is semver.valid(a.name), so parsing the raw directory name yields the same SemVer ordering as parsing its canonical form.
         const av = semver.parse(a.version);
+        // Stryker disable next-line llm: b.version is semver.valid(b.name), so parsing the raw directory name yields the same SemVer ordering as parsing its canonical form.
         const bv = semver.parse(b.version);
-        // Stryker disable next-line NumberLiteralValue: versions passed semver.valid and the null-valued entries were filtered out before parsing.
+        // Stryker disable next-line NumberLiteralValue,llm: versions passed semver.valid and the null-valued entries were filtered out before parsing, so the null fallback is unreachable.
         return av === null || bv === null ? 0 : semver.compare(av, bv);
     });
     const latest = sorted.at(-1);
@@ -324,6 +328,7 @@ export async function loadPlugins(
     const inRepoPlugins = await discoverInRepoPlugins(pluginsDir);
     for(const plugin of inRepoPlugins) {
         const name = path.basename(plugin.path);
+        // Stryker disable next-line llm: guarding Set.add with !has is equivalent because Set.add is idempotent
         loadedNames.add(name);
         allPlugins.push(plugin);
     }
@@ -340,6 +345,7 @@ export async function loadPlugins(
     const config = await loadPluginsConfig(pluginsDir);
 
     // 3. Resolve external plugins
+    // Stryker disable next-line llm: PluginsConfigSchema and every fallback guarantee externalPaths is an array
     const externalPlugins = await resolveExternalPlugins(config.externalPaths, loadedNames);
     allPlugins.push(...externalPlugins);
 
@@ -352,6 +358,7 @@ export async function loadPlugins(
     }
 
     // 4. Resolve marketplace plugins (lowest priority)
+    // Stryker disable next-line llm: PluginsConfigSchema and every fallback guarantee marketplace is an array
     const marketplacePlugins = await resolveMarketplacePlugins(config.marketplace, marketplacePath, loadedNames);
     allPlugins.push(...marketplacePlugins);
 

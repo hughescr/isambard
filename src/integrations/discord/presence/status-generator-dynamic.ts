@@ -139,6 +139,7 @@ Output only the thought.`;
  * Format tool input as a JSON summary, truncated if needed.
  */
 function formatToolInputSummary(toolInput: unknown): string {
+    // Stryker disable next-line llm: `== undefined` only additionally admits null, which the disjunction's other arm already accepts, so the guard is equivalent
     if(toolInput === undefined || toolInput === null) {
         return '(no input)';
     }
@@ -182,6 +183,7 @@ function buildUserPrompt(context: SynopsisContext, previousStatus: string | null
         // this section: `turn-synopsis.ts` builds every `userMessage` from `LedgerTurn.seed`,
         // which was already sliced to that width when the envelope was built. A second local
         // constant here could only ever drift into being unreachable.
+        // Stryker disable next-line ArrayMethodSwap: first insertion into the freshly created empty array, so push and unshift are equivalent
         sections.push(`## Question being answered\n${userMessage.slice(0, SYNOPSIS_SEED_CAP)}`);
     }
 
@@ -217,6 +219,7 @@ function buildUserPrompt(context: SynopsisContext, previousStatus: string | null
 
     // Last: the system prompt asks for a thought different from the last one, which is only
     // possible if the last one is actually shown.
+    // Stryker disable next-line llm: previousStatus is typed string | null and this private helper's only caller passes state.cachedStatus, so undefined is unreachable and != null is equivalent
     if(previousStatus !== null) {
         sections.push(`## Previous status\n${previousStatus}`);
     }
@@ -418,6 +421,7 @@ export function createDynamicStatusGenerator(
     const systemPrompt = [buildSystemPrompt(identityContext), SYSTEM_PROMPT_DYNAMIC_BOUNDARY];
 
     const state: InstanceState = {
+        // Stryker disable next-line NumberLiteralValue: unobservable — cachedStatus starts null so the cooldown gate short-circuits, and every write of cachedStatus is followed synchronously by finally overwriting lastHaikuCall
         lastHaikuCall:      0,
         cachedStatus:       null,
         inFlightController: null,

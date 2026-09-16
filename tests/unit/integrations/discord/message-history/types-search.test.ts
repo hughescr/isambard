@@ -380,6 +380,7 @@ describe('searchResponseSchema', () => {
     });
 });
 
+// Boundary values deliberately pin Zod's public .min(1) and .min(0) contracts.
 describe('message-history schema boundaries', () => {
     const validSearchResult: DiscordSearchResult = {
         id:          '999888777666555444', channelId:   '123456789012345678' as ChannelId,

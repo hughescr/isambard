@@ -133,6 +133,27 @@ describe('createSagaExecutor', () => {
             );
         });
 
+        test('propagates rejection when persisting the failed state fails', async () => {
+            const saga = makeSaga({ type: 'bsky_reply' });
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
+                async (): Promise<ApprovalSaga[]> => [saga]
+            );
+            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
+                async (): Promise<void> => { throw new Error('network failure'); }
+            );
+            (backend.updateState as ReturnType<typeof mock>).mockImplementation(
+                async (_id: string, state: string): Promise<void> => {
+                    if(state === 'failed') {
+                        throw new Error('persist failed-state write failed');
+                    }
+                }
+            );
+
+            const executor = createSagaExecutor({ backend, registry, executors, logger });
+
+            await expect(executor.executeOnce()).rejects.toThrow('persist failed-state write failed');
+        });
+
         test('uses String(err) for non-Error exceptions', async () => {
             const saga = makeSaga({ type: 'bsky_reply' });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(

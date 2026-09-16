@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
 import { PersonHistoryCoordinator, type PersonHistoryCoordinatorOptions } from '../../../../src/agent/history-providers/coordinator';
 import type { HistoryEntry, HistoryFetchParams, KnownPlatform, PlatformHistoryProvider } from '../../../../src/agent/history-providers/types';
 import type { Contact, ContactId } from '../../../../src/storage/contacts';
@@ -90,6 +90,10 @@ function makeProvider(platform: KnownPlatform, entries: HistoryEntry[] = []): Pl
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe.concurrent('PersonHistoryCoordinator', () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     // ── getPersonHistory ───────────────────────────────────────────────────────
 
     describe('getPersonHistory', () => {
@@ -245,6 +249,24 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             const discordPos = result.history!.indexOf('discord msg');
             const emailPos   = result.history!.indexOf('email msg');
             expect(discordPos).toBeLessThan(emailPos);
+        });
+
+        test('preserves provider registration order for entries with equal timestamps', async () => {
+            const timestamp = '2025-01-01T10:00:00.000Z';
+            const firstProvider = makeProvider('discord', [makeEntry({ timestamp, summary: 'first provider' })]);
+            const secondProvider = makeProvider('email', [makeEntry({ platform: 'email', timestamp, summary: 'second provider' })]);
+            const contact = makeContact({
+                identifiers: [
+                    { platform: 'discord', value: 'craig' },
+                    { platform: 'email', value: 'craig@example.com' },
+                ],
+            });
+            const backend = makeMockBackend();
+            backend.fuzzyLookup.mockImplementation(async (): Promise<Contact[]> => [contact]);
+            const coord = new PersonHistoryCoordinator(makeOptions({ backend, providers: [firstProvider, secondProvider] }));
+            const result = await coord.getPersonHistory('craig');
+
+            expect(result.history!.indexOf('first provider')).toBeLessThan(result.history!.indexOf('second provider'));
         });
 
         test('includes [bsky] platform label in formatted output for bsky entries', async () => {
@@ -609,9 +631,9 @@ describe.concurrent('PersonHistoryCoordinator', () => {
         test('passes platform and identifier to resolveIdentifier', async () => {
             const backend = makeMockBackend();
             const coord   = new PersonHistoryCoordinator(makeOptions({ backend }));
-            await coord.getPersonHistory('craig', { platformHint: 'discord' });
+            await coord.getPersonHistory('Craig@Example.COM', { platformHint: 'discord' });
 
-            expect(backend.resolveIdentifier).toHaveBeenCalledWith('discord', 'craig');
+            expect(backend.resolveIdentifier).toHaveBeenCalledWith('discord', 'Craig@Example.COM');
         });
 
         test('falls back to fuzzyLookup when resolveIdentifier returns empty with platformHint', async () => {
@@ -648,6 +670,73 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             const coord    = new PersonHistoryCoordinator(makeOptions({ providers: [provider] }));
 
             await expect(coord.getPersonHistory('craig')).rejects.toThrow('Unexpected platform: rss');
+        });
+    });
+
+    // ── default option constants ────────────────────────────────────────────────
+
+    describe('default option constants', () => {
+        // Each default in types.ts drives observable coordinator behaviour when the
+        // caller passes no option (or omits that option). These tests pin the defaults
+        // through the public API rather than importing the constants directly.
+
+        test('uses the default maxMessagesPerPlatform of 10 when omitted', async () => {
+            let capturedParams: HistoryFetchParams | undefined;
+            const provider: PlatformHistoryProvider = {
+                platform:     'discord',
+                fetchHistory: mock(async (params): Promise<HistoryEntry[]> => {
+                    capturedParams = params;
+                    return [];
+                }),
+            };
+
+            const coord = new PersonHistoryCoordinator(makeOptions({ providers: [provider] }));
+            await coord.getPersonHistory('craig');
+
+            expect(capturedParams?.maxMessages).toBe(10);
+        });
+
+        test('caps results at the default maxTotalEntries of 30 when omitted', async () => {
+            const entries: HistoryEntry[] = Array.from({ length: 40 }, (_, i) => makeEntry({
+                timestamp: new Date(Date.UTC(2025, 0, 1, 0, i)).toISOString(),
+                summary:   `default-cap-${i}`,
+            }));
+            const provider = makeProvider('discord', entries);
+            const coord    = new PersonHistoryCoordinator(makeOptions({ providers: [provider] }));
+            const result   = await coord.getPersonHistory('craig');
+
+            const matches = result.history?.match(/default-cap-\d+/g) ?? [];
+            expect(matches).toHaveLength(30);
+        });
+
+        test('uses the default time window of 120 minutes when timeWindowMinutes is omitted', async () => {
+            let capturedParams: HistoryFetchParams | undefined;
+            const provider: PlatformHistoryProvider = {
+                platform:     'discord',
+                fetchHistory: mock(async (params): Promise<HistoryEntry[]> => {
+                    capturedParams = params;
+                    return [];
+                }),
+            };
+
+            const explicitEnd = new Date('2025-06-01T12:00:00.000Z');
+            const coord       = new PersonHistoryCoordinator(makeOptions({ providers: [provider] }));
+            await coord.getPersonHistory('craig', { endTime: explicitEnd });
+
+            expect(capturedParams?.endTime?.toISOString()).toBe('2025-06-01T12:00:00.000Z');
+            expect(capturedParams?.startTime?.toISOString()).toBe('2025-06-01T10:00:00.000Z');
+        });
+
+        test('truncates at the default maxCharacters of 12_000 when omitted', async () => {
+            const entries: HistoryEntry[] = Array.from({ length: 5 }, (_, i) => makeEntry({
+                timestamp: new Date(Date.UTC(2025, 0, 1, i)).toISOString(),
+                summary:   'y'.repeat(5000),
+            }));
+            const provider = makeProvider('discord', entries);
+            const coord    = new PersonHistoryCoordinator(makeOptions({ providers: [provider] }));
+            const result   = await coord.getPersonHistory('craig');
+
+            expect(result.history).toHaveLength(12_000);
         });
     });
 
@@ -733,6 +822,57 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             expect(capturedLimit).toBe(15);
         });
 
+        test('uses the default per-platform limit when no limit is supplied', async () => {
+            let capturedLimit: number | undefined;
+            mockSearch.getRecentMessages.mockImplementation(async (_channelId: string, limit?: number): Promise<{ messages: unknown[] }> => {
+                capturedLimit = limit;
+                return { messages: [] };
+            });
+
+            const coord = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
+            await coord.getChannelLocalHistory('ch-123');
+
+            expect(capturedLimit).toBe(10);
+        });
+
+        test('truncates channel history at the default maxCharacters when omitted', async () => {
+            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
+                messages: Array.from({ length: 5 }, (_, _index) => ({ id: 'message', author: { displayName: 'Craig' }, content: 'x'.repeat(5000), timestamp: '2025-01-01T10:00:00.000Z' })),
+            }));
+
+            const coord = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
+            const result = await coord.getChannelLocalHistory('ch-123');
+
+            expect(result).toHaveLength(12_000);
+        });
+
+        test('uses the epoch timestamp when a raw message omits its timestamp', async () => {
+            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
+                messages: [
+                    { id: 'msg1', author: { displayName: 'Craig' }, content: 'timeless' },
+                ],
+            }));
+
+            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
+            const result = await coord.getChannelLocalHistory('ch-123');
+
+            expect(result).toContain('[1970-01-01] Craig: timeless');
+        });
+
+        test('prefers a display name over a username when both are available', async () => {
+            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
+                messages: [
+                    { id: 'msg1', author: { displayName: 'Craig Display', username: 'craiguser' }, content: 'hello', timestamp: '2025-01-01T10:00:00.000Z' },
+                ],
+            }));
+
+            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
+            const result = await coord.getChannelLocalHistory('ch-123');
+
+            expect(result).toContain('Craig Display: hello');
+            expect(result).not.toContain('craiguser: hello');
+        });
+
         test('caps output at maxCharacters when formatted string is longer', async () => {
             const longContent = 'x'.repeat(5000);
             mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
@@ -814,6 +954,42 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             const result = await coord.getChannelLocalHistory('ch-123');
 
             expect(result).toContain('unknown: hello');
+        });
+
+        test('formats a previous UTC date as a date at the midnight boundary', async () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2025-01-02T00:00:00.000Z'));
+            const entry = makeEntry({ timestamp: '2025-01-01T23:59:00.000Z', summary: 'previous day' });
+            const coord = new PersonHistoryCoordinator(makeOptions({ providers: [makeProvider('discord', [entry])] }));
+            const result = await coord.getPersonHistory('craig');
+
+            expect(result.history).toContain('[2025-01-01] previous day');
+        });
+
+        test('formats today timestamps in UTC even when the process timezone differs', async () => {
+            const previousTimezone = process.env.TZ;
+            process.env.TZ = 'Asia/Kathmandu';
+            try {
+                const entry = makeEntry({ timestamp: todayUtc(12, 34), summary: 'UTC timestamp' });
+                const coord = new PersonHistoryCoordinator(makeOptions({ providers: [makeProvider('discord', [entry])] }));
+                const result = await coord.getPersonHistory('craig');
+
+                expect(result.history).toContain('[12:34] UTC timestamp');
+            } finally {
+                if(previousTimezone === undefined) {
+                    delete process.env.TZ;
+                } else {
+                    // eslint-disable-next-line require-atomic-updates -- Restore the timezone captured before this isolated test's await.
+                    process.env.TZ = previousTimezone;
+                }
+            }
+        });
+
+        test('formats an invalid symbol platform in the assertNever diagnostic', async () => {
+            const invalidEntry = makeEntry({ platform: Symbol('invalid platform') as unknown as KnownPlatform });
+            const coord = new PersonHistoryCoordinator(makeOptions({ providers: [makeProvider('discord', [invalidEntry])] }));
+
+            await expect(coord.getPersonHistory('craig')).rejects.toThrow('Unexpected platform: Symbol(invalid platform)');
         });
 
         test('uses empty string fallback when content is absent', async () => {

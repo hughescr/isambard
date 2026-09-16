@@ -744,6 +744,30 @@ describe('MemoryToolBackendTagIndex', () => {
             });
             expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
         });
+
+        test('retries unprocessed items under their own table key, not the first key found', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = new Set(['seed']);
+            const updatedAt = '2024-01-01T00:00:00.000Z';
+
+            ddbMock.on(BatchWriteCommand)
+                .resolvesOnce({
+                    UnprocessedItems: {
+                        TestTable:  [{ PutRequest: { Item: { PK: 'TAG#seed', SK: 'PATH#A' } } }],
+                        OtherTable: [{ PutRequest: { Item: { PK: 'TAG#seed', SK: 'PATH#B' } } }],
+                    },
+                })
+                .resolvesOnce({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
+
+            const promise = backend.createTagIndexItems(path, tags, updatedAt, 'preview', 'identity');
+            await drainTimers();
+            await promise;
+
+            const retryInput = ddbMock.commandCalls(BatchWriteCommand)[1]?.args[0].input.RequestItems;
+            expect(retryInput?.TestTable).toEqual([{ PutRequest: { Item: { PK: 'TAG#seed', SK: 'PATH#A' } } }]);
+            expect(retryInput?.OtherTable).toEqual([{ PutRequest: { Item: { PK: 'TAG#seed', SK: 'PATH#B' } } }]);
+        });
     });
 
     describe('deleteTagIndexItems', () => {
@@ -857,6 +881,22 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(batchCalls).toHaveLength(0);
             const updateCalls = ddbMock.commandCalls(UpdateCommand);
             expect(updateCalls).toHaveLength(0);
+        });
+
+        test('should split into batches of 25', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = new Set(Array.from({ length: 30 }, (_, i) => `tag${i}`));
+
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({ Attributes: { count: 5 } });
+
+            await backend.deleteTagIndexItems(path, tags);
+
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
+            // 30 tags = 2 batches (25 + 5)
+            expect(calls).toHaveLength(2);
+            expect(calls[0].args[0].input.RequestItems?.TestTable).toHaveLength(25);
+            expect(calls[1].args[0].input.RequestItems?.TestTable).toHaveLength(5);
         });
     });
 
@@ -1248,6 +1288,8 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(result.nextCursor).toBeDefined();
             const decodedCursor = JSON.parse(Buffer.from(result.nextCursor!, 'base64').toString('utf8'));
             expect(decodedCursor).toEqual(lastEvaluatedKey);
+            // Pin the exact encoding: a compact (non-pretty-printed) JSON.stringify, base64-encoded.
+            expect(result.nextCursor).toBe(Buffer.from(JSON.stringify(lastEvaluatedKey)).toString('base64'));
         });
     });
 
@@ -1912,6 +1954,24 @@ describe('MemoryToolBackendTagIndex', () => {
                 tags,
                 contentPreview,
             });
+        });
+
+        test('should split into batches of 25', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            const tags = new Set(Array.from({ length: 30 }, (_, i) => `tag${i}`));
+            const updatedAt = '2024-01-01T00:00:00.000Z';
+            const contentPreview = 'My values';
+            const layer = 'identity';
+
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+
+            await backend.refreshTagIndexItems(path, tags, updatedAt, contentPreview, layer);
+
+            const calls = ddbMock.commandCalls(BatchWriteCommand);
+            // 30 tags = 2 batches (25 + 5)
+            expect(calls).toHaveLength(2);
+            expect(calls[0].args[0].input.RequestItems?.TestTable).toHaveLength(25);
+            expect(calls[1].args[0].input.RequestItems?.TestTable).toHaveLength(5);
         });
     });
 

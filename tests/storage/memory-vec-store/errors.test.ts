@@ -100,6 +100,18 @@ describe('VectorIndexUnavailableError', () => {
         expect((err.context as Record<string, unknown>).reason).toBe('extension load failed');
     });
 
+    it('context carries exactly the reason — the cause lives on the error, not in the context', () => {
+        const cause        = new Error('database failed');
+        const withCause    = new VectorIndexUnavailableError('open failed', cause);
+        const withoutCause = new VectorIndexUnavailableError('open failed');
+
+        expect(withCause.context).toStrictEqual({ reason: 'open failed' });
+        expect(withCause.cause).toBe(cause);
+
+        // No cause passed: the context must not grow an explicit `cause: undefined` key either
+        expect(withoutCause.context).toStrictEqual({ reason: 'open failed' });
+    });
+
     it('has a non-empty message', () => {
         const err = new VectorIndexUnavailableError('some reason');
         expect(err.message.length).toBeGreaterThan(0);

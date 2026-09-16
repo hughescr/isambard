@@ -540,6 +540,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     function resolveTurnEndedWaiters(): void {
+        // Stryker disable next-line NumberLiteralValue: turnEndedWaiters holds at most one waiter (only shutdown's single waitForTurnEnd call pushes, behind the shuttingDown guard), so splice(-1) and splice(0) remove the same element
         const waiters = turnEndedWaiters.splice(0);
         for(const waiter of waiters) {
             waiter();
@@ -580,8 +581,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * `task_notification` frame) journals the ordinary `task_completed`.
      */
     function journalTaskLifecycle(ledger: Ledger, event: LedgerEvent): void {
+        // Stryker disable next-line llm: LedgerTask.id is always a string (built from the SDK frame's task_id), so `task.id + ''` is the identity and the id set is unchanged
         const currentTaskIds = new Set(ledger.tasks.map(task => task.id));
         for(const task of ledger.tasks) {
+            // Stryker disable next-line llm: previousTasks is keyed by LedgerTask.id strings, so String(task.id) is the identity and the lookup is unchanged
             if(!previousTasks.has(task.id)) {
                 journal.append({ type: 'task_started', at: now(), taskId: task.id, description: task.description });
             }
@@ -590,6 +593,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         const explicitlyLostTaskId = event.type === 'task_lost' ? event.taskId : undefined;
         for(const [id, task] of previousTasks) {
             if(!currentTaskIds.has(id)) {
+                // Stryker disable next-line llm: both operands are string | undefined, where == and === agree (an undefined taskId is falsy against a string key either way)
                 const lost = isReopen || id === explicitlyLostTaskId;
                 journal.append(lost
                     ? { type: 'task_lost', at: now(), taskId: id, description: task.description }
@@ -607,8 +611,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * blocked on `currentTurn !== null` forever.
      */
     function journalCompactionOutcome(event: LedgerEvent): void {
+        // Stryker disable next-line llm: event.type is a string-literal discriminant, so == and === agree
         if(event.type === 'compaction_failed') {
             journal.append({ type: 'compaction_failed', at: now(), error: event.reason ?? 'compaction attempt did not complete' });
+            // Stryker disable next-line llm: reason is string | undefined, so == and === agree against a string literal
             if(event.reason === 'timeout' && currentTurn?.kind === 'compact') {
                 void interruptCurrentTurnInternal('compaction ceiling exceeded');
             }
@@ -671,6 +677,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             if(firstOtherIndex === -1) {
                 pendingQueue.push(item);
             } else {
+                // Stryker disable next-line NumberLiteralValue: splice clamps a negative deleteCount to 0, so splice(i, -1, item) inserts exactly like splice(i, 0, item)
                 pendingQueue.splice(firstOtherIndex, 0, item);
             }
         } else {
@@ -769,20 +776,24 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     function routeIncoming(item: QueuedItem): void {
+        // Stryker disable next-line llm: `x && true` is truthiness-preserving, so the early-return condition is unchanged
         if(item.withdrawnWhileWaiting) {
             return;
         }
+        // Stryker disable next-line llm: currentTurn is ActiveTurn | null and is never assigned undefined, so == null and == undefined both match === null
         if(currentTurn === null) {
             enqueue(item);
             processQueue();
             return;
         }
+        // Stryker disable llm: `!== undefined` and the truthy test differ only for an empty-string channel id, which no discord caller can produce (both sides are non-empty snowflakes)
         if(item.priority === 'human' && currentTurn.kind === 'discord'
           && item.requestingChannelId !== undefined && item.requestingChannelId === currentTurn.channelId) {
             enqueue(item);
             void interruptCurrentTurnInternal('human envelope for the running channel');
             return;
         }
+        // Stryker restore llm
         if(item.priority === 'human' && isBackgroundKind(currentTurn.kind)) {
             enqueue(item);
             armHumanWaitEscalation();
@@ -830,6 +841,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     function settleErroredTurn(turn: ActiveTurn, item: QueuedItem, progress: StreamProgress, frame: ResultFrame, contextUsagePercent: number): void {
         const error = resultFrameToError(frame);
         const classification = classifyError(error);
+        // Stryker disable next-line llm: attempts and maxAttempts are both integers (attempts starts at 1 and is only incremented; maxAttempts is z.int()), so `< maxAttempts` and `<= maxAttempts - 1` are the same comparison
         const canRetry = (classification.category === 'transient' || classification.category === 'rate_limited') && item.attempts < retryPolicy.maxAttempts;
         if(!canRetry) {
             failTurn(turn, item, progress, error, contextUsagePercent);
@@ -883,10 +895,14 @@ export function createConductor(params: CreateConductorParams): Conductor {
             clock.clearTimer(turn.escalationTimer);
         }
         resolveTurnEndedWaiters();
+        // Stryker disable llm: turn is ActiveTurn | null, an object type, so `turn !== null` and the truthy check select the same branch for every possible value
         if(turn !== null) {
             settleTurn(turn, frame);
         }
+        // Stryker restore llm
+        // Stryker disable llm: readRss is backed by process.memoryUsage().rss, a non-negative integer, so `|| 0` cannot change the dispatched value
         ledgerStore.dispatch({ type: 'tick', rssBytes: readRss(), at: now() });
+        // Stryker restore llm
         // Between here and guard.onTurnEnd() resolving, currentTurn is null but a `/compact` turn
         // may be about to begin (submitCompact -> beginTurn, driven from inside onTurnEnd itself).
         // awaitingTurnEnd blocks onFrame's spontaneous-notification-turn branch for exactly this
@@ -1071,9 +1087,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
     function onFrame(frame: SDKMessage): void {
         guard.onFrame(frame);
         pendingAdoptions = pendingAdoptions.filter((entry) => {
+            // Stryker disable llm: PendingAdoption.setAt is always clock.now() at push time and never null/undefined, so `?? now()` is dead code
             if(!isPendingAdoptionStale(entry.setAt)) {
                 return true;
             }
+            // Stryker restore llm
             warnPendingAdoptionExpired(entry);
             return false;
         });
@@ -1097,10 +1115,12 @@ export function createConductor(params: CreateConductorParams): Conductor {
         currentTurn?.tracker.update(frame as unknown as AgentStreamEvent);
         notifyTurnSubscribers(frame);
         ledgerStore.dispatch({ type: 'sdk_frame', frame, at: now() });
+        // Stryker disable llm: `void` is a compile-time-only marker here; dropping it does not change the runtime call or its fire-and-forget behavior
         if(frame.type === 'result') {
             void afterResult(frame);
         }
     }
+    // Stryker restore llm
 
     /**
      * Opens exactly one fresh `queryFn` call, resolving once the session id is captured or
@@ -1125,6 +1145,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             // Counted here, at the single point where a query's options are actually built, so
             // `maybeStartRequestedReopen` can tell "a query already captured the new prompt" from
             // "every live query predates the request" without comparing handle identities.
+            // Stryker disable next-line NumberLiteralValue: openGeneration is only compared with > against earlier snapshots, so any positive step decides identically (see the same reasoning on its initial 0)
             openGeneration += 1;
             queue.push(toSdkUserMessage(buildBootEnvelope(handshakeText, now())));
             const handle = openSession({
@@ -1197,9 +1218,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
             bufferedAppends.push(toSdkUserMessage(envelope));
             return true;
         }
+        // Stryker disable llm: currentQueue is InputQueue | undefined and never null, so === undefined and == null match the same values
         if(currentQueue === undefined) {
             return false;
         }
+        // Stryker restore llm
         // Deliberately does NOT dispatch `envelope_queued`: that ledger event is only ever
         // balanced by `turn_submitted` (see `enqueue`/`beginTurn`), and this seam by construction
         // never opens a turn — dispatching it here would permanently inflate `ledger.queued.other`
@@ -1226,6 +1249,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     async function runBootRecovery(): Promise<void> {
         try {
             const entries = await journal.readSince(clock.now() - RECOVERY_WINDOW_MS);
+            // Stryker disable next-line llm: computeRecovery is a pure readonly fold, so a shallow entries copy is unobservable
             const recovery = computeRecovery(entries);
 
             for(const lostTask of recovery.lostTasks) {
@@ -1239,6 +1263,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             if(buildBootBundle !== undefined) {
                 resolvedBootBundle = await buildBootBundle({
                     lostTasks:   recovery.lostTasks.map(task => task.description ?? task.taskId),
+                    // Stryker disable next-line llm: an unused shallow copy before this read-only map cannot affect output
                     undelivered: recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`),
                 });
             }
@@ -1488,7 +1513,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
             void interruptCurrentTurnInternal('submit() signal aborted');
             return;
         }
+        // Stryker disable next-line llm: a QueuedItem is enqueued at most once at a time (shifted out before beginTurn, re-queued only after), so indexOf === lastIndexOf over a queue of distinct references
         const index = pendingQueue.indexOf(item);
+        // Stryker disable next-line llm: indexOf returns -1 or a non-negative integer, where `!== -1` and `> -1` agree
         if(index !== -1) {
             pendingQueue.splice(index, 1);
             item.deferred.resolve(withdrawnResult(item));
@@ -1515,10 +1542,12 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
         return new Promise<TurnResult>((resolve, reject) => {
             const item: QueuedItem = {
+                // Stryker disable next-line llm: priority is a required SubmitPriority and is only ever compared with 'human', which 0 (like undefined) never matches
                 envelope, priority: options.priority, requestingChannelId: options.requestingChannelId, attempts: 1, deferred: { resolve, reject },
             };
             const { signal } = options;
             if(signal !== undefined) {
+                // Stryker disable next-line llm: guarded by `signal !== undefined` two lines above, so the optional chain and `?? false` can never engage
                 if(signal.aborted) {
                     resolve(withdrawnResult(item));
                     return;

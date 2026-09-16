@@ -88,6 +88,7 @@ export function mcpServiceUnavailableResult(
 
     // Trigger immediate reconnection if available
     if(reconnectionLoop) {
+        // Stryker disable next-line llm: void only discards the promise value, which an expression statement discards anyway; runtime behaviour is identical.
         void reconnectionLoop.triggerNow();
     }
 
@@ -146,6 +147,7 @@ export function checkWriteServiceHealth(
 
     // Check approval service
     if(!registry.isAvailable(approvalService)) {
+        // Stryker disable next-line llm: getEntry returns a non-nullable Readonly<ServiceHealthEntry>, so a fallback is unreachable.
         const entry = registry.getEntry(approvalService);
         const text = `The ${primaryService} service is online, but ${approvalService} (needed for admin approval) is currently ${entry.state}. Write operations requiring approval are unavailable.`;
         return { content: [{ type: 'text' as const, text }], isError: true };

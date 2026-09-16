@@ -52,6 +52,7 @@ export const SYNOPSIS_SEED_CAP = 200;
  * @returns The capped seed, or `undefined` when there is nothing to seed from
  */
 export function toSynopsisSeed(text: string | undefined): string | undefined {
+    // Stryker disable next-line llm: slice and substring agree from offset zero with a nonnegative cap
     return text ? text.slice(0, SYNOPSIS_SEED_CAP) : undefined;
 }
 
@@ -350,6 +351,7 @@ export interface BuildCatchupEnvelopeParams {
 
 /** Renders a `## Heading` section from a list, or `undefined` when the list is empty/undefined. */
 function renderCatchupListSection(heading: string, items: string[] | undefined): string | undefined {
+    // Stryker disable next-line llm: an array length is a nonnegative integer, so > 0, !== 0 and >= 1 coincide
     return items && items.length > 0 ? `## ${heading}\n${items.join('\n')}` : undefined;
 }
 
@@ -369,7 +371,9 @@ export function buildCatchupEnvelope(params: BuildCatchupEnvelopeParams): Envelo
 
     const stamp = formatEnvelopeStamp(now, timezone);
     const header = `[CATCH-UP · ${stamp}]`;
+    // Stryker disable next-line NumberLiteralValue: the fallback is taken only when unreadCount is undefined, and 0 > 0 and -1 > 0 are both false, so no input can distinguish them.
     const hasUnread = (unreadCount ?? 0) > 0;
+    // Stryker disable next-line NumberLiteralValue: the fallback is taken only when lostTasks is undefined, and 0 > 0 and -1 > 0 are both false, so no input can distinguish them.
     const shouldQuery = hasUnread || (lostTasks?.length ?? 0) > 0;
 
     // The seed is exactly the body — header and time header stripped — so `text` and

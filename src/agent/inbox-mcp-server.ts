@@ -64,7 +64,6 @@ export function createInboxMCPServer(
                             channelCount: overview.channels.length,
                             msg:          'Unread overview retrieved',
                         });
-                        // Stryker restore ObjectLiteral,StringLiteral
 
                         return mcpJsonResult(overview);
                     }))
@@ -81,6 +80,7 @@ export function createInboxMCPServer(
                         const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
                         const messages = inboxManager.getChannelMessages(channelId);
 
+                        // Stryker disable next-line llm: getChannelMessages returns an array whose length is nonnegative, so added falsy and `<= 0` checks are equivalent.
                         if(messages.length === 0) {
                             return mcpJsonResult({
                                 channelId:    args.channelId,
@@ -145,7 +145,6 @@ export function createInboxMCPServer(
                             authorCount:  authors.length,
                             msg:          'Channel summary generated',
                         });
-                        // Stryker restore ObjectLiteral,StringLiteral
 
                         return mcpJsonResult(response);
                     }))
@@ -160,17 +159,22 @@ export function createInboxMCPServer(
                 },
                 withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
                     withToolErrorHandling('fetchMessages', async (args): Promise<CallToolResult> => {
+                        // Stryker disable next-line llm: args.channelId is a required z.string() arg; .toString() on a string is the identity function.
                         const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
 
                         const fetchedMessages = [];
 
                         for(const messageId of args.messageIds) {
+                            // Stryker disable next-line llm: messageId is a required z.array(z.string()) element, never nullish, so `?? ''` is unreachable.
                             const msg = inboxManager.getMessage(channelId, messageId);
                             if(msg) {
                                 fetchedMessages.push({
+                                    // Stryker disable next-line llm: msg.id: string is non-nullable by type, so the `??` fallback is unreachable.
                                     id:        msg.id,
+                                    // Stryker disable next-line llm: msg.author: string is non-nullable by type, so the `??` fallback is unreachable.
                                     author:    msg.author,
                                     timestamp: msg.timestamp,
+                                    // Stryker disable next-line llm: msg.content: string is non-nullable by type, so the `??` fallback is unreachable.
                                     content:   msg.content,
                                 });
                             }
@@ -179,10 +183,10 @@ export function createInboxMCPServer(
                         logger.info({
                             channelId,
                             requestedCount: args.messageIds.length,
+                            // Stryker disable next-line llm: a - (a - b) is an algebraic identity equal to b for finite integer array lengths.
                             fetchedCount:   fetchedMessages.length,
                             msg:            'Messages fetched',
                         });
-                        // Stryker restore ObjectLiteral,StringLiteral
 
                         return mcpJsonResult({ messages: fetchedMessages });
                     }))
@@ -205,7 +209,6 @@ export function createInboxMCPServer(
                             markedCount: args.messageIds.length,
                             msg:         'Messages marked as read',
                         });
-                        // Stryker restore ObjectLiteral,StringLiteral
 
                         return mcpJsonResult({ success: true, markedCount: args.messageIds.length });
                     }))
@@ -226,7 +229,6 @@ export function createInboxMCPServer(
                             channelId,
                             msg: 'Channel marked as read',
                         });
-                        // Stryker restore ObjectLiteral,StringLiteral
 
                         return mcpJsonResult({ success: true });
                     }))

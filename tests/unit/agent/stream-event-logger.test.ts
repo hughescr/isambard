@@ -58,6 +58,16 @@ describe('one-shot stream log helpers', () => {
         });
     });
 
+    test('preserves an explicitly undefined errors field', () => {
+        logResultErrors({ type: 'result', is_error: true, errors: undefined });
+
+        expect(mockLogger.error).toHaveBeenCalledWith({
+            subtype: undefined,
+            errors:  undefined,
+            msg:     'Agent SDK returned error result',
+        });
+    });
+
     test('logs assistant errors', () => {
         const error = new Error('assistant failed');
 
@@ -145,6 +155,39 @@ describe('createStreamEventLogger', () => {
             eventType: 'tool_response',
             toolName:  'Read',
             msg:       'Tool result for LLM: Read',
+        });
+
+        mockLogger.debug.mockClear();
+        streamLogger.logStreamEvent(userEvent);
+        expect(mockLogger.debug).toHaveBeenCalledWith({
+            eventType: 'user',
+            msg:       'Sending message to Claude LLM',
+        });
+    });
+
+    test('correlates multi-tool responses in request order and clears them together', () => {
+        const streamLogger = createStreamEventLogger();
+        streamLogger.logStreamEvent({
+            type:    'assistant',
+            message: { content: [
+                { type: 'tool_use', id: 'tool_1', name: 'Read', input: {} },
+                { type: 'tool_use', id: 'tool_2', name: 'Write', input: {} },
+            ] },
+        });
+        mockLogger.debug.mockClear();
+
+        streamLogger.logStreamEvent(userEvent);
+
+        expect(mockLogger.debug).toHaveBeenCalledTimes(2);
+        expect(mockLogger.debug).toHaveBeenNthCalledWith(1, {
+            eventType: 'tool_response',
+            toolName:  'Read',
+            msg:       'Tool result for LLM: Read',
+        });
+        expect(mockLogger.debug).toHaveBeenNthCalledWith(2, {
+            eventType: 'tool_response',
+            toolName:  'Write',
+            msg:       'Tool result for LLM: Write',
         });
 
         mockLogger.debug.mockClear();

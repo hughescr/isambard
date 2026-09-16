@@ -194,6 +194,7 @@ export class BskyCheckpointManager {
 
         // Compute lastSeenAt (max indexedAt of fetched notifications via lexicographic sort)
         const sortedIndexedAts = notifications.map(n => n.indexedAt).toSorted((a, b) => a.localeCompare(b));
+        // Stryker disable next-line llm: a non-empty map of required BskyNotification.indexedAt strings has a defined final element.
         const lastSeenAt = notifications.length > 0 ? sortedIndexedAts.at(-1) : checkpoint?.lastSeenAt;
 
         // Build deduplicated processedUris
@@ -264,11 +265,18 @@ export class BskyCheckpointManager {
 
         // Candidates: unread conversations that actually carry a lastMessage — a convo with no
         // lastMessage cannot be an unread event.
-        const candidates = convos.filter((c): c is BskyConversation & { lastMessage: NonNullable<BskyConversation['lastMessage']> } => c.unreadCount > 0 && c.lastMessage !== undefined);
+        const candidates = convos.filter(
+            (c): c is BskyConversation & { lastMessage: NonNullable<BskyConversation['lastMessage']> } =>
+                // eslint-disable-next-line @stylistic/operator-linebreak -- Keep the operator with the first predicate so the Stryker directive targets only the second predicate.
+                c.unreadCount > 0 &&
+                // Stryker disable next-line llm: lastMessage is BskyDirectMessage | undefined, so Boolean() cannot differ from !== undefined
+                c.lastMessage !== undefined
+        );
         const newConvos  = candidates.filter(c => !processedSet.has(c.lastMessage.id));
 
         // Compute high-water mark (max ISO timestamp via lexicographic sort) over candidates only.
         const candidateSentAts = candidates.map(c => c.lastMessage.sentAt);
+        // Stryker disable next-line llm: Array.length is a non-negative integer, so > 0 and >= 1 are equivalent.
         const lastSeenSentAt   = candidateSentAts.length > 0
             ? candidateSentAts.toSorted((a, b) => a.localeCompare(b)).at(-1)
             : checkpoint?.lastSeenSentAt;
@@ -276,6 +284,7 @@ export class BskyCheckpointManager {
         // Build deduplicated processedUris (lastMessage.id values)
         const updatedUris = [...new Set([...(checkpoint?.processedUris ?? []), ...candidates.map(c => c.lastMessage.id)])];
 
+        // Stryker disable next-line llm: Array.length is a non-negative integer, so > 0 and >= 1 are equivalent.
         if(newConvos.length > 0 || lastSeenSentAt !== checkpoint?.lastSeenSentAt) {
             const now = new Date().toISOString();
             await this.saveDmCheckpoint({

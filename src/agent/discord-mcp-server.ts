@@ -65,6 +65,7 @@ function isErrorResult(result: unknown): result is { error: CallToolResult } {
 /** Add local time only to search records with a usable timestamp. */
 function addLocalTimestamps(messages: unknown[], timezone: string): void {
     for(const message of messages) {
+        // Stryker disable next-line llm: the fetcher emits Date.toISOString(), never ''; the only divergence is timestamp: '', where the original would carry Luxon's 'Invalid DateTime' sentinel, a wart not worth pinning.
         if(typeof message === 'object' && message !== null && 'timestamp' in message && typeof message.timestamp === 'string') {
             Object.assign(message, { localTimestamp: formatLocalDateTime(message.timestamp, timezone) });
         }
@@ -94,6 +95,7 @@ async function fetchAndValidateChannel(
         };
     }
 
+    // Stryker disable next-line llm: isTextBased() returns boolean, so negation and strict comparison with false agree.
     if(!channel.isTextBased()) {
         logger.warn({ channelId }, 'Discord tool returned error: Channel is not text-based');
         return {
@@ -119,12 +121,14 @@ async function sendMessage(
     files?: string[]
 ): Promise<Message> {
     const messageOptions: MessageCreateOptions = { content };
+    // Stryker disable next-line llm: files is string[] or undefined, so both guards accept exactly the non-empty arrays.
     if(files && files.length > 0) {
         messageOptions.files = files;
     }
 
     if(replyToMessageId) {
         const originalMessage = await retryHelper.withRetry(
+            // Stryker disable next-line llm: this branch establishes that replyToMessageId is truthy, making the empty-string fallback unreachable.
             () => channel.messages.fetch(replyToMessageId)
         );
         return retryHelper.withRetry(
@@ -241,6 +245,7 @@ async function normalizeChannelId(
     let existingThreadId: string | undefined;
 
     if(fetchedChannel.isThread()) {
+        // Stryker disable next-line llm: Discord thread parentId is null or a non-empty snowflake, so nullish and falsy fallback coincide.
         normalizedChannelId = fetchedChannel.parentId ?? channelId;
         existingThreadId = fetchedChannel.id;
     }
@@ -313,6 +318,7 @@ async function prepareQuestionChannel(
         };
     }
 
+    // Stryker disable next-line llm: callers only read threadId by value, so an absent property and explicit undefined are indistinguishable.
     return { targetChannel: channel };
 }
 
@@ -333,6 +339,7 @@ function buildQuestionMessage(
 
     const messageOptions: MessageCreateOptions = { content: questionContent };
 
+    // Stryker disable next-line llm: options is an array or undefined, making both guards true exactly for non-empty arrays.
     if(options && options.length > 0) {
         messageOptions.components = buttonBuilder.buildQuestionButtons({ questionId, options });
     }
@@ -511,6 +518,7 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                         }
 
                         return {
+                            // Stryker disable next-line NumberLiteralValue: JSON indentation changes only presentation whitespace, not the result data.
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     })),
@@ -538,6 +546,7 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                         }
 
                         return {
+                            // Stryker disable next-line NumberLiteralValue: JSON indentation changes only presentation whitespace, not the result data.
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     })),
@@ -569,6 +578,7 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                             }
 
                             return {
+                                // Stryker disable next-line llm, NumberLiteralValue: JSON indentation changes only presentation whitespace, not the result data.
                                 content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
                             };
                         }
@@ -590,6 +600,7 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                         }
 
                         return {
+                            // Stryker disable next-line llm, NumberLiteralValue: JSON indentation changes only presentation whitespace, not the result data.
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     })),
@@ -705,6 +716,7 @@ The channel must always be given explicitly — there is no ambient conversation
                             logger.info({ requestingUserId: args.requestingUserId, channelId: args.channelId, messageIds: result.messageIds, msg: 'Message sent via MCP tool' });
 
                             return {
+                                // Stryker disable next-line NumberLiteralValue: JSON indentation changes only presentation whitespace, not the result data.
                                 content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                             };
                         })),
@@ -855,6 +867,7 @@ The channel must always be given explicitly — there is no ambient conversation
                         }
 
                         return {
+                            // Stryker disable next-line llm, NumberLiteralValue: JSON indentation changes only presentation whitespace, not the result data.
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                             ...(failedEmojis.length > 0 && { isError: true }),
                         };

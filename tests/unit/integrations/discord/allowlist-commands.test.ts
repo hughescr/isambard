@@ -635,6 +635,27 @@ describe('AllowlistCommandHandler - list', () => {
         expect(fields[0]?.value).not.toMatch(/[🤖🦋📩] phone/u);
     });
 
+    test('shows a single-character unknown platform without emoji prefix', async () => {
+        const contact   = makeContact({
+            displayName: 'Alice Doe',
+            identifiers: [{ platform: 'x' as unknown as 'email', value: 'alice' }],
+        });
+        const personId  = contact.personId;
+        const allowlist = createMockPersonAllowlist({
+            list: mock(async () => [{ personId, addedAt: '2024-01-01T00:00:00Z', addedBy: 'discord-command' }]),
+        });
+        const { backend } = createMockContactBackend(contact);
+        const handler = new AllowlistCommandHandler(allowlist, backend, ADMIN_USER_ID);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'list');
+
+        await handler.handle(asChatInput);
+
+        // One-character platform name is the shortest non-empty platformDisplay, pinning the
+        // lower boundary of the `length > 0` guard that adds the platform line.
+        const fields = getEmbedFields(editReply);
+        expect(fields[0]?.value).toBe('Person: `alice`\nx');
+    });
+
     test('omits platform line when all identifiers are filtered out', async () => {
         const contact   = makeContact({
             displayName: 'Alice Doe',
@@ -957,6 +978,33 @@ describe('AllowlistCommandHandler - add', () => {
         expect(arg.content).toContain('Failed to add');
         expect(mockLogger.error).toHaveBeenCalledTimes(1);
         expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error), personIdStr: 'alice', msg: 'Failed to add to allowlist' }));
+    });
+
+    test('rejects a whitespace-padded person option instead of trimming it into a valid ID', async () => {
+        const allowlist = createMockPersonAllowlist();
+        const { backend, getContact } = createMockContactBackend(makeContact());
+        const handler = new AllowlistCommandHandler(allowlist, backend, ADMIN_USER_ID);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'add', { person: ' alice ' });
+
+        await handler.handle(asChatInput);
+
+        expect(getContact).not.toHaveBeenCalled();
+        expect(editReply).toHaveBeenCalledWith({ content: 'Invalid person ID format. Person IDs are lowercase with hyphens (e.g., alice-smith).' });
+    });
+
+    test('reports the exact identifier count in the add confirmation', async () => {
+        const contact   = makeContact({ identifiers: [
+            { platform: 'email',  value: 'alice@example.com' },
+            { platform: 'discord', value: '12345' },
+        ] });
+        const allowlist = createMockPersonAllowlist({ isPersonAllowed: false });
+        const { backend } = createMockContactBackend(contact);
+        const handler = new AllowlistCommandHandler(allowlist, backend, ADMIN_USER_ID);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'add', { person: 'alice' });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith({ content: 'Added Alice Doe to the allowlist (2 identifiers).' });
     });
 });
 

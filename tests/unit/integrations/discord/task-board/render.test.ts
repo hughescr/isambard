@@ -424,6 +424,14 @@ describe('renderTaskBoardEmbed', () => {
             expect(rendered.footer).toBe('Updates every few seconds · Last update 8:36:47 PM');
         });
 
+        test('a running board stamps now, not a finishedAt it happens to carry', () => {
+            // The composer clears `finishedAt` while a task runs, but the type allows both, and the
+            // running footer's contract is the render time — never a stale finish.
+            const view = board([boardTask()], { finishedAt: at(161) });
+
+            expect(renderTaskBoardEmbed(view, at(4)).footer).toBe('Updates every few seconds · Last update 8:36:47 PM');
+        });
+
         test('a settled board stamps its finish', () => {
             const view = board([boardTask({ status: 'completed' })], { state: 'done', finishedAt: at(161) });
 

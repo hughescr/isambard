@@ -45,6 +45,16 @@ describe.concurrent('branded ID schemas', () => {
     });
 });
 
+describe('messageIdSchema minimum length', () => {
+    test('accepts a 1-character string (the minimum boundary)', () => {
+        expect(messageIdSchema.safeParse('1').success).toBe(true);
+    });
+
+    test('rejects the empty string (below the minimum boundary)', () => {
+        expect(messageIdSchema.safeParse('').success).toBe(false);
+    });
+});
+
 describe('discordMessageContextSchema', () => {
     const validContext = {
         guildId:   '123456789012345678' as GuildId,
@@ -94,6 +104,10 @@ describe('discordMessageContextSchema', () => {
 
         // Invalid timestamp
         expect(discordMessageContextSchema.safeParse({ ...validContext, timestamp: 'not-a-date' }).success).toBe(false);
+    });
+
+    test('accepts a 1-character messageId (the minimum boundary)', () => {
+        expect(discordMessageContextSchema.safeParse({ ...validContext, messageId: '1' }).success).toBe(true);
     });
 
     test('should accept field constraints: empty content and various ISO timestamps', () => {

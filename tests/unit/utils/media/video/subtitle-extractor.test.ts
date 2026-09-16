@@ -51,6 +51,14 @@ const METADATA_WITH_SUBTITLES: VideoMetadata = {
     subtitleTracks: [{ index: 0, language: 'eng', title: 'English' }],
 };
 
+const METADATA_WITH_TWO_SUBTITLE_TRACKS: VideoMetadata = {
+    ...MINIMAL_METADATA,
+    subtitleTracks: [
+        { index: 0, language: 'eng', title: 'English' },
+        { index: 1, language: 'fre', title: 'French' },
+    ],
+};
+
 describe('extractEmbeddedSubtitles', () => {
     it('passes the selected track and pipe output as exact ffmpeg arguments', async () => {
         const calls: string[][] = [];
@@ -184,6 +192,11 @@ describe('transcribeWithWhisperKit', () => {
         expect(result).toEqual({ segments: [], fullText: 'Transcription unavailable: whisperkit-cli exited with code 7' });
     });
 
+    it('treats negative WhisperKit exit codes as failures', async () => {
+        const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeFailRunner('', -1));
+        expect(result).toEqual({ segments: [], fullText: 'Transcription unavailable: whisperkit-cli exited with code -1' });
+    });
+
     it('reports nonempty WhisperKit stderr without replacing it with an exit-code message', async () => {
         const result = await transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeFailRunner('model unavailable', 7));
         expect(result).toEqual({ segments: [], fullText: 'Transcription unavailable: model unavailable' });
@@ -223,5 +236,24 @@ describe('getSubtitlesOrTranscription', () => {
         expect(result.transcription).toBeDefined();
         expect(result.transcription?.segments).toHaveLength(2);
         expect(result.subtitles).toBeUndefined();
+    });
+
+    it('always selects track 0 when multiple subtitle tracks are present', async () => {
+        const calls: string[][] = [];
+        const runner: SpawnRunner = async (args) => {
+            calls.push(args);
+            return { stdout: SAMPLE_SRT, stderr: '', exitCode: 0 };
+        };
+
+        await getSubtitlesOrTranscription('/test/video.mp4', METADATA_WITH_TWO_SUBTITLE_TRACKS, '/tmp/out', runner);
+
+        expect(calls).toEqual([['ffmpeg', '-i', '/test/video.mp4', '-map', '0:s:0', '-f', 'srt', 'pipe:1']]);
+    });
+
+    it('omits the transcription key entirely when returning embedded subtitles', async () => {
+        const runner = makeTextRunner(SAMPLE_SRT);
+        const result = await getSubtitlesOrTranscription('/test/video.mp4', METADATA_WITH_SUBTITLES, '/tmp/out', runner);
+        expect(result).toStrictEqual({ subtitles: SAMPLE_SRT });
+        expect(Object.keys(result)).toEqual(['subtitles']);
     });
 });

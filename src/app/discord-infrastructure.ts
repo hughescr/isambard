@@ -99,6 +99,7 @@ export function createDiscordInfrastructure(options: DiscordInfrastructureOption
     const discordClient = createDiscordClient(discordConfig);
     let ownershipRegistered = false;
     try {
+        // Stryker disable next-line llm: options.onClientCreated is a function or absent, so the optional call and the && form skip it for exactly the same values and invoke it identically otherwise
         onClientCreated?.(discordClient);
         ownershipRegistered = onClientCreated !== undefined;
         // Create channel registry (REQUIRED - bot cannot start without it)

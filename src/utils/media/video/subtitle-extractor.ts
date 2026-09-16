@@ -17,7 +17,6 @@ function parseTimestamp(ts: string): number {
 /** Parse WhisperKit CLI output into structured TranscriptionResult. */
 function parseWhisperKitOutput(output: string): TranscriptionResult {
     const segmentRe = /\[(\d{2}:\d{2}:\d{2}[.,]\d+) *--> *(\d{2}:\d{2}:\d{2}[.,]\d+)\] *(.*)/gu;
-    // Stryker restore Regex
     const segments: TranscriptionSegment[] = [];
 
     let match = segmentRe.exec(output);
@@ -36,7 +35,6 @@ function parseWhisperKitOutput(output: string): TranscriptionResult {
         });
         match = segmentRe.exec(output);
     }
-    // Stryker restore BlockStatement,MethodExpression
 
     const fullText = segments.map(s => s.text).join(' ');
     return { segments, fullText };
@@ -55,7 +53,6 @@ export async function extractEmbeddedSubtitles(
         '-f', 'srt',
         'pipe:1',
     ]);
-    // Stryker restore StringLiteral,ArrayDeclaration
 
     if(result.exitCode !== 0) {
         throw new MediaProcessingError(
@@ -85,7 +82,6 @@ export async function transcribeWithWhisperKit(
         '--report',
         '--report-path', outputDir,
     ]);
-    // Stryker restore StringLiteral,ArrayDeclaration
 
     if(result.exitCode !== 0) {
         // whisperkit-cli not available or failed — return graceful error result
@@ -115,5 +111,6 @@ export async function getSubtitlesOrTranscription(
     }
 
     const transcription = await transcribeWithWhisperKit(videoPath, outputDir, run);
+    // Stryker disable next-line llm: transcribeWithWhisperKit returns a non-nullable TranscriptionResult, so the ?? null fallback is unreachable/equivalent.
     return { transcription };
 }

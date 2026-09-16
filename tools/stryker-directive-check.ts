@@ -55,6 +55,7 @@ interface OpenDisable { names: Set<string>, isAll: boolean }
 // anything carrying a `type` field is enough — no scope/parent bookkeeping needed, just "does
 // this comment appear as *some* node's leadingComments".
 function walk(node: unknown, visit: (n: BabelNode) => void): void {
+    // Stryker disable next-line ConditionalExpression: the root is an AST object, object-property recursion is pre-filtered below, and Babel AST arrays contain only nodes/objects or null; no reachable call passes the truthy primitive needed to distinguish this disjunct from false.
     if(!node || typeof node !== 'object') {
         return;
     }

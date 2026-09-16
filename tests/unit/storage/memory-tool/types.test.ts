@@ -259,6 +259,55 @@ describe.concurrent('isContentType', () => {
     });
 });
 
+describe.concurrent('memoryToolItemSchema - content field bounds', () => {
+    const baseItem = {
+        path:        '/test/file.md',
+        contentType: 'text/plain',
+        createdAt:   '2024-01-01T00:00:00.000Z',
+        updatedAt:   '2024-01-01T00:00:00.000Z',
+    };
+
+    test('accepts content at the 1-char minimum', () => {
+        const result = memoryToolItemSchema.safeParse({ ...baseItem, content: 'a' });
+        expect(result.success).toBe(true);
+    });
+
+    test('rejects empty content', () => {
+        const result = memoryToolItemSchema.safeParse({ ...baseItem, content: '' });
+        expect(result.success).toBe(false);
+    });
+
+    test('accepts content at the 300,000-char maximum', () => {
+        const result = memoryToolItemSchema.safeParse({ ...baseItem, content: 'a'.repeat(300_000) });
+        expect(result.success).toBe(true);
+    });
+
+    test('rejects content one char over the 300,000-char maximum', () => {
+        const result = memoryToolItemSchema.safeParse({ ...baseItem, content: 'a'.repeat(300_001) });
+        expect(result.success).toBe(false);
+    });
+});
+
+describe.concurrent('memoryToolItemSchema - contentPreview field bounds', () => {
+    const baseItem = {
+        path:        '/test/file.md',
+        content:     'Test content',
+        contentType: 'text/plain',
+        createdAt:   '2024-01-01T00:00:00.000Z',
+        updatedAt:   '2024-01-01T00:00:00.000Z',
+    };
+
+    test('accepts contentPreview at the 100-char maximum', () => {
+        const result = memoryToolItemSchema.safeParse({ ...baseItem, contentPreview: 'a'.repeat(100) });
+        expect(result.success).toBe(true);
+    });
+
+    test('rejects contentPreview one char over the 100-char maximum', () => {
+        const result = memoryToolItemSchema.safeParse({ ...baseItem, contentPreview: 'a'.repeat(101) });
+        expect(result.success).toBe(false);
+    });
+});
+
 describe.concurrent('memoryToolItemSchema - tags field', () => {
     const baseItem = {
         path:        '/test/file.md',

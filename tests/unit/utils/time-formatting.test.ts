@@ -224,3 +224,14 @@ describe('formatEnvelopeStamp — full DST abbreviation fold table', () => {
         expect(formatEnvelopeStamp(now, 'UTC')).toBe(`2026-09-04 22:07 ${foldedLabel}`);
     });
 });
+
+describe('formatRelativeTime fractional-unit boundaries', () => {
+    test.each([
+        ['seconds', new Date('2025-07-01T11:59:00.500Z'), new Date('2025-07-01T12:00:00.000Z'), 'just now'],
+        ['minutes', new Date('2025-07-01T11:58:30.000Z'), new Date('2025-07-01T12:00:00.000Z'), '1 minute ago'],
+        ['hours', new Date('2025-07-01T10:30:00.000Z'), new Date('2025-07-01T12:00:00.000Z'), '1 hour ago'],
+        ['years', new Date('2024-01-01T00:00:00.000Z'), new Date('2025-07-01T00:00:00.000Z'), '1 year ago'],
+    ])('rounds fractional %s elapsed time down', (_, date, now, expected) => {
+        expect(formatRelativeTime(date, now)).toBe(expected);
+    });
+});

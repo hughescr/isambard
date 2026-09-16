@@ -99,6 +99,12 @@ describe('OutboxBackend', () => {
             const calls = ddbMock.commandCalls(PutCommand);
             expect(calls[0].args[0].input.TableName).toBe('TestTable');
         });
+
+        test('propagates a failed write', async () => {
+            ddbMock.on(PutCommand).rejects(new Error('write failed'));
+
+            await expect(backend.enqueue(makeItem())).rejects.toThrow('write failed');
+        });
     });
 
     describe('dequeue()', () => {
@@ -187,6 +193,12 @@ describe('OutboxBackend', () => {
                 },
             });
         });
+
+        test('propagates a failed delete', async () => {
+            ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
+
+            await expect(backend.markSent(makeItem())).rejects.toThrow('delete failed');
+        });
     });
 
     describe('markFailed()', () => {
@@ -232,6 +244,12 @@ describe('OutboxBackend', () => {
 
             const calls = ddbMock.commandCalls(PutCommand);
             expect(calls[0].args[0].input.Item!.TTL).toBe(1_234_567);
+        });
+
+        test('propagates a failed retry write', async () => {
+            ddbMock.on(PutCommand).rejects(new Error('retry write failed'));
+
+            await expect(backend.markFailed(makeItem(), 'err')).rejects.toThrow('retry write failed');
         });
     });
 });

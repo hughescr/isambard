@@ -1,4 +1,5 @@
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, afterEach, spyOn, jest } from 'bun:test';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import { mockFsPromises, resetMockFs } from '../../setup';
 import { validateFilePath, validateFilePaths, PathSecurityError } from '@/utils/path-validator';
@@ -9,6 +10,10 @@ const validFile = path.join(testDir, 'valid.txt');
 const subDir = path.join(testDir, 'subdir');
 const subDirFile = path.join(subDir, 'nested.txt');
 const dotDotPrefixedFile = path.join(process.cwd(), '..safe-file.txt');
+
+afterEach(() => {
+    jest.restoreAllMocks();
+});
 
 describe('path-validator', () => {
     beforeAll(() => {
@@ -75,6 +80,43 @@ describe('path-validator', () => {
 
         test('should include "Do NOT circumvent" in security errors', async () => {
             await expect(validateFilePath('../etc/passwd')).rejects.toThrow('Do NOT circumvent');
+        });
+
+        test('resolves the target against the cwd captured once, not a fresh process.cwd() read', async () => {
+            // path.resolve(cwd, filePath) must not re-read process.cwd(): if it did, a cwd()
+            // that changes between the initial capture and the resolve call would let the
+            // resolved path drift onto a different root than the one used for the
+            // inside-CWD check below it, defeating the security guard via a TOCTOU-style gap.
+            const cwdSpy = spyOn(process, 'cwd');
+            cwdSpy.mockReturnValueOnce('/mock-cwd-a').mockReturnValueOnce('/mock-cwd-b');
+
+            await expect(validateFilePath('foo.txt')).rejects.toMatchObject({
+                context: { reason: 'not_found' },
+            });
+        });
+
+        test('rejects when path.relative resolves to an absolute path that is neither ".." nor "..<sep>"-prefixed', async () => {
+            const relativeSpy = spyOn(path, 'relative').mockReturnValue('/definitely/elsewhere');
+
+            await expect(validateFilePath(validFile)).rejects.toMatchObject({
+                context: { reason: 'outside_cwd' },
+            });
+            expect(relativeSpy).toHaveBeenCalled();
+        });
+
+        test('accepts a relativePath containing ".."+sep only in the middle, not as a prefix', async () => {
+            const relativeSpy = spyOn(path, 'relative').mockReturnValue(`safe${path.sep}..${path.sep}inner.txt`);
+
+            const result = await validateFilePath(validFile);
+            expect(result).toBe(validFile);
+            expect(relativeSpy).toHaveBeenCalled();
+        });
+
+        test('checks file access with read permission (R_OK), not mere existence (F_OK)', async () => {
+            await validateFilePath(validFile);
+
+            const lastCall = mockFsPromises.access.mock.calls.at(-1);
+            expect(lastCall).toEqual([validFile, constants.R_OK]);
         });
 
         test('should reject symlinks', async () => {

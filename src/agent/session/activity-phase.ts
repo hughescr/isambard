@@ -108,12 +108,14 @@ function usingToolPhase(toolName: string, prev: ActivityPhase | null, at: Date):
 }
 
 function phaseFromAssistant(frame: AssistantFrame, prev: ActivityPhase | null, at: Date): ActivityPhase {
+    // Stryker disable next-line llm: frame.message is required by every SDK assistant frame, so the fallback is unreachable without a type escape
     const { content } = frame.message;
     const toolUseBlocks = content.filter((block): block is ToolUseBlock => block.type === 'tool_use');
     if(toolUseBlocks.length > 0) {
         return usingToolPhase(toolUseBlocks[toolUseBlocks.length - 1]!.name, prev, at);
     }
 
+    // Stryker disable next-line llm: block.type is a string-literal discriminant (== and === agree) and TextBlock.text is a required string, so optional chaining is unreachable
     const hasText = content.some((block): block is TextBlock => block.type === 'text' && block.text.length > 0);
     return hasText ? { type: 'responding', startedAt: at } : { type: 'thinking', startedAt: at };
 }
@@ -130,6 +132,7 @@ function phaseFromTaskProgress(frame: TaskProgressFrame, prev: ActivityPhase | n
     if(!frame.summary) {
         return prev;
     }
+    // Stryker disable next-line llm: prev is ActivityPhase | null, so `prev && prev.type === ...` selects the same branch as the optional chain
     return prev?.type === 'responding' ? { type: 'responding', startedAt: at } : { type: 'thinking', startedAt: at };
 }
 

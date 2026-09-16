@@ -4,7 +4,6 @@ import { z } from 'zod';
 const calendarServerIdSchema = z
     .string()
     .check(z.uuid({ error: 'Calendar server ID must be a valid UUID' }))
-    // Stryker restore ObjectLiteral,StringLiteral
     .brand<'CalendarServerId'>();
 
 type CalendarServerId = z.infer<typeof calendarServerIdSchema>;

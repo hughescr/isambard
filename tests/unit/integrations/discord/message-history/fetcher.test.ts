@@ -1,5 +1,6 @@
-import { describe, test, expect, mock } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import type { Client, TextChannel, Message, Collection, User } from 'discord.js';
+import { mockWithDiscordRetry } from '../../../../setup';
 import { ErrorCode } from '@/errors/codes';
 import {
     createMessageFetcher,
@@ -378,6 +379,42 @@ describe.concurrent('createMessageFetcher', () => {
                 expect(result.messages[0].embeds[0].url).toBe('https://example.com');
                 expect(result.messages[0].embeds[0].description).toBe('Desc');
             });
+
+            test('preserves an embed description verbatim, including surrounding whitespace', async () => {
+                const message = createMockMessage({
+                    id:     '100000000000000003',
+                    embeds: [
+                        { title: null, description: '  spaced description  ', url: null },
+                    ],
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0].embeds[0].description).toBe('  spaced description  ');
+            });
+
+            test('preserves an embed url verbatim, including its path casing', async () => {
+                const message = createMockMessage({
+                    id:     '100000000000000004',
+                    embeds: [
+                        { title: null, description: null, url: 'https://example.com/Path/To-Page' },
+                    ],
+                });
+
+                const channel = createMockChannel('123456789012345678', [message]);
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({ channelId: '123456789012345678' });
+
+                expect(result.messages[0].embeds[0].url).toBe('https://example.com/Path/To-Page');
+            });
         });
 
         describe('reaction transformation', () => {
@@ -612,6 +649,31 @@ describe.concurrent('createMessageFetcher', () => {
                 });
 
                 expect(result.messages).toHaveLength(10);
+            });
+
+            test('requests a floor of 1 message when limit is 0', async () => {
+                // Targets the Math.max(1, remaining) guard in pageOptions at fetcher.ts:187 —
+                // a literal 1 -> 0 mutation would let a page request with limit: 0 through
+                // instead of flooring it to 1.
+                const messages = [createMockMessage({ id: '100000000000000000' })];
+
+                const fetchCalls: { limit?: number, before?: string }[] = [];
+                const channel = createMockChannel('123456789012345678', messages, (options) => {
+                    fetchCalls.push({ ...options });
+                    return [];
+                });
+
+                const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+                const client = createMockClient(channels);
+
+                const fetcher = createMessageFetcher(client);
+                const result = await fetcher.fetchMessages({
+                    channelId: '123456789012345678',
+                    limit:     0,
+                });
+
+                expect(fetchCalls[0].limit).toBe(1);
+                expect(result.messages).toHaveLength(0);
             });
 
             test('should set hasMore to true when more messages exist', async () => {
@@ -1098,6 +1160,56 @@ describe.concurrent('createMessageFetcher', () => {
             expect(result[0].content).toBe('First message');
             expect(result[1].content).toBe('Second message');
         });
+
+        test('bounds fetchByIds to exactly 5 concurrent in-flight fetches', async () => {
+            // Targets the mapBounded concurrency literal (5) at fetcher.ts:305 — with 6
+            // ids requested, the number of fetch calls made before any resolves reveals
+            // the concurrency bound: 5 (correct), 6/4 (off-by-one), or 1 (0 collapsed by
+            // mapBounded's Math.max(1, concurrency) guard).
+            const messageIds = Array.from({ length: 6 }, (_, i) => (100_000_000_000_000_000n + BigInt(i)).toString());
+            const messages = messageIds.map(id => createMockMessage({ id }));
+
+            let callCount = 0;
+            const resolvers: (() => void)[] = [];
+            const channel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                messages:    {
+                    fetch: mock((messageId: string) => {
+                        callCount++;
+                        return new Promise<Message>((resolve) => {
+                            resolvers.push(() => resolve(messages.find(m => m.id === messageId)!));
+                        });
+                    }),
+                },
+            } as unknown as TextChannel;
+
+            const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+            const client = createMockClient(channels);
+            const fetcher = createMessageFetcher(client);
+
+            const resultPromise = fetcher.fetchByIds('123456789012345678', messageIds);
+
+            // Flush enough microtask turns for the initial batch of workers to issue
+            // every synchronously-dispatchable fetch call. Each fetch's promise stays
+            // deliberately unresolved, so no further worker can start beyond this
+            // point — the count is stable once reached, not a race.
+            for(let i = 0; i < 20; i++) {
+                // eslint-disable-next-line no-await-in-loop -- sequential microtask flush, not a real await-in-loop
+                await Promise.resolve();
+            }
+
+            expect(callCount).toBe(5);
+
+            while(resolvers.length > 0) {
+                resolvers.shift()!();
+                // eslint-disable-next-line no-await-in-loop -- sequential microtask flush drains one worker at a time
+                await Promise.resolve();
+            }
+
+            const result = await resultPromise;
+            expect(result).toHaveLength(6);
+        });
     });
 });
 
@@ -1117,5 +1229,65 @@ describe('MessageFetchError', () => {
         expect(error.context.channelId).toBe('123456789012345678');
         expect(error.message).toContain('Network timeout');
         expect(error.code).toBe(ErrorCode.MESSAGE_FETCH_ERROR);
+    });
+});
+
+describe('createMessageFetcher retry', () => {
+    beforeEach(() => {
+        mockWithDiscordRetry.mockReset();
+        mockWithDiscordRetry.mockImplementation(async <T>(
+            operation: () => Promise<T>,
+            _options?: unknown
+        ): Promise<T> => {
+            try {
+                return await operation();
+            } catch (error) {
+                if((error as { code?: string }).code === 'ECONNRESET') {
+                    return operation();
+                }
+                throw error;
+            }
+        });
+    });
+
+    afterEach(() => {
+        mockWithDiscordRetry.mockReset();
+        mockWithDiscordRetry.mockImplementation(async <T>(
+            operation: () => Promise<T>,
+            _options?: unknown
+        ): Promise<T> => operation());
+    });
+
+    test('retries a transiently failing batch fetch for the requested id', async () => {
+        const messages = [createMockMessage({ id: '100000000000000001', content: 'Retried message' })];
+
+        let callCount = 0;
+        const channel = {
+            id:          '123456789012345678',
+            isTextBased: () => true,
+            messages:    {
+                fetch: mock(async (messageId: string) => {
+                    callCount++;
+                    if(callCount === 1) {
+                        throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+                    }
+                    const msg = messages.find(m => m.id === messageId);
+                    if(!msg) {
+                        throw new Error('Not found');
+                    }
+                    return msg;
+                }),
+            },
+        } as unknown as TextChannel;
+
+        const channels = new Map<string, TextChannel>([['123456789012345678', channel]]);
+        const client = createMockClient(channels);
+        const fetcher = createMessageFetcher(client);
+
+        const result = await fetcher.fetchByIds('123456789012345678', ['100000000000000001']);
+
+        expect(callCount).toBe(2);
+        expect(result).toHaveLength(1);
+        expect(result[0].content).toBe('Retried message');
     });
 });

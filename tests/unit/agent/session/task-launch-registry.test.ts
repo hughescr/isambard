@@ -11,6 +11,9 @@ import {
     type TaskLaunch
 } from '@/agent/session/task-launch-registry';
 
+/** Distinct default-capacity boundary is 200 — see the `DEFAULT_TASK_LAUNCH_CAPACITY` boundary test below. */
+const DEFAULT_CAPACITY_UNDER_TEST = 200;
+
 function launch(overrides: Partial<TaskLaunch> = {}): TaskLaunch {
     return {
         taskId:     'task-1',
@@ -224,6 +227,41 @@ describe('createTaskLaunchRegistry', () => {
             expect(registry.lookup({ taskId: 'C', toolUseId: 'tool-C' })).toBeDefined();
             expect(registry.lookup({ taskId: 'D', toolUseId: 'tool-D' })).toBeDefined();
         });
+
+        it('forgetting a middle entry splices out exactly that one slot (not a neighbor, not two slots), so later evictions still remove the correct, now-oldest survivors instead of leaking one forever', () => {
+            const registry = createTaskLaunchRegistry({ capacity: 3 });
+            registry.record(launch({ taskId: 'A', toolUseId: 'tool-A' }));
+            registry.record(launch({ taskId: 'B', toolUseId: 'tool-B' }));
+            registry.record(launch({ taskId: 'C', toolUseId: 'tool-C' }));
+
+            registry.forget('B');
+            // Two more pushes past capacity 3 should evict, in order, the two remaining survivors
+            // that predate them: A, then C. A wrong splice index/count instead strands one of A/C
+            // in byTaskId with no live FIFO slot (a permanent leak) while evicting some OTHER
+            // still-live entry early.
+            registry.record(launch({ taskId: 'D', toolUseId: 'tool-D' }));
+            registry.record(launch({ taskId: 'E', toolUseId: 'tool-E' }));
+            registry.record(launch({ taskId: 'F', toolUseId: 'tool-F' }));
+
+            expect(registry.lookup({ taskId: 'A', toolUseId: 'tool-A' })).toBeUndefined();
+            expect(registry.lookup({ taskId: 'C', toolUseId: 'tool-C' })).toBeUndefined();
+            expect(registry.lookup({ taskId: 'D', toolUseId: 'tool-D' })).toBeDefined();
+            expect(registry.lookup({ taskId: 'E', toolUseId: 'tool-E' })).toBeDefined();
+            expect(registry.lookup({ taskId: 'F', toolUseId: 'tool-F' })).toBeDefined();
+        });
+
+        it('forgetting a taskId that was never recorded does not disturb the FIFO order, so a later push still evicts the true oldest entry', () => {
+            const registry = createTaskLaunchRegistry({ capacity: 2 });
+            registry.record(launch({ taskId: 'task-1', toolUseId: 'tool-1' }));
+            registry.record(launch({ taskId: 'task-2', toolUseId: 'tool-2' }));
+
+            registry.forget('never-recorded');
+            registry.record(launch({ taskId: 'task-3', toolUseId: 'tool-3' }));
+
+            expect(registry.lookup({ taskId: 'task-1', toolUseId: 'tool-1' })).toBeUndefined();
+            expect(registry.lookup({ taskId: 'task-2', toolUseId: 'tool-2' })).toBeDefined();
+            expect(registry.lookup({ taskId: 'task-3', toolUseId: 'tool-3' })).toBeDefined();
+        });
     });
 
     it('a default-constructed registry (no params) works with no journal and default capacity', () => {
@@ -233,6 +271,35 @@ describe('createTaskLaunchRegistry', () => {
             registry.record(launch());
         }).not.toThrow();
         expect(registry.lookup({ taskId: 'task-1', toolUseId: 'tool-1' })).toBeDefined();
+    });
+
+    it('the default capacity is exactly 200: the 200th distinct taskId is still retained, but a 201st evicts the oldest', () => {
+        const registry = createTaskLaunchRegistry();
+        for(let i = 0; i < DEFAULT_CAPACITY_UNDER_TEST; i++) {
+            registry.record(launch({ taskId: `task-${i}`, toolUseId: `tool-${i}` }));
+        }
+        // At exactly 200 distinct entries, the oldest must NOT have been evicted yet.
+        expect(registry.lookup({ taskId: 'task-0', toolUseId: 'tool-0' })).toBeDefined();
+
+        registry.record(launch({ taskId: 'task-200', toolUseId: 'tool-200' }));
+
+        // The 201st entry pushes the registry over capacity, evicting the oldest (task-0).
+        expect(registry.lookup({ taskId: 'task-0', toolUseId: 'tool-0' })).toBeUndefined();
+        expect(registry.lookup({ taskId: 'task-200', toolUseId: 'tool-200' })).toBeDefined();
+    });
+
+    it('a fractional capacity evicts once length strictly EXCEEDS it, not only once length reaches the next whole number above it', () => {
+        // order.length > capacity is not the same as order.length >= capacity + 1 when capacity
+        // is not a whole number: with capacity 2.5, a length of 3 must already evict (3 > 2.5),
+        // even though 3 >= 2.5 + 1 (3.5) is false.
+        const registry = createTaskLaunchRegistry({ capacity: 2.5 });
+        registry.record(launch({ taskId: 'task-1', toolUseId: 'tool-1' }));
+        registry.record(launch({ taskId: 'task-2', toolUseId: 'tool-2' }));
+        registry.record(launch({ taskId: 'task-3', toolUseId: 'tool-3' }));
+
+        expect(registry.lookup({ taskId: 'task-1', toolUseId: 'tool-1' })).toBeUndefined();
+        expect(registry.lookup({ taskId: 'task-2', toolUseId: 'tool-2' })).toBeDefined();
+        expect(registry.lookup({ taskId: 'task-3', toolUseId: 'tool-3' })).toBeDefined();
     });
 });
 

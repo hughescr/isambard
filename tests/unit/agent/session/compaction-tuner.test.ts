@@ -23,6 +23,11 @@ function boundaryEvent(at: Date): LedgerEvent {
     return { type: 'sdk_frame', frame: frames.compactBoundary(), at };
 }
 
+function sparseIntervals(length: number): number[] {
+    // eslint-disable-next-line unicorn/new-for-builtins -- Array.from would create a dense array; these cases deliberately exercise sparse array slots
+    return Array<number>(length);
+}
+
 describe('computeTunedThreshold', () => {
     const WIDE: CompactionThresholdBand = { targetIntervalMs: 5000, min: 10, max: 90 };
 
@@ -44,6 +49,8 @@ describe('computeTunedThreshold', () => {
         { name: 'a collapsed band with an unset (Infinity) target is a no-op regardless of history', intervalsMs: [1, 999_999], currentPercent: 60, band: { targetIntervalMs: Number.POSITIVE_INFINITY, min: 60, max: 60 }, expected: 60 },
         { name: 'an even-length history takes the mean of the middle two values, not a single element', intervalsMs: [1000, 9000], currentPercent: 50, band: WIDE, expected: 50 },
         { name: 'an odd-length history uses the single middle element, not a mean', intervalsMs: [1000, 3000, 9000], currentPercent: 50, band: { targetIntervalMs: 3000, min: 10, max: 90 }, expected: 50 },
+        { name: 'an even-length sparse history treats missing middle values as zero', intervalsMs: sparseIntervals(2), currentPercent: 50, band: { targetIntervalMs: 0, min: 10, max: 90 }, expected: 50 },
+        { name: 'an odd-length sparse history treats its missing middle value as zero', intervalsMs: sparseIntervals(3), currentPercent: 50, band: { targetIntervalMs: 0, min: 10, max: 90 }, expected: 50 },
     ];
 
     it.each(table)('$name', ({ intervalsMs, currentPercent, band, expected }) => {

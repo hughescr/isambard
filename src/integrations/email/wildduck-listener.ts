@@ -29,7 +29,6 @@ const DEFAULT_SSE_RECONNECT_DELAY_MS = 5000;
 const NOOP_HEALTH_REGISTRY: Pick<ServiceHealthRegistry, 'sendEvent'> = {
     sendEvent: () => undefined,
 };
-// Stryker restore all
 
 // ---------------------------------------------------------------------------
 // WildDuckListener class
@@ -58,6 +57,7 @@ export class WildDuckListener {
         this.processingGeneration = null;
         this.processingDone       = null;
         this._running             = false;
+        // Stryker disable next-line NumberLiteralValue: the counter is pre-incremented before every use and only compared against values it produced, so its initial value is unobservable.
         this.generation           = 0;
         this.startPromise         = null;
         this.sseSource            = null;
@@ -98,7 +98,9 @@ export class WildDuckListener {
 
             // Connect SSE for real-time new-mail notifications via reconnection loop.
             // Only start when EventSource is available (not in all test environments).
+            // Stryker disable next-line llm: a defined EventSource global is always a constructor, so the undefined check and the function check coincide.
             if(typeof EventSource !== 'undefined') {
+                // Stryker disable next-line llm: ServiceHealthRegistry is an object interface, so every configured value is truthy and ?? and || coincide.
                 const registry = this.config.healthRegistry ?? NOOP_HEALTH_REGISTRY;
                 const baseDelayMs = this.config.sseReconnectDelayMs ?? DEFAULT_SSE_RECONNECT_DELAY_MS;
                 const loop = createReconnectionLoop({
@@ -115,6 +117,7 @@ export class WildDuckListener {
             this.scheduleNextPoll(generation);
         } catch (err) {
             if(this.isCurrent(generation)) {
+                // Stryker disable next-line AwaitDrop: stop() has no internal await, so its cleanup completes synchronously and the awaited promise carries no result.
                 await this.stop();
             }
             throw err;
@@ -199,6 +202,7 @@ export class WildDuckListener {
         if(healthRegistry === undefined) {
             return;
         }
+        // Stryker disable next-line llm: the increment result is discarded, so prefix and postfix leave the same counter for the threshold check.
         this.consecutivePollFails++;
         if(this.consecutivePollFails >= CONSECUTIVE_POLL_FAILURE_THRESHOLD) {
             healthRegistry.sendEvent('email', 'CONNECTION_LOST', {
@@ -242,6 +246,7 @@ export class WildDuckListener {
             }
 
             const capped    = summaries.length > maxEmailsPerPoll;
+            // Stryker disable next-line llm: when the batch is not capped, slice(0, maxEmailsPerPoll) returns every summary in the same order, and toProcess is only indexed and measured, so the copy is unobservable.
             const toProcess = capped ? summaries.slice(0, maxEmailsPerPoll) : summaries;
             if(capped) {
                 logger.warn({
@@ -249,7 +254,6 @@ export class WildDuckListener {
                     processed: maxEmailsPerPoll,
                     msg:       'Email batch cap reached; remaining emails will be processed next poll',
                 });
-                // Stryker restore ObjectLiteral,StringLiteral
             }
 
             let nextIndex = 0;
@@ -282,6 +286,7 @@ export class WildDuckListener {
 
             return capped;
         } finally {
+            // Stryker disable next-line llm: processingGeneration is only read behind the processingDone !== null guard, and processingDone is nulled on the very next line, so a stale generation is never observed.
             this.processingGeneration = null;
             this.processingDone = null;
             releaseProcessing();
@@ -291,6 +296,7 @@ export class WildDuckListener {
     private async processOne(uid: number, generation: number): Promise<void> {
         try {
             const email = await this.wildDuckClient.getFullMessage(EmailFolder.Inbox, uid);
+            // Stryker disable next-line llm: email is object|null, and the monotonic generation counter makes a future generation unreachable here, so the proposed comparisons agree.
             if(!email || generation !== this.generation) {
                 return;
             }
@@ -357,6 +363,7 @@ export class WildDuckListener {
                     return;
                 }
 
+                // Stryker disable next-line llm: both reordered && operands are pure, so swapping them cannot change the boolean result.
                 if(typeof data === 'object' && data !== null && 'command' in data && (data).command === 'EXISTS') {
                     void this.fetchAndProcess(generation);
                 }

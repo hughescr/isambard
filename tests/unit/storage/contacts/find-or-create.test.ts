@@ -94,6 +94,17 @@ describe('findOrCreateContact', () => {
         expect(contact.updatedAt).toBeDefined();
     });
 
+    test('rejects when persisting a newly created contact fails', async () => {
+        const backend = makeBackend({
+            putContact: mock(async () => {
+                throw new Error('persistence failed');
+            }),
+        });
+
+        await expect(findOrCreateContact(backend, 'email', 'alice@example.com', 'Alice'))
+            .rejects.toThrow('persistence failed');
+    });
+
     test('passes notes to new contact when provided', async () => {
         const backend = makeBackend();
 

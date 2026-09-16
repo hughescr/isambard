@@ -76,6 +76,7 @@ function emptyResult(): ProcessResult {
 
 /** `delta` itself when at least one of its three lists is non-empty, else `undefined` — the `stateChanged` param's "nothing to show" collapse, matching `newEvents`'s own empty-array-to-undefined pattern. */
 function stateChangedOrUndefined(delta: StateTopSetDelta): StateTopSetDelta | undefined {
+    // Stryker disable next-line llm: array lengths are nonnegative integers, and A || (C && !A) is equivalent to A || C (covers 30068/30071/30085).
     return delta.added.length > 0 || delta.removed.length > 0 || delta.changed.length > 0 ? delta : undefined;
 }
 
@@ -105,6 +106,7 @@ function formatAgendaLine(entry: AgendaEntry, timezone: string): string {
  */
 function calendarChangedOrUndefined(delta: CalendarDelta, agendaText: string, timezone: string): BuildDiscordEnvelopeParams['calendarChanged'] {
     const hasChanges = delta.added.length > 0 || delta.removed.length > 0 || delta.changed.length > 0;
+    // Stryker disable next-line llm: agendaText is always a string, for which length === 0, loose equality to '', and strict equality to '' coincide (covers 30144/30145).
     if(delta.isFirst ? agendaText === '' : !hasChanges) {
         return undefined;
     }
@@ -130,6 +132,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
 
     return async (contexts, resumeContext, abortSignal): Promise<ProcessResult> => {
         const first = contexts[0];
+        // Stryker disable next-line llm: DiscordMessageContext[] cannot contain null, so loose null and strict undefined checks accept the same reachable values (covers 30161).
         if(first === undefined) {
             logger.warn('createConductorProcessor: processor called with an empty context batch');
             return emptyResult();
@@ -174,6 +177,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         // interrupting messages arrive as a fresh envelope rather than a continuation of the old one.
         const resumeNote = resumeContext ? buildResumeNote(resumeContext.partialWork) : undefined;
         const now = new Date();
+        // Stryker disable next-line llm: CalendarDelta.events is required and every producer returns an array, so a nullish empty-array fallback is unreachable (covers 30176).
         const calendarAgendaText = formatCalendarContext(calendarDelta.events, now, timezone);
 
         const envelope = buildDiscordEnvelope({
@@ -211,6 +215,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         // interrupted turn for the next submit's resume context).
         const streamTracker = new StreamTracker();
         const unsubscribe = conductor.subscribeTurn((turnId, frame) => {
+            // Stryker disable next-line llm: subscribeTurn's turnId and envelope.id are both strings, for which loose and strict equality coincide (covers 30206).
             if(turnId === envelope.id) {
                 streamTracker.update(frame as AgentStreamEvent);
             }

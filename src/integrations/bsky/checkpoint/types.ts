@@ -25,7 +25,6 @@ export const bskyFeedCheckpointSchema = z.object({
     /** ISO 8601 timestamp when this checkpoint was last updated */
     updatedAt:     z.iso.datetime(),
 });
-// Stryker restore StringLiteral
 
 export type BskyFeedCheckpoint = z.infer<typeof bskyFeedCheckpointSchema>;
 
@@ -45,7 +44,6 @@ export const bskyNotificationCheckpointSchema = z.object({
     /** ISO 8601 timestamp when this checkpoint was last updated */
     updatedAt:     z.iso.datetime(),
 });
-// Stryker restore StringLiteral
 
 export type BskyNotificationCheckpoint = z.infer<typeof bskyNotificationCheckpointSchema>;
 
@@ -67,6 +65,5 @@ export const bskyDmCheckpointSchema = z.object({
     /** ISO 8601 timestamp when this checkpoint was last updated */
     updatedAt:      z.iso.datetime(),
 });
-// Stryker restore StringLiteral
 
 export type BskyDmCheckpoint = z.infer<typeof bskyDmCheckpointSchema>;

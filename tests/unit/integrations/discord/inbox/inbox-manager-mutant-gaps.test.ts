@@ -183,4 +183,50 @@ describe('InboxManager mutation gap contracts', () => {
         }
         expect(resolved).toBe(true);
     });
+
+    test('loads channels with at most five searches in flight', async () => {
+        const { manager, messageSearchService } = makeManager(['1', '2', '3', '4', '5', '6'], { minGapDurationMs: 0 });
+        const gate = deferred<void>();
+        let inFlight = 0;
+        let peak = 0;
+        const search = messageSearchService.searchMessages;
+        const gated = async (request: Parameters<MessageSearchService['searchMessages']>[0]) => {
+            inFlight += 1;
+            peak = Math.max(peak, inFlight);
+            await gate.promise;
+            inFlight -= 1;
+            return search(request);
+        };
+        messageSearchService.searchMessages = mock(gated);
+
+        // While the gate is closed the in-flight count only grows, so two rounds without a
+        // change mean every admitted worker has reached the search call and the pool is full.
+        const settle = async (state: { previous: number, stable: number, rounds: number }): Promise<number> => {
+            if(state.rounds === 0 || (state.previous > 0 && state.stable >= 2)) {
+                return state.previous;
+            }
+            await Promise.resolve();
+            return settle({
+                previous: inFlight,
+                stable:   inFlight === state.previous ? state.stable + 1 : 0,
+                rounds:   state.rounds - 1,
+            });
+        };
+
+        const loading = manager.loadUnread();
+        expect(await settle({ previous: 0, stable: 0, rounds: 100 })).toBe(5);
+
+        gate.resolve();
+        await loading;
+        expect(peak).toBe(5);
+    });
+
+    test('reports unread channels in load order', async () => {
+        const { manager, channels } = makeManager(['alpha', 'beta', 'gamma'], { minGapDurationMs: 0 });
+
+        await manager.loadUnread();
+
+        expect(manager.getUnreadOverview().channels.map(channel => channel.channelId))
+            .toEqual(channels.map(channel => channel.channelId));
+    });
 });

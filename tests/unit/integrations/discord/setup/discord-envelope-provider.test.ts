@@ -160,8 +160,8 @@ describe('resolveNames', () => {
 describe('toEnvelopeInput', () => {
     it('joins every batched context\'s content and carries through names/images/channelList', () => {
         const contexts = [
-            makeContext({ messageId: 'msg-1', content: 'first' }),
-            makeContext({ messageId: 'msg-2', content: 'second' }),
+            makeContext({ messageId: 'msg-1', content: 'first', timestamp: new Date(0).toISOString() }),
+            makeContext({ messageId: 'msg-2', content: 'second', timestamp: new Date(1000).toISOString() }),
         ];
         const names = {
             channelName: 'general', guildName: 'My Guild', authorName: 'Craig', isDM: false,

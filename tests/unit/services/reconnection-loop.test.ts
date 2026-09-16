@@ -991,4 +991,61 @@ describe('createReconnectionLoop', () => {
             expect(connectFn).toHaveBeenCalledTimes(1);
         });
     });
+
+    // -------------------------------------------------------------------------
+    // DEFAULT_POLICY values — observed through the registry events the loop emits
+    // when no explicit policy is supplied.
+    // -------------------------------------------------------------------------
+
+    describe('default policy', () => {
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        test('caps the retry delay at 300 000 ms', async () => {
+            const connectFn = mock(async () => {
+                throw new Error('offline');
+            });
+            const loop = createReconnectionLoop({
+                service: SERVICE, registry, connectFn, deps: { now: () => 0 },
+            });
+
+            loop.start();
+            await Promise.resolve();
+            for(let attempt = 2; attempt <= 10; attempt++) {
+                // eslint-disable-next-line no-await-in-loop -- attempts must advance sequentially to measure backoff
+                expect(await loop.triggerNow()).toBe(false);
+            }
+
+            const failures = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls
+                .filter(call => call[1] === 'CONNECT_FAIL');
+            expect(failures).toHaveLength(10);
+            // Attempt 10 is the first whose uncapped delay (1000 * 2^9 = 512 000 ms) exceeds
+            // the cap even at the low end of the ±10% jitter band (460 800 ms), so the default
+            // maxDelayMs is exactly the reported wait.
+            expect(failures[9]?.[2]?.nextRetryAt).toEqual(new Date(300_000));
+            loop.stop();
+        });
+
+        test('applies a 10% jitter fraction to the retry delay', async () => {
+            jest.spyOn(Math, 'random').mockReturnValue(1);
+            const connectFn = mock(async () => {
+                throw new Error('offline');
+            });
+            const loop = createReconnectionLoop({
+                service: SERVICE, registry, connectFn, deps: { now: () => 0 },
+            });
+
+            loop.start();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Math.random() === 1 is the top of the jitter band: 1000 * (1 + 0.1 * 1) = 1100 ms.
+            // Without a jitter fraction the wait would be the bare 1000 ms base delay.
+            const failure = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls
+                .find(call => call[1] === 'CONNECT_FAIL');
+            expect(failure?.[2]?.nextRetryAt).toEqual(new Date(1100));
+            loop.stop();
+        });
+    });
 });

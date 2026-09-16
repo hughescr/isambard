@@ -92,6 +92,18 @@ describe('analyzeVideoFromUrl tool — path validation', () => {
             processVideoSpy.mockRestore();
         }
     });
+
+    test('should permit an output directory whose name contains dot-dot', async () => {
+        const processVideoSpy = spyOn(utils, 'processVideo').mockRejectedValue(new Error('mocked subprocess error'));
+        try {
+            const handler = getToolHandler(createMediaMCPServer(), 'analyzeVideoFromUrl');
+            const result = await handler({ url: 'https://example.com/video.m3u8', outputDir: 'recordings/..archive' });
+            expect(processVideoSpy).toHaveBeenCalled();
+            expect(textContent(result.content[0])).not.toContain('Output directory must be within the working directory');
+        } finally {
+            processVideoSpy.mockRestore();
+        }
+    });
 });
 
 // analyzeLocalVideo tool — path validation
@@ -118,6 +130,20 @@ describe('analyzeLocalVideo tool — path validation', () => {
         const result = await handler({ videoPath: 'video.mp4', outputDir: '/etc/evil' });
         expect(result.isError).toBe(true);
         expect(textContent(result.content[0])).toContain('Output directory must be within the working directory');
+    });
+
+    test('should permit an output directory whose name contains dot-dot', async () => {
+        const pathSpy = spyOn(utils, 'validateFilePath').mockResolvedValue('/safe/video.mp4');
+        const processSpy = spyOn(utils, 'processLocalVideo').mockRejectedValue(new Error('mocked subprocess error'));
+        try {
+            const handler = getToolHandler(createMediaMCPServer(), 'analyzeLocalVideo');
+            const result = await handler({ videoPath: 'video.mp4', outputDir: 'recordings/..archive' });
+            expect(processSpy).toHaveBeenCalled();
+            expect(textContent(result.content[0])).not.toContain('Output directory must be within the working directory');
+        } finally {
+            processSpy.mockRestore();
+            pathSpy.mockRestore();
+        }
     });
 });
 

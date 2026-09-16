@@ -356,6 +356,34 @@ describe('retryAsyncGenerator', () => {
         });
     });
 
+    describe('Backoff failures', () => {
+        it('should propagate a failed retry delay before restarting the generator', async () => {
+            const sleepFailure = new Error('Sleep failed');
+            sleepMock = mock(() => Promise.reject(sleepFailure));
+            deps = { ...deps, sleep: sleepMock };
+
+            let callCount = 0;
+            async function* generator() {
+                callCount++;
+                if(callCount === 1) {
+                    throw new Error('Transient error');
+                }
+                yield 2;
+            }
+
+            const generatorFactory = mock(generator);
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
+
+            await expect((async () => {
+                for await (const _ of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
+                    // The retry delay fails before this attempt can yield.
+                }
+            })()).rejects.toBe(sleepFailure);
+
+            expect(generatorFactory).toHaveBeenCalledTimes(1);
+        });
+    });
+
     describe('Max attempts exhausted', () => {
         it('should throw after maxAttempts transient errors', async () => {
             async function* generator() {

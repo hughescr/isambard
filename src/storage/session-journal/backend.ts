@@ -65,7 +65,9 @@ export class SessionJournalBackend extends BaseRepository<SessionJournalItem> {
             };
             // eslint-disable-next-line no-await-in-loop -- sequential pagination required by DynamoDB
             const result = await this.docClient.send(new QueryCommand(params));
+            // Stryker disable next-line llm: Items is an array or undefined by the SDK contract, so ?? and || pick the same operand and the push side effect is identical whether guarded by && or spread from []
             rawItems.push(...(result.Items ?? []));
+            // Stryker disable next-line llm: LastEvaluatedKey is a record or undefined; a ?? undefined fallback assigns the same value and the loop exit is unchanged
             lastEvaluatedKey = result.LastEvaluatedKey;
         } while(lastEvaluatedKey);
 

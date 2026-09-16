@@ -287,6 +287,26 @@ describe('presence-view', () => {
 
             expect(throttle.shouldUpdate()).toBe(true);
         });
+
+        test('undefined throttleMs defaults to a 12_000ms window: blocks one ms before it', () => {
+            const clock = new FakeClock(0);
+            const throttle = createPresenceThrottle(undefined, clock.now);
+
+            throttle.record();
+            clock.advance(11_999);
+
+            expect(throttle.shouldUpdate()).toBe(false);
+        });
+
+        test('undefined throttleMs defaults to a 12_000ms window: allows exactly at it', () => {
+            const clock = new FakeClock(0);
+            const throttle = createPresenceThrottle(undefined, clock.now);
+
+            throttle.record();
+            clock.advance(12_000);
+
+            expect(throttle.shouldUpdate()).toBe(true);
+        });
     });
 
     describe('planPresenceUpdate', () => {

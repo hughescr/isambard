@@ -159,6 +159,17 @@ describe('EmailHistoryProvider', () => {
         expect(result[0].direction).toBe('outbound');
     });
 
+    test('sets direction to outbound when the bot address appears inside a display name', async () => {
+        mockSearch.mockResolvedValueOnce([makeSearchResult({
+            message: 'CleanInbox:100',
+            from:    'Relay via bot@isambard.ai <relay@example.com>',
+        })]);
+
+        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+
+        expect(result[0].direction).toBe('outbound');
+    });
+
     test('sets direction to inbound when from is not bot address and not Sent Mail', async () => {
         const searchResult = makeSearchResult({
             message: 'CleanInbox:1',
@@ -182,6 +193,14 @@ describe('EmailHistoryProvider', () => {
         const result = await provider.fetchHistory({ identifier: 'alice@example.com', maxMessages: 3 });
 
         expect(result).toHaveLength(3);
+    });
+
+    test('honors a zero maxMessages cap', async () => {
+        mockSearch.mockResolvedValueOnce([makeSearchResult()]);
+
+        const result = await provider.fetchHistory({ identifier: 'alice@example.com', maxMessages: 0 });
+
+        expect(result).toEqual([]);
     });
 
     test('returns all results when fewer than maxMessages', async () => {
@@ -225,6 +244,15 @@ describe('EmailHistoryProvider', () => {
         const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].summary).toContain(`Z${'A'.repeat(99)}...`);
+    });
+
+    test('preserves a trailing space before the exact truncation ellipsis', async () => {
+        const longSubject = `${'A'.repeat(99)} Z`;
+        mockSearch.mockResolvedValueOnce([makeSearchResult({ subject: longSubject })]);
+
+        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+
+        expect(result[0].summary).toBe(`Alice <alice@example.com> — "${'A'.repeat(99)} ..."`);
     });
 
     test('does not truncate subject at exactly the max length (100 chars)', async () => {

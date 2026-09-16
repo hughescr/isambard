@@ -105,7 +105,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         void this.activityLogger?.log({ type: 'email-rejected', summary: 'Email rejected' }).catch((err) => {
             logger.warn({ err, msg: 'Activity log failed for email rejection' });
         });
-        // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
         // Persist succeeded — update Discord to show rejection
         const updatedEmbed = this.buildRejectedEmbed(reason);
@@ -120,7 +119,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         } catch (editError) {
             logger.warn({ err: editError, uid, msg: 'Failed to update Discord embed after email rejection' });
         }
-        // Stryker restore BlockStatement
 
         // Wake notification (Q7, plan amendment B2) — deliberately AFTER the Discord editReply
         // block above so a stuck/failed notify can never be mistaken for a WildDuck-persist
@@ -177,10 +175,10 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch((err) => {
                 logger.warn({ err, msg: 'Activity log failed for email send (allowlist path)' });
             });
-            // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
             // Kick off the allowlist saga for each selected recipient address.
             // Uses followUp (not showModal) since deferUpdate was already called.
+            // Stryker disable next-line llm: iterating a shallow copy of interaction.values yields the same elements in the same order; nothing in the loop body mutates the array
             for(const emailAddress of interaction.values) {
                 // eslint-disable-next-line no-await-in-loop -- serialize saga starts and followUps on the shared interaction in recipient order
                 await this.allowlistInteractionHandler.startFromApproval(interaction, 'email', emailAddress);
@@ -218,9 +216,7 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             } catch (error) {
                 logger.error({ err: error, msg: 'Failed to send error editReply for select menu' });
             }
-            // Stryker restore BlockStatement
         }
-        // Stryker restore BlockStatement
     }
 
     // ---------------------------------------------------------------------------
@@ -244,7 +240,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch((err) => {
             logger.warn({ err, msg: 'Activity log failed for email send (direct path)' });
         });
-        // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
         const updatedEmbed = this.buildApprovedEmbed('Approved \u2713 \u2014 sending shortly');
 
@@ -258,7 +253,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         } catch (editError) {
             logger.warn({ err: editError, uid, msg: 'Failed to update Discord embed after email approval' });
         }
-        // Stryker restore BlockStatement
 
         // Wake notification (Q7, plan amendment B2) \u2014 after the Discord editReply attempt
         // above, regardless of whether it succeeded. A thrown or false-returning notify never
@@ -289,10 +283,10 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             await this.handleApprove(interaction, uid);
             return;
         }
-        // Stryker restore BlockStatement
 
         const allRecipients = [...new Set([...toAddresses, ...ccAddresses])];
 
+        // Stryker disable next-line llm: an array length is never negative, so === 0, <= 0 and < 1 are the same condition
         if(allRecipients.length === 0) {
             // No recipients to allowlist — fall back to simple approve
             await this.handleApprove(interaction, uid);
@@ -307,7 +301,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             .setMaxValues(allRecipients.length)
             .addOptions(allRecipients.map(r =>
                 new StringSelectMenuOptionBuilder().setLabel(r).setValue(r)));
-        // Stryker restore StringLiteral
 
         const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
 

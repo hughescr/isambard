@@ -850,7 +850,31 @@ describe('WildDuckListener', () => {
 
             expect(processEmail).toHaveBeenCalledTimes(2);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-                msg: expect.stringContaining('email'),
+                error: 'Processing failed',
+                msg:   expect.stringContaining('email'),
+            }));
+
+            await listener.stop();
+        });
+
+        test('non-Error email processing failure is stringified in the warning', async () => {
+            const { client } = makeWildDuckClient({
+                listMessages:   mock(async () => [makeSummary(1)]),
+                getFullMessage: mock(async () => makeEmail(1)),
+            });
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- exercise defensive non-Error rejection logging
+            const processEmail = mock(() => Promise.reject('non-Error processing failure'));
+            const listener = new WildDuckListener(
+                client,
+                { processEmail } as unknown as EmailProcessor,
+                DEFAULT_CONFIG
+            );
+
+            await listener.start();
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                error: 'non-Error processing failure',
+                msg:   'Failed to process email, continuing',
             }));
 
             await listener.stop();
@@ -908,6 +932,25 @@ describe('WildDuckListener', () => {
             } finally {
                 await listener.stop();
             }
+        });
+
+        test('a zero batch cap requests one summary without processing it', async () => {
+            let listCount = 0;
+            const { client, listMessages, getFullMessage } = makeWildDuckClient({
+                listMessages: mock(async () => {
+                    listCount++;
+                    return listCount === 1 ? [makeSummary(1)] : [];
+                }),
+            });
+            const { processor, processEmail } = makeProcessor();
+            const listener = new WildDuckListener(client, processor, { ...DEFAULT_CONFIG, maxEmailsPerPoll: 0 });
+
+            await listener.start();
+
+            expect(listMessages).toHaveBeenNthCalledWith(1, 'INBOX', { unseen: true, limit: 1 });
+            expect(getFullMessage).not.toHaveBeenCalled();
+            expect(processEmail).not.toHaveBeenCalled();
+            await listener.stop();
         });
 
         test('logs warning when batch cap is hit', async () => {
@@ -1589,6 +1632,41 @@ describe('WildDuckListener', () => {
             await listener.stop();
         });
 
+        test('reports every threshold-exceeding failure and recovers after an extended outage', async () => {
+            let listCount = 0;
+            const { client } = makeWildDuckClient({
+                listMessages: mock(async () => {
+                    listCount++;
+                    if(listCount === 1 || listCount === 6) {
+                        return [];
+                    }
+                    throw 'network unavailable';
+                }),
+            });
+            const { processor } = makeProcessor();
+            const { registry, sendEvent } = makeHealthRegistry();
+            const listener = new WildDuckListener(client, processor, { ...DEFAULT_CONFIG, healthRegistry: registry });
+
+            await listener.start();
+            const { nextPoll } = trackPoll(listener);
+            for(let i = 0; i < 4; i++) {
+                jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+                // eslint-disable-next-line no-await-in-loop -- sequential polls establish the consecutive failure count
+                await nextPoll();
+            }
+
+            const lostCalls = (sendEvent.mock.calls as unknown[][]).filter(call => call[1] === 'CONNECTION_LOST');
+            expect(lostCalls).toEqual([
+                ['email', 'CONNECTION_LOST', { error: 'network unavailable' }],
+                ['email', 'CONNECTION_LOST', { error: 'network unavailable' }],
+            ]);
+
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await nextPoll();
+            expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECT_SUCCESS');
+            await listener.stop();
+        });
+
         test('emits CONNECT_SUCCESS after recovery from 3+ failures', async () => {
             let listCount = 0;
             const listMessages = mock(async () => {
@@ -1781,6 +1859,7 @@ describe('WildDuckListener', () => {
         });
 
         afterEach(() => {
+            jest.restoreAllMocks();
             // Remove fake EventSource — dynamic delete is the correct approach for cleaning up global state
             delete (globalThis as unknown as Record<string, unknown>).EventSource;
         });
@@ -1833,6 +1912,57 @@ describe('WildDuckListener', () => {
             await flushAsync();
             expect(fakeEventSourceInstances).toHaveLength(1);
             await listener.stop();
+        });
+
+        test('omitted SSE retry delay retries exactly after the default 5000ms', async () => {
+            const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.5);
+            const { client } = makeWildDuckClient();
+            const { processor } = makeProcessor();
+            const listener = new WildDuckListener(client, processor, {
+                pollFallbackMs:   DEFAULT_CONFIG.pollFallbackMs,
+                maxEmailsPerPoll: DEFAULT_CONFIG.maxEmailsPerPoll,
+            });
+
+            try {
+                await listener.start();
+                firstFakeEventSource().emit('error');
+                await waitFor(() => jest.getTimerCount() === 2, 'default SSE backoff timer installed');
+
+                jest.advanceTimersByTime(4999);
+                await flushAsync();
+                expect(fakeEventSourceInstances).toHaveLength(1);
+
+                jest.advanceTimersByTime(1);
+                await waitFor(() => fakeEventSourceInstances.length === 2, 'retry starts at the 5000ms boundary');
+            } finally {
+                randomSpy.mockRestore();
+                await listener.stop();
+            }
+        });
+
+        test('a zero SSE retry delay is not replaced by the default', async () => {
+            const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.5);
+            const { client } = makeWildDuckClient();
+            const { processor } = makeProcessor();
+            const listener = new WildDuckListener(client, processor, {
+                ...DEFAULT_CONFIG,
+                sseReconnectDelayMs: 0,
+            });
+
+            try {
+                await listener.start();
+                firstFakeEventSource().emit('error');
+                await waitFor(() => jest.getTimerCount() === 2, 'zero-delay SSE backoff timer installed');
+                jest.advanceTimersByTime(999);
+                await flushAsync();
+                expect(fakeEventSourceInstances).toHaveLength(1);
+
+                jest.advanceTimersByTime(1);
+                await waitFor(() => fakeEventSourceInstances.length === 2, 'zero-delay config falls back to the retry policy minimum delay');
+            } finally {
+                randomSpy.mockRestore();
+                await listener.stop();
+            }
         });
 
         test('events from a stopped SSE source cannot fetch or reconnect after restart', async () => {
@@ -2106,6 +2236,60 @@ describe('WildDuckListener', () => {
             });
 
             await listener.stop();
+        });
+
+        test('error after open uses restart() so backoff keeps growing across repeated drops', async () => {
+            // Distinguishes loop.restart() from loop.start() on the "error after open" path:
+            // restart() preserves attemptCount across drops so backoff keeps growing, while
+            // start() would reset it to 0 every time, capping every retry at the base delay.
+            const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.5); // zero jitter
+            const { client }    = makeWildDuckClient();
+            const { processor } = makeProcessor();
+            const { registry }  = makeHealthRegistry();
+
+            const listener = new WildDuckListener(client, processor, {
+                ...DEFAULT_CONFIG,
+                healthRegistry: registry,
+            });
+
+            try {
+                await listener.start();
+                expect(fakeEventSourceInstances).toHaveLength(1);
+
+                // First cycle: connect, then drop after open (attemptCount: 0 -> restart, still 0)
+                fakeEventSourceInstances[0]?.emit('open');
+                await flushAsync();
+                fakeEventSourceInstances[0]?.emit('error');
+                await waitFor(() => fakeEventSourceInstances.length === 2, 'second EventSource created after first drop');
+
+                // Second attempt fails before open (attemptCount: 0 -> 1, delay = 5000ms)
+                fakeEventSourceInstances[1]?.emit('error');
+                await flushAsync();
+
+                // Let the internal backoff retry fire and connect successfully
+                jest.advanceTimersByTime(5000);
+                await waitFor(() => fakeEventSourceInstances.length === 3, 'third EventSource created after backoff retry');
+                fakeEventSourceInstances[2]?.emit('open');
+                await flushAsync();
+
+                // Second cycle: drop after open again — restart() must preserve attemptCount=1
+                fakeEventSourceInstances[2]?.emit('error');
+                await waitFor(() => fakeEventSourceInstances.length === 4, 'fourth EventSource created after second drop');
+
+                // Fourth attempt fails before open (attemptCount: 1 -> 2, delay = 10000ms with restart();
+                // 1 -> 1, delay = 5000ms if the mutant loop.start() reset attemptCount instead)
+                fakeEventSourceInstances[3]?.emit('error');
+                await flushAsync();
+
+                // At +5000ms the real restart()-preserved backoff (10000ms) has not elapsed yet, so
+                // no fifth EventSource should have been created.
+                jest.advanceTimersByTime(5000);
+                await flushAsync();
+                expect(fakeEventSourceInstances).toHaveLength(4);
+            } finally {
+                randomSpy.mockRestore();
+                await listener.stop();
+            }
         });
 
         test('synchronous throw inside EventSource constructor does not kill the listener', async () => {

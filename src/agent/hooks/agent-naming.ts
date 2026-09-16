@@ -83,6 +83,7 @@ function asRecord(toolInput: unknown): Record<string, unknown> | undefined {
 
 /** `value` when it is a non-empty string, else `undefined`. */
 function nonEmptyString(value: unknown): string | undefined {
+    // Stryker disable next-line llm: value is narrowed to string by the first operand, for which length === 0 and !length are the same predicate.
     if(typeof value !== 'string' || value.length === 0) {
         return undefined;
     }
@@ -148,6 +149,7 @@ export function createAgentNamingHooks(params: CreateAgentNamingHooksParams): Pa
         }
         if(toolName === 'Agent') {
             const explicitType = nonEmptyString(input.subagent_type);
+            // Stryker disable next-line llm: nonEmptyString returns a non-empty string or undefined, so ?? and || select the same operand.
             const subagentType = explicitType ?? DEFAULT_SUBAGENT_TYPE;
             const name = agentName(input, subagentType);
             if(name === undefined && explicitType !== undefined) {

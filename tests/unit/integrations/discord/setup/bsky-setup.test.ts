@@ -204,6 +204,18 @@ describe('setupBsky — isSendableChannel type guard', () => {
             .toBe(JSON.stringify(['@first.bsky.social']));
     });
 
+    it('propagates a direct Discord DM delivery failure after retry exhaustion', async () => {
+        const send = mock(async () => {
+            throw new Error('Discord unavailable');
+        });
+        options.client = { channels: { fetch: mock(async () => ({ send })) } } as unknown as Client;
+        const result = await setupBsky(options);
+
+        await expect(result.sendDMApprovalRequest('dm text', ['@first.bsky.social'], 'convo'))
+            .rejects.toThrow('Discord unavailable');
+        expect(send).toHaveBeenCalledTimes(3);
+    });
+
     it('starts the outbound rate limiter at its documented 24-message capacity', async () => {
         const { rateLimiter } = await setupBsky(options);
         expect(rateLimiter.tokensRemaining()).toBe(24);

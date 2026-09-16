@@ -1130,6 +1130,21 @@ describe('createWebViewAdapter — getConsoleLogs', () => {
         expect(logs[0]?.at).toBeInstanceOf(Date);
     });
 
+    test('stamps each console entry with the time the callback ran', async () => {
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
+        await adapter.navigate('https://example.com');
+        const consoleCb = fakeView.constructorOptions.console!;
+
+        const before = Date.now();
+        consoleCb('log', 'hello');
+        const after = Date.now();
+
+        const at = adapter.getConsoleLogs()[0]?.at.getTime();
+        expect(at).toBeGreaterThanOrEqual(before);
+        expect(at).toBeLessThanOrEqual(after);
+    });
+
     test('limit parameter restricts number of returned entries', async () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
@@ -1200,5 +1215,128 @@ describe('createWebViewAdapter — getConsoleLogs', () => {
 
         // After reinit, console log buffer must be empty — no stale entries from before close
         expect(adapter.getConsoleLogs()).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Mutation witnesses — observable recovery and polling contracts
+// ---------------------------------------------------------------------------
+
+describe('createWebViewAdapter — recovery and polling boundaries', () => {
+    test('keeps exactly the 200 newest console entries', async () => {
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
+        await adapter.navigate('https://example.com');
+        const consoleCb = fakeView.constructorOptions.console!;
+
+        for(let i = 0; i <= 200; i++) {
+            consoleCb('log', String(i));
+        }
+
+        const logs = adapter.getConsoleLogs();
+        expect(logs).toHaveLength(200);
+        expect(logs[0]?.args).toEqual(['1']);
+        expect(logs.at(-1)?.args).toEqual(['200']);
+    });
+
+    test('polls absent selectors at the documented 50ms interval', async () => {
+        const pollDelays: number[] = [];
+        const recordingDelay = async (ms: number): Promise<void> => {
+            pollDelays.push(ms);
+        };
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(defaultConfig, factory, recordingDelay);
+        await adapter.navigate('https://example.com');
+        pollDelays.length = 0;
+
+        let evaluationCount = 0;
+        fakeView.evaluate = mock(async (): Promise<boolean> => {
+            evaluationCount++;
+            return evaluationCount === 2;
+        });
+        const nowSpy = spyOn(Date, 'now').mockReturnValue(1000);
+        try {
+            await expect(adapter.waitForSelector('button', 100)).resolves.toBeUndefined();
+            expect(pollDelays).toEqual([50]);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    test('uses an Error message for pending-slot recovery even when its stringification differs', async () => {
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
+        await adapter.evaluate('init');
+        const pendingError = new RangeError('pending navigation');
+        pendingError.toString = () => 'reload failed';
+
+        fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
+        fakeView.reload = mock((): Promise<void> => {
+            throw pendingError;
+        });
+
+        await adapter.navigate('https://example.com');
+        expect(factory).toHaveBeenCalledTimes(2);
+    });
+
+    test('preserves an empty non-pending thrown value from reload', async () => {
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
+        await adapter.evaluate('init');
+
+        fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
+        fakeView.reload = mock((): Promise<void> => {
+            throw '';
+        });
+
+        await expect(adapter.navigate('https://example.com')).rejects.toBe('');
+    });
+
+    test('retries the fresh view after a pending-slot recovery navigation also times out', async () => {
+        const views: FakeWebView[] = [];
+        const factory = mock((opts: FakeWebViewOptions): FakeWebView => {
+            const nextView = new FakeWebView(opts);
+            views.push(nextView);
+            fakeView = nextView;
+
+            if(views.length === 1) {
+                nextView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
+                nextView.reload = mock((): Promise<void> => {
+                    throw new Error('pending navigation');
+                });
+            } else {
+                nextView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
+            }
+            return nextView;
+        });
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
+
+        await adapter.navigate('https://example.com');
+
+        expect(views).toHaveLength(2);
+        expect(views[0]?.reload).toHaveBeenCalledTimes(1);
+        expect(views[1]?.reload).toHaveBeenCalledTimes(1);
+    });
+
+    test('propagates a polling delay rejection before another selector evaluation', async () => {
+        const rejectingDelay = mock(async (): Promise<void> => {
+            throw new Error('poll delay rejected');
+        });
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(defaultConfig, factory, rejectingDelay);
+        await adapter.evaluate('init');
+
+        let evaluationCount = 0;
+        fakeView.evaluate = mock(async (): Promise<boolean> => {
+            evaluationCount++;
+            return evaluationCount > 1;
+        });
+        const nowSpy = spyOn(Date, 'now').mockReturnValue(1000);
+        try {
+            await expect(adapter.waitForSelector('button', 100)).rejects.toThrow('poll delay rejected');
+            expect(evaluationCount).toBe(1);
+        } finally {
+            nowSpy.mockRestore();
+        }
     });
 });

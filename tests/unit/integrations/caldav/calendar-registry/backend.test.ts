@@ -1,6 +1,7 @@
-import { describe, test, expect, beforeEach, afterEach, spyOn, type mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn, jest, type mock } from 'bun:test';
 import { DynamoDBDocumentClient, PutCommand, GetCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { DynamoTimeoutError } from '@/errors';
 import { CalendarRegistryBackend } from '@/integrations/caldav/calendar-registry/backend';
 import { createCalendarServerId, type CalendarRegistryRecord, type CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
 import { type DynamoTimeoutOptions } from '@/storage/dynamo-retry';
@@ -49,6 +50,7 @@ describe('CalendarRegistryBackend', () => {
     afterEach(() => {
         ddbMock.restore();
         withDynamoTimeoutSpy.mockRestore();
+        jest.useRealTimers();
     });
 
     describe('getUserRecord', () => {
@@ -343,6 +345,28 @@ describe('CalendarRegistryBackend', () => {
             expect(putItem?.servers[0].serverId).toBe(VALID_UUID_2);
         });
 
+        test('updates the removal timestamp and persists it with the revised server list', async () => {
+            jest.useFakeTimers();
+            try {
+                jest.setSystemTime(new Date('2026-03-14T10:00:00.000Z'));
+                const record = makeRecord('user-123', [makeServer(), makeServer({ serverId: VALID_UUID_2 })]);
+                ddbMock.on(GetCommand).resolves({
+                    Item: { ...record, PK: 'CALCAL#user-123', SK: 'CALENDARS' },
+                });
+                ddbMock.on(PutCommand).resolves({});
+
+                await backend.removeServer('user-123', VALID_UUID_1);
+
+                const putItem = ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item;
+                expect(putItem).toMatchObject({
+                    servers:   [expect.objectContaining({ serverId: VALID_UUID_2 })],
+                    updatedAt: '2026-03-14T10:00:00.000Z',
+                });
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
         test('should return false when server not found', async () => {
             const record = makeRecord('user-123', []);
             ddbMock.on(GetCommand).resolves({
@@ -523,6 +547,76 @@ describe('CalendarRegistryBackend', () => {
             expect(updatedServer1?.calendars[0].calendarPath).toBe('/cal/s1-b/');
             expect(updatedServer2?.calendars).toHaveLength(1);
             expect(updatedServer2?.calendars[0].calendarPath).toBe('/cal/s2/');
+        });
+
+        test('should not add extraneous fields to the updated server entry', async () => {
+            const server = makeServer({
+                calendars: [
+                    { calendarPath: '/cal/path1/', label: 'Cal 1' },
+                    { calendarPath: '/cal/path2/', label: 'Cal 2' },
+                ],
+            });
+            const record = makeRecord('user-123', [server]);
+            ddbMock.on(GetCommand).resolves({
+                Item: { ...record, PK: 'CALCAL#user-123', SK: 'CALENDARS' },
+            });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.removeCalendar('user-123', VALID_UUID_1, '/cal/path1/');
+
+            const putItem = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item;
+            expect(putItem?.servers[0]).toEqual({
+                ...server,
+                calendars: [{ calendarPath: '/cal/path2/', label: 'Cal 2' }],
+            });
+        });
+
+        test('should set updatedAt to the current time, not the epoch', async () => {
+            jest.useFakeTimers();
+            try {
+                jest.setSystemTime(new Date('2026-03-14T10:00:00.000Z'));
+                const server = makeServer({
+                    calendars: [{ calendarPath: '/cal/only/', label: 'Only Cal' }],
+                });
+                const record = makeRecord('user-123', [server]);
+                ddbMock.on(GetCommand).resolves({
+                    Item: { ...record, PK: 'CALCAL#user-123', SK: 'CALENDARS' },
+                });
+                ddbMock.on(PutCommand).resolves({});
+
+                await backend.removeCalendar('user-123', VALID_UUID_1, '/cal/only/');
+
+                const putItem = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item;
+                expect(putItem?.updatedAt).toBe('2026-03-14T10:00:00.000Z');
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
+        test('should remove every entry matching the target serverId when the last calendar is removed', async () => {
+            // Two server entries sharing the same serverId (a malformed-but-possible record):
+            // findIndex locks onto the first match, but the final removal branch filters by
+            // serverId — so removing the last calendar from the first entry must also drop the
+            // second entry sharing that id, not merely the entry at the matched index.
+            const duplicateServerA = makeServer({
+                serverId:  VALID_UUID_1,
+                calendars: [{ calendarPath: '/cal/dup-a/', label: 'Dup A' }],
+            });
+            const duplicateServerB = makeServer({
+                serverId:  VALID_UUID_1,
+                calendars: [{ calendarPath: '/cal/dup-b/', label: 'Dup B' }],
+            });
+            const record = makeRecord('user-123', [duplicateServerA, duplicateServerB]);
+            ddbMock.on(GetCommand).resolves({
+                Item: { ...record, PK: 'CALCAL#user-123', SK: 'CALENDARS' },
+            });
+            ddbMock.on(PutCommand).resolves({});
+
+            const result = await backend.removeCalendar('user-123', VALID_UUID_1, '/cal/dup-a/');
+
+            expect(result).toBe(true);
+            const putItem = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item;
+            expect(putItem?.servers).toHaveLength(0);
         });
     });
 
@@ -778,6 +872,51 @@ describe('CalendarRegistryBackend', () => {
             );
 
             expect(customBackend).toBeDefined();
+        });
+
+        test('default timeout fires at exactly 10 seconds, not before and not after', async () => {
+            // Use the real withDynamoTimeout (the outer beforeEach replaces it with a
+            // passthrough that ignores timeoutMs entirely) so the 10_000 default constructor
+            // argument actually drives a race against a hanging DynamoDB call.
+            withDynamoTimeoutSpy.mockRestore();
+            jest.useFakeTimers();
+            try {
+                const defaultBackend = new CalendarRegistryBackend(
+                    ddbMock as unknown as DynamoDBDocumentClient,
+                    TABLE_NAME
+                );
+                ddbMock.on(GetCommand).callsFake(async () => new Promise(() => {
+                    // Never resolves — only the timeout can settle the race.
+                }));
+
+                let rejection: unknown;
+                let settled = false;
+                const pending = defaultBackend.getUserRecord('user-123').catch((err: unknown) => {
+                    rejection = err;
+                }).finally(() => {
+                    settled = true;
+                });
+
+                for(let i = 0; i < 10; i++) {
+                    // eslint-disable-next-line no-await-in-loop -- flush microtasks before checking timer state
+                    await Promise.resolve();
+                }
+                expect(settled).toBe(false);
+
+                jest.advanceTimersByTime(9999);
+                for(let i = 0; i < 10; i++) {
+                    // eslint-disable-next-line no-await-in-loop -- flush microtasks after partial timer advance
+                    await Promise.resolve();
+                }
+                expect(settled).toBe(false);
+
+                jest.advanceTimersByTime(1);
+                await pending;
+                expect(settled).toBe(true);
+                expect(rejection).toBeInstanceOf(DynamoTimeoutError);
+            } finally {
+                jest.useRealTimers();
+            }
         });
     });
 });

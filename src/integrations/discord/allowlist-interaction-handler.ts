@@ -55,7 +55,6 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
             logger.error({ err, sagaId, msg: 'Allowlist saga: failed to process name submission' });
             await this.renderError(interaction);
         }
-        // Stryker restore BlockStatement
     }
 
     /**
@@ -65,6 +64,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
      */
     async handleButton(interaction: ButtonInteraction): Promise<void> {
         const colonIdx = interaction.customId.indexOf(':');
+        // Stryker disable next-line llm: String.indexOf returns only -1 or a non-negative integer, so `=== -1` and `< 0` are equivalent.
         if(colonIdx === -1) {
             return;
         }
@@ -106,7 +106,6 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
             logger.error({ err, sagaId, msg: 'Allowlist saga: failed to process button' });
             await this.renderError(interaction);
         }
-        // Stryker restore BlockStatement
     }
 
     /**
@@ -123,6 +122,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
         try {
             const result = await this.deps.executor.start(platform, identifierValue, displayNameHint);
 
+            // Stryker disable next-line llm: result.action is a string-literal union, so loose and strict comparison to this literal are equivalent.
             if(result.action === 'completed') {
                 // Contact already exists — add a note in a followUp
                 await interaction.followUp({ content: `✓ **${result.displayName}** added to allowlist.`, ephemeral: true });
@@ -143,7 +143,6 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
         } catch (err) {
             logger.error({ err, platform, identifierValue, msg: 'Allowlist saga: failed to start from approval' });
         }
-        // Stryker restore BlockStatement
         return { allowlistSuffix: '' };
     }
 
@@ -211,6 +210,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
         if(contact) {
             embed.addFields({ name: 'Name', value: contact.displayName, inline: true });
             embed.addFields({ name: 'Person ID', value: contact.personId, inline: true });
+            // Stryker disable next-line EqualityOperator,llm: length > 0 and length >= 1 are equivalent for a non-negative integer array length
             if(contact.identifiers.length > 0) {
                 const idStr = contact.identifiers.map(id => `${id.platform}: ${id.value}`).join('\n');
                 embed.addFields({ name: 'Identifiers', value: idStr, inline: false });
@@ -255,6 +255,5 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
             // The primary error has already been logged by the caller; failing to show the
             // error embed is a cosmetic degradation, not an additional error worth logging.
         }
-        // Stryker restore BlockStatement
     }
 }

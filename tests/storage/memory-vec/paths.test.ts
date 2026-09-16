@@ -81,6 +81,21 @@ describe('cacheDir', () => {
             const result = cacheDir();
             expect(result).toBe(path.join('/custom/xdg-cache', 'llama.cpp'));
         });
+
+        it('treats an empty XDG_CACHE_HOME as unset (XDG Base Directory spec)', () => {
+            process.env.XDG_CACHE_HOME = '';
+            const result = cacheDir();
+            const expected = path.join(homedir(), '.cache', 'llama.cpp');
+            expect(result).toBe(expected);
+        });
+
+        it('normalizes a trailing separator in XDG_CACHE_HOME', () => {
+            process.env.XDG_CACHE_HOME = '/custom/xdg-cache/';
+            const result = cacheDir();
+            const expected = path.join('/custom/xdg-cache/', 'llama.cpp');
+            expect(expected).toBe('/custom/xdg-cache/llama.cpp');
+            expect(result).toBe(expected);
+        });
     });
 });
 

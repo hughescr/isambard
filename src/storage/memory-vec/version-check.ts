@@ -57,6 +57,7 @@ export async function getBundledLlamaCppVersion(): Promise<{ build: number, rele
             return null;
         }
 
+        // Stryker disable next-line NumberLiteralValue: radix 0 falls back to decimal unless the string starts with 0x, which the /^b(\d+)$/ guard rules out
         const build = Number.parseInt(match[1]!, 10);
         // A very long numeric tag can parse to Infinity or lose integer precision.
         // Neither is a trustworthy build number for a compatibility decision.

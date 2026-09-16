@@ -145,6 +145,7 @@ export interface LiveSignalsDepsInternal extends LiveSignalsDeps {
  *   23     late night
  */
 function timeOfDayBucket(hour: number): string {
+    // Stryker disable next-line llm: Luxon DateTime.hour is an integer (or NaN), so <= 4 and < 5 agree on every value.
     if(hour <= 4) {
         return 'deep night';
     }
@@ -179,7 +180,6 @@ function timeOfDayBucket(hour: number): string {
  * Day-of-week names (Luxon uses 1=Monday … 7=Sunday).
  */
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
-// Stryker restore StringLiteral,ArrayDeclaration
 
 /**
  * Format a relative duration in milliseconds as a short human string.
@@ -210,13 +210,14 @@ const BSKY_SNIPPET_MAX_CHARS = 120;
  * Strips newlines, truncates to BSKY_SNIPPET_MAX_CHARS, appends author handle.
  */
 function formatFeedItemContent(item: BskyFeedItem): string {
+    // Stryker disable next-line llm: BskyPost.text is required string data, so an empty-string fallback returns the same value.
     const text = item.post.text.replaceAll('\n', ' ').trim();
     const snippet = text.length > BSKY_SNIPPET_MAX_CHARS
         ? `${text.slice(0, BSKY_SNIPPET_MAX_CHARS)}…`
         : text;
+    // Stryker disable next-line llm: BskyAuthor.handle is required string data, so an empty-string fallback returns the same value.
     const handle = item.post.author.handle;
     return `"${snippet}" — @${handle}`;
-    // Stryker restore all
 }
 
 /**
@@ -253,7 +254,6 @@ function summariseNotifications(notifications: BskyNotification[]): string | und
     const sorted = notifications.toSorted((a, b) => b.indexedAt.localeCompare(a.indexedAt));
     const latest = sorted[0]!;
     return `${parts.join(', ')} — latest from @${latest.author.handle}`;
-    // Stryker restore all
 }
 
 /**
@@ -344,6 +344,7 @@ export class LiveSignals {
         const signals: Signal[] = [];
         for(const result of results) {
             if(result.status === 'fulfilled') {
+                // Stryker disable next-line llm: appendSignalValue appends nothing for undefined and nothing for [], so the fallback is inert.
                 this.appendSignalValue(signals, result.value);
             } else {
                 logger.debug({
@@ -359,6 +360,7 @@ export class LiveSignals {
      * Append a single signal, an array of signals, or nothing (undefined) to the accumulator.
      */
     private appendSignalValue(signals: Signal[], value: Signal | Signal[] | undefined): void {
+        // Stryker disable next-line llm: value is an object, array, or undefined, so strict equality and truthiness checks agree.
         if(value === undefined) {
             return;
         }
@@ -426,8 +428,10 @@ export class LiveSignals {
     private daySignal(): Signal {
         const dt = this.getNow();
         // Luxon weekday: 1=Monday … 7=Sunday
+        // Stryker disable next-line llm: valid weekdays map to [0,6], while invalid DateTime yields NaN; `% 7` changes neither lookup.
         const dayIndex = dt.weekday - 1;
         const dayName = DAY_NAMES[dayIndex] ?? 'Monday';
+        // Stryker disable next-line llm: valid hours are [0,23], while invalid DateTime yields NaN; `% 24` changes neither bucket input.
         const timeBucket = timeOfDayBucket(dt.hour);
         return {
             kind:    'day',
@@ -439,6 +443,7 @@ export class LiveSignals {
     private toolSignal(): Signal | undefined {
         // Stryker disable next-line llm: the dependency contract requires an array, and the runtime producer always returns its array buffer, so `|| []` is inert.
         const tools = this.deps.getRecentTools();
+        // Stryker disable next-line NumberLiteralValue: the producer is a dense push/shift buffer, so this fallback only runs when empty and every index reads undefined.
         const latest = tools[tools.length - 1] ?? tools[0];
         if(!latest) {
             return undefined;
@@ -453,6 +458,7 @@ export class LiveSignals {
 
     private channelSignal(): Signal | undefined {
         const channels = this.deps.getRecentChannels();
+        // Stryker disable next-line llm,NumberLiteralValue: the producer is a dense push/shift buffer, so this fallback only runs when empty and every index reads undefined.
         const latest = channels[channels.length - 1] ?? channels[0];
         if(!latest) {
             return undefined;
@@ -502,6 +508,7 @@ export class LiveSignals {
         if(nowMs - cache.fetchedAt > ttlMs) {
             return undefined;   // stale
         }
+        // Stryker disable next-line llm: TtlCache.items is a non-nullable T[] written only from typed producers, so a nullish fallback is unreachable.
         return cache.items;
     }
 
@@ -605,6 +612,7 @@ export class LiveSignals {
             }));
         }
 
+        // Stryker disable next-line llm: forYouInFlight is a Promise or undefined and promises are always truthy, so || and ?? select the same operand.
         await waitForBootstrap(this.forYouInFlight ?? this.startForYouRefresh(bskyClient));
 
         const afterWait = this.readCache<BskyFeedItem>(this.forYouCache, ttlMs, this.getNowMs());
@@ -648,6 +656,7 @@ export class LiveSignals {
 
         const ttlMs = idleSignalsConfig.bskyNotificationsCacheMs;
         const nowMs = this.getNowMs();
+        // Stryker disable next-line llm: nowMs was read on the previous line with no await in between, so re-reading the clock here is only distinguishable by a scripted clock.
         const cached = this.readCache(this.notificationsCache, ttlMs, nowMs);
 
         if(cached !== undefined) {

@@ -21,6 +21,16 @@ function getConfiguredHandlerOptions(handler: NodeHttpHandler): Promise<NodeHttp
     return (handler as unknown as NodeHttpHandlerWithConfigProvider).configProvider;
 }
 
+describe.concurrent('SLOW_READ_MS', () => {
+    // Pinning test: the threshold tests elsewhere in this file compute their elapsed-time
+    // fixtures from SLOW_READ_MS symbolically (SLOW_READ_MS - 1 / SLOW_READ_MS / SLOW_READ_MS + 1),
+    // so they pass unchanged no matter what the constant's actual value is. This test pins the
+    // literal itself so a change to the threshold value is a conscious, visible edit.
+    test('should be exactly 200ms', () => {
+        expect(SLOW_READ_MS).toBe(200);
+    });
+});
+
 describe.concurrent('buildClientConfig', () => {
     test('should set maxAttempts to 3', () => {
         const clientConfig = buildClientConfig();

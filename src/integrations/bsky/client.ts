@@ -12,7 +12,6 @@ const HTTP_STATUS = {
     AUTH_REQUIRED: 401,
     RATE_LIMITED:  429,
 } as const;
-// Stryker restore ObjectLiteral,StringLiteral
 
 /**
  * Minimal duck-type for the XRPCError shape from @atproto/xrpc.
@@ -27,6 +26,7 @@ interface XRPCErrorLike {
 
 const BSKY_READ_MAX_ATTEMPTS = 3;
 const BSKY_RETRY_BASE_DELAY_MS = 5000;
+// Stryker disable next-line NumberLiteralValue: with three attempts, retry delays only reach 10% above 10s, so the 60s cap cannot bind.
 const BSKY_RETRY_MAX_DELAY_MS = 60_000;
 
 const BSKY_READ_RETRY_POLICY: Partial<RetryPolicy> = {
@@ -36,7 +36,6 @@ const BSKY_READ_RETRY_POLICY: Partial<RetryPolicy> = {
     backoffMultiplier: 2,
     jitterFraction:    0.1,
 };
-// Stryker restore ObjectLiteral,ArithmeticOperator
 
 function isXRPCError(err: unknown): err is XRPCErrorLike {
     if(!(err instanceof Error)) {
@@ -46,7 +45,6 @@ function isXRPCError(err: unknown): err is XRPCErrorLike {
     const errRecord = err as unknown as Record<string, unknown>;
     return typeof errRecord.status === 'number' && typeof errRecord.error === 'string';
 }
-// Stryker restore BlockStatement,ConditionalExpression,LogicalOperator
 
 /**
  * Extract a retry-after delay in milliseconds from XRPC error response headers.
@@ -60,7 +58,6 @@ function extractRateLimitRetryAfterMs(headers: XRPCErrorLike['headers']): number
     if(headers === undefined) {
         return undefined;
     }
-    // Stryker restore BlockStatement,ConditionalExpression,LogicalOperator
 
     // Bluesky sends `ratelimit-reset` as a Unix epoch timestamp (seconds)
     const resetRaw = headers['ratelimit-reset'];
@@ -68,7 +65,6 @@ function extractRateLimitRetryAfterMs(headers: XRPCErrorLike['headers']): number
     if(typeof resetStr !== 'string') {
         return undefined;
     }
-    // Stryker restore BlockStatement,ConditionalExpression
 
     const resetEpochSec = Number.parseInt(resetStr, 10);
     // Stryker disable next-line llm: parseInt yields an integer or NaN, making the finite and integer predicates equivalent here.
@@ -257,6 +253,7 @@ export class BlueskyClient {
             try {
                 const response = await this.agent.getPosts({ uris: [uri] });
                 const posts    = response.data.posts;
+                // Stryker disable next-line llm: posts is PostView[] by the @atproto getPosts output schema, so a nullish guard and `|| 0` on its length are both no-ops
                 if(posts.length === 0) {
                     throw new BskyError('Post not found', undefined, { uri });
                 }
@@ -877,9 +874,11 @@ export class BlueskyClient {
 
     private async normalizeMessage(msg: ChatBskyConvoDefs.MessageView, didCache?: Map<string, Promise<string>>): Promise<BskyDirectMessage> {
         const embed        = msg.embed;
+        // Stryker disable next-line llm: the SDK isView validator safely returns false for undefined, making the explicit embed guard redundant.
         const normalizedEmbed = (embed && this.api.AppBskyEmbedRecord.isView(embed) && this.api.AppBskyEmbedRecord.isViewRecord(embed.record))
             ? this.normalizeEmbeddedRecord(embed.record)
             : undefined;
+        // Stryker disable next-line llm: didCache is Map<...> or undefined; every Map is truthy, so ?? and || are equivalent.
         const cache = didCache ?? this.createDIDCache();
         const normalizedFacets = msg.facets ? await this.normalizeFacets(msg.facets, cache) : undefined;
         return {

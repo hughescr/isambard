@@ -260,8 +260,9 @@ describe('setupPerchDriverAndScheduler', () => {
             const { getConductor } = captureDriverConductor();
             const sendEnvelopeResponseSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
             const innerSubmit = mock(async () => makeTurnResult({ envelopeId: 'env-wrapup-1', response: 'Wrapping up soon' }));
+            let deliveredTarget: { channelId: string, messageIds: string[] } | undefined;
             const innerDeliver = mock(async (_id: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
-                await send();
+                deliveredTarget = await send();
                 return { delivered: true };
             });
             const channelRegistry = fakeChannelRegistry('perch-time-channel-id');
@@ -277,6 +278,9 @@ describe('setupPerchDriverAndScheduler', () => {
             await wrapped?.submit({ id: 'env-wrapup-1', kind: 'wrapup' }, { priority: 'other' });
 
             expect(channelRegistry.getWellKnownChannel).toHaveBeenCalledWith('perch-time');
+            // `deliver` journals this return value as the `response_delivered` row, so the
+            // resolved perch-time id — not a blank fallback — is what the receipt records.
+            expect(deliveredTarget).toEqual({ channelId: 'perch-time-channel-id', messageIds: [] });
             expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
                 envelopeId: 'env-wrapup-1', kind: 'wrapup', channelId: 'perch-time-channel-id', text: 'Wrapping up soon',
             }));

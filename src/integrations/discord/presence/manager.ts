@@ -217,6 +217,7 @@ export class PresenceManager {
         // Either path: the session went busy while Haiku was writing an idle line (a follow-up
         // message interrupting a turn goes idle for a few hundred ms before the next turn opens) —
         // applying it now would paint "💤" over an active status.
+        // Stryker disable next-line llm: equivalent — currentPhase is a PresencePhase object or null, so !this.currentPhase || … yields the same boolean as currentPhase?.type !== 'idle' for every reachable value (null gives undefined !== 'idle' → true either way)
         if(this.currentPhase?.type !== 'idle') {
             this.deps.logger.debug({ currentPhase: this.currentPhase?.type }, 'Discarding stale idle status (no longer idle)');
             return;
@@ -259,6 +260,7 @@ export class PresenceManager {
         }
 
         this.stopIdleRefresh();
+        // Stryker disable next-line llm: currentPhase was just assigned the production view phase and no intervening manager operation reassigns it
         const generated = this.deps.activeStatusGenerator.generate(view.phase);
         const text = renderPresenceText(view, generated.name);
         await this.applyPresenceUpdate({ name: text, type: generated.type });
@@ -319,6 +321,7 @@ export class PresenceManager {
         // transitioning to 'none' (idle) — the subsequent updatePhase(idle) handles it — and
         // skip when there is no current phase at all (nothing to re-render with a prefix).
         if(this.currentPhase && this.currentPhase.type !== 'idle' && mode !== 'none') {
+            // Stryker disable next-line llm: presenceDisplayMode was just assigned mode and no intervening manager operation reassigns it
             const activity = this.deps.activeStatusGenerator.generate(this.currentPhase, mode);
             void this.applyPresenceUpdate(activity);
         }
@@ -352,6 +355,7 @@ export class PresenceManager {
         if(nowIdle && !wasIdle) {
             // If presence display mode is active, don't start idle refresh yet.
             // The transitionPresenceDisplayMode('none') call will trigger idle refresh with correct mode.
+            // Stryker disable next-line llm: equivalent — presenceDisplayMode is the PresenceDisplayMode string union, so == and === against 'none' coincide for every reachable value
             if(this.presenceDisplayMode === 'none') {
                 await this.startIdleRefresh();
             }

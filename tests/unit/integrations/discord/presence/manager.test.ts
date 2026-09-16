@@ -1468,4 +1468,130 @@ describe('PresenceManager', () => {
             expect(idleGeneratePromises).toHaveLength(2);
         });
     });
+    describe('applyView awaits the presence work it triggers (dropped-await guards)', () => {
+        const idleView: PresenceView = {
+            live:       [],
+            prefix:     '💤 • 1 🪾',
+            compacting: false,
+            phase:      { type: 'idle', since: new Date(0) },
+            activeRole: null,
+        };
+
+        const activeView: PresenceView = {
+            live:       ['conversation'],
+            prefix:     '💬 • 1 🪾',
+            compacting: false,
+            phase:      { type: 'thinking', startedAt: new Date(0) },
+            activeRole: 'conversation',
+        };
+
+        // A dropped `await` cannot change WHAT applyView does, only WHEN its promise settles, so
+        // the observable here is the promise's pending state: hold the downstream Discord write
+        // (or the Haiku generation feeding it) open, drain every microtask a mutant could have
+        // used, and assert applyView is still unsettled. Nothing here waits on a real timer.
+        async function drainMicrotasks(): Promise<void> {
+            for(let i = 0; i < 30; i++) {
+                // eslint-disable-next-line no-await-in-loop -- each turn must land one microtask tick later than the last (a chain, not a parallel batch), covering generate → in-flight coalescing → refreshIdleStatus → applyPresenceUpdate → retry wrapper
+                await Promise.resolve();
+            }
+        }
+
+        it('applyView(idle) stays pending until the idle status it started has been generated and applied (await on startIdleRefresh/refreshIdleStatus)', async () => {
+            let releaseIdle!: (value: ActivitiesOptions) => void;
+            mockIdleGenerator.generate = mock(() => new Promise<ActivitiesOptions>((resolve) => {
+                releaseIdle = resolve;
+            }));
+
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            let settled = false;
+            const applied = manager.applyView(idleView).finally(() => {
+                settled = true;
+            });
+
+            await drainMicrotasks();
+            expect(settled).toBe(false);
+
+            releaseIdle({ name: 'Gated idle line', type: ActivityType.Custom });
+            await applied;
+
+            expect(settled).toBe(true);
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: 'Gated idle line', type: ActivityType.Custom });
+        });
+
+        it('applyView(active) stays pending until its presence update has reached Discord (await on applyPresenceUpdate)', async () => {
+            let releaseRetry!: () => void;
+            mockWithDiscordRetry.mockImplementationOnce(async <T>(operation: () => Promise<T>, _options?: unknown): Promise<T> => {
+                await new Promise<void>((resolve) => {
+                    releaseRetry = resolve;
+                });
+                return operation();
+            });
+
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            let settled = false;
+            const applied = manager.applyView(activeView).finally(() => {
+                settled = true;
+            });
+
+            await drainMicrotasks();
+            expect(settled).toBe(false);
+
+            releaseRetry();
+            await applied;
+
+            expect(settled).toBe(true);
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({
+                name: '💬 • 1 🪾 • Status for thinking',
+                type: ActivityType.Custom,
+            });
+        });
+
+        it('an idle refresh stays pending until its forced presence update has reached Discord (await on forcePresenceUpdate)', async () => {
+            let releaseRetry!: () => void;
+            mockWithDiscordRetry.mockImplementationOnce(async <T>(operation: () => Promise<T>, _options?: unknown): Promise<T> => {
+                await new Promise<void>((resolve) => {
+                    releaseRetry = resolve;
+                });
+                return operation();
+            });
+
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            let settled = false;
+            const applied = manager.applyView(idleView).finally(() => {
+                settled = true;
+            });
+
+            await drainMicrotasks();
+            // The idle line has been generated by now; only the Discord write is still outstanding.
+            expect(mockIdleGenerator.generate).toHaveBeenCalledWith({ prefix: '💤 • 1 🪾', compacting: false });
+            expect(settled).toBe(false);
+
+            releaseRetry();
+            await applied;
+
+            expect(settled).toBe(true);
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: '💤 Dozing peacefully', type: ActivityType.Custom });
+        });
+    });
 });

@@ -10,6 +10,15 @@ async function createMockPluginDir(basePath: string): Promise<void> {
     await mockFsPromises.writeFile(path.join(basePath, '.claude-plugin', 'plugin.json'), '{}');
 }
 
+// Flushes pending microtasks without a real timer, so p-limit's internal Promise chain
+// (enqueue -> internal resolve -> .then(run)) has a chance to settle deterministically.
+async function flushMicrotasks(remaining: number): Promise<void> {
+    if(remaining > 0) {
+        await Promise.resolve();
+        await flushMicrotasks(remaining - 1);
+    }
+}
+
 describe('resolveExternalPath', () => {
     test.each([
         ['~/my-plugin', path.join(homedir(), 'my-plugin'), 'expand ~ to home directory'],
@@ -20,6 +29,11 @@ describe('resolveExternalPath', () => {
         ['./relative/path', './relative/path', 'preserve relative paths'],
         ['../relative/path', '../relative/path', 'preserve relative parent paths'],
         ['', '', 'return empty string for empty input'],
+        ['~foo', '~foo', 'not expand a bare ~name with no following slash'],
+        [String.raw`~\subdir`, String.raw`~\subdir`, 'not expand ~ followed by a backslash (only ~/ triggers expansion)'],
+        ['~ ', '~ ', 'not expand ~ followed by whitespace instead of a slash'],
+        ['~/', homedir(), 'expand ~/ with nothing after it to exactly the home directory'],
+        ['~//', path.join(homedir(), '/'), 'expand ~// the same way path.join normalizes a doubled separator'],
     ])('should %s', (input, expected) => {
         const result = resolveExternalPath(input);
         expect(result).toBe(expected);
@@ -86,6 +100,13 @@ describe('findLatestMarketplaceVersion', () => {
 
         const result = await findLatestMarketplaceVersion(tempDir, 'test-plugin');
         expect(result).toBe(path.join(pluginDir, expected));
+    });
+
+    test('sorts versions by their semver directory names rather than plugin name', async () => {
+        const pluginDir = path.join(tempDir, 'test-plugin');
+        await Promise.all(['2.0.0', '1.0.0'].map(version => createMockPluginDir(path.join(pluginDir, version))));
+
+        expect(await findLatestMarketplaceVersion(tempDir, 'test-plugin')).toBe(path.join(pluginDir, '2.0.0'));
     });
 
     test.each([
@@ -225,6 +246,21 @@ describe('loadPlugins', () => {
             expect(paths).toContain(plugin1);
             expect(paths).toContain(plugin2);
         });
+
+        test('should append discovered in-repo plugins in discovery order, not reverse it', async () => {
+            const plugin1 = path.join(pluginsDir, 'plugin-alpha');
+            const plugin2 = path.join(pluginsDir, 'plugin-beta');
+            const plugin3 = path.join(pluginsDir, 'plugin-gamma');
+
+            // Created (and therefore discovered) in this exact order.
+            await createMockPluginDir(plugin1);
+            await createMockPluginDir(plugin2);
+            await createMockPluginDir(plugin3);
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            expect(result.map(item => item.path)).toEqual([plugin1, plugin2, plugin3]);
+        });
     });
 
     describe('external path resolution', () => {
@@ -241,6 +277,25 @@ describe('loadPlugins', () => {
 
             expect(result).toHaveLength(1);
             expect(result[0]).toEqual({ type: 'local', path: externalPlugin });
+        });
+
+        test('should expand a ~-prefixed external path before checking it', async () => {
+            const externalPlugin = path.join(homedir(), 'tilde-external-plugin');
+            await createMockPluginDir(externalPlugin);
+
+            await mockFsPromises.writeFile(
+                path.join(pluginsDir, 'plugins.json'),
+                JSON.stringify({ externalPaths: ['~/tilde-external-plugin'], marketplace: [] })
+            );
+
+            try {
+                const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+                expect(result).toHaveLength(1);
+                expect(result[0]).toEqual({ type: 'local', path: externalPlugin });
+            } finally {
+                await mockFsPromises.rm(externalPlugin, { recursive: true, force: true });
+            }
         });
 
         test('should warn and skip missing external paths', async () => {
@@ -335,6 +390,28 @@ describe('loadPlugins', () => {
     });
 
     describe('priority and deduplication', () => {
+        test('should treat in-repo plugin names as case-sensitive when deduplicating', async () => {
+            const inRepoPlugin = path.join(pluginsDir, 'MyPlugin');
+            const externalPlugin = path.join(tempDir, 'myplugin');
+
+            await createMockPluginDir(inRepoPlugin);
+            await createMockPluginDir(externalPlugin);
+
+            await mockFsPromises.writeFile(
+                path.join(pluginsDir, 'plugins.json'),
+                JSON.stringify({ externalPaths: [externalPlugin], marketplace: [] })
+            );
+
+            const result = await loadPlugins(pluginsDir, marketplaceDir);
+
+            // externalPlugin's basename "myplugin" differs in case from the in-repo "MyPlugin",
+            // so it must NOT be deduplicated against it: both should load.
+            expect(result).toHaveLength(2);
+            const paths = result.map(item => item.path);
+            expect(paths).toContain(inRepoPlugin);
+            expect(paths).toContain(externalPlugin);
+        });
+
         test('should prioritize in-repo over external path with same name', async () => {
             const inRepoPlugin = path.join(pluginsDir, 'shared-plugin');
             const externalPlugin = path.join(tempDir, 'shared-plugin');
@@ -499,6 +576,33 @@ describe('loadPlugins', () => {
     });
 
     describe('error handling', () => {
+        test('logs the zod issues array (not a flattened field-error map) for an invalid schema', async () => {
+            await mockFsPromises.writeFile(
+                path.join(pluginsDir, 'plugins.json'),
+                JSON.stringify({ externalPaths: 'not-an-array', marketplace: 123 })
+            );
+
+            await loadPlugins(pluginsDir, marketplaceDir);
+
+            const call = mockLogger.warn.mock.calls.find(([arg]) => (arg as { errors?: unknown }).errors !== undefined);
+            expect(call).toBeDefined();
+            // result.error.issues is an array of ZodIssue; .flatten().fieldErrors is a plain object keyed by field.
+            expect(Array.isArray((call?.[0] as { errors: unknown }).errors)).toBe(true);
+        });
+
+        test('logs the underlying Error message (not String(error)) when plugins.json fails to read', async () => {
+            mockFsPromises.readFile.mockRejectedValueOnce(new Error('boom'));
+
+            await loadPlugins(pluginsDir, marketplaceDir);
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    // error.message is 'boom'; String(error) would be 'Error: boom'.
+                    error: 'boom',
+                })
+            );
+        });
+
         test('should use empty config defaults when plugins.json is missing without warning', async () => {
             await mockFsPromises.rm(path.join(pluginsDir, 'plugins.json'));
 
@@ -630,6 +734,87 @@ describe('loadPlugins', () => {
             const result = await loadPlugins(pluginsDir, marketplaceDir);
 
             expect(result).toHaveLength(0);
+        });
+    });
+
+    describe('concurrency limits', () => {
+        const configPath = path.join(pluginsDir, 'plugins.json');
+
+        test('checks at most 8 external plugin paths concurrently', async () => {
+            const externalPaths = Array.from({ length: 12 }, (_, i) => path.join(tempDir, `ext-gate-${i}`));
+            await mockFsPromises.writeFile(configPath, JSON.stringify({ externalPaths, marketplace: [] }));
+
+            let inFlight = 0;
+            let maxInFlight = 0;
+            const releasers: (() => void)[] = [];
+            mockFsPromises.access.mockImplementation(async (checkedPath) => {
+                // Let the framework's own existence checks (plugins dir, plugins.json) through
+                // immediately; only the external-plugin candidates are held open to measure
+                // how many run at once.
+                if(checkedPath === pluginsDir || checkedPath === configPath) {
+                    return;
+                }
+                inFlight++;
+                maxInFlight = Math.max(maxInFlight, inFlight);
+                await new Promise<void>((_resolve, reject) => {
+                    releasers.push(() => {
+                        inFlight--;
+                        reject(new Error('ENOENT'));
+                    });
+                });
+            });
+
+            const resultPromise = loadPlugins(pluginsDir, marketplaceDir);
+            await flushMicrotasks(20);
+
+            expect(maxInFlight).toBe(8);
+
+            // Drain in waves: releasing one wave lets p-limit start the next, which needs its
+            // own microtask flush before it shows up in `releasers`.
+            while(releasers.length > 0) {
+                for(const release of releasers.splice(0)) {
+                    release();
+                }
+                // eslint-disable-next-line no-await-in-loop -- draining a variable-length wave queue; each wave's size depends on the previous wave's release
+                await flushMicrotasks(5);
+            }
+            await resultPromise;
+        });
+
+        test('checks at most 8 marketplace plugin versions concurrently', async () => {
+            const marketplaceNames = Array.from({ length: 12 }, (_, i) => `mkt-gate-${i}`);
+            await mockFsPromises.writeFile(configPath, JSON.stringify({ externalPaths: [], marketplace: marketplaceNames }));
+
+            let inFlight = 0;
+            let maxInFlight = 0;
+            const releasers: (() => void)[] = [];
+            mockFsPromises.access.mockImplementation(async (checkedPath) => {
+                if(checkedPath === pluginsDir || checkedPath === configPath) {
+                    return;
+                }
+                inFlight++;
+                maxInFlight = Math.max(maxInFlight, inFlight);
+                await new Promise<void>((_resolve, reject) => {
+                    releasers.push(() => {
+                        inFlight--;
+                        reject(new Error('ENOENT'));
+                    });
+                });
+            });
+
+            const resultPromise = loadPlugins(pluginsDir, marketplaceDir);
+            await flushMicrotasks(20);
+
+            expect(maxInFlight).toBe(8);
+
+            while(releasers.length > 0) {
+                for(const release of releasers.splice(0)) {
+                    release();
+                }
+                // eslint-disable-next-line no-await-in-loop -- draining a variable-length wave queue; each wave's size depends on the previous wave's release
+                await flushMicrotasks(5);
+            }
+            await resultPromise;
         });
     });
 });

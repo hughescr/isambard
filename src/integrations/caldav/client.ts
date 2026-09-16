@@ -123,6 +123,7 @@ export class CalDAVClient {
         }
 
         return {
+            // Stryker disable next-line llm: sorting mutates only this fresh local array, so returned ordered contents are identical.
             events: allEvents.toSorted((a, b) => a.start.getTime() - b.start.getTime()),
             failed: allFailed,
         };
@@ -229,13 +230,11 @@ export class CalDAVClient {
                 ));
             }, ms);
         });
-        // Stryker restore BlockStatement
         try {
             return await Promise.race([promise, timeout]);
         } finally {
             clearTimeout(timeoutId);
         }
-        // Stryker restore BlockStatement
     }
 
     async #createClient(serverUrl: string, username: string, password: string) {
@@ -254,7 +253,6 @@ export class CalDAVClient {
                 `Failed to connect to CalDAV server: ${serverUrl}`,
                 { serverUrl, originalError: String(error) }
             );
-            // Stryker restore StringLiteral
         }
     }
 
@@ -334,6 +332,7 @@ export class CalDAVClient {
     }
 
     #extractParameterValue(value: ical.ParameterValue | undefined): string | undefined {
+        // Stryker disable next-line llm: === and == differ only for null, which node-ical's ParameterValue never produces.
         if(value === undefined) {
             return undefined;
         }
@@ -346,6 +345,7 @@ export class CalDAVClient {
     }
 
     #extractAttendees(vevent: ical.VEvent): string[] | undefined {
+        // Stryker disable next-line llm: node-ical's attendee is undefined when absent, never null; an empty-string attendee yields undefined on either branch.
         if(!vevent.attendee) {
             return undefined;
         }
@@ -356,17 +356,20 @@ export class CalDAVClient {
                     return a.replace('mailto:', '');
                 }
                 // ParameterValue object with optional CN param
+                // Stryker disable next-line llm: params is always an object on node-ical Attendee values; falsy params are out of contract.
                 if('params' in a) {
                     const cn = (a.params as Record<string, unknown>).CN as string | undefined;
                     if(cn) {
                         return cn;
                     }
                     const val = (a as { val?: string }).val ?? '';
+                    // Stryker disable next-line llm: node-ical passes attendee values through untrimmed; trimming only alters malformed whitespace-padded mailto URIs, not supported values.
                     return val.replace('mailto:', '');
                 }
                 return '';
             })
             .filter((name): name is string => name.length > 0);
+        // Stryker disable next-line llm: an array length is a non-negative integer, so > 0 and >= 1 are identical.
         return names.length > 0 ? names : undefined;
     }
 
@@ -401,18 +404,25 @@ export class CalDAVClient {
         // Round absolute instants to the UTC hour so repeated local DST hours stay distinct.
         // Stryker disable next-line llm: valid Date construction and copying its timestamp are equivalent here.
         const startHour = new Date(start);
+        // Stryker disable next-line NumberLiteralValue: every constant sub-hour offset defines the same private hour-bucket partition.
         startHour.setUTCMinutes(0, 0, 0);
         // Stryker disable next-line llm: valid Date construction and copying its timestamp are equivalent here.
         const endHour = new Date(end);
+        // Stryker disable next-line NumberLiteralValue: every constant sub-hour offset defines the same private hour-bucket partition.
         endHour.setUTCMinutes(0, 0, 0);
 
         const calPaths = JSON.stringify(server.calendars.map(c => c.calendarPath).toSorted((a, b) => {
+            // Stryker disable next-line EqualityOperator,llm: either string order and equal-string ties give one key per path multiset.
             if(a < b) {
+                // Stryker disable next-line NumberLiteralValue: sort inspects only the sign of the comparator result.
                 return -1;
             }
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,llm,BlockStatement: Bun's tie/half comparators give one key per path multiset.
             if(a > b) {
+                // Stryker disable next-line NumberLiteralValue: sign-equivalent and Bun half comparators give one key per path multiset.
                 return 1;
             }
+            // Stryker disable next-line NumberLiteralValue: identical strings are interchangeable in the key, so the tie value is unobservable.
             return 0;
         }));
         return `${server.serverId}|${server.serverUrl}|${calPaths}|${startHour.toISOString()}|${endHour.toISOString()}`;

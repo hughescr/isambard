@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { ButtonStyle, type ButtonInteraction, type ModalSubmitInteraction } from 'discord.js';
 import { mockLogger } from '../../../setup';
 import { AllowlistInteractionHandler, type AllowlistInteractionHandlerDeps } from '@/integrations/discord/allowlist-interaction-handler';
+import { BLUE, BRIGHT_GREEN } from '@/integrations/discord/colors';
 import type { AllowlistSagaExecutor, SagaStepResult, SagaInteractionResult } from '@/services';
 import type { ContactBackend, Contact, ContactId } from '@/storage';
 
@@ -129,6 +130,15 @@ describe('AllowlistInteractionHandler', () => {
             expect(editReply).toHaveBeenCalledTimes(1);
         });
 
+        test('passes sagaId to submitName exactly as parsed, without trimming', async () => {
+            const rawSagaId = `  ${SAGA_ID}  `;
+            const { interaction } = makeModalInteraction(`allowlist-name:${rawSagaId}`, 'Bob Smith');
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(deps.executor.submitName).toHaveBeenCalledWith(rawSagaId, 'Bob Smith');
+        });
+
         test('renders completed embed when submitName returns completed', async () => {
             const { interaction, editReply } = makeModalInteraction(`allowlist-name:${SAGA_ID}`);
             deps.executor.submitName = mock(async (): Promise<SagaInteractionResult> => ({ action: 'completed', personId: PERSON_ID, displayName: DISPLAY_NAME }));
@@ -137,6 +147,8 @@ describe('AllowlistInteractionHandler', () => {
 
             const call = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string, color?: number } }[], components: unknown[] };
             expect(call.embeds[0].data.title).toContain('\u2713');
+            // Kills llm mutant: BRIGHT_GREEN -> BLUE on the completed embed's color.
+            expect(call.embeds[0].data.color).toBe(BRIGHT_GREEN);
             expect(call.components).toEqual([]);
         });
 
@@ -157,8 +169,10 @@ describe('AllowlistInteractionHandler', () => {
 
             await handler.handleModalSubmit(interaction);
 
-            const call = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[], components: unknown[] };
+            const call = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string, color?: number } }[], components: unknown[] };
             expect(call.embeds[0].data.title).toBe('Allowlist Flow Cancelled');
+            // Kills llm mutant: BLUE -> BRIGHT_GREEN on the cancelled embed's color.
+            expect(call.embeds[0].data.color).toBe(BLUE);
             expect(call.components).toEqual([]);
         });
 
@@ -206,6 +220,15 @@ describe('AllowlistInteractionHandler', () => {
             expect(deferUpdate).toHaveBeenCalledTimes(1);
             expect(deps.executor.confirmMatch).toHaveBeenCalledWith(SAGA_ID);
             expect(editReply).toHaveBeenCalledTimes(1);
+        });
+
+        test('splits customId at the first colon, keeping later colons in sagaId', async () => {
+            const { interaction, deferUpdate } = makeButtonInteraction(`allowlist-yes:${SAGA_ID}:extra`);
+
+            await handler.handleButton(interaction);
+
+            expect(deferUpdate).toHaveBeenCalledTimes(1);
+            expect(deps.executor.confirmMatch).toHaveBeenCalledWith(`${SAGA_ID}:extra`);
         });
 
         test('allowlist-next calls skipMatch', async () => {
@@ -318,12 +341,14 @@ describe('AllowlistInteractionHandler', () => {
             const { allowlistSuffix } = await handler.startFromApproval(interaction, 'email', 'alice@example.com', DISPLAY_NAME);
 
             expect(followUp).toHaveBeenCalledTimes(1);
-            const followUpArgs = followUp.mock.calls[0]?.[0] as { content: string, components: { components: { data: { custom_id?: string, style?: ButtonStyle } }[] }[], ephemeral: boolean };
+            const followUpArgs = followUp.mock.calls[0]?.[0] as { content: string, components: { components: { data: { custom_id?: string, style?: ButtonStyle, label?: string } }[] }[], ephemeral: boolean };
             expect(followUpArgs.ephemeral).toBe(true);
             expect(followUpArgs.content).toBe('Add to allowlist:');
             const btn = followUpArgs.components[0]?.components[0];
             expect(btn.data.custom_id).toBe(`allowlist-startmodal:${SAGA_ID}`);
             expect(btn.data.style).toBe(ButtonStyle.Primary);
+            // Kills llm mutant: 'Set up allowlist entry' -> 'Cancel' on the button's label.
+            expect(btn.data.label).toBe('Set up allowlist entry');
             expect(allowlistSuffix).toBe('');
         });
 
@@ -376,6 +401,17 @@ describe('AllowlistInteractionHandler', () => {
             expect(fields.find(f => f.name === 'Identifiers')?.inline).toBe(false);
             expect(fields.some(f => f.name === 'Notes')).toBe(true);
             expect(fields.find(f => f.name === 'Notes')?.inline).toBe(false);
+        });
+
+        test('uses the BLUE brand color for the review embed', async () => {
+            const { interaction, editReply } = makeButtonInteraction(`allowlist-yes:${SAGA_ID}`);
+            deps.executor.confirmMatch = mock(async (): Promise<SagaInteractionResult> => ({ action: 'review_match', sagaId: SAGA_ID, matchPersonId: PERSON_ID }));
+            deps.contactBackend.getContact = mock(async () => makeContact());
+
+            await handler.handleButton(interaction);
+
+            const call = editReply.mock.calls[0]?.[0] as { embeds: { data: { color?: number } }[] };
+            expect(call.embeds[0].data.color).toBe(BLUE);
         });
 
         test('formats identifiers as "platform: value" in the Identifiers field', async () => {

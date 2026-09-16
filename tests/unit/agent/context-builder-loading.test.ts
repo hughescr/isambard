@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createContextBuilder, type CalendarService } from '../../../src/agent/context-builder';
 import type { BlueskyClient } from '../../../src/integrations/bsky';
@@ -25,7 +25,40 @@ describe('createContextBuilder loading methods', () => {
         backend = new MemoryToolBackend(mockDocClient, 'test-table');
     });
 
+    afterEach(() => {
+        setSystemTime();
+    });
+
     describe('recordAccess', () => {
+        test('records lastAccessed as an ISO timestamp', async () => {
+            const path = createMemoryPath('/state/timestamped.md');
+            backend.get = mock(async () => ({
+                path,
+                content:     'Test content',
+                contentType: 'text/markdown' as const,
+                metadata:    {},
+                version:     1,
+                createdAt:   '2025-01-01T00:00:00Z',
+                updatedAt:   '2025-01-01T00:00:00Z',
+            }));
+            backend.update = mock(async () => ({
+                path,
+                content:     'Test content',
+                contentType: 'text/markdown' as const,
+                metadata:    {},
+                version:     2,
+                createdAt:   '2025-01-01T00:00:00Z',
+                updatedAt:   '2025-01-01T00:00:00Z',
+            }));
+
+            setSystemTime(new Date('2026-01-02T03:04:05.678Z'));
+            await createContextBuilder({ backend }).recordAccess([path]);
+
+            expect(backend.update).toHaveBeenCalledWith(path, expect.objectContaining({
+                metadata: expect.objectContaining({ lastAccessed: '2026-01-02T03:04:05.678Z' }),
+            }));
+        });
+
         test('should update accessCount for a single path', async () => {
             const path = createMemoryPath('/state/task.md');
 
@@ -3061,6 +3094,24 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('CleanInbox:2');
             expect(result).toContain('## Inbox\nYou have mail (2 unread):\n- [CleanInbox:1]');
             expect(result).toContain('- [CleanInbox:1] From: Alice <alice@example.com> | Subject: Hello | 2h ago\n- [CleanInbox:2] From: bob@example.com | Subject: World | 1h ago');
+        });
+
+        test('reports the mailbox unseen count rather than the number of loaded message summaries', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+            const emailService = {
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 5, unseen: 3 })),
+                    getMessage:       mock(() => Promise.resolve(null)),
+                    listMessages:     mock(async () => [{ id: 1, from: { address: 'alice@example.com' }, subject: 'Hello', date: '2025-01-15T10:00:00.000Z' }]),
+                    searchByKeyword:  mock(async () => []),
+                },
+            };
+
+            const result = await createContextBuilder({ backend, emailService }).buildPerchContext(new Date('2025-01-15T12:00:00.000Z'));
+
+            expect(result).toContain('You have mail (3 unread)');
         });
 
         test('should skip inbox section when emailService provided but unread === 0', async () => {

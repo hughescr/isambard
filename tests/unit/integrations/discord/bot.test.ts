@@ -1056,6 +1056,32 @@ describe('createDiscordBot', () => {
             expect(ledgerPresenceUnsubscribed).toBe(true);
         });
 
+        test('waits for an asynchronous teardown failure before completing stop()', async () => {
+            const client = makeMockClientForConductor();
+            const failure = deferredPromise<void>();
+            const bot = createDiscordBot({
+                config:           mockConfig,
+                client,
+                channelRegistry:  mockChannelRegistry,
+                questionRegistry: { stop: mock(() => failure.promise) } as unknown as DiscordBotOptions['questionRegistry'],
+            });
+
+            const stopping = bot.stop();
+            let settled = false;
+            void stopping.then(() => {
+                settled = true;
+                return undefined;
+            }).catch(() => {
+                settled = true;
+                return undefined;
+            });
+            await flushMicrotasks();
+            expect(settled).toBe(false);
+
+            failure.reject(new Error('question teardown failed'));
+            await expect(stopping).rejects.toThrow('question teardown failed');
+        });
+
         test('waits for client destruction even if earlier teardown throws', async () => {
             const teardownError = new Error('question registry stop failed');
             const client = makeMockClientForConductor();
@@ -1705,6 +1731,33 @@ describe('createDiscordBot', () => {
             expect((deps.conversationConductor as ReturnType<typeof makeFakeConductor>).open).toHaveBeenCalledTimes(1);
         });
 
+        test('does not open the conductor when its journal is unavailable', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            const conductor = makeFakeConductor();
+            const deps = conductorDeps({ conversationConductor: conductor, journal: undefined });
+
+            createDiscordBot({ config: mockConfig, channelRegistry: mockChannelRegistry, ...deps });
+            await triggerReady(client);
+
+            expect(conductor.open).not.toHaveBeenCalled();
+        });
+
+        test('does not open the perch conductor when no perch journal is configured', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+
+            // A perch conductor and its ledger without a journal is not a complete perch: open() must
+            // stay untouched rather than opening a session whose turns could never be journalled.
+            const perchConductor = makeFakeConductor();
+            const deps = conductorDeps({ perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1') });
+
+            createDiscordBot({ config: mockConfig, channelRegistry: mockChannelRegistry, ...deps });
+            await triggerReady(client);
+
+            expect(perchConductor.open).not.toHaveBeenCalled();
+        });
+
         test('seeds lastSessionId from the ledger after a successful open()', async () => {
             const client = makeMockClientForConductor();
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
@@ -1779,6 +1832,50 @@ describe('createDiscordBot', () => {
             // fires three times — after conductor.shutdown in every case.
             expect(callOrder).toEqual(['coordinator.stop', 'conductor.shutdown', 'ring-buffer unsubscribe', 'ring-buffer unsubscribe', 'ring-buffer unsubscribe']);
             expect(ledgerUnsubscribe).toHaveBeenCalledTimes(3);
+        });
+
+        test.each(['coordinator', 'ingress', 'ledgerPresence', 'taskBoard', 'presence', 'rateLimiter', 'channelRegistry'] as const)('stop() waits for asynchronous %s teardown', async (phase) => {
+            const client = makeMockClientForConductor();
+            const completion = deferredPromise<void>();
+            const stopFor = (candidate: typeof phase): void | Promise<void> => (candidate === phase ? completion.promise : undefined);
+            const channelRegistry = { ...mockChannelRegistry, stop: mock(() => stopFor('channelRegistry')) } as unknown as ChannelRegistryManager;
+            const coordinator = { setProcessor: mock(() => undefined), stop: mock(() => stopFor('coordinator')) } as unknown as MessageCoordinator;
+            const ingressGate = { admit: mock(() => 'pass'), open: mock(() => undefined), state: mock(() => 'buffering'), stop: mock(() => stopFor('ingress')) };
+            const presenceManager = { start: mock(() => undefined), stop: mock(() => stopFor('presence')) } as unknown as PresenceManager;
+            const conductorPresence = { presenceManager, unsubscribeLedgers: mock(() => stopFor('ledgerPresence')), dynamicStatusGenerators: [] };
+            const taskBoard = { stop: mock(() => stopFor('taskBoard')) };
+            const rateLimiterStop = mock(() => stopFor('rateLimiter'));
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(client),
+                spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockReturnValue(coordinator),
+                spyOn(ingressGateModule, 'createIngressGate').mockReturnValue(ingressGate as unknown as ReturnType<typeof ingressGateModule.createIngressGate>),
+                spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue(conductorPresence),
+                spyOn(taskBoardSetupModule, 'setupTaskBoard').mockReturnValue(taskBoard),
+                // eslint-disable-next-line @typescript-eslint/no-misused-promises -- shutdown accepts either synchronous or asynchronous resource cleanup.
+                spyOn(DiscordRateLimiter.prototype, 'stop').mockImplementation(rateLimiterStop)
+            );
+            const bot = createDiscordBot({
+                config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
+                client,
+                channelRegistry,
+                identityContext: 'Test identity',
+                ...conductorDeps(),
+            });
+            await triggerReady(client);
+
+            const stopping = bot.stop();
+            let settled = false;
+            void stopping.then(() => {
+                settled = true;
+                return undefined;
+            }).catch(() => {
+                settled = true;
+                return undefined;
+            });
+            await flushMicrotasks(100);
+            expect(settled).toBe(false);
+            completion.resolve();
+            await stopping;
         });
 
         test('stop() calls the ingress gate\'s stop() (P10, gate.stop -> shutdown.run)', async () => {
@@ -2170,6 +2267,8 @@ describe('createDiscordBot', () => {
             });
 
             test('feeds recentTools from a using_tool phase change on either ledger, deduped by toolName', async () => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date('2026-01-02T03:04:05.678Z'));
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
@@ -2193,12 +2292,14 @@ describe('createDiscordBot', () => {
                 ledgerStore.emit({ turn: { kind: 'discord', phase: { type: 'using_tool', toolName: 'Bash' } } }, phaseChangedEvent);
                 ledgerStore.emit({ turn: { kind: 'discord', phase: { type: 'using_tool', toolName: 'Bash' } } }, phaseChangedEvent);
 
-                const tools = getCaptured().getRecentTools?.() as { toolName: string }[];
+                const tools = getCaptured().getRecentTools?.() as { toolName: string, timestamp: number }[];
                 expect(tools).toHaveLength(1);
-                expect(tools[0].toolName).toBe('Bash');
+                expect(tools[0]).toEqual({ toolName: 'Bash', timestamp: Date.parse('2026-01-02T03:04:05.678Z') });
             });
 
             test('feeds recentChannels from a new discord turn carrying a channelId', async () => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date('2026-02-03T04:05:06.789Z'));
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
@@ -2218,9 +2319,9 @@ describe('createDiscordBot', () => {
 
                 ledgerStore.emit({ turn: { id: 'turn-1', kind: 'discord', channelId: 'chan-1', phase: null } }, { type: 'phase_changed', phase: null, at: new Date(0) });
 
-                const channels = getCaptured().getRecentChannels?.() as { channelId: string }[];
+                const channels = getCaptured().getRecentChannels?.() as { channelId: string, timestamp: number }[];
                 expect(channels).toHaveLength(1);
-                expect(channels[0].channelId).toBe('chan-1');
+                expect(channels[0]).toEqual({ channelId: 'chan-1', timestamp: Date.parse('2026-02-03T04:05:06.789Z') });
             });
 
             test('resets tool dedupe after leaving a tool phase and retains only the newest ten entries', async () => {
@@ -2240,6 +2341,22 @@ describe('createDiscordBot', () => {
                     ledgerStore.emit({ turn: { phase: { type: 'using_tool', toolName: `tool-${i}` } } });
                 }
                 expect((getCaptured().getRecentTools?.() as { toolName: string }[]).map(tool => tool.toolName)).toEqual(Array.from({ length: 10 }, (_, i) => `tool-${i}`));
+            });
+
+            test('removes exactly one oldest tool when the ring buffer overflows', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { getCaptured } = captureLiveSignalsGetters();
+                const ledgerStore = makeFakeLedgerStore();
+                createDiscordBot({ config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: minimalPerchConfig, ...conductorDeps({ ledgerStore }) });
+                await triggerReady(client);
+
+                for(let i = 0; i < 11; i += 1) {
+                    ledgerStore.emit({ turn: { phase: { type: 'using_tool', toolName: `tool-${i}` } } });
+                }
+
+                expect((getCaptured().getRecentTools?.() as { toolName: string }[]).map(tool => tool.toolName)).toEqual(Array.from({ length: 10 }, (_, i) => `tool-${i + 1}`));
             });
 
             test('dedupes a repeated turn, records a new turn, and retains only the newest ten channels', async () => {
@@ -2290,6 +2407,30 @@ describe('createDiscordBot', () => {
                 expect(setupConductorPresenceSpy).toHaveBeenCalledTimes(1);
                 const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { sessions?: readonly unknown[] } | undefined;
                 expect(call?.sessions).toHaveLength(2);
+            });
+
+            test('does not set up presence when the conversation conductor never opened', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+
+                const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence');
+                spies.push(setupConductorPresenceSpy);
+
+                // Every other input presence needs (identity, presence config, ledger, shared throttle)
+                // is present here; only conductorOpened is false, and that alone must keep presence off.
+                const deps = conductorDeps({ conversationConductor: undefined });
+
+                createDiscordBot({
+                    config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
+                    channelRegistry: mockChannelRegistry,
+                    identityContext: 'Test identity',
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                expect(setupConductorPresenceSpy).not.toHaveBeenCalled();
             });
 
             test('composes from [ledgerStore] alone (length 1) when no perch conductor/ledger is configured', async () => {
@@ -3151,6 +3292,53 @@ describe('createDiscordBot', () => {
                 expect(callOrder).toEqual(['perchScheduler.stop', 'perchDriver.stop', 'perch.shutdown']);
                 expect(driver.stop).toHaveBeenCalledTimes(1);
                 expect(scheduler.stop).toHaveBeenCalledTimes(1);
+            });
+
+            test('stop() waits for each asynchronous perch timer shutdown', async () => {
+                async function assertStopWaitsFor(phase: 'scheduler' | 'driver'): Promise<void> {
+                    const client = makeMockClientForConductor();
+                    const completion = deferredPromise<void>();
+                    const driver = {
+                        runSlot: mock(() => 'started' as const),
+                        stop:    mock(() => (phase === 'driver' ? completion.promise : undefined)),
+                    };
+                    const scheduler = {
+                        start:            mock(() => undefined),
+                        stop:             mock(() => (phase === 'scheduler' ? completion.promise : undefined)),
+                        getState:         mock(),
+                        triggerNow:       mock(),
+                        triggerTestPerch: mock(),
+                    };
+                    spies.push(
+                        spyOn(clientModule, 'createDiscordClient').mockReturnValue(client),
+                        spyOn(perchSetupModule, 'setupPerchDriverAndScheduler').mockReturnValue({ driver, scheduler })
+                    );
+                    stubCoordinator();
+                    const deps = conductorDeps({
+                        perchConductor:   makeFakeConductor(),
+                        perchLedgerStore: makeFakeLedgerStore('perch-sess-1'),
+                        perchJournal:     { append: mock(() => undefined), flush: mock(async () => undefined), readSince: mock(async () => []) },
+                    });
+                    const bot = createDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, perchConfig: minimalPerchConfig, ...deps });
+                    await triggerReady(client);
+
+                    const stopping = bot.stop();
+                    let settled = false;
+                    void stopping.then(() => {
+                        settled = true;
+                        return undefined;
+                    }).catch(() => {
+                        settled = true;
+                        return undefined;
+                    });
+                    await flushMicrotasks(100);
+                    expect(settled).toBe(false);
+                    completion.resolve();
+                    await stopping;
+                }
+
+                await assertStopWaitsFor('scheduler');
+                await assertStopWaitsFor('driver');
             });
         });
 
@@ -4417,6 +4605,10 @@ describe('createDiscordBot', () => {
                 ['modal', 'other-bsky-dm-reject-reason:1'], ['modal', 'other-email-send-reject-reason:1'],
                 ['modal', 'other-allowlist-name:1'], ['select', 'other-email-allowlist-select:1'],
                 ['select', 'email-allowlist-selectX:1'],
+                // Delimiters are part of ownership: a bare namespace must fall through.
+                ['button', 'bsky-send'], ['button', 'contact-delete-'],
+                ['modal', 'bsky-send-reject-reason'], ['modal', 'bsky-dm-reject-reason'],
+                ['modal', 'email-send-reject-reason'], ['modal', 'allowlist-name'],
             ];
             for(const [kind, customId] of malformed) {
                 // eslint-disable-next-line no-await-in-loop -- route ownership is checked independently for each malformed ID

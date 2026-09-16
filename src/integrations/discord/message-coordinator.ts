@@ -158,6 +158,7 @@ export class MessageCoordinator {
      * Start typing indicator and set up refresh interval.
      */
     private startTypingIndicator(state: ChannelState): void {
+        // Stryker disable next-line llm: `!x || x === null` is logically equivalent to `!x` for every value of x (x === null already implies !x).
         if(!state.typingChannel) {
             return;
         }
@@ -353,6 +354,7 @@ export class MessageCoordinator {
         // arrival order. Re-queued original messages carry discordMessage: null (only their
         // context survives interruption — see the debounce-timer handler in handleMessage), so
         // they're excluded here; only messages we still hold a real Message object for appear.
+        // Stryker disable next-line llm: originalMessages (discordMessage === null) are all removed by the following .filter, so the spread order of the two non-overlapping groups cannot affect batch
         const batch: Message[] = [...originalMessages, ...newMessages]
             .map(msg => msg.discordMessage)
             .filter((message): message is Message => message !== null);
@@ -490,6 +492,7 @@ export class MessageCoordinator {
                         activeQuery.abortController.abort();
 
                         // Store the first message from interrupted query if we don't have one yet
+                        // Stryker disable next-line llm: the field is cleared before every activeQuery install and resumeScheduled makes this line reachable at most once per query, so it is always undefined here and `??=` equals `=`
                         state.interruptedFirstMessage ??= activeQuery.firstDiscordMessage;
 
                         // Re-queue original messages (with null discordMessage)

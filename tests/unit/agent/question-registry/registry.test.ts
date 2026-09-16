@@ -539,7 +539,10 @@ describe('QuestionRegistry', () => {
             const resultPromise1 = registry.register(question1);
             const resultPromise2 = registry.register(question2);
 
+            const exposed1 = registry.getQuestion('q1');
             registry.stop();
+
+            expect(exposed1?.state).toBe('cancelled');
 
             // Both should resolve with null
             const result1 = await resultPromise1;

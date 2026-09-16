@@ -224,6 +224,15 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             expect(day!.content).toContain('early afternoon');
             expect(day!.content).toContain('Wednesday');
         });
+
+        test('content is exactly "<time bucket> on a <day>", precisely at the deep-night/pre-dawn hour boundary', async () => {
+            // hour=4 is the last "deep night" hour (timeOfDayBucket uses hour <= 4); hour=5 is
+            // already "pre-dawn". An off-by-one on the hour fed into the bucket lookup, or a
+            // swap of the two template placeholders, both change this exact string.
+            const signals = await new LiveSignals(makeDefaultDeps({ now: makeClock(4, 2) })).snapshot();
+            const day = signals.find(s => s.kind === 'day');
+            expect(day!.content).toBe('deep night on a Tuesday');
+        });
     });
 
     // -------------------------------------------------------------------------
@@ -428,10 +437,10 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             expect(signals.find(s => s.kind === 'day')).toBeDefined();
             expect(signals.find(s => s.kind === 'perch-next')).toBeDefined();
 
-            // debug log should have been called
-            expect(debugSpy).toHaveBeenCalledWith(
-                expect.objectContaining({ msg: 'LiveSignals: signal source threw, omitting' })
-            );
+            // debug log carries the thrown error's message (not its stack or "Error: ..." prefix)
+            expect(debugSpy).toHaveBeenCalledWith({
+                error: 'ring buffer exploded', msg: 'LiveSignals: signal source threw, omitting',
+            });
         });
 
         test('continues after multiple signal sources throw', async () => {
@@ -645,9 +654,9 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             const discover = signals.filter(s => s.kind === 'bsky-discover');
             expect(discover).toHaveLength(2);
             expect(discover[0].label).toBe('bsky-discover');
-            expect(discover[0].content).toContain('Hello world');
-            expect(discover[0].content).toContain('@alice.bsky');
-            expect(discover[1].content).toContain('Another post');
+            // Quoted snippet, em-dash separator, @-prefixed handle — same typography as the notifications summary
+            expect(discover[0].content).toBe('"Hello world" — @alice.bsky');
+            expect(discover[1].content).toBe('"Another post" — @bob.bsky');
         });
 
         test('cache hit: second call within TTL does not re-fetch', async () => {

@@ -8,8 +8,11 @@ import type { AuthCheckResult, VerificationResults } from '@/integrations/email/
  * Returns empty string if input is empty or malformed.
  */
 function extractDomain(emailOrDomain: string): string {
+    // Stryker disable next-line llm: .replaceAll with a /g-flagged regex is identical to .replace with the same regex — both replace every match.
     const cleaned = emailOrDomain.trim().replaceAll(/^<|>$/g, '');
-    return cleaned.slice(cleaned.indexOf('@') + 1);
+    const domainStart = cleaned.indexOf('@') + 1;
+    // Stryker disable next-line llm: .slice(x) and .substring(x) agree for the non-negative domainStart.
+    return cleaned.slice(domainStart);
 }
 
 /**
@@ -27,6 +30,7 @@ export function checkVerificationResults(
     }
 
     const fromDomain = extractDomain(fromAddress);
+    // Stryker disable next-line llm: fromDomain is always a string, and for a string !x and x === '' agree for every value.
     if(!fromDomain) {
         return { spfPass: false, dkimPass: false };
     }

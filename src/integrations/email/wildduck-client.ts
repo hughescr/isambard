@@ -17,7 +17,6 @@ const SPECIAL_USE_FLAGS: Record<string, string> = {
     '\\Trash':   'Trash',
     '\\Archive': 'Archive',
 };
-// Stryker restore StringLiteral,ObjectLiteral
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -249,6 +248,7 @@ function extractBody(content: string, isHtml: boolean, maxBytes: number): string
     }
     // A Buffer created from UTF-8 text cannot start with a continuation byte; an
     // out-of-range read bitwise-coerces to zero, so this also stops at byte zero.
+    // Stryker disable next-line llm: Buffer.slice is the deprecated alias of subarray; both return the same view.
     return buf.subarray(0, end).toString('utf8');
 }
 
@@ -292,7 +292,9 @@ export class WildDuckClient {
                 state.stopped = true;
             };
             const createWorker = async (): Promise<void> => {
+                // Stryker disable next-line llm: nextIndex advances by one per admitted folder and cannot overshoot the array length.
                 while(nextIndex < missingFolders.length && !state.stopped) {
+                    // Stryker disable next-line llm: removing the non-null assertion is type-only and has no runtime effect.
                     const folder = missingFolders[nextIndex++]!;
                     try {
                         // eslint-disable-next-line no-await-in-loop -- each worker admits one folder at a time, with at most two in flight
@@ -305,6 +307,7 @@ export class WildDuckClient {
             };
             // Wait for every admitted worker before reporting the first failure. This
             // prevents shutdown from racing a sibling mailbox creation.
+            // Stryker disable next-line llm: createWorker ignores mapper arguments, and a surplus worker exits without side effects.
             await Promise.allSettled(Array.from({ length: Math.min(2, missingFolders.length) }, () => createWorker()));
             if(state.stopped) {
                 throw state.firstFailure;
@@ -327,7 +330,6 @@ export class WildDuckClient {
         } catch{
             // Best-effort — ignore errors on shutdown
         }
-        // Stryker restore BlockStatement
         this.token = null;
     }
 
@@ -348,7 +350,9 @@ export class WildDuckClient {
             mailbox: mailboxPath,
         });
         const uids = results.map((result) => {
+            // Stryker disable next-line llm: lastIndexOf defaults to the final index, so spelling out length - 1 is equivalent.
             const colonIdx = result.message.lastIndexOf(':');
+            // Stryker disable next-line llm, NumberLiteralValue: lastIndexOf cannot return below -1; parseInt aliases Number.parseInt; slice and substring agree here; either non-positive sentinel is filtered.
             return colonIdx === -1 ? 0 : Number.parseInt(result.message.slice(colonIdx + 1), 10);
         });
         return uids.filter(uid => uid > 0);
@@ -480,6 +484,7 @@ export class WildDuckClient {
         } catch (err) {
             if(err instanceof WildDuckAuthError) {
                 // Another request may have refreshed the token before this 401 arrived.
+                // Stryker disable next-line llm: both token values are string or null, for which loose and strict equality agree.
                 if(this.token === tokenAtAttempt) {
                     await this.authenticate();
                 }
@@ -488,7 +493,6 @@ export class WildDuckClient {
             throw err;
         }
     }
-    // Stryker restore BlockStatement
 
     private async authenticate(): Promise<void> {
         if(this.authInFlight) {
@@ -530,12 +534,14 @@ export class WildDuckClient {
         this.mailboxMap.clear();
         this.reverseMailboxMap.clear();
 
+        // Stryker disable next-line llm: results is required by the API contract; a fallback differs only for malformed responses.
         for(const mailbox of response.results) {
             this.mailboxMap.set(mailbox.id, mailbox.path);
             this.reverseMailboxMap.set(mailbox.path, mailbox.id);
             // Also map the logical folder name (e.g. 'Sent Mail') via specialUse flag
             // so that resolveMailboxId() works regardless of server-specific path names
             // (e.g. '[Gmail]/Sent Mail' vs 'Sent Mail')
+            // Stryker disable next-line llm: unique non-empty keys make entry order irrelevant, and an absent flag cannot match.
             const mapping = Object.entries(SPECIAL_USE_FLAGS).find(([flag]) => flag === mailbox.specialUse);
             if(mapping) {
                 this.reverseMailboxMap.set(mapping[1], mailbox.id);
@@ -556,7 +562,6 @@ export class WildDuckClient {
                 body:    JSON.stringify({ path }),
             }
         );
-        // Stryker restore ObjectLiteral,StringLiteral
     }
 
     private async doSearch(params: WildDuckSearchParams): Promise<WildDuckSearchResult[]> {
@@ -613,7 +618,6 @@ export class WildDuckClient {
         const to = result.to.map(addr => (
             addr.name ? `${addr.name} <${addr.address ?? ''}>` : (addr.address ?? '')
         ));
-        // Stryker restore StringLiteral
 
         return {
             message,
@@ -771,7 +775,6 @@ export class WildDuckClient {
             ...(hdrs['x-rspamd-score']         ? { xRspamdScore: hdrs['x-rspamd-score'] }                  : {}),
         };
     }
-    // Stryker restore StringLiteral
 
     private extractBodyText(response: FullMessageResponse): string {
         const maxBodySizeBytes = this.options.maxBodySizeBytes ?? 50_000;
@@ -790,12 +793,14 @@ export class WildDuckClient {
         // Map addresses
         const from = response.from ? mapAddress(response.from) : { address: '' };
         const to   = (response.to ?? []).map(addr => mapAddress(addr));
+        // Stryker disable next-line llm: cc entries are contractually non-null; filtering changes only malformed responses.
         const cc   = (response.cc ?? []).map(addr => mapAddress(addr));
 
         // Map headers
         const headers = this.mapHeaders(response.headers ?? {}, response.replyTo);
 
         // Map attachment metadata for lazy fetching (data not fetched here)
+        // Stryker disable next-line llm: attachment id, filename, and sizeKb are required; fallbacks differ only for malformed responses.
         const attachmentMeta: WildDuckAttachmentMeta[] = (response.attachments ?? []).map(att => ({
             id:          att.id,
             filename:    att.filename,
@@ -814,8 +819,10 @@ export class WildDuckClient {
             to,
             cc,
             subject:        response.subject ?? '',
+            // Stryker disable next-line llm: date is contractually non-null, and undefined and an empty string both produce Invalid Date.
             date:           new Date(response.date),
             bodyText,
+            // Stryker disable next-line NumberLiteralValue: the fallback is compared only with > 0, so any non-positive value is equivalent.
             hasAttachments: (response.attachments?.length ?? 0) > 0,
             headers,
             verificationResults,
@@ -833,8 +840,7 @@ export class WildDuckClient {
     }
 
     private async makeRequestBuffer(path: string, options: RequestInit): Promise<Buffer> {
-        // Stryker disable next-line ObjectLiteral: the only private caller passes GET without headers; the access token is inserted below after this copy
-        // Stryker disable next-line SpreadOperandDrop: the only private caller passes headerless GET, so spreading undefined adds no properties.
+        // Stryker disable next-line ObjectLiteral,SpreadOperandDrop: the sole caller passes a headerless GET, and this copy receives the access token below.
         const headers: Record<string, string> = {
             ...options.headers as Record<string, string>,
         };
@@ -863,12 +869,10 @@ export class WildDuckClient {
     }
 
     private async makeRequestNullable<T>(path: string, options: RequestInit): Promise<T | null> {
-        // Stryker disable ObjectLiteral: both private callers pass GET without headers; the access token is inserted below after this copy
-        // Stryker disable next-line SpreadOperandDrop: both private callers pass headerless GET, so spreading undefined adds no properties.
+        // Stryker disable next-line ObjectLiteral,SpreadOperandDrop: both private callers pass a headerless GET, and this copy receives the access token below.
         const headers: Record<string, string> = {
             ...options.headers as Record<string, string>,
         };
-        // Stryker restore ObjectLiteral
 
         if(this.token) {
             headers['X-Access-Token'] = this.token;
@@ -917,6 +921,7 @@ export class WildDuckClient {
 
         if(!response.ok) {
             const body = await response.text();
+            // Stryker disable next-line llm: response.text returns a string whose only falsy value is the same empty string.
             const bodySuffix = body ? `: ${body}` : '';
             throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`);
         }

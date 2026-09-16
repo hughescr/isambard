@@ -244,6 +244,48 @@ describe('ChannelRegistryManager', () => {
             await manager.getChannelsByGuild(homeGuildId);
             expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(3);
         });
+
+        it('reports guild and DM counts separately and names each record while warming', async () => {
+            const guildA = createChannelId('guild-a');
+            const guildB = createChannelId('guild-b');
+            const dmOnly = createChannelId('dm-only');
+            backend.getChannelsByGuild = mock((guildId: string) => Promise.resolve(
+                guildId === homeGuildId
+                    ? [createMockStorageRecord({ channelId: guildA }), createMockStorageRecord({ channelId: guildB })]
+                    : [createMockStorageRecord({ channelId: dmOnly, guildId: createGuildId('DM') })]
+            ));
+
+            await manager.warmCache();
+
+            expect(mockLogger.info).toHaveBeenCalledWith({
+                guildChannels: 2,
+                dmChannels:    1,
+                msg:           'Warming channel cache...',
+            });
+            expect((mockLogger.debug as ReturnType<typeof mock>).mock.calls.map(([entry]) => entry)).toEqual([
+                { index: 1, total: 3, channelId: guildA, msg: 'Warming channel...' },
+                { index: 2, total: 3, channelId: guildB, msg: 'Warming channel...' },
+                { index: 3, total: 3, channelId: dmOnly, msg: 'Warming channel...' },
+            ]);
+        });
+
+        it('stringifies a non-Error rejection reason in the skip warning', async () => {
+            const failing = createChannelId('failing-with-status');
+            backend.getChannelsByGuild = mock((guildId: string) => Promise.resolve(
+                guildId === homeGuildId ? [createMockStorageRecord({ channelId: failing })] : []
+            ));
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- exercises the non-Error branch of the catch block's String(error) coercion
+            client.channels.fetch = mock(() => Promise.reject(429));
+
+            await manager.warmCache();
+
+            expect(await manager.getChannel(failing)).toBeNull();
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                channelId: failing,
+                error:     '429',
+                msg:       'Skipping channel: Discord API error',
+            });
+        });
     });
 
     describe('readiness gate (isReady / ready)', () => {

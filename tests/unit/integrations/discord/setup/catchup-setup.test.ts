@@ -8,6 +8,7 @@
 import { describe, test, expect, mock, jest, afterEach, spyOn } from 'bun:test';
 import * as loggerModule from '@hughescr/logger';
 import type { Client } from 'discord.js';
+import * as agentModule from '@/agent';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
 import {
     setupInboxAndCatchUp,
@@ -670,6 +671,53 @@ describe('runConductorInboxInit', () => {
         });
     });
 
+    test('includes each replayed message exactly once in its channel\'s envelope, even when the channel has multiple messages', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const conductor = makeFakeConductor();
+        const inboxManager = makeFakeInboxManager({
+            replayUnhandled: mock(async () => [
+                { id: '100', channelId: 'chan-1', channelName: 'general', guildId: 'guild-1', author: 'alice', authorId: 'snowflake-alice', content: 'hi', timestamp: new Date(0).toISOString(), isRead: false },
+                { id: '150', channelId: 'chan-1', channelName: 'general', guildId: 'guild-1', author: 'alice', authorId: 'snowflake-alice', content: 'again', timestamp: new Date(1).toISOString(), isRead: false },
+            ]),
+        });
+
+        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));
+
+        const [envelope] = conductor.submit.mock.calls.find(([e]: [{ kind: string }]) => e.kind === 'discord')! as unknown as [{ text: string }];
+        expect(envelope.text.match(/alice: hi/g)).toHaveLength(1);
+        expect(envelope.text.match(/alice: again/g)).toHaveLength(1);
+        expect(envelope.text).toContain('messageIds=[100, 150]');
+    });
+
+    test('forces runBootSequence\'s unreadCount callback to 0 when perch testMode skips catch-up, regardless of actual unread mail', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const runBootSequenceSpy = spyOn(agentModule, 'runBootSequence');
+        spies.push(runBootSequenceSpy);
+        const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 7, channels: [{ channelId: 'c1' }] })) });
+
+        await runConductorInboxInit(conductorParams({
+            inboxManager: inboxManager as never,
+            perchConfig:  { testMode: { triggerOnStartup: true } } as never,
+        }));
+
+        expect(runBootSequenceSpy).toHaveBeenCalledTimes(1);
+        const [params] = runBootSequenceSpy.mock.calls[0] as unknown as [{ unreadCount: () => number }];
+        expect(params.unreadCount()).toBe(0);
+    });
+
+    test('feeds runBootSequence\'s unreadCount callback the real unread total when catch-up is not skipped', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const runBootSequenceSpy = spyOn(agentModule, 'runBootSequence');
+        spies.push(runBootSequenceSpy);
+        const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 7, channels: [{ channelId: 'c1' }] })) });
+
+        await runConductorInboxInit(conductorParams({ inboxManager: inboxManager as never }));
+
+        expect(runBootSequenceSpy).toHaveBeenCalledTimes(1);
+        const [params] = runBootSequenceSpy.mock.calls[0] as unknown as [{ unreadCount: () => number }];
+        expect(params.unreadCount()).toBe(7);
+    });
+
     test('opens the ingress gate with exactly the replayed message ids', async () => {
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
         const ingressGate = makeFakeIngressGate();
@@ -1129,5 +1177,116 @@ describe('setupInboxAndCatchUp', () => {
         await setupInboxAndCatchUp(conductorInboxParams({ inboxManager, ingressGate }) as never);
 
         expect(ingressGate.open).toHaveBeenCalledWith(new Set());
+    });
+});
+
+describe('catchup setup mutation witnesses', () => {
+    const spies: ReturnType<typeof spyOn>[] = [];
+    afterEach(() => {
+        for(const spy of spies) {
+            spy.mockRestore();
+        }
+        spies.length = 0;
+        jest.restoreAllMocks();
+        jest.useRealTimers();
+    });
+
+    test('waits for catch-up submission failures to propagate', async () => {
+        const submissionError = new Error('conductor unavailable');
+        const conductor = makeFakeConductor({ submit: mock(async () => {
+            throw submissionError;
+        }) });
+        const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }] })) });
+
+        await expect(submitConductorCatchUp({
+            inboxManager: inboxManager as never, conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never,
+        })).rejects.toBe(submissionError);
+    });
+
+    test('keeps the redelivery summary ordered and caps each preview at 200 characters', async () => {
+        const conductor = makeFakeConductor();
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const firstReply = 'x'.repeat(201);
+        const expectedPreview = `${'x'.repeat(199)}…`;
+        const journal = makeFakeJournal({
+            readSince: mock(async () => [
+                { type: 'envelope_submitted', at: 0, envelopeId: 'first', kind: 'discord', channelId: 'chan-1' },
+                { type: 'turn_completed', at: new Date(1), envelopeId: 'first', responseText: firstReply },
+                { type: 'envelope_submitted', at: 2, envelopeId: 'second', kind: 'discord', channelId: 'chan-1' },
+                { type: 'turn_completed', at: new Date(3), envelopeId: 'second', responseText: 'second redelivery' },
+            ]),
+        });
+
+        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
+
+        const [envelope] = conductor.appendWithoutTurn.mock.calls[0] as unknown as [{ text: string }];
+        expect(envelope.text).toContain(`${expectedPreview}\nsecond redelivery`);
+    });
+
+    test('logs a failed replay watermark instead of leaving its rejection detached', async () => {
+        const watermarkError = new Error('watermark unavailable');
+        const recordHandled = mock(async () => {
+            throw watermarkError;
+        });
+        const warnSpy = spyOn(loggerModule.logger, 'warn');
+        spies.push(warnSpy, spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const inboxManager = makeFakeInboxManager({
+            recordHandled,
+            replayUnhandled: mock(async () => [
+                { id: '100', channelId: 'chan-1', channelName: 'general', guildId: 'guild-1', author: 'alice', content: 'hi', timestamp: new Date(0).toISOString(), isRead: false },
+            ]),
+        });
+
+        await expect(runConductorInboxInit(conductorParams({ inboxManager: inboxManager as never }))).resolves.toBeUndefined();
+
+        expect(warnSpy).toHaveBeenCalledWith({
+            err: watermarkError, channelId: 'chan-1', msg: 'Boot-time replay submission failed — channel will be replayed again on the next boot',
+        });
+    });
+
+    test('treats an absent events delta as empty when deciding whether to append a boot envelope', async () => {
+        const conductor = makeFakeConductor();
+
+        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never }));
+
+        expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
+    });
+
+    test('reports the actual number of unread channels in the merged boot envelope', async () => {
+        const conductor = makeFakeConductor();
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }, { channelId: 'c2' }] })) });
+
+        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));
+
+        const [envelope] = conductor.submit.mock.calls.find(([candidate]: [{ kind: string }]) => candidate.kind === 'catchup')! as unknown as [{ text: string }];
+        expect(envelope.text).toContain('across 2 channels');
+    });
+
+    test('timestamps the merged boot envelope at the current time', async () => {
+        const now = new Date('2026-09-16T12:00:00.000Z');
+        jest.useFakeTimers({ now });
+        const conductor = makeFakeConductor();
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 1, channels: [{ channelId: 'c1' }] })) });
+
+        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));
+
+        const [envelope] = conductor.submit.mock.calls.find(([candidate]: [{ kind: string }]) => candidate.kind === 'catchup')! as unknown as [{ createdAt: Date }];
+        expect(envelope.createdAt).toEqual(now);
+    });
+
+    test('uses an explicit empty boot task snapshot instead of stale recovery tasks', async () => {
+        const conductor = makeFakeConductor();
+        const journal = makeFakeJournal({
+            readSince: mock(async () => [
+                { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'stale task' },
+            ]),
+        });
+
+        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal, bootLostTasks: [] }));
+
+        expect(conductor.submit).not.toHaveBeenCalled();
+        expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
     });
 });

@@ -106,7 +106,6 @@ export function registerTimingMiddleware(client: DynamoDBClient): DynamoDBClient
         step: 'initialize',
         name: 'timingMiddleware',
     });
-    // Stryker restore StringLiteral,ObjectLiteral
 
     return client;
 }

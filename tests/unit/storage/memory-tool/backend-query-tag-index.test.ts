@@ -85,6 +85,16 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
         expect(result.items[0].tags.has('core')).toBe(true);
     });
 
+    test('drives the multi-tag query from the first tag supplied', async () => {
+        ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+        await queryOps.searchByTags(new Set(['important', 'core']));
+
+        const calls = ddbMock.commandCalls(QueryCommand);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args[0].input.ExpressionAttributeValues?.[':pk']).toBe('TAG#important');
+    });
+
     test('should pass layer parameter through to tagIndex', async () => {
         ddbMock.on(QueryCommand).resolves({ Items: [] });
 
@@ -202,6 +212,24 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
         expect(result.items).toEqual([]);
         // Verify no query was sent (queryByTags returns early for empty tags)
         expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
+    });
+
+    test('queries a stored empty tag without filtering it from the request', async () => {
+        ddbMock.on(QueryCommand).resolves({
+            Items: [{
+                PK:             'TAG#',
+                SK:             'PATH#/identity/untagged.md',
+                memoryPath:     '/identity/untagged.md',
+                layer:          'identity',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(),
+                contentPreview: 'Legacy empty tag',
+            }],
+        });
+
+        const result = await queryOps.searchByTags(new Set(['']));
+
+        expect(result.items.map(item => item.memoryPath)).toEqual(['/identity/untagged.md']);
     });
 
     test('should combine layer and date filters', async () => {

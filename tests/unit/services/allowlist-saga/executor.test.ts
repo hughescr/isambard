@@ -271,6 +271,23 @@ describe('AllowlistSagaExecutor', () => {
             });
         });
 
+        test('falls back to personId when the matched contact has no display name', async () => {
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(reviewSaga);
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue({
+                ...makeContact('bob-jones' as ContactId, 'Bob Jones'),
+                // A legacy/partial contact record can carry an absent display name.
+                displayName: undefined as unknown as string,
+            });
+
+            const result = await executor.confirmMatch(SAGA_UUID);
+
+            expect(result).toEqual({
+                action:      'completed',
+                personId:    'bob-jones' as ContactId,
+                displayName: 'bob-jones',
+            });
+        });
+
         test('persists resultPersonId in saga update', async () => {
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(reviewSaga);
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
@@ -366,6 +383,25 @@ describe('AllowlistSagaExecutor', () => {
                 state:          'completed',
                 resultPersonId: expect.any(String),
             }));
+        });
+
+        test('prefers the admin display name over the caller-supplied hint when no more matches', async () => {
+            const saga = allowlistSagaSchema.parse(makeSaga({
+                state:            'pending_review',
+                adminDisplayName: 'Alice Smith',
+                displayNameHint:  'Alice Hint',
+                fuzzyMatches:     ['alice-a'],
+                matchIndex:       0,
+            }));
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(saga);
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
+
+            const result = await executor.skipMatch(SAGA_UUID);
+
+            expect(contactBackend.putContact).toHaveBeenCalledWith(expect.objectContaining({
+                displayName: 'Alice Smith',
+            }));
+            expect(result).toEqual(expect.objectContaining({ action: 'completed', displayName: 'Alice Smith' }));
         });
 
         test('returns cancelled for invalid state', async () => {

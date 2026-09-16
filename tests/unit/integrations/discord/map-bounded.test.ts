@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { mapBounded } from '@/integrations/discord/map-bounded';
 
+// Drains pending promise continuations with no real timers. Admitting the next item costs
+// several microtask hops (the mapper settles -> its `await` resumes -> the worker recurses
+// into the next item), so a single `await Promise.resolve()` does not observe the hand-off.
+// Over-draining is harmless: the drained chain is parked on a gate the test controls.
+const flushMicrotasks = async (remaining = 16): Promise<void> => {
+    if(remaining > 0) {
+        await Promise.resolve();
+        await flushMicrotasks(remaining - 1);
+    }
+};
+
 describe('mapBounded', () => {
     test('limits in-flight work and returns results in input order', async () => {
         const releases: (() => void)[] = [];
@@ -61,5 +72,39 @@ describe('mapBounded', () => {
         })).rejects.toThrow('Invariant violated in mapBounded: missing item at index 1');
 
         expect(mapped).toEqual([1]);
+    });
+
+    test('clamps a concurrency below one to a single worker instead of skipping the work', async () => {
+        const seen: number[] = [];
+
+        const results = await mapBounded([1, 2, 3], 0, async (value) => {
+            seen.push(value);
+            return value * 10;
+        });
+
+        expect(seen).toEqual([1, 2, 3]);
+        expect(results).toEqual([10, 20, 30]);
+    });
+
+    test('admits the next item only after the previous one settles when concurrency is one', async () => {
+        const started: number[] = [];
+        const releases: (() => void)[] = [];
+        const pending = mapBounded([1, 2], 1, async (value) => {
+            started.push(value);
+            await new Promise<void>((resolve) => {
+                releases.push(resolve);
+            });
+            return value;
+        });
+
+        await flushMicrotasks();
+        expect(started).toEqual([1]);
+
+        releases.shift()?.();
+        await flushMicrotasks();
+        expect(started).toEqual([1, 2]);
+
+        releases.shift()?.();
+        expect(await pending).toEqual([1, 2]);
     });
 });

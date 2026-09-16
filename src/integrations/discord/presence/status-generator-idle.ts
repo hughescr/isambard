@@ -239,6 +239,7 @@ export function createIdleStatusGenerator(
             : USER_PROMPT_WITHOUT_CONTEXT;
 
         const previousStatus = getPreviousStatus?.();
+        // Stryker disable next-line llm: `== undefined` differs from `=== undefined` only for null, which the `() => string | undefined` contract excludes
         const previousBlock = previousStatus === undefined
             ? ''
             : `\nThe idea is to make the status different each time it's generated;\nthe last one said this: "${previousStatus}"`;
@@ -260,12 +261,14 @@ export function createIdleStatusGenerator(
 
         const taskContext = await getTaskContext?.();
         const recentContext = await getRecentContext?.();
+        // Stryker disable next-line llm: value is only consumed as a truthiness guard, so `?? ''` is unobservable in the composed prompt
         const thinkingContext = getLastThinkingContent?.();
 
         // Build sections most-stable → least-stable for Anthropic API prefix caching:
         // task context (~hours) → recent conversation (~minutes) → last thoughts (~per turn)
         const sections: string[] = [];
         if(taskContext) {
+            // Stryker disable next-line ArrayMethodSwap: sections is empty at this first push, so unshift is indistinguishable from push
             sections.push(`Current work:\n${taskContext}`);
         }
         if(recentContext) {
@@ -301,7 +304,9 @@ export function createIdleStatusGenerator(
             return rawText;
         }
         const previous = getPreviousStatus?.();
+        // Stryker disable next-line llm: for any string, trim() !== '' and trim().length > 0 are equivalent
         const fallback = previous !== undefined && previous.trim() !== '' ? previous : DEFAULT_IDLE_TEXT;
+        // Stryker disable next-line llm: previous is string | undefined and fallback is a string, so == and === coincide
         logger.warn({ usedPreviousStatus: fallback === previous }, 'Idle status generation produced no text');
         return fallback;
     }
@@ -344,6 +349,5 @@ export function createIdleStatusGenerator(
                 return { name, type: activityType };
             }
         },
-        // Stryker restore StringLiteral,ObjectLiteral
     };
 }

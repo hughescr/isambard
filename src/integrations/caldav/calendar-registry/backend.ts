@@ -161,7 +161,6 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
             },
             'CalendarRegistry.listRegisteredUserIds'
         );
-        // Stryker restore StringLiteral,ObjectLiteral
 
         return items
             .map(item => CalendarRegistryKeyGenerator.parseUserId(item.PK as string))

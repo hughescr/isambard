@@ -101,7 +101,11 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
         });
         const batches = Array.from(
             { length: Math.ceil(items.length / BATCH_SIZE) },
-            (_, index) => items.slice(index * BATCH_SIZE, (index + 1) * BATCH_SIZE)
+            (_, index) => items.slice(
+                // Stryker disable next-line llm: index is an integer Array.from index and BATCH_SIZE an integer constant, so Math.floor on their product is the identity
+                index * BATCH_SIZE,
+                (index + 1) * BATCH_SIZE
+            )
         );
 
         let failedCount = 0;
@@ -119,6 +123,7 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
                 }));
 
                 const leftover = result.UnprocessedItems?.[this.tableName];
+                // Stryker disable next-line llm: array .length is never negative, so === 0 and <= 0 are equivalent
                 if(!leftover || leftover.length === 0) {
                     unprocessed = [];
                     break;

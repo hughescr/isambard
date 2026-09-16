@@ -150,6 +150,17 @@ describe('BskyHistoryProvider', () => {
             expect(results[0].summary.length).toBeLessThanOrEqual(220); // handle + ': ' + ~200 chars
         });
 
+        test('preserves text of exactly 200 chars without truncating', async () => {
+            const text200 = 'B'.repeat(200);
+            mockGetAuthorFeed.mockImplementation(async () => ({
+                items: [makeFeedItem({ text: text200 })],
+            }));
+
+            const results = await provider.fetchHistory({ identifier: 'alice.bsky.social' });
+
+            expect(results[0].summary).toBe(`@alice.bsky.social: ${text200}`);
+        });
+
         test('returns empty array on API error', async () => {
             mockGetAuthorFeed.mockImplementation(async () => {
                 throw new Error('API failure');

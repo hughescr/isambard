@@ -132,10 +132,12 @@ export class TaskBoardManager {
      * @param views The full set of boards composed this tick — a key's absence is meaningful.
      */
     applyViews(views: readonly TaskBoardView[]): void {
+        // Stryker disable next-line llm: views.map(view => view.key) feeds straight into new Set(...), which already dedupes, so wrapping it in a redundant dedupe filter or a defensive .slice() copy changes nothing observable.
         const live = new Set(views.map(view => view.key));
 
         // Deleting from a Map/Set while iterating it is well defined: the entry just removed is
         // simply not revisited.
+        // Stryker disable next-line llm: forget() only deletes from this.boards, never inserts, so a live Map iterator and a materialized Array.from(...) snapshot visit the same keys in the same order.
         for(const key of this.boards.keys()) {
             if(!live.has(key)) {
                 this.forget(key);
@@ -143,6 +145,7 @@ export class TaskBoardManager {
         }
 
         for(const view of views) {
+            // Stryker disable next-line llm: view comes from a readonly TaskBoardView[], so it is a defined object and an added truthiness guard cannot short-circuit.
             this.applyView(view);
         }
     }
@@ -186,6 +189,7 @@ export class TaskBoardManager {
 
     /** Routes one view to the send, retry, or edit path. */
     private applyView(view: TaskBoardView): void {
+        // Stryker disable next-line llm: TaskBoardView.key is a required string, so the nullish fallback is unreachable.
         const entry = this.boards.get(view.key);
         if(entry === undefined) {
             const created: BoardEntry = {
@@ -195,6 +199,7 @@ export class TaskBoardManager {
                 failedOnce:    false,
                 abandoned:     false,
                 finalized:     false,
+                // Stryker disable next-line NumberLiteralValue: every terminal edit resets finalAttempts to 0 in applyToPosted before incrementing it, so the initial value is never read.
                 finalAttempts: 0,
             };
             this.boards.set(view.key, created);
@@ -313,6 +318,7 @@ export class TaskBoardManager {
         if(view.state !== 'running') {
             // Terminal: one final edit, no throttle, cancelling whatever was owed. The entry and
             // its message survive, so a second launch under this key resumes on the same board.
+            // Stryker disable next-line llm: clearTimeout and clearInterval cancel the same timer handle identically in Bun.
             clearTimeout(entry.timer);
             entry.timer = undefined;
             entry.finalAttempts = 0;
@@ -325,6 +331,7 @@ export class TaskBoardManager {
             return;
         }
 
+        // Stryker disable next-line NumberLiteralValue: any non-positive fallback for a never-edited board takes the same immediate-edit branch.
         const waitMs = posted.editedAt === undefined ? 0 : (posted.editedAt + this.deps.editIntervalMs) - at.getTime();
         if(waitMs <= 0) {
             this.editNow(entry, posted.message, rendered, at);
@@ -333,6 +340,7 @@ export class TaskBoardManager {
 
         const message = posted.message;
         entry.timer = setTimeout(() => {
+            // Stryker disable next-line llm: posted is the readonly parameter, so posted.message is the same reference as the captured message.
             this.onEditDue(entry, message);
         }, waitMs);
     }
@@ -344,11 +352,13 @@ export class TaskBoardManager {
     private editNow(entry: BoardEntry, message: Message, rendered: RenderedEmbed, at: Date): void {
         entry.posted = { message, rendered, editedAt: at.getTime() };
         if(entry.latest.state === 'running') {
+            // Stryker disable next-line llm: entry.posted was assigned `{ message, ... }` two lines above with no interleaving point, so entry.posted.message is the same reference as message.
             void this.edit(entry.key, message, rendered);
             return;
         }
 
         entry.finalAttempts += 1;
+        // Stryker disable next-line llm: entry.posted was assigned `{ message, ... }` at the top of this synchronous body with no interleaving point, so entry.posted.message is the same reference as message.
         void this.editFinal(entry, message, rendered);
     }
 
@@ -401,6 +411,7 @@ export class TaskBoardManager {
             return;
         }
 
+        // Stryker disable next-line llm: finalAttempts is reset to 0 before each terminal edit and incremented at most twice before the retry stops, so it is never negative or above the limit.
         if(entry.finalAttempts >= FINAL_EDIT_ATTEMPTS) {
             this.deps.logger.warn({
                 boardKey:  entry.key,

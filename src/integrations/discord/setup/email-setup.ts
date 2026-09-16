@@ -253,12 +253,10 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
             password:         emailConfig.password,
             maxBodySizeBytes: emailConfig.maxBodySizeBytes,
         });
-        // Stryker restore ObjectLiteral,StringLiteral
         logger.info('Starting WildDuck client...');
         await wildDuckClient.init();
         logger.info('WildDuck client initialized');
     }
-    // Stryker restore BlockStatement
 
     // Create processor with Discord admin channel callbacks. Callback bodies themselves live in
     // buildEmailProcessorCallbacks (exported, directly unit-tested) — these disables cover only
@@ -290,6 +288,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
             .addFields(
                 { name: 'To',      value: to,      inline: true  },
                 { name: 'Subject', value: subject, inline: true  },
+                // Stryker disable next-line llm: draftUid is typed number from the WildDuck draft UID, so String(n) and n.toString() are identical
                 { name: 'UID',     value: String(draftUid), inline: true }
             );
 
@@ -328,7 +327,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                 }
             }, retryDeps));
     };
-    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression
 
     // Create listener (not started yet — started in clientReady handler)
     // Must be created after sendApprovalRequest and wildDuckClient are defined.
@@ -369,7 +367,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         healthRegistry:   options.healthRegistry,
         reconnectionLoop: options.reconnectionLoop,
     });
-    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration
 
     const emailMcpServer = createEmailMcpServerInstance();
 
@@ -424,4 +421,3 @@ async function sendToAdminChannel(
         });
     }
 }
-// Stryker restore all
