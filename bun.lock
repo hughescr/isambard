@@ -38,7 +38,7 @@
         "@hughescr/eslint-plugin-module-boundaries": "^1.0.0",
         "@hughescr/eslint-plugin-test-hygiene": "^1.0.0",
         "@hughescr/stryker-bun-runner": "^1.4.0",
-        "@hughescr/stryker-llm-mutator": "^1.2.0",
+        "@hughescr/stryker-llm-mutator": "^1.2.1",
         "@modelcontextprotocol/sdk": "^1.30.0",
         "@smithy/types": "^4.18.0",
         "@stryker-mutator/api": "10.0.0",
@@ -313,7 +313,7 @@
 
     "@hughescr/stryker-bun-runner": ["@hughescr/stryker-bun-runner@1.4.0", "", { "dependencies": { "@stryker-mutator/api": "^9.0.0 || ^10.0.0", "smol-toml": "1.7.0", "tinyglobby": "0.2.17", "ws": "8.21.0" }, "peerDependencies": { "@stryker-mutator/core": "^9.0.0 || ^10.0.0" } }, "sha512-yQmjwGgq21RcV/Ip1cvUjZNPp1qlmQkyQNqahZxL4CIb+SIxne6toOWng7JmSDei71wiggYrtQoKFHjCuwzNew=="],
 
-    "@hughescr/stryker-llm-mutator": ["@hughescr/stryker-llm-mutator@1.2.0", "", { "dependencies": { "@anthropic-ai/claude-agent-sdk": "0.3.186", "@babel/parser": "^7.29.0", "@babel/types": "^7.29.0", "zod": "4.4.3" }, "peerDependencies": { "@stryker-mutator/api": ">=9.6.0 <10", "@stryker-mutator/core": ">=9.6.0 <10", "@stryker-mutator/instrumenter": ">=9.6.0 <10" }, "bin": { "stryker-llm": "dist/cli.js" } }, "sha512-k4//+1XTXQFyp4o4fUxpqwFAL0w7wwGPpwsGrsbyO2ilakqC2wa/tGFAZv6HA7tlfMeRr7pKqD5pgrkQpgJWDw=="],
+    "@hughescr/stryker-llm-mutator": ["@hughescr/stryker-llm-mutator@1.2.1", "", { "dependencies": { "@anthropic-ai/claude-agent-sdk": "0.3.186", "@babel/parser": "^7.29.0", "@babel/types": "^7.29.0", "zod": "4.4.3" }, "peerDependencies": { "@stryker-mutator/api": ">=9.6.0 <10", "@stryker-mutator/core": ">=9.6.0 <10", "@stryker-mutator/instrumenter": ">=9.6.0 <10" }, "bin": { "stryker-llm": "dist/cli.js" } }, "sha512-+cl1pLbHI3djIRd5LlznGEYzDeX0HbblpX/yz9U/ZBk2sWTofRDE18o8rtHbjpyIFaVru5OwUMgiJOVzjiThLA=="],
 
     "@humanfs/core": ["@humanfs/core@0.19.2", "", { "dependencies": { "@humanfs/types": "^0.15.0" } }, "sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA=="],
 
