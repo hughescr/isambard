@@ -206,7 +206,7 @@ describe('event-summarizer', () => {
                 createMockEvent('/events/e1', '2025-01-15T11:00:00Z', 'Event content'),
             ];
 
-            expect(summarizeEventBatches(events, 5, now)).rejects.toThrow('LLM service unavailable');
+            await expect(summarizeEventBatches(events, 5, now)).rejects.toThrow('LLM service unavailable');
         });
     });
 });

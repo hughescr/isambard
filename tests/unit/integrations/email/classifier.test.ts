@@ -202,41 +202,19 @@ describe('EmailClassifier', () => {
             expect(result.confidence).toBe(0);
         });
 
-        test('extracts JSON when surrounded by whitespace', async () => {
-            mockGenerateTextWithSystemPrompt.mockResolvedValue(
-                '   {"verdict":"safe","confidence":0.9,"reason":"OK"}   '
-            );
+        test.each([
+            ['surrounded by whitespace', '   {"verdict":"safe","confidence":0.9,"reason":"OK"}   ', 0.9],
+            ['embedded in response with surrounding text', 'Here is my assessment: {"verdict":"safe","confidence":0.85,"reason":"OK"} That is my verdict.', 0.85],
+            // This case specifically exercises the [\s\S]* in the regex (matches whitespace inside JSON)
+            ['embedded with internal whitespace when surrounded by text', 'Result: { "verdict": "safe", "confidence": 0.9, "reason": "OK" } done.', 0.9],
+        ] as const)('extracts JSON when %s', async (_desc, response, confidence) => {
+            mockGenerateTextWithSystemPrompt.mockResolvedValue(response);
 
             const classifier = new EmailClassifier();
             const result = await classifier.classify(makeEmail());
 
             expect(result.verdict).toBe('safe');
-            expect(result.confidence).toBeCloseTo(0.9, 2);
-        });
-
-        test('extracts embedded JSON when response has surrounding text', async () => {
-            mockGenerateTextWithSystemPrompt.mockResolvedValue(
-                'Here is my assessment: {"verdict":"safe","confidence":0.85,"reason":"OK"} That is my verdict.'
-            );
-
-            const classifier = new EmailClassifier();
-            const result = await classifier.classify(makeEmail());
-
-            expect(result.verdict).toBe('safe');
-            expect(result.confidence).toBeCloseTo(0.85, 2);
-        });
-
-        test('extracts embedded JSON with internal whitespace when surrounded by text', async () => {
-            // This test specifically exercises the [\s\S]* in the regex (matches whitespace inside JSON)
-            mockGenerateTextWithSystemPrompt.mockResolvedValue(
-                'Result: { "verdict": "safe", "confidence": 0.9, "reason": "OK" } done.'
-            );
-
-            const classifier = new EmailClassifier();
-            const result = await classifier.classify(makeEmail());
-
-            expect(result.verdict).toBe('safe');
-            expect(result.confidence).toBeCloseTo(0.9, 2);
+            expect(result.confidence).toBeCloseTo(confidence, 2);
         });
 
         test('returns uncertain when JSON is embedded but invalid', async () => {
@@ -251,38 +229,13 @@ describe('EmailClassifier', () => {
             expect(result.confidence).toBe(0);
         });
 
-        test('does not attempt extraction or log a warning when no complete JSON object exists', async () => {
-            mockGenerateTextWithSystemPrompt.mockResolvedValue('plain text with no JSON');
-            mockLogger.warn.mockClear();
-
-            const result = await new EmailClassifier().classify(makeEmail());
-
-            expect(result).toMatchObject({ verdict: 'uncertain', confidence: 0 });
-            expect(mockLogger.warn).not.toHaveBeenCalled();
-        });
-
-        test('does not attempt extraction when only a closing brace is present', async () => {
-            mockGenerateTextWithSystemPrompt.mockResolvedValue('plain text }');
-            mockLogger.warn.mockClear();
-
-            const result = await new EmailClassifier().classify(makeEmail());
-
-            expect(result).toMatchObject({ verdict: 'uncertain', confidence: 0 });
-            expect(mockLogger.warn).not.toHaveBeenCalled();
-        });
-
-        test('does not attempt extraction when only an opening brace is present', async () => {
-            mockGenerateTextWithSystemPrompt.mockResolvedValue('plain text {');
-            mockLogger.warn.mockClear();
-
-            const result = await new EmailClassifier().classify(makeEmail());
-
-            expect(result).toMatchObject({ verdict: 'uncertain', confidence: 0 });
-            expect(mockLogger.warn).not.toHaveBeenCalled();
-        });
-
-        test('does not attempt extraction when the closing brace precedes the opening brace', async () => {
-            mockGenerateTextWithSystemPrompt.mockResolvedValue('} plain text {');
+        test.each([
+            ['when no complete JSON object exists', 'plain text with no JSON'],
+            ['when only a closing brace is present', 'plain text }'],
+            ['when only an opening brace is present', 'plain text {'],
+            ['when the closing brace precedes the opening brace', '} plain text {'],
+        ] as const)('does not attempt extraction or log a warning %s', async (_desc, response) => {
+            mockGenerateTextWithSystemPrompt.mockResolvedValue(response);
             mockLogger.warn.mockClear();
 
             const result = await new EmailClassifier().classify(makeEmail());
@@ -354,7 +307,7 @@ describe('EmailClassifier', () => {
 
             const classifier = new EmailClassifier();
 
-            expect(classifier.classify(makeEmail()))
+            await expect(classifier.classify(makeEmail()))
                 .rejects.toThrow(ClassifierError);
         });
 
@@ -372,7 +325,7 @@ describe('EmailClassifier', () => {
 
             const classifier = new EmailClassifier();
 
-            expect(classifier.classify(makeEmail()))
+            await expect(classifier.classify(makeEmail()))
                 .rejects.toThrow('ECONNREFUSED');
         });
 
@@ -437,7 +390,7 @@ describe('EmailClassifier', () => {
             mockGenerateTextWithSystemPrompt.mockRejectedValue(new Error('Network error'));
             const classifier = new EmailClassifier();
 
-            expect(classifier.classify(makeEmail())).rejects.toThrow();
+            await expect(classifier.classify(makeEmail())).rejects.toThrow();
             expect(mockLogger.info).not.toHaveBeenCalled();
         });
     });

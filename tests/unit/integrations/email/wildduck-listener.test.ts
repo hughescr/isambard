@@ -300,7 +300,7 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
 
-            expect(listener.start()).rejects.toThrow('List failed on startup');
+            await expect(listener.start()).rejects.toThrow('List failed on startup');
             expect(listener.running).toBe(false);
         });
 

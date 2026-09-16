@@ -999,7 +999,7 @@ describe('IdleStatusGenerator', () => {
                 // No setPreviousStatus
             });
 
-            expect(generator.generate()).resolves.toBeDefined();
+            await expect(generator.generate()).resolves.toBeDefined();
         });
 
         test('should call setPreviousStatus even when text gets truncated', async () => {

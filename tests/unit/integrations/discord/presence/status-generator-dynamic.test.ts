@@ -257,39 +257,33 @@ describe('DynamicStatusGenerator', () => {
 
     describe('generateSynopsis', () => {
         describe('prompt construction - system prompt', () => {
-            it('should include the identity context verbatim', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'I am Isambard, a curious 9x7z owl who loves learning',
-                });
+            it.each<[string, string, (system: string) => void]>([
+                [
+                    'include the identity context verbatim',
+                    'I am Isambard, a curious 9x7z owl who loves learning',
+                    system => expect(system).toContain('I am Isambard, a curious 9x7z owl who loves learning'),
+                ],
+                [
+                    'not leave the {identityContext} placeholder in the system prompt',
+                    'Identity 9x7z',
+                    system => expect(system).not.toContain('{identityContext}'),
+                ],
+                [
+                    'state the status-line task, the 40-character cap and the first-person rule',
+                    'Test identity',
+                    (system) => {
+                        expect(system).toContain("You write Izzy's Discord status line");
+                        expect(system).toContain('at most 40 characters');
+                        expect(system).toContain('First person, present tense, one line, no more than 40 characters.');
+                    },
+                ],
+            ])('should %s', async (_name, identityContext, assertSystem) => {
+                const generator = createDynamicStatusGenerator({ identityContext });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
 
                 const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
-                expect(system).toContain('I am Isambard, a curious 9x7z owl who loves learning');
-            });
-
-            it('should not leave the {identityContext} placeholder in the system prompt', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Identity 9x7z',
-                });
-
-                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
-
-                const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
-                expect(system).not.toContain('{identityContext}');
-            });
-
-            it('should state the status-line task, the 40-character cap and the first-person rule', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
-
-                const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
-                expect(system).toContain("You write Izzy's Discord status line");
-                expect(system).toContain('at most 40 characters');
-                expect(system).toContain('First person, present tense, one line, no more than 40 characters.');
+                assertSystem(system);
             });
 
             it('should describe every labelled section the user prompt can carry', async () => {
@@ -848,7 +842,23 @@ describe('DynamicStatusGenerator', () => {
                 expect(user).toContain('Phase: Using a tool\nTool: Searching through memories 9x7z\nArguments: {"query":"auth"}');
             });
 
-            it('should look up the tool description from ToolDescriptions when none is provided', async () => {
+            it.each<[string, string | undefined, string]>([
+                [
+                    'look up the tool description from ToolDescriptions when none is provided',
+                    'mcp__memory__search',
+                    'Tool: Searching through memories\n',
+                ],
+                [
+                    'fall back to the raw tool name when no description is known',
+                    'unknown_tool_9x7z',
+                    'Tool: unknown_tool_9x7z\n',
+                ],
+                [
+                    'fall back to "unknown tool" when no tool name is provided',
+                    undefined,
+                    'Tool: unknown tool\n',
+                ],
+            ])('should %s', async (_name, toolName, expected) => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -856,46 +866,13 @@ describe('DynamicStatusGenerator', () => {
                 const context: SynopsisContext = {
                     phase:       'using_tool',
                     userMessage: 'Test',
-                    toolName:    'mcp__memory__search',
+                    ...(toolName === undefined ? {} : { toolName }),
                 };
 
                 await generator.generateSynopsis(context);
 
                 const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
-                expect(user).toContain('Tool: Searching through memories\n');
-            });
-
-            it('should fall back to the raw tool name when no description is known', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:       'using_tool',
-                    userMessage: 'Test',
-                    toolName:    'unknown_tool_9x7z',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
-                expect(user).toContain('Tool: unknown_tool_9x7z\n');
-            });
-
-            it('should fall back to "unknown tool" when no tool name is provided', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:       'using_tool',
-                    userMessage: 'Test',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
-                expect(user).toContain('Tool: unknown tool\n');
+                expect(user).toContain(expected);
             });
 
             it('should show "(no input)" when the tool input is undefined', async () => {
@@ -1288,46 +1265,20 @@ describe('DynamicStatusGenerator', () => {
                 expect(result!.length).toBeLessThanOrEqual(HARD_MAX_STATUS_LENGTH);
             });
 
-            it('should reject a response one character over the cap instead of truncating it', async () => {
-                const text = `Wondering whether the cite holds up 9x7z${'.'.repeat(41)}`;
-                expect(text).toHaveLength(HARD_MAX_STATUS_LENGTH + 1);
+            it.each<[string, string, number | undefined]>([
+                [
+                    'reject a response one character over the cap instead of truncating it',
+                    `Wondering whether the cite holds up 9x7z${'.'.repeat(41)}`,
+                    HARD_MAX_STATUS_LENGTH + 1,
+                ],
+                ['reject a multiline response', 'Rereading the plan 9x7z\nContext: the repair', undefined],
+                ['reject a narration of the task', "I need to capture what's happening 9x7z", undefined],
+                ['reject a third-person response', 'Izzy is deep in the config 9x7z', undefined],
+            ])('should %s', async (_name, text, expectedLength) => {
+                if(expectedLength !== undefined) {
+                    expect(text).toHaveLength(expectedLength);
+                }
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
-
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
-
-                expect(result).toBeNull();
-            });
-
-            it('should reject a multiline response', async () => {
-                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Rereading the plan 9x7z\nContext: the repair'));
-
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
-
-                expect(result).toBeNull();
-            });
-
-            it('should reject a narration of the task', async () => {
-                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve("I need to capture what's happening 9x7z"));
-
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
-
-                expect(result).toBeNull();
-            });
-
-            it('should reject a third-person response', async () => {
-                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Izzy is deep in the config 9x7z'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1353,34 +1304,15 @@ describe('DynamicStatusGenerator', () => {
                 expect(result).toBe('Chasing a hunch 9x7z');
             });
 
-            it('should leave quotes that are not a surrounding pair alone', async () => {
-                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Wondering if "cite" holds 9x7z'));
-
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
-
-                expect(result).toBe('Wondering if "cite" holds 9x7z');
-            });
-
-            it('should leave a status that merely ENDS with a quoted word alone', async () => {
+            it.each([
+                // Baseline: quotes that are not a surrounding pair are left alone.
+                ['leave quotes that are not a surrounding pair alone', 'Wondering if "cite" holds 9x7z'],
                 // Kills the ^-anchor mutant: unanchored, this would swallow the inner quotes.
-                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Wondering about "the cite"'));
-
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
-
-                expect(result).toBe('Wondering about "the cite"');
-            });
-
-            it('should leave a status that merely STARTS with a quoted word alone', async () => {
+                ['leave a status that merely ENDS with a quoted word alone', 'Wondering about "the cite"'],
                 // Kills the $-anchor mutant: without it, the leading quoted word would be unwrapped.
-                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('"the cite" still holds 9x7z'));
+                ['leave a status that merely STARTS with a quoted word alone', '"the cite" still holds 9x7z'],
+            ])('should %s', async (_name, text) => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1388,7 +1320,7 @@ describe('DynamicStatusGenerator', () => {
 
                 const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
 
-                expect(result).toBe('"the cite" still holds 9x7z');
+                expect(result).toBe(text);
             });
 
             it('should strip the quotes BEFORE validating, so a quoted narration is still rejected', async () => {

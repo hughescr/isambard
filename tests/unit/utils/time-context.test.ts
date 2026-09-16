@@ -10,79 +10,47 @@ import {
 describe.concurrent('getTimeOfDay', () => {
     describe('with UTC timezone (explicit)', () => {
         describe('morning (5:00-11:59)', () => {
-            test('should return "morning" at 5:00 UTC', () => {
-                const date = new Date('2025-01-15T05:00:00.000Z');
-                expect(getTimeOfDay(date, 'UTC')).toBe('morning');
-            });
-
-            test('should return "morning" at 11:59 UTC', () => {
-                const date = new Date('2025-01-15T11:59:59.000Z');
-                expect(getTimeOfDay(date, 'UTC')).toBe('morning');
-            });
-
-            test('should return "morning" at 8:00 UTC', () => {
-                const date = new Date('2025-01-15T08:00:00.000Z');
+            test.each([
+                { desc: '5:00 UTC', iso: '2025-01-15T05:00:00.000Z' },
+                { desc: '11:59 UTC', iso: '2025-01-15T11:59:59.000Z' },
+                { desc: '8:00 UTC', iso: '2025-01-15T08:00:00.000Z' },
+            ])('should return "morning" at $desc', ({ iso }) => {
+                const date = new Date(iso);
                 expect(getTimeOfDay(date, 'UTC')).toBe('morning');
             });
         });
 
         describe('afternoon (12:00-16:59)', () => {
-            test('should return "afternoon" at 12:00 UTC', () => {
-                const date = new Date('2025-01-15T12:00:00.000Z');
-                expect(getTimeOfDay(date, 'UTC')).toBe('afternoon');
-            });
-
-            test('should return "afternoon" at 16:59 UTC', () => {
-                const date = new Date('2025-01-15T16:59:59.000Z');
-                expect(getTimeOfDay(date, 'UTC')).toBe('afternoon');
-            });
-
-            test('should return "afternoon" at 14:00 UTC', () => {
-                const date = new Date('2025-01-15T14:00:00.000Z');
+            test.each([
+                { desc: '12:00 UTC', iso: '2025-01-15T12:00:00.000Z' },
+                { desc: '16:59 UTC', iso: '2025-01-15T16:59:59.000Z' },
+                { desc: '14:00 UTC', iso: '2025-01-15T14:00:00.000Z' },
+            ])('should return "afternoon" at $desc', ({ iso }) => {
+                const date = new Date(iso);
                 expect(getTimeOfDay(date, 'UTC')).toBe('afternoon');
             });
         });
 
         describe('evening (17:00-20:59)', () => {
-            test('should return "evening" at 17:00 UTC', () => {
-                const date = new Date('2025-01-15T17:00:00.000Z');
-                expect(getTimeOfDay(date, 'UTC')).toBe('evening');
-            });
-
-            test('should return "evening" at 20:59 UTC', () => {
-                const date = new Date('2025-01-15T20:59:59.000Z');
-                expect(getTimeOfDay(date, 'UTC')).toBe('evening');
-            });
-
-            test('should return "evening" at 19:00 UTC', () => {
-                const date = new Date('2025-01-15T19:00:00.000Z');
+            test.each([
+                { desc: '17:00 UTC', iso: '2025-01-15T17:00:00.000Z' },
+                { desc: '20:59 UTC', iso: '2025-01-15T20:59:59.000Z' },
+                { desc: '19:00 UTC', iso: '2025-01-15T19:00:00.000Z' },
+            ])('should return "evening" at $desc', ({ iso }) => {
+                const date = new Date(iso);
                 expect(getTimeOfDay(date, 'UTC')).toBe('evening');
             });
         });
 
         describe('night (21:00-4:59)', () => {
-            test('should return "night" at 21:00 UTC', () => {
-                const date = new Date('2025-01-15T21:00:00.000Z');
-                expect(getTimeOfDay(date, 'UTC')).toBe('night');
-            });
-
-            test('should return "night" at 23:59 UTC', () => {
-                const date = new Date('2025-01-15T23:59:59.000Z');
-                expect(getTimeOfDay(date, 'UTC')).toBe('night');
-            });
-
-            test('should return "night" at 0:00 UTC', () => {
-                const date = new Date('2025-01-15T00:00:00.000Z');
-                expect(getTimeOfDay(date, 'UTC')).toBe('night');
-            });
-
-            test('should return "night" at 4:59 UTC', () => {
-                const date = new Date('2025-01-15T04:59:59.000Z');
-                expect(getTimeOfDay(date, 'UTC')).toBe('night');
-            });
-
-            test('should return "night" at 2:00 UTC', () => {
-                const date = new Date('2025-01-15T02:00:00.000Z');
+            test.each([
+                { desc: '21:00 UTC', iso: '2025-01-15T21:00:00.000Z' },
+                { desc: '23:59 UTC', iso: '2025-01-15T23:59:59.000Z' },
+                { desc: '0:00 UTC', iso: '2025-01-15T00:00:00.000Z' },
+                { desc: '4:59 UTC', iso: '2025-01-15T04:59:59.000Z' },
+                { desc: '2:00 UTC', iso: '2025-01-15T02:00:00.000Z' },
+            ])('should return "night" at $desc', ({ iso }) => {
+                const date = new Date(iso);
                 expect(getTimeOfDay(date, 'UTC')).toBe('night');
             });
         });
@@ -237,24 +205,15 @@ describe('resolveTimezone', () => {
 });
 
 describe('formatLocalDateTime', () => {
-    test('should format correctly for UTC timezone', () => {
+    test.each([
+        // 2025-01-15T14:30:45Z UTC = 2025-01-15T06:30:45 PST (UTC-8), 2025-01-15T23:30:45 JST (UTC+9)
+        { timezone: 'UTC', expected: '2025-01-15T14:30:45' },
+        { timezone: 'America/Los_Angeles', expected: '2025-01-15T06:30:45' },
+        { timezone: 'Asia/Tokyo', expected: '2025-01-15T23:30:45' },
+    ])('should format correctly for $timezone timezone', ({ timezone, expected }) => {
         const isoString = '2025-01-15T14:30:45.000Z';
-        const result = formatLocalDateTime(isoString, 'UTC');
-        expect(result).toBe('2025-01-15T14:30:45');
-    });
-
-    test('should format correctly for America/Los_Angeles timezone', () => {
-        // 2025-01-15T14:30:45Z UTC = 2025-01-15T06:30:45 PST (UTC-8)
-        const isoString = '2025-01-15T14:30:45.000Z';
-        const result = formatLocalDateTime(isoString, 'America/Los_Angeles');
-        expect(result).toBe('2025-01-15T06:30:45');
-    });
-
-    test('should format correctly for Asia/Tokyo timezone', () => {
-        // 2025-01-15T14:30:45Z UTC = 2025-01-15T23:30:45 JST (UTC+9)
-        const isoString = '2025-01-15T14:30:45.000Z';
-        const result = formatLocalDateTime(isoString, 'Asia/Tokyo');
-        expect(result).toBe('2025-01-15T23:30:45');
+        const result = formatLocalDateTime(isoString, timezone);
+        expect(result).toBe(expected);
     });
 
     test('should use 24-hour format (no AM/PM)', () => {

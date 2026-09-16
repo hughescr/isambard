@@ -577,7 +577,7 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
             const client = createMockClient();
             const manager = new ChannelRegistryManager({ backend, homeGuildId, client });
 
-            expect(manager.warmCache()).rejects.toThrow('DynamoDB down');
+            await expect(manager.warmCache()).rejects.toThrow('DynamoDB down');
             expect(manager.isReady()).toBe(false);
         });
     });

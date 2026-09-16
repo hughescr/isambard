@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { mockGenerateText, originalGenerateText, mockLogger } from '../../../setup';
 import { classifyWithHaiku } from '@/agent/answer-classifier/haiku-classifier';
-import type { MessageToClassify } from '@/agent/answer-classifier/types';
+import type { ClassificationResult, MessageToClassify } from '@/agent/answer-classifier/types';
 import type { PendingQuestion } from '@/agent/question-registry/types';
 import { userIdSchema, channelIdSchema } from '@/integrations/discord/types';
 
@@ -60,68 +60,21 @@ describe('classifyWithHaiku', () => {
         expect(prompt).toContain('2025-01-17');
     });
 
-    it('should parse "answer" response correctly', async () => {
-        mockGenerateText.mockResolvedValue('answer');
+    it.each<[string, ClassificationResult, string]>([
+        ['answer', 'answer', 'a plain "answer" response'],
+        ['interruption', 'interruption', 'a plain "interruption" response'],
+        ['unrelated', 'unrelated', 'a plain "unrelated" response'],
+        ['  answer  \n', 'answer', 'a response with extra whitespace'],
+        ['answer - This message directly responds to the question', 'answer', 'a response with explanation text'],
+        ['invalid-classification', 'interruption', 'an invalid response'],
+        ['', 'interruption', 'an empty response'],
+        ['Something completely unexpected', 'interruption', 'a response that fails to parse'],
+    ])('should parse %j as %j (%s)', async (response, expected) => {
+        mockGenerateText.mockResolvedValue(response);
 
         const result = await classifyWithHaiku(baseQuestion, baseMessage);
 
-        expect(result).toBe('answer');
-    });
-
-    it('should parse "interruption" response correctly', async () => {
-        mockGenerateText.mockResolvedValue('interruption');
-
-        const result = await classifyWithHaiku(baseQuestion, baseMessage);
-
-        expect(result).toBe('interruption');
-    });
-
-    it('should parse "unrelated" response correctly', async () => {
-        mockGenerateText.mockResolvedValue('unrelated');
-
-        const result = await classifyWithHaiku(baseQuestion, baseMessage);
-
-        expect(result).toBe('unrelated');
-    });
-
-    it('should handle response with extra whitespace', async () => {
-        mockGenerateText.mockResolvedValue('  answer  \n');
-
-        const result = await classifyWithHaiku(baseQuestion, baseMessage);
-
-        expect(result).toBe('answer');
-    });
-
-    it('should handle response with explanation text', async () => {
-        mockGenerateText.mockResolvedValue('answer - This message directly responds to the question');
-
-        const result = await classifyWithHaiku(baseQuestion, baseMessage);
-
-        expect(result).toBe('answer');
-    });
-
-    it('should default to interruption on invalid response', async () => {
-        mockGenerateText.mockResolvedValue('invalid-classification');
-
-        const result = await classifyWithHaiku(baseQuestion, baseMessage);
-
-        expect(result).toBe('interruption');
-    });
-
-    it('should default to interruption on empty response', async () => {
-        mockGenerateText.mockResolvedValue('');
-
-        const result = await classifyWithHaiku(baseQuestion, baseMessage);
-
-        expect(result).toBe('interruption');
-    });
-
-    it('should default to interruption on parse failure', async () => {
-        mockGenerateText.mockResolvedValue('Something completely unexpected');
-
-        const result = await classifyWithHaiku(baseQuestion, baseMessage);
-
-        expect(result).toBe('interruption');
+        expect(result).toBe(expected);
     });
 
     it('should default to interruption on text generator error', async () => {

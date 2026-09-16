@@ -1594,52 +1594,23 @@ describe('createEmailMCPServer', () => {
             expect(mockWildDuck.moveMessage).toHaveBeenCalledWith('CleanInbox', 15, 'Archive');
         });
 
-        test('should deny archive from Quarantine mailbox', async () => {
+        test.each([
+            ['Quarantine', 7, ['Restricted mailboxes require admin review']],
+            ['Junk',       3, []],
+            ['Trash',      5, []],
+            ['Drafts',     2, []],
+        ])('should deny archive from %s mailbox', async (mailbox, id, extraMessages) => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
             const handler = getToolHandler(server, 'archiveEmail');
 
-            const result: CallToolResult = await handler({ message: 'Quarantine:7' });
+            const result: CallToolResult = await handler({ message: `${mailbox}:${id}` });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('Access denied');
-            expect(getText(result)).toContain('Quarantine');
-            expect(getText(result)).toContain('Restricted mailboxes require admin review');
-            expect(mockWildDuck.moveMessage).not.toHaveBeenCalled();
-        });
-
-        test('should deny archive from Junk mailbox', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
-            const handler = getToolHandler(server, 'archiveEmail');
-
-            const result: CallToolResult = await handler({ message: 'Junk:3' });
-
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Access denied');
-            expect(getText(result)).toContain('Junk');
-            expect(mockWildDuck.moveMessage).not.toHaveBeenCalled();
-        });
-
-        test('should deny archive from Trash mailbox', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
-            const handler = getToolHandler(server, 'archiveEmail');
-
-            const result: CallToolResult = await handler({ message: 'Trash:5' });
-
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Access denied');
-            expect(getText(result)).toContain('Trash');
-            expect(mockWildDuck.moveMessage).not.toHaveBeenCalled();
-        });
-
-        test('should deny archive from Drafts mailbox', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
-            const handler = getToolHandler(server, 'archiveEmail');
-
-            const result: CallToolResult = await handler({ message: 'Drafts:2' });
-
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Access denied');
-            expect(getText(result)).toContain('Drafts');
+            expect(getText(result)).toContain(mailbox);
+            for(const extraMessage of extraMessages) {
+                expect(getText(result)).toContain(extraMessage);
+            }
             expect(mockWildDuck.moveMessage).not.toHaveBeenCalled();
         });
 

@@ -351,6 +351,7 @@ async function executeWithCooldown(
         if(controller.signal.aborted) {
             return null;
         }
+        // eslint-disable-next-line require-atomic-updates -- no await between the aborted check above and this write, so a concurrent call replacing state.inFlightController cannot interleave here
         state.cachedStatus = statusText;
         logger.info({ statusText, ...logContext.success });
         return statusText;

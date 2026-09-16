@@ -83,7 +83,7 @@ describe('IdentityCache', () => {
             const cache = new IdentityCache(failThenSucceed);
 
             // First get() should throw
-            expect(cache.get()).rejects.toThrow('transient failure');
+            await expect(cache.get()).rejects.toThrow('transient failure');
 
             // Wait for the rejection to settle
             await Promise.resolve();

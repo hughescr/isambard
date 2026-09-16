@@ -48,8 +48,12 @@ describe('getBundledLlamaCppVersion', () => {
         expect(result).toBeNull();
     });
 
-    it('returns null when JSON is malformed', async () => {
-        mockFsPromises.readFile.mockImplementation(async (_path, _opts) => 'not-valid-json');
+    it.each([
+        { label: 'JSON is malformed', raw: 'not-valid-json' },
+        { label: 'JSON is a primitive (null JSON value)', raw: 'null' },
+        { label: 'JSON is a number (not an object)', raw: '42' },
+    ])('returns null when $label', async ({ raw }) => {
+        mockFsPromises.readFile.mockImplementation(async (_path, _opts) => raw);
         const result = await getBundledLlamaCppVersion();
         expect(result).toBeNull();
     });
@@ -62,45 +66,14 @@ describe('getBundledLlamaCppVersion', () => {
         expect(result).toBeNull();
     });
 
-    it('returns null when tag does not match expected format', async () => {
+    it.each([
+        { label: 'tag does not match expected format', tag: 'not-a-build-tag' },
+        { label: 'tag has no leading b prefix (e.g. "8953")', tag: '8953' },
+        { label: 'tag has trailing extra chars (e.g. "b8953extra")', tag: 'b8953extra' },
+        { label: 'tag has leading extra chars (e.g. "xb8953")', tag: 'xb8953' },
+    ])('returns null when $label', async ({ tag }) => {
         mockFsPromises.readFile.mockImplementation(async (_path, _opts) =>
-            JSON.stringify({ tag: 'not-a-build-tag', llamaCppGithubRepo: 'ggml-org/llama.cpp' })
-        );
-        const result = await getBundledLlamaCppVersion();
-        expect(result).toBeNull();
-    });
-
-    it('returns null when JSON is a primitive (null JSON value)', async () => {
-        mockFsPromises.readFile.mockImplementation(async (_path, _opts) => 'null');
-        const result = await getBundledLlamaCppVersion();
-        expect(result).toBeNull();
-    });
-
-    it('returns null when JSON is a number (not an object)', async () => {
-        mockFsPromises.readFile.mockImplementation(async (_path, _opts) => '42');
-        const result = await getBundledLlamaCppVersion();
-        expect(result).toBeNull();
-    });
-
-    it('returns null when tag has no leading b prefix (e.g. "8953")', async () => {
-        mockFsPromises.readFile.mockImplementation(async (_path, _opts) =>
-            JSON.stringify({ tag: '8953', llamaCppGithubRepo: 'ggml-org/llama.cpp' })
-        );
-        const result = await getBundledLlamaCppVersion();
-        expect(result).toBeNull();
-    });
-
-    it('returns null when tag has trailing extra chars (e.g. "b8953extra")', async () => {
-        mockFsPromises.readFile.mockImplementation(async (_path, _opts) =>
-            JSON.stringify({ tag: 'b8953extra', llamaCppGithubRepo: 'ggml-org/llama.cpp' })
-        );
-        const result = await getBundledLlamaCppVersion();
-        expect(result).toBeNull();
-    });
-
-    it('returns null when tag has leading extra chars (e.g. "xb8953")', async () => {
-        mockFsPromises.readFile.mockImplementation(async (_path, _opts) =>
-            JSON.stringify({ tag: 'xb8953', llamaCppGithubRepo: 'ggml-org/llama.cpp' })
+            JSON.stringify({ tag, llamaCppGithubRepo: 'ggml-org/llama.cpp' })
         );
         const result = await getBundledLlamaCppVersion();
         expect(result).toBeNull();
@@ -121,21 +94,21 @@ describe('assertLlamaCppCompatible', () => {
         mockFsPromises.readFile.mockImplementation(async (_path, _opts) =>
             JSON.stringify({ tag: 'b8950', llamaCppGithubRepo: 'ggml-org/llama.cpp' })
         );
-        expect(assertLlamaCppCompatible()).resolves.toBeUndefined();
+        await expect(assertLlamaCppCompatible()).resolves.toBeUndefined();
     });
 
     it('does not throw when build is above 8950', async () => {
         mockFsPromises.readFile.mockImplementation(async (_path, _opts) =>
             JSON.stringify({ tag: 'b8953', llamaCppGithubRepo: 'ggml-org/llama.cpp' })
         );
-        expect(assertLlamaCppCompatible()).resolves.toBeUndefined();
+        await expect(assertLlamaCppCompatible()).resolves.toBeUndefined();
     });
 
     it('throws IncompatibleLlamaCppError when build is below 8950', async () => {
         mockFsPromises.readFile.mockImplementation(async (_path, _opts) =>
             JSON.stringify({ tag: 'b8390', llamaCppGithubRepo: 'ggml-org/llama.cpp' })
         );
-        expect(assertLlamaCppCompatible()).rejects.toBeInstanceOf(IncompatibleLlamaCppError);
+        await expect(assertLlamaCppCompatible()).rejects.toBeInstanceOf(IncompatibleLlamaCppError);
     });
 
     it('throws IncompatibleLlamaCppError when version file is missing', async () => {
@@ -144,7 +117,7 @@ describe('assertLlamaCppCompatible', () => {
             err.code = 'ENOENT';
             throw err;
         });
-        expect(assertLlamaCppCompatible()).rejects.toBeInstanceOf(IncompatibleLlamaCppError);
+        await expect(assertLlamaCppCompatible()).rejects.toBeInstanceOf(IncompatibleLlamaCppError);
     });
 
     it('error message includes remediation command when build is too old', async () => {

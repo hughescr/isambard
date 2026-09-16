@@ -100,7 +100,7 @@ describe('loadEmbedder / Embedder.load', () => {
         jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockRejectedValue(
             new IncompatibleLlamaCppError(8390, 8950)
         );
-        expect(loadEmbedder()).rejects.toBeInstanceOf(IncompatibleLlamaCppError);
+        await expect(loadEmbedder()).rejects.toBeInstanceOf(IncompatibleLlamaCppError);
     });
 
     it('throws ModelFileNotFoundError if model file does not exist', async () => {
@@ -109,7 +109,7 @@ describe('loadEmbedder / Embedder.load', () => {
         mockFsPromises.access.mockImplementation(async (_path) => {
             throw err;
         });
-        expect(loadEmbedder()).rejects.toBeInstanceOf(ModelFileNotFoundError);
+        await expect(loadEmbedder()).rejects.toBeInstanceOf(ModelFileNotFoundError);
     });
 
     it('does not dispose unacquired owners when getLlama rejects', async () => {
@@ -302,7 +302,7 @@ describe('Embedder.encode', () => {
 
     it('throws EmbedderClosedError after close', async () => {
         await embedder.close();
-        expect(embedder.encode(['test'])).rejects.toBeInstanceOf(EmbedderClosedError);
+        await expect(embedder.encode(['test'])).rejects.toBeInstanceOf(EmbedderClosedError);
     });
 
     it('single text produces non-all-zero packed output (inner loop runs)', async () => {
@@ -373,7 +373,7 @@ describe('Embedder.close', () => {
     it('is idempotent — calling close twice does not throw', async () => {
         const embedder = await loadEmbedder();
         await embedder.close();
-        expect(embedder.close()).resolves.toBeUndefined();
+        await expect(embedder.close()).resolves.toBeUndefined();
     });
 
     it('dispose is called exactly once even when close is called twice', async () => {

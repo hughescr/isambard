@@ -105,7 +105,7 @@ describe('AsyncIndexer', () => {
         });
 
         it('drain resolves immediately when queue is empty', async () => {
-            expect(indexer.drain()).resolves.toBeUndefined();
+            await expect(indexer.drain()).resolves.toBeUndefined();
         });
 
         it('drain waits for all queued jobs to complete', async () => {
@@ -269,7 +269,7 @@ describe('AsyncIndexer', () => {
 
         it('is idempotent — calling close twice does not throw', async () => {
             await indexer.close();
-            expect(indexer.close()).resolves.toBeUndefined();
+            await expect(indexer.close()).resolves.toBeUndefined();
         });
 
         it('calls embedder.close exactly once even when close() is called twice', async () => {

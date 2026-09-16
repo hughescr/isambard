@@ -180,7 +180,15 @@ describe('Discord Event Handlers', () => {
             } as unknown as Message;
         };
 
-        it('should infer image/heic for .heic files with null contentType', async () => {
+        it.each([
+            { desc: 'should infer image/heic for .heic files with null contentType', filename: 'photo.heic', expectedType: 'image/heic' },
+            { desc: 'should infer image/heif for .heif files with null contentType', filename: 'photo.heif', expectedType: 'image/heif' },
+            { desc: 'should infer image/jpeg for .jpg files with null contentType', filename: 'photo.jpg', expectedType: 'image/jpeg' },
+            { desc: 'should infer image/png for .png files with null contentType', filename: 'image.png', expectedType: 'image/png' },
+            { desc: 'should fallback to application/octet-stream for unknown extensions with null contentType', filename: 'file.xyz', expectedType: 'application/octet-stream' },
+            { desc: 'should handle case-insensitive file extensions', filename: 'photo.HEIC', expectedType: 'image/heic' },
+            { desc: 'should handle file without extension and return octet-stream', filename: 'README', expectedType: 'application/octet-stream' }
+        ])('$desc', async ({ filename, expectedType }) => {
             const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
@@ -189,96 +197,12 @@ describe('Discord Event Handlers', () => {
                 ingressGate:     createPassingIngressGate(),
             });
 
-            const message = createMockMessage([{ name: 'photo.heic', contentType: null }]);
+            const message = createMockMessage([{ name: filename, contentType: null }]);
             await handler(message);
 
             expect(coordinator.handleMessage).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    attachments: [expect.objectContaining({ filename: 'photo.heic', contentType: 'image/heic' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should infer image/heif for .heif files with null contentType', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'photo.heif', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ filename: 'photo.heif', contentType: 'image/heif' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should infer image/jpeg for .jpg files with null contentType', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'photo.jpg', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ filename: 'photo.jpg', contentType: 'image/jpeg' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should infer image/png for .png files with null contentType', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'image.png', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ filename: 'image.png', contentType: 'image/png' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should fallback to application/octet-stream for unknown extensions with null contentType', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'file.xyz', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ filename: 'file.xyz', contentType: 'application/octet-stream' })],
+                    attachments: [expect.objectContaining({ filename, contentType: expectedType })],
                 }),
                 message,
                 expect.anything()
@@ -323,27 +247,6 @@ describe('Discord Event Handlers', () => {
             expect(coordinator.handleMessage).toHaveBeenCalledWith(
                 expect.objectContaining({
                     attachments: [expect.objectContaining({ filename: 'photo.heic', contentType: 'image/heic' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should handle case-insensitive file extensions', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'photo.HEIC', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ filename: 'photo.HEIC', contentType: 'image/heic' })],
                 }),
                 message,
                 expect.anything()
@@ -395,7 +298,20 @@ describe('Discord Event Handlers', () => {
             );
         });
 
-        it('should return exact image/heic string for .heic extension', async () => {
+        it.each([
+            { desc: 'should return exact image/heic string for .heic extension', filename: 'photo.heic', expectedType: 'image/heic' },
+            { desc: 'should return exact image/jpeg string for .jpg extension', filename: 'photo.jpg', expectedType: 'image/jpeg' },
+            { desc: 'should return exact image/png string for .png extension', filename: 'image.png', expectedType: 'image/png' },
+            { desc: 'should return exact application/octet-stream string for unknown extension', filename: 'file.xyz', expectedType: 'application/octet-stream' },
+            { desc: 'should return non-empty string for heic contentType', filename: 'photo.heic', expectedType: 'image/heic' },
+            { desc: 'should return non-empty string for heif contentType', filename: 'photo.heif', expectedType: 'image/heif' },
+            { desc: 'should return non-empty string for jpeg contentType', filename: 'photo.jpeg', expectedType: 'image/jpeg' },
+            { desc: 'should return non-empty string for png contentType', filename: 'image.png', expectedType: 'image/png' },
+            { desc: 'should return non-empty string for gif contentType', filename: 'animation.gif', expectedType: 'image/gif' },
+            { desc: 'should return non-empty string for webp contentType', filename: 'photo.webp', expectedType: 'image/webp' },
+            { desc: 'should return non-empty string for octet-stream', filename: 'file.unknown', expectedType: 'application/octet-stream' },
+            { desc: 'should handle null Discord contentType correctly (test always-true conditional)', filename: 'test.png', expectedType: 'image/png' }
+        ])('$desc', async ({ filename, expectedType }) => {
             const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
@@ -404,96 +320,12 @@ describe('Discord Event Handlers', () => {
                 ingressGate:     createPassingIngressGate(),
             });
 
-            const message = createMockMessage([{ name: 'photo.heic', contentType: null }]);
+            const message = createMockMessage([{ name: filename, contentType: null }]);
             await handler(message);
 
             expect(coordinator.handleMessage).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'image/heic' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should return exact image/jpeg string for .jpg extension', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'photo.jpg', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'image/jpeg' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should return exact image/png string for .png extension', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'image.png', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'image/png' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should return exact application/octet-stream string for unknown extension', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'file.xyz', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'application/octet-stream' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should handle file without extension and return octet-stream', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'README', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ filename: 'README', contentType: 'application/octet-stream' })],
+                    attachments: [expect.objectContaining({ contentType: expectedType })],
                 }),
                 message,
                 expect.anything()
@@ -590,153 +422,6 @@ describe('Discord Event Handlers', () => {
             );
         });
 
-        it('should return non-empty string for heic contentType', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'photo.heic', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'image/heic' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should return non-empty string for heif contentType', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'photo.heif', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'image/heif' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should return non-empty string for jpeg contentType', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'photo.jpeg', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'image/jpeg' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should return non-empty string for png contentType', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'image.png', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'image/png' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should return non-empty string for gif contentType', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'animation.gif', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'image/gif' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should return non-empty string for webp contentType', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'photo.webp', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'image/webp' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
-        it('should return non-empty string for octet-stream', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            const message = createMockMessage([{ name: 'file.unknown', contentType: null }]);
-            await handler(message);
-
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'application/octet-stream' })],
-                }),
-                message,
-                expect.anything()
-            );
-        });
-
         it('should NOT set attachments when size is 0 (test for size === 0 logic)', async () => {
             let contextCaptured: DiscordMessageContext | null = null;
             const mockCoordinator = {
@@ -809,29 +494,6 @@ describe('Discord Event Handlers', () => {
             expect(contextCaptured!.attachments).toBeDefined();
             expect(contextCaptured!.attachments).toHaveLength(1);
             expect(contextCaptured!.attachments![0].filename).toBe('photo.png');
-        });
-
-        it('should handle null Discord contentType correctly (test always-true conditional)', async () => {
-            const coordinator = createMockCoordinator();
-            const handler = createMessageHandler({
-                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                botUserId,
-                coordinator,
-                ingressGate:     createPassingIngressGate(),
-            });
-
-            // Discord provides null contentType
-            const message = createMockMessage([{ name: 'test.png', contentType: null }]);
-            await handler(message);
-
-            // Null Discord contentType falls through to extension inference
-            expect(coordinator.handleMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    attachments: [expect.objectContaining({ contentType: 'image/png' })],
-                }),
-                message,
-                expect.anything()
-            );
         });
     });
 

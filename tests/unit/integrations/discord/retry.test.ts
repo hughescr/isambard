@@ -12,35 +12,19 @@ import { describe, expect, test, mock } from 'bun:test';
 import { originalWithDiscordRetry as withDiscordRetry, originalClassifyDiscordError as classifyDiscordError } from '../../../setup';
 
 describe('classifyDiscordError', () => {
-    test('classifies ECONNRESET as transient', () => {
-        const error = new Error('Connection reset');
-        (error as NodeJS.ErrnoException).code = 'ECONNRESET';
+    // CRITICAL: Must be transient for network errors (also kills network error conditional)
+    test.each([
+        { code: 'ECONNRESET', message: 'Connection reset' },
+        { code: 'ETIMEDOUT', message: 'Connection timed out' },
+        { code: 'ECONNREFUSED', message: 'Connection refused' }
+    ])('classifies $code as transient', ({ code, message }) => {
+        const error = new Error(message);
+        (error as NodeJS.ErrnoException).code = code;
 
         const result = classifyDiscordError(error);
 
         expect(result.category).toBe('transient');
-        expect(result.message).toBe('Connection reset');
-    });
-
-    test('classifies ETIMEDOUT as transient', () => {
-        const error = new Error('Connection timed out');
-        (error as NodeJS.ErrnoException).code = 'ETIMEDOUT';
-
-        const result = classifyDiscordError(error);
-
-        expect(result.category).toBe('transient');
-        expect(result.message).toBe('Connection timed out');
-    });
-
-    test('classifies ECONNREFUSED as transient (kills network error conditional)', () => {
-        const error = new Error('Connection refused');
-        (error as NodeJS.ErrnoException).code = 'ECONNREFUSED';
-
-        const result = classifyDiscordError(error);
-
-        // CRITICAL: Must be transient for network errors
-        expect(result.category).toBe('transient');
-        expect(result.message).toBe('Connection refused');
+        expect(result.message).toBe(message);
     });
 
     test('classifies rate limit error as permanent', () => {
@@ -155,7 +139,7 @@ describe('withDiscordRetry', () => {
             debug: mock(),
         };
 
-        expect(
+        await expect(
             withDiscordRetry(operation, {
                 deps: { logger: mockLogger },
             })
@@ -183,7 +167,7 @@ describe('withDiscordRetry', () => {
             debug: mock(),
         };
 
-        expect(
+        await expect(
             withDiscordRetry(operation, {
                 policy: { maxAttempts: 3 },
                 deps:   { sleep: mockSleep, logger: mockLogger },
@@ -213,7 +197,7 @@ describe('withDiscordRetry', () => {
             debug: mock(),
         };
 
-        expect(
+        await expect(
             withDiscordRetry(operation, {
                 policy: {
                     maxAttempts: 5,
@@ -236,7 +220,7 @@ describe('withDiscordRetry', () => {
             debug: mock(),
         };
 
-        expect(
+        await expect(
             withDiscordRetry(operation, {
                 deps: { logger: mockLogger },
             })

@@ -92,11 +92,15 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result).toContain('BB');
             });
 
-            test('should use double newline separator when accumulating paragraphs', () => {
-                // Tests: currentChunk.length > 0 ? '\\n\\n' : ''
-                const message = 'para1\n\npara2';
+            test.each<{ desc: string, message: string, expected: string[] }>([
+                { desc: 'should use double newline separator when accumulating paragraphs', message: 'para1\n\npara2', expected: ['para1\n\npara2'] },
+                { desc: 'should push final chunk when not empty', message: 'single paragraph', expected: ['single paragraph'] },
+                { desc: 'should return chunks not empty array', message: 'test', expected: ['test'] }
+            ])('$desc', ({ message, expected }) => {
+                // Tests: currentChunk.length > 0 ? '\\n\\n' : ''; if(currentChunk.length > 0) at end;
+                // return chunks.length > 0 ? chunks : ['']
                 const result = splitMessage(message, 100);
-                expect(result).toEqual(['para1\n\npara2']);
+                expect(result).toEqual(expected);
             });
 
             test('should check overflow including 2-char separator', () => {
@@ -108,20 +112,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = `${para1}\n\n${para2}`;
                 const result = splitMessage(message, 50);
                 expect(result).toHaveLength(2);
-            });
-
-            test('should push final chunk when not empty', () => {
-                // Tests: if(currentChunk.length > 0) at end
-                const message = 'single paragraph';
-                const result = splitMessage(message, 100);
-                expect(result).toEqual(['single paragraph']);
-            });
-
-            test('should return chunks not empty array', () => {
-                // Tests: return chunks.length > 0 ? chunks : ['']
-                const message = 'test';
-                const result = splitMessage(message, 100);
-                expect(result).toEqual(['test']);
             });
         });
     });

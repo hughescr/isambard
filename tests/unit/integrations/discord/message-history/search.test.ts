@@ -799,7 +799,7 @@ describe('createMessageSearchService', () => {
                     Promise.reject(new Error('Fetcher error'))
                 );
 
-                expect(
+                await expect(
                     service.searchMessages({ channelId: createChannelId(testChannelId) })
                 ).rejects.toThrow('Fetcher error');
             });
@@ -822,7 +822,7 @@ describe('createMessageSearchService', () => {
                     Promise.reject(new Error('Summarizer error'))
                 );
 
-                expect(
+                await expect(
                     service.searchMessages({
                         channelId: createChannelId(testChannelId),
                         limit:     5,
@@ -904,7 +904,7 @@ describe('createMessageSearchService', () => {
                 Promise.reject(new Error('Fetch error'))
             );
 
-            expect(
+            await expect(
                 service.getMessageById(testChannelId, '100000000000000000')
             ).rejects.toThrow('Fetch error');
         });
@@ -916,7 +916,7 @@ describe('createMessageSearchService', () => {
                 Promise.reject(new Error('Batch fetch error'))
             );
 
-            expect(
+            await expect(
                 service.getMessagesById(testChannelId, ['100000000000000001'])
             ).rejects.toThrow('Batch fetch error');
         });

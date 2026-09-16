@@ -109,7 +109,7 @@ export async function processAttachments(contexts: DiscordMessageContext[]): Pro
 
     const nonImageAttachments = allAttachments.filter(att => !isSupportedImageType(att.contentType));
     contentAdditions.push(...await saveNonImageAttachments(
-        nonImageAttachments, process.cwd(), contexts[0]!.messageId ?? 'unknown'
+        nonImageAttachments, process.cwd(), contexts[0]!.messageId
     ));
 
     return { images, contentAdditions };

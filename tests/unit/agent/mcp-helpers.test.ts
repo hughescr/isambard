@@ -83,11 +83,15 @@ describe('mcpServiceUnavailableResult', () => {
         expect(text).toContain('bad credentials');
     });
 
-    test('without lastError → no last-error text', () => {
-        const entry = makeEntry({ state: 'offline' });
+    test.each([
+        { name: 'without lastError → no last-error text', state: 'offline', excluded: 'Last error' },
+        { name: 'without lastOfflineAt → no "Offline since" text', state: 'offline', excluded: 'Offline since' },
+        { name: 'disabled state does NOT include "Read operations may still work"', state: 'disabled', excluded: 'Read operations may still work' },
+    ] as const)('$name', ({ state, excluded }) => {
+        const entry = makeEntry({ state });
         const result = mcpServiceUnavailableResult('email', entry);
         const text = (result.content[0] as { text: string }).text;
-        expect(text).not.toContain('Last error');
+        expect(text).not.toContain(excluded);
     });
 
     test('with lastOfflineAt → message includes "Offline since"', () => {
@@ -95,13 +99,6 @@ describe('mcpServiceUnavailableResult', () => {
         const result = mcpServiceUnavailableResult('email', entry);
         const text = (result.content[0] as { text: string }).text;
         expect(text).toContain('Offline since');
-    });
-
-    test('without lastOfflineAt → no "Offline since" text', () => {
-        const entry = makeEntry({ state: 'offline' });
-        const result = mcpServiceUnavailableResult('email', entry);
-        const text = (result.content[0] as { text: string }).text;
-        expect(text).not.toContain('Offline since');
     });
 
     test('nextRetryAt in the future → message includes "Next reconnection attempt in ~Xs"', () => {
@@ -175,13 +172,6 @@ describe('mcpServiceUnavailableResult', () => {
         const text = (result.content[0] as { text: string }).text;
         // "The email service..." and "Last error:..." should be separated by a space
         expect(text).toContain('currently offline. Last error');
-    });
-
-    test('disabled state does NOT include "Read operations may still work"', () => {
-        const entry = makeEntry({ state: 'disabled' });
-        const result = mcpServiceUnavailableResult('email', entry);
-        const text = (result.content[0] as { text: string }).text;
-        expect(text).not.toContain('Read operations may still work');
     });
 
     test('degraded state does NOT trigger reconnection loop', () => {

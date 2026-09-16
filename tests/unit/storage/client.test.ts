@@ -368,28 +368,16 @@ describe('buildTimingMiddleware', () => {
     });
 
     describe.concurrent('Write commands → always log regardless of duration', () => {
-        test('PutItemCommand under threshold → debug log emitted', async () => {
-            await runMiddleware('PutItemCommand', 10);
+        test.each([
+            ['PutItemCommand', 10],
+            ['UpdateItemCommand', 5],
+            ['BatchWriteItemCommand', 1],
+        ] as const)('%s under threshold → debug log emitted', async (commandName, elapsedMs) => {
+            await runMiddleware(commandName, elapsedMs);
 
             expect(mockLogger.debug).toHaveBeenCalledTimes(1);
             const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown }];
-            expect(logArg.operation).toBe('PutItemCommand');
-        });
-
-        test('UpdateItemCommand under threshold → debug log emitted', async () => {
-            await runMiddleware('UpdateItemCommand', 5);
-
-            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
-            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown }];
-            expect(logArg.operation).toBe('UpdateItemCommand');
-        });
-
-        test('BatchWriteItemCommand under threshold → debug log emitted', async () => {
-            await runMiddleware('BatchWriteItemCommand', 1);
-
-            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
-            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown }];
-            expect(logArg.operation).toBe('BatchWriteItemCommand');
+            expect(logArg.operation).toBe(commandName);
         });
     });
 
@@ -417,7 +405,7 @@ describe('buildTimingMiddleware', () => {
     describe.concurrent('Error path — always logs and re-throws', () => {
         test('failing fast DescribeTableCommand is logged and error propagates', async () => {
             const error = new Error('ResourceNotFoundException');
-            expect(runMiddlewareThatThrows('DescribeTableCommand', SLOW_READ_MS - 1, error)).rejects.toThrow('ResourceNotFoundException');
+            await expect(runMiddlewareThatThrows('DescribeTableCommand', SLOW_READ_MS - 1, error)).rejects.toThrow('ResourceNotFoundException');
 
             // Wait a tick for the rejection to settle so the debug call registers
             await Promise.resolve();
@@ -434,7 +422,7 @@ describe('buildTimingMiddleware', () => {
 
         test('failing fast QueryCommand is logged and error propagates', async () => {
             const error = new Error('ValidationException');
-            expect(runMiddlewareThatThrows('QueryCommand', SLOW_READ_MS - 1, error)).rejects.toThrow('ValidationException');
+            await expect(runMiddlewareThatThrows('QueryCommand', SLOW_READ_MS - 1, error)).rejects.toThrow('ValidationException');
 
             await Promise.resolve();
             await Promise.resolve();
@@ -447,7 +435,7 @@ describe('buildTimingMiddleware', () => {
 
         test('failing slow QueryCommand (over threshold) is also logged', async () => {
             const error = new Error('ProvisionedThroughputExceededException');
-            expect(runMiddlewareThatThrows('QueryCommand', SLOW_READ_MS + 50, error)).rejects.toThrow('ProvisionedThroughputExceededException');
+            await expect(runMiddlewareThatThrows('QueryCommand', SLOW_READ_MS + 50, error)).rejects.toThrow('ProvisionedThroughputExceededException');
 
             await Promise.resolve();
             await Promise.resolve();
@@ -461,7 +449,7 @@ describe('buildTimingMiddleware', () => {
 
         test('failing PutItemCommand (write) is logged on error path', async () => {
             const error = new Error('ConditionalCheckFailedException');
-            expect(runMiddlewareThatThrows('PutItemCommand', 10, error)).rejects.toThrow('ConditionalCheckFailedException');
+            await expect(runMiddlewareThatThrows('PutItemCommand', 10, error)).rejects.toThrow('ConditionalCheckFailedException');
 
             await Promise.resolve();
             await Promise.resolve();
@@ -474,7 +462,7 @@ describe('buildTimingMiddleware', () => {
 
         test('failing command with undefined commandName logs fallback msg', async () => {
             const error = new Error('SomeError');
-            expect(runMiddlewareThatThrows(undefined, 10, error)).rejects.toThrow('SomeError');
+            await expect(runMiddlewareThatThrows(undefined, 10, error)).rejects.toThrow('SomeError');
 
             await Promise.resolve();
             await Promise.resolve();
@@ -495,7 +483,7 @@ describe('buildTimingMiddleware', () => {
                 const handler = middleware(next, { commandName: 'GetItemCommand' });
                 const callPromise = handler({ input: {} });
                 jest.advanceTimersByTime(5);
-                expect(callPromise).rejects.toBe('string-error');
+                await expect(callPromise).rejects.toBe('string-error');
                 await Promise.resolve();
                 await Promise.resolve();
                 expect(mockLogger.debug).toHaveBeenCalledTimes(1);
@@ -561,7 +549,7 @@ describe('probeDynamoDB', () => {
         });
         const stubClient = { send: mockSend } as unknown as Pick<DynamoDBClient, 'send'>;
 
-        expect(probeDynamoDB(stubClient as DynamoDBClient, 'TestTable')).rejects.toThrow('FailedToOpenSocket');
+        await expect(probeDynamoDB(stubClient as DynamoDBClient, 'TestTable')).rejects.toThrow('FailedToOpenSocket');
     });
 
     test('should call DescribeTable with correct TableName', async () => {

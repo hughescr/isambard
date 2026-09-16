@@ -156,7 +156,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
                     updatedAt: '2025-01-01T00:00:00.000Z',
                 }));
 
-                expect(consolidateHandler(localBackend, {
+                await expect(consolidateHandler(localBackend, {
                     source_paths: ['/test/source1.md'],
                     target_path:  '/test/target.md',
                     summary:      'Summary',
@@ -166,7 +166,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             test('should throw InvalidPathError for invalid target path', async () => {
                 const localBackend = createMockBackend();
 
-                expect(consolidateHandler(localBackend, {
+                await expect(consolidateHandler(localBackend, {
                     source_paths: ['/test/source1.md'],
                     target_path:  'bad-path',
                     summary:      'Summary',
@@ -176,7 +176,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
             test('should throw InvalidPathError for invalid source paths', async () => {
                 const localBackend = createMockBackend();
 
-                expect(consolidateHandler(localBackend, {
+                await expect(consolidateHandler(localBackend, {
                     source_paths: ['bad-path'],
                     target_path:  '/test/target.md',
                     summary:      'Summary',

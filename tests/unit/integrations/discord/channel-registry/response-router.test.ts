@@ -60,10 +60,10 @@ describe('ResponseRouter', () => {
             expect(result.isFallback).toBe(true);
         });
 
-        it('should throw WellKnownChannelNotFoundError when no fallback channel is configured', () => {
+        it('should throw WellKnownChannelNotFoundError when no fallback channel is configured', async () => {
             mockManager.getWellKnownChannel = mock(() => Promise.resolve(null));
 
-            expect(router.routeToFallback('Notification')).rejects.toThrow(WellKnownChannelNotFoundError);
+            await expect(router.routeToFallback('Notification')).rejects.toThrow(WellKnownChannelNotFoundError);
         });
     });
 

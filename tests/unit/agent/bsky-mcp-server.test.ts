@@ -2586,37 +2586,19 @@ describe('createBskyMCPServer', () => {
             recordRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
         } as unknown as BskyRejectionBackend;
 
-        test('should call clearAll and return count-based success message for multiple items', async () => {
-            (mockRejectionBackend.clearAll as ReturnType<typeof mock>).mockImplementation(async (): Promise<number> => 3);
+        test.each([
+            [3, 'Cleared 3 rejections.'],
+            [1, 'Cleared 1 rejection.'],
+            [0, 'No rejections to clear.'],
+        ] as const)('should return the correct message when clearAll resolves to %d', async (count, expectedMessage) => {
+            (mockRejectionBackend.clearAll as ReturnType<typeof mock>).mockImplementation(async (): Promise<number> => count);
             const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: mockRejectionBackend });
             const handler = getToolHandler(server, 'clearAllRejections');
 
             const result = await handler({});
 
             expect(result.isError).toBeUndefined();
-            expect(textContent(result.content[0])).toBe('Cleared 3 rejections.');
-        });
-
-        test('should use singular form when exactly one rejection is cleared', async () => {
-            (mockRejectionBackend.clearAll as ReturnType<typeof mock>).mockImplementation(async (): Promise<number> => 1);
-            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: mockRejectionBackend });
-            const handler = getToolHandler(server, 'clearAllRejections');
-
-            const result = await handler({});
-
-            expect(result.isError).toBeUndefined();
-            expect(textContent(result.content[0])).toBe('Cleared 1 rejection.');
-        });
-
-        test('should return no-op message when count is zero', async () => {
-            (mockRejectionBackend.clearAll as ReturnType<typeof mock>).mockImplementation(async (): Promise<number> => 0);
-            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: mockRejectionBackend });
-            const handler = getToolHandler(server, 'clearAllRejections');
-
-            const result = await handler({});
-
-            expect(result.isError).toBeUndefined();
-            expect(textContent(result.content[0])).toBe('No rejections to clear.');
+            expect(textContent(result.content[0])).toBe(expectedMessage);
         });
 
         test('should return error when rejectionBackend is not configured', async () => {

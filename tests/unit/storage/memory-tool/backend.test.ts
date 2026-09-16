@@ -55,7 +55,7 @@ describe('MemoryToolBackend', () => {
         });
 
         test('should throw ValidationError on empty content', async () => {
-            expect(
+            await expect(
                 backend.create({
                     path:        '/test/file.md' as MemoryPath,
                     content:     '',
@@ -65,7 +65,7 @@ describe('MemoryToolBackend', () => {
         });
 
         test('should throw ValidationError on invalid content type', async () => {
-            expect(
+            await expect(
                 backend.create({
                     path:        '/test/file.md' as MemoryPath,
                     content:     'Test content',
@@ -187,7 +187,7 @@ describe('MemoryToolBackend', () => {
         test('should throw ItemNotFoundError if item does not exist', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
-            expect(
+            await expect(
                 backend.update('/nonexistent/file.md' as MemoryPath, { content: 'New' })
             ).rejects.toThrow(ItemNotFoundError);
         });
@@ -254,7 +254,7 @@ describe('MemoryToolBackend', () => {
         test('should throw ValidationError on invalid update data', async () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
 
-            expect(
+            await expect(
                 backend.update(testPath, { content: '' }) // Empty content
             ).rejects.toThrow(ValidationError);
         });
@@ -950,8 +950,7 @@ describe('MemoryToolBackend', () => {
                     content:     'hello world',
                     contentType: 'text/plain',
                 });
-                expect(createPromise).resolves.toBeDefined();
-                await createPromise;
+                await expect(createPromise).resolves.toBeDefined();
                 expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                     msg:   'MemoryToolBackend: indexer.enqueue failed, ignoring',
                     error: expect.objectContaining({ message: 'indexer failure' }),
@@ -993,7 +992,7 @@ describe('MemoryToolBackend', () => {
                 });
                 const backendWithIndexer = makeBackendWithIndexer();
                 const updatePromise = backendWithIndexer.update('/identity/foo' as MemoryPath, { content: 'new content' });
-                expect(updatePromise).resolves.toBeDefined();
+                await expect(updatePromise).resolves.toBeDefined();
             });
         });
 
@@ -1029,7 +1028,7 @@ describe('MemoryToolBackend', () => {
                     throw new Error('indexer failure');
                 });
                 const backendWithIndexer = makeBackendWithIndexer();
-                expect(backendWithIndexer.delete('/identity/foo' as MemoryPath)).resolves.toBeDefined();
+                await expect(backendWithIndexer.delete('/identity/foo' as MemoryPath)).resolves.toBeDefined();
             });
         });
     });
@@ -1192,7 +1191,7 @@ describe('MemoryToolBackend', () => {
             test('create on identity-layer does not throw when onIdentityWrite is undefined', async () => {
                 ddbMock.on(PutCommand).resolves({});
                 // backend in outer beforeEach has no onIdentityWrite
-                expect(
+                await expect(
                     backend.create({
                         path:        '/identity/no-callback' as MemoryPath,
                         content:     'some identity text',
@@ -1205,7 +1204,7 @@ describe('MemoryToolBackend', () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingIdentityItem });
                 ddbMock.on(PutCommand).resolves({});
                 // backend in outer beforeEach has no onIdentityWrite
-                expect(
+                await expect(
                     backend.update('/identity/foo' as MemoryPath, { content: 'updated' })
                 ).resolves.toBeDefined();
             });
@@ -1214,7 +1213,7 @@ describe('MemoryToolBackend', () => {
                 ddbMock.on(GetCommand).resolves({ Item: existingIdentityItem });
                 ddbMock.on(DeleteCommand).resolves({});
                 // backend in outer beforeEach has no onIdentityWrite
-                expect(
+                await expect(
                     backend.delete('/identity/foo' as MemoryPath)
                 ).resolves.toBeDefined();
             });

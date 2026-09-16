@@ -497,19 +497,13 @@ describe.concurrent('BatchWriteExhaustedError', () => {
         expect(error.code).toBe(ErrorCode.BATCH_WRITE_EXHAUSTED);
     });
 
-    test('should include operation in message', () => {
+    test.each([
+        { field: 'operation', expected: 'myOperation' },
+        { field: 'remainingCount', expected: '7' },
+        { field: 'maxRetries', expected: '10' }
+    ])('should include $field in message', ({ expected }) => {
         const error = new BatchWriteExhaustedError('myOperation', 7, 10);
-        expect(error.message).toContain('myOperation');
-    });
-
-    test('should include remainingCount in message', () => {
-        const error = new BatchWriteExhaustedError('myOperation', 7, 10);
-        expect(error.message).toContain('7');
-    });
-
-    test('should include maxRetries in message', () => {
-        const error = new BatchWriteExhaustedError('myOperation', 7, 10);
-        expect(error.message).toContain('10');
+        expect(error.message).toContain(expected);
     });
 
     test('should have correct message format', () => {

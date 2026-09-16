@@ -234,7 +234,7 @@ describe.concurrent('createActivityLogger', () => {
             const logger = createActivityLogger(mockBackend);
             const entry: ActivityLogEntry = { type: 'email-sent', summary: 'Test' };
 
-            expect(logger.log(entry)).rejects.toThrow('DynamoDB failure');
+            await expect(logger.log(entry)).rejects.toThrow('DynamoDB failure');
         });
     });
 

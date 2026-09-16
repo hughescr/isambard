@@ -332,7 +332,11 @@ describe('PersonAllowlist.load()', () => {
 // ─── isAllowed() ─────────────────────────────────────────────────────────────
 
 describe('PersonAllowlist.isAllowed()', () => {
-    test('returns true when identifier maps to an allowed person', async () => {
+    test.each([
+        ['returns true when identifier maps to an allowed person', 'email', 'alice@example.com', true],
+        ['returns false for unknown identifier', 'email', 'unknown@example.com', false],
+        ['does not index a discord identifier when _internal.discordUserId is absent', 'discord', '481231231231231234', false],
+    ] as const)('%s', async (_name, platform, identifier, expected) => {
         ddbMock.on(GetCommand).resolves({
             Item: { personIds: new Set([ALICE_ID]) },
         });
@@ -342,20 +346,7 @@ describe('PersonAllowlist.isAllowed()', () => {
         const allowlist = makeAllowlist();
         await allowlist.load();
 
-        expect(allowlist.isAllowed('email', 'alice@example.com')).toBe(true);
-    });
-
-    test('returns false for unknown identifier', async () => {
-        ddbMock.on(GetCommand).resolves({
-            Item: { personIds: new Set([ALICE_ID]) },
-        });
-        (mockBackend.getContact as ReturnType<typeof mock>)
-            .mockResolvedValue(ALICE_CONTACT);
-
-        const allowlist = makeAllowlist();
-        await allowlist.load();
-
-        expect(allowlist.isAllowed('email', 'unknown@example.com')).toBe(false);
+        expect(allowlist.isAllowed(platform, identifier)).toBe(expected);
     });
 
     test('returns false before load() is called (empty cache)', () => {
@@ -411,19 +402,6 @@ describe('PersonAllowlist.isAllowed()', () => {
         expect(allowlist.isAllowed('discord', 'dave#1234')).toBe(true);
         expect(allowlist.isAllowed('discord', '481231231231231234')).toBe(true);
         expect(allowlist.isAllowed('discord', '000000000000000000')).toBe(false);
-    });
-
-    test('does not index a discord identifier when _internal.discordUserId is absent', async () => {
-        ddbMock.on(GetCommand).resolves({
-            Item: { personIds: new Set([ALICE_ID]) },
-        });
-        (mockBackend.getContact as ReturnType<typeof mock>)
-            .mockResolvedValue(ALICE_CONTACT);
-
-        const allowlist = makeAllowlist();
-        await allowlist.load();
-
-        expect(allowlist.isAllowed('discord', '481231231231231234')).toBe(false);
     });
 });
 

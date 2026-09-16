@@ -830,27 +830,21 @@ describe('WildDuckClient', () => {
     // -----------------------------------------------------------------------
     describe('makeRequest() fetch options', () => {
         test('allows an asynchronous response to arrive before request timeout', async () => {
-            jest.useRealTimers();
+            // Deferred (not synchronously-resolved) response, simulated via a manually-settled
+            // promise rather than a real/fake timer — client.search() attaches the abort listener
+            // synchronously during its initial (pre-await) execution, so resolving the gate right
+            // after the call still exercises the same "response beats the abort" race.
             const client = await makeInitializedClient();
-            let responseTimer: ReturnType<typeof setTimeout> | undefined;
-            mockFetch.mockImplementationOnce((_url, options) => new Promise<Response>((resolve, reject) => {
+            const gate = Promise.withResolvers<Response>();
+            mockFetch.mockImplementationOnce((_url, options) => {
                 const signal = options?.signal;
-                const onAbort = (): void => reject(signal?.reason);
+                const onAbort = (): void => gate.reject(signal?.reason instanceof Error ? signal.reason : new Error('Aborted'));
                 signal?.addEventListener('abort', onAbort, { once: true });
-                responseTimer = setTimeout(() => {
-                    signal?.removeEventListener('abort', onAbort);
-                    resolve(makeJsonResponse({ success: true, results: [] }));
-                }, 1);
-            }));
+                return gate.promise.finally(() => signal?.removeEventListener('abort', onAbort));
+            });
             const completion = client.search({});
-            try {
-                await expect(completion).resolves.toEqual([]);
-            } finally {
-                if(responseTimer) {
-                    clearTimeout(responseTimer);
-                }
-                await Promise.allSettled([completion]);
-            }
+            gate.resolve(makeJsonResponse({ success: true, results: [] }));
+            await expect(completion).resolves.toEqual([]);
         });
 
         test('passes an AbortSignal to fetch for timeout enforcement', async () => {
@@ -2708,7 +2702,11 @@ describe('WildDuckClient', () => {
             expect(options.method).toBe('GET');
         });
 
-        test('includes unseen=true in default query params', async () => {
+        test.each([
+            ['unseen=true'],
+            ['limit=20'],
+            ['order=asc'],
+        ] as const)('includes %s in default query params', async (param) => {
             const client = await makeInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse(LIST_RESPONSE));
@@ -2716,29 +2714,7 @@ describe('WildDuckClient', () => {
             await client.listMessages('CleanInbox');
 
             const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(url).toContain('unseen=true');
-        });
-
-        test('includes limit=20 in default query params', async () => {
-            const client = await makeInitializedClient();
-
-            mockFetch.mockResolvedValueOnce(makeJsonResponse(LIST_RESPONSE));
-
-            await client.listMessages('CleanInbox');
-
-            const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(url).toContain('limit=20');
-        });
-
-        test('includes order=asc in default query params', async () => {
-            const client = await makeInitializedClient();
-
-            mockFetch.mockResolvedValueOnce(makeJsonResponse(LIST_RESPONSE));
-
-            await client.listMessages('CleanInbox');
-
-            const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(url).toContain('order=asc');
+            expect(url).toContain(param);
         });
 
         test('respects custom options: unseen=false, limit=50, order=desc', async () => {

@@ -89,35 +89,17 @@ describe('IncompatibleLlamaCppError', () => {
         expect(err.code).toBe(ErrorCode.INCOMPATIBLE_LLAMA_CPP);
     });
 
-    it('includes current build in message', () => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
-        expect(err.message).toContain('8390');
-    });
-
-    it('includes minimum build in message', () => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
-        expect(err.message).toContain('8950');
-    });
-
-    it('includes source build command hint in message', () => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
-        expect(err.message).toContain('source build');
-    });
-
-    it('includes "Run a source build to fix" remediation line in message', () => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
-        expect(err.message).toContain('Run a source build to fix');
-    });
-
-    it('includes node-llama-cpp source download command in message', () => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
-        expect(err.message).toContain('source download');
-    });
-
-    it('includes bunx node-llama-cpp source build (final step) in message', () => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
+    it.each([
+        ['current build', '8390'],
+        ['minimum build', '8950'],
+        ['source build command hint', 'source build'],
+        ['"Run a source build to fix" remediation line', 'Run a source build to fix'],
+        ['node-llama-cpp source download command', 'source download'],
         // 'bunx node-llama-cpp source build' is the final line — unique because it has no trailing \n
-        expect(err.message).toContain('bunx node-llama-cpp source build');
+        ['bunx node-llama-cpp source build (final step)', 'bunx node-llama-cpp source build']
+    ])('includes %s in message', (_description, expected) => {
+        const err = new IncompatibleLlamaCppError(8390, 8950);
+        expect(err.message).toContain(expected);
     });
 
     it('has correct name', () => {

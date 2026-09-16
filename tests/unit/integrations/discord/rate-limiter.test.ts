@@ -135,7 +135,7 @@ describe('new DiscordRateLimiter', () => {
         const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         // First send fails
-        expect(
+        await expect(
             limiter.sendToChannel(mockChannel, 'Message 1')
         ).rejects.toThrow('Send failed');
 
@@ -260,7 +260,7 @@ describe('new DiscordRateLimiter', () => {
         const limiter = new DiscordRateLimiter({ logger: mockLogger, limitFn: syncLimit });
 
         // First send fails
-        expect(
+        await expect(
             limiter.sendToChannel(mockChannel, 'Message 1')
         ).rejects.toThrow('First send failed');
 
@@ -339,7 +339,7 @@ describe('new DiscordRateLimiter', () => {
         const limiter = new DiscordRateLimiter({ limitFn: syncLimit });
 
         // First send fails
-        expect(
+        await expect(
             limiter.sendToChannel(mockChannel, 'Message 1')
         ).rejects.toThrow('Send failed');
 

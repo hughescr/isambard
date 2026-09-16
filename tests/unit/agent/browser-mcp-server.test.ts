@@ -882,23 +882,13 @@ describe('truncateToBytes — 3-byte codepoints (你 = E4 BD A0)', () => {
         expect(Buffer.byteLength(content, 'utf8')).toBe(0);
     });
 
-    test('cap=3 is clean boundary (one 你)', () => {
-        const result = truncateToBytes(text, 3);
-        assertValidTruncation(result, 3);
-        const content = result.split('[truncated')[0] ?? '';
-        expect(content).toBe('你');
-    });
-
-    test('cap=4 back-walks to 3', () => {
-        const result = truncateToBytes(text, 4);
-        assertValidTruncation(result, 4);
-        const content = result.split('[truncated')[0] ?? '';
-        expect(content).toBe('你');
-    });
-
-    test('cap=5 back-walks to 3', () => {
-        const result = truncateToBytes(text, 5);
-        assertValidTruncation(result, 5);
+    test.each([
+        [3, 'is clean boundary (one 你)'],
+        [4, 'back-walks to 3'],
+        [5, 'back-walks to 3'],
+    ])('cap=%s %s', (cap) => {
+        const result = truncateToBytes(text, cap);
+        assertValidTruncation(result, cap);
         const content = result.split('[truncated')[0] ?? '';
         expect(content).toBe('你');
     });
@@ -944,47 +934,19 @@ describe('truncateToBytes — mixed content (a🎉b = 61 F0 9F 8E 89 62)', () =>
     // 'a🎉b' = 6 bytes
     const text = 'a🎉b';
 
-    test('cap=0 — empty content with full-byte truncation marker', () => {
-        const result = truncateToBytes(text, 0);
-        assertValidTruncation(result, 0);
+    // byte[1]=0xF0 is a start byte, byte[2]=0x9F IS continuation → back-walk from cap=2 to 1
+    test.each([
+        { cap: 0, desc: 'empty content with full-byte truncation marker', expected: '' },
+        { cap: 1, desc: 'cuts after ASCII a', expected: 'a' },
+        { cap: 2, desc: 'back-walks to byte 1 (a only, emoji F0 start at byte 1 is not continuation)', expected: 'a' },
+        { cap: 3, desc: 'back-walks to byte 1', expected: 'a' },
+        { cap: 4, desc: 'back-walks to byte 1', expected: 'a' },
+        { cap: 5, desc: 'cuts at emoji end (a🎉)', expected: 'a🎉' },
+    ])('cap=$cap — $desc', ({ cap, expected }) => {
+        const result = truncateToBytes(text, cap);
+        assertValidTruncation(result, cap);
         const content = result.split('[truncated')[0] ?? '';
-        expect(content).toBe('');
-    });
-
-    test('cap=1 — cuts after ASCII a', () => {
-        const result = truncateToBytes(text, 1);
-        assertValidTruncation(result, 1);
-        const content = result.split('[truncated')[0] ?? '';
-        expect(content).toBe('a');
-    });
-
-    test('cap=2 — back-walks to byte 1 (a only, emoji F0 start at byte 1 is not continuation)', () => {
-        // byte[1]=0xF0 is a start byte, byte[2]=0x9F IS continuation → back-walk from cap=2 to 1
-        const result = truncateToBytes(text, 2);
-        assertValidTruncation(result, 2);
-        const content = result.split('[truncated')[0] ?? '';
-        expect(content).toBe('a');
-    });
-
-    test('cap=3 — back-walks to byte 1', () => {
-        const result = truncateToBytes(text, 3);
-        assertValidTruncation(result, 3);
-        const content = result.split('[truncated')[0] ?? '';
-        expect(content).toBe('a');
-    });
-
-    test('cap=4 — back-walks to byte 1', () => {
-        const result = truncateToBytes(text, 4);
-        assertValidTruncation(result, 4);
-        const content = result.split('[truncated')[0] ?? '';
-        expect(content).toBe('a');
-    });
-
-    test('cap=5 — cuts at emoji end (a🎉)', () => {
-        const result = truncateToBytes(text, 5);
-        assertValidTruncation(result, 5);
-        const content = result.split('[truncated')[0] ?? '';
-        expect(content).toBe('a🎉');
+        expect(content).toBe(expected);
     });
 
     test('cap=6 — returns unchanged (full string)', () => {

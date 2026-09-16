@@ -100,25 +100,14 @@ describe.concurrent('Discord Message Splitting', () => {
         });
 
         describe('mutation coverage - final chunk push', () => {
-            test('should push final chunk at end of word processing', () => {
-                // Tests: if(currentChunk.length > 0) at end of splitByWords
-                const message = 'just words';
+            test.each([
+                { desc: 'should push final chunk at end of word processing', message: 'just words', stage: 'splitByWords' },
+                { desc: 'should push final chunk at end of sentence processing', message: 'Just a sentence.', stage: 'splitBySentences' },
+                { desc: 'should push final chunk at end of paragraph processing', message: 'Just a paragraph', stage: 'splitByParagraphs' }
+            ])('$desc', ({ message }) => {
+                // Tests: if(currentChunk.length > 0) at end of the relevant split stage
                 const result = splitMessage(message, 100);
-                expect(result).toEqual(['just words']);
-            });
-
-            test('should push final chunk at end of sentence processing', () => {
-                // Tests: if(currentChunk.length > 0) at end of splitBySentences
-                const message = 'Just a sentence.';
-                const result = splitMessage(message, 100);
-                expect(result).toEqual(['Just a sentence.']);
-            });
-
-            test('should push final chunk at end of paragraph processing', () => {
-                // Tests: if(currentChunk.length > 0) at end of splitByParagraphs
-                const message = 'Just a paragraph';
-                const result = splitMessage(message, 100);
-                expect(result).toEqual(['Just a paragraph']);
+                expect(result).toEqual([message]);
             });
         });
 

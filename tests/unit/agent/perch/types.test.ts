@@ -36,51 +36,18 @@ describe.concurrent('PerchSlotSchema', () => {
         }
     });
 
-    test('should validate exact string "pre-dawn"', () => {
-        const result = PerchSlotSchema.safeParse('pre-dawn');
+    test.each<PerchSlot>([
+        'pre-dawn',
+        'evening',
+        'late-night',
+        'afternoon',
+        'mid-morning',
+        'unscheduled',
+    ])('should validate exact string "%s"', (slot) => {
+        const result = PerchSlotSchema.safeParse(slot);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data).toBe('pre-dawn');
-        }
-    });
-
-    test('should validate exact string "evening"', () => {
-        const result = PerchSlotSchema.safeParse('evening');
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toBe('evening');
-        }
-    });
-
-    test('should validate exact string "late-night"', () => {
-        const result = PerchSlotSchema.safeParse('late-night');
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toBe('late-night');
-        }
-    });
-
-    test('should validate exact string "afternoon"', () => {
-        const result = PerchSlotSchema.safeParse('afternoon');
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toBe('afternoon');
-        }
-    });
-
-    test('should validate exact string "mid-morning"', () => {
-        const result = PerchSlotSchema.safeParse('mid-morning');
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toBe('mid-morning');
-        }
-    });
-
-    test('should validate exact string "unscheduled"', () => {
-        const result = PerchSlotSchema.safeParse('unscheduled');
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toBe('unscheduled');
+            expect(result.data).toBe(slot);
         }
     });
 });
@@ -112,35 +79,16 @@ describe.concurrent('SuggestionLevelSchema', () => {
         }
     });
 
-    test('should validate exact string "open"', () => {
-        const result = SuggestionLevelSchema.safeParse('open');
+    test.each<SuggestionLevel>([
+        'open',
+        'light_touch',
+        'strongly_suggestive',
+        'moderate',
+    ])('should validate exact string "%s"', (level) => {
+        const result = SuggestionLevelSchema.safeParse(level);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data).toBe('open');
-        }
-    });
-
-    test('should validate exact string "light_touch"', () => {
-        const result = SuggestionLevelSchema.safeParse('light_touch');
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toBe('light_touch');
-        }
-    });
-
-    test('should validate exact string "strongly_suggestive"', () => {
-        const result = SuggestionLevelSchema.safeParse('strongly_suggestive');
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toBe('strongly_suggestive');
-        }
-    });
-
-    test('should validate exact string "moderate"', () => {
-        const result = SuggestionLevelSchema.safeParse('moderate');
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toBe('moderate');
+            expect(result.data).toBe(level);
         }
     });
 });
@@ -185,52 +133,19 @@ describe.concurrent('PerchSlotConfigSchema', () => {
         }).success).toBe(true);
     });
 
-    test('should reject config with startHour < 0', () => {
-        const invalidConfig = {
-            slot:      'pre-dawn',
-            startHour: -1,
-            endHour:   7,
-            level:     'strongly_suggestive',
-            hint:      'Test',
-        };
-
-        const result = PerchSlotConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject config with startHour > 23', () => {
-        const invalidConfig = {
-            slot:      'pre-dawn',
-            startHour: 24,
-            endHour:   7,
-            level:     'strongly_suggestive',
-            hint:      'Test',
-        };
-
-        const result = PerchSlotConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject config with endHour < 0', () => {
+    test.each<[string, Partial<{ startHour: number, endHour: number }>]>([
+        ['startHour < 0', { startHour: -1 }],
+        ['startHour > 23', { startHour: 24 }],
+        ['endHour < 0', { endHour: -1 }],
+        ['endHour > 23', { endHour: 24 }],
+    ])('should reject config with %s', (_label, overrides) => {
         const invalidConfig = {
             slot:      'pre-dawn',
             startHour: 5,
-            endHour:   -1,
+            endHour:   7,
             level:     'strongly_suggestive',
             hint:      'Test',
-        };
-
-        const result = PerchSlotConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject config with endHour > 23', () => {
-        const invalidConfig = {
-            slot:      'pre-dawn',
-            startHour: 5,
-            endHour:   24,
-            level:     'strongly_suggestive',
-            hint:      'Test',
+            ...overrides,
         };
 
         const result = PerchSlotConfigSchema.safeParse(invalidConfig);

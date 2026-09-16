@@ -1798,7 +1798,7 @@ describe('MemoryToolBackendTagIndex', () => {
             // ConditionalCheckFailedException was swallowed, so decrementTagCounts resolved.
             const deleteCalls = ddbMock.commandCalls(DeleteCommand);
             expect(deleteCalls).toHaveLength(3); // MAX_RETRIES
-            expect(promise).resolves.toBeUndefined();
+            await expect(promise).resolves.toBeUndefined();
         });
 
         test('should verify UpdateCommand has correct ExpressionAttributeNames and Values for decrement', async () => {
@@ -2299,7 +2299,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 const promise = backend.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
                 await drainTimers();
                 // Should not throw
-                expect(promise).resolves.toBeUndefined();
+                await expect(promise).resolves.toBeUndefined();
             });
         });
     });

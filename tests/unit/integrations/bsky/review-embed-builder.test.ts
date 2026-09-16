@@ -286,21 +286,13 @@ describe('buildBskyApprovalEmbed', () => {
             expect(field?.value).toBe('');
         });
 
-        test('embed does NOT include Parent URI field', () => {
+        test.each([
+            ['Parent URI'],
+            ['Parent CID'],
+            ['Replying to'],
+        ])('embed does NOT include %s field', (fieldName) => {
             const result = buildBskyApprovalEmbed(makeDMParams());
-            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent URI');
-            expect(field).toBeUndefined();
-        });
-
-        test('embed does NOT include Parent CID field', () => {
-            const result = buildBskyApprovalEmbed(makeDMParams());
-            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent CID');
-            expect(field).toBeUndefined();
-        });
-
-        test('embed does NOT include Replying to field', () => {
-            const result = buildBskyApprovalEmbed(makeDMParams());
-            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Replying to');
+            const field  = result.embed.toJSON().fields?.find(f => f.name === fieldName);
             expect(field).toBeUndefined();
         });
 

@@ -27,32 +27,21 @@ function launch(overrides: Partial<TaskLaunch> = {}): TaskLaunch {
 
 describe('createTaskLaunchRegistry', () => {
     describe('record()/lookup()', () => {
-        it('records a launch and finds it by toolUseId', () => {
+        it.each([
+            { name: 'records a launch and finds it by toolUseId', taskId: 'task-1', toolUseId: 'tool-1', matches: true },
+            { name: 'finds a recorded launch by toolUseId even when the queried taskId is wrong', taskId: 'wrong-task', toolUseId: 'tool-1', matches: true },
+            { name: 'falls back to matching by taskId when toolUseId does not match', taskId: 'task-1', toolUseId: 'wrong-tool', matches: true },
+            { name: 'returns undefined when neither taskId nor toolUseId match anything recorded', taskId: 'nope', toolUseId: 'nope', matches: false },
+        ])('$name', ({ taskId, toolUseId, matches }) => {
             const registry = createTaskLaunchRegistry();
             registry.record(launch());
 
-            expect(registry.lookup({ taskId: 'task-1', toolUseId: 'tool-1' })).toEqual(launch());
-        });
-
-        it('finds a recorded launch by toolUseId even when the queried taskId is wrong', () => {
-            const registry = createTaskLaunchRegistry();
-            registry.record(launch());
-
-            expect(registry.lookup({ taskId: 'wrong-task', toolUseId: 'tool-1' })).toEqual(launch());
-        });
-
-        it('falls back to matching by taskId when toolUseId does not match', () => {
-            const registry = createTaskLaunchRegistry();
-            registry.record(launch());
-
-            expect(registry.lookup({ taskId: 'task-1', toolUseId: 'wrong-tool' })).toEqual(launch());
-        });
-
-        it('returns undefined when neither taskId nor toolUseId match anything recorded', () => {
-            const registry = createTaskLaunchRegistry();
-            registry.record(launch());
-
-            expect(registry.lookup({ taskId: 'nope', toolUseId: 'nope' })).toBeUndefined();
+            const found = registry.lookup({ taskId, toolUseId });
+            if(matches) {
+                expect(found).toEqual(launch());
+            } else {
+                expect(found).toBeUndefined();
+            }
         });
 
         it('appends a task_launched journal row with optional fields present when given', () => {

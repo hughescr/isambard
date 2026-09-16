@@ -260,11 +260,15 @@ describe('PerchScheduler', () => {
     });
 
     describe('triggerNow()', () => {
-        test('should trigger immediately when no perch turn is running', () => {
+        test.each([
+            [10, 'mid-morning'],
+            [18, 'evening'],
+            [11, 'unscheduled'],
+        ])('should trigger immediately with hour %d mapped to slot %s when no perch turn is running', (hour, expectedSlot) => {
             const deps: PerchSchedulerDeps = {
                 logger:              mockLogger,
                 config,
-                getCurrentLocalHour: () => 10, // mid-morning
+                getCurrentLocalHour: () => hour,
                 onPerchTrigger:      mockOnPerchTrigger,
                 isPerchTurnRunning:  () => false,
             };
@@ -272,7 +276,7 @@ describe('PerchScheduler', () => {
             const scheduler = createPerchScheduler(deps);
             scheduler.triggerNow();
 
-            expect(mockOnPerchTrigger).toHaveBeenCalledWith('mid-morning');
+            expect(mockOnPerchTrigger).toHaveBeenCalledWith(expectedSlot);
         });
 
         test('should set pending when a perch turn is already running', () => {
@@ -292,36 +296,6 @@ describe('PerchScheduler', () => {
             expect(state.pendingSlot).toBe('mid-morning');
             expect(state.pendingTriggerTime).toBeInstanceOf(Date);
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();
-        });
-
-        test('should use current local hour', () => {
-            const deps: PerchSchedulerDeps = {
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 18, // evening
-                onPerchTrigger:      mockOnPerchTrigger,
-                isPerchTurnRunning:  () => false,
-            };
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.triggerNow();
-
-            expect(mockOnPerchTrigger).toHaveBeenCalledWith('evening');
-        });
-
-        test('should handle unscheduled slot', () => {
-            const deps: PerchSchedulerDeps = {
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 11, // unscheduled
-                onPerchTrigger:      mockOnPerchTrigger,
-                isPerchTurnRunning:  () => false,
-            };
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.triggerNow();
-
-            expect(mockOnPerchTrigger).toHaveBeenCalledWith('unscheduled');
         });
 
         test('triggers immediately with no isPerchTurnRunning to consult', () => {

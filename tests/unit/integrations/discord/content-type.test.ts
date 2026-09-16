@@ -229,19 +229,13 @@ describe('inferImageContentType', () => {
             expect(result).toBe('image/webp');
         });
 
-        it('falls back for unknown extension', () => {
-            const result = inferImageContentType('test.unknown', null);
-            expect(result).toBe('application/octet-stream');
-        });
-
-        it('falls back when no extension present', () => {
-            const result = inferImageContentType('testfile', null);
-            expect(result).toBe('application/octet-stream');
-        });
-
-        it('does not return non-image MIME types from extension lookup', () => {
+        it.each([
+            { desc: 'falls back for unknown extension', filename: 'test.unknown' },
+            { desc: 'falls back when no extension present', filename: 'testfile' },
             // mrmime knows about .txt => text/plain, but we filter to image/ only
-            const result = inferImageContentType('file.txt', null);
+            { desc: 'does not return non-image MIME types from extension lookup', filename: 'file.txt' }
+        ])('$desc', ({ filename }) => {
+            const result = inferImageContentType(filename, null);
             expect(result).toBe('application/octet-stream');
         });
     });

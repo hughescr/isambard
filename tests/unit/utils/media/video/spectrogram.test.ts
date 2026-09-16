@@ -28,7 +28,7 @@ describe('generateSpectrogram', () => {
             calls.push(cmd);
             return { stdout: FAKE_PNG, stderr: 'decoder failed', exitCode: 2 };
         };
-        expect(generateSpectrogram('/tmp/input with spaces.mp4', runner)).rejects.toThrow('decoder failed');
+        await expect(generateSpectrogram('/tmp/input with spaces.mp4', runner)).rejects.toThrow('decoder failed');
         expect(calls).toEqual([[
             'ffmpeg', '-i', '/tmp/input with spaces.mp4', '-lavfi', 'showspectrumpic=s=1024x512',
             '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1',
@@ -60,7 +60,7 @@ describe('generateSpectrogram', () => {
             stderr:   '',
             exitCode: 0,
         });
-        expect(
+        await expect(
             generateSpectrogram('/test/video.mp4', emptyRunner)
         ).rejects.toThrow('Spectrogram generation failed');
     });

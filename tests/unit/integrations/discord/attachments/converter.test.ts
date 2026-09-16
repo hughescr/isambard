@@ -62,7 +62,7 @@ describe('Image Converter', () => {
         test('throws error for unsupported image types', async () => {
             const inputBuffer = Buffer.from('fake-jpeg-data');
 
-            expect(convert(inputBuffer, 'image/jpeg')).rejects.toThrow(
+            await expect(convert(inputBuffer, 'image/jpeg')).rejects.toThrow(
                 'Unsupported content type for conversion: image/jpeg'
             );
         });
@@ -70,7 +70,7 @@ describe('Image Converter', () => {
         test('throws error for non-image types', async () => {
             const inputBuffer = Buffer.from('pdf-data');
 
-            expect(convert(inputBuffer, 'application/pdf')).rejects.toThrow(
+            await expect(convert(inputBuffer, 'application/pdf')).rejects.toThrow(
                 'Unsupported content type for conversion: application/pdf'
             );
         });
@@ -80,7 +80,7 @@ describe('Image Converter', () => {
 
             const inputBuffer = Buffer.from('corrupt-heic-data');
 
-            expect(convert(inputBuffer, 'image/heic')).rejects.toThrow(
+            await expect(convert(inputBuffer, 'image/heic')).rejects.toThrow(
                 'HEIC conversion failed: Invalid HEIC data'
             );
         });

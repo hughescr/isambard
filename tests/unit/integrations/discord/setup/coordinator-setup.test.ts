@@ -710,14 +710,4 @@ describe('processAttachments', () => {
 
         expect(mockLogger.info).not.toHaveBeenCalled();
     });
-
-    test('uses the explicit unknown source-message fallback when the first context has no message id', async () => {
-        const document = { filename: 'notes.txt', contentType: 'text/plain', url: 'https://example.test/notes.txt', size: 32 };
-        spies.push(spyOn(attachmentsModule, 'saveNonImageAttachment').mockResolvedValue(null));
-        const missingMessageId = { ...context('placeholder', [document]), messageId: undefined } as unknown as DiscordMessageContext;
-
-        await processAttachments([missingMessageId]);
-
-        expect(attachmentsModule.saveNonImageAttachment).toHaveBeenCalledWith(document, process.cwd(), 'unknown');
-    });
 });

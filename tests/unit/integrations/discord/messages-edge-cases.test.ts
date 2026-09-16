@@ -96,11 +96,14 @@ describe.concurrent('Discord Message Splitting', () => {
         });
 
         describe('unicode and emoji handling', () => {
-            test('should handle emoji characters', () => {
-                const message = 'Hello 👋 World 🌍!';
+            test.each([
+                { desc: 'should handle emoji characters', message: 'Hello 👋 World 🌍!' },
+                { desc: 'should handle non-ASCII characters', message: 'Héllo Wörld Tëst' },
+                { desc: 'should handle CJK characters', message: '你好世界 Hello' }
+            ])('$desc', ({ message }) => {
                 const result = splitMessage(message, 100);
 
-                expect(result).toEqual(['Hello 👋 World 🌍!']);
+                expect(result).toEqual([message]);
             });
 
             test('should split message with emoji correctly', () => {
@@ -111,20 +114,6 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result.length).toBeGreaterThan(1);
                 // First chunk should start with emoji
                 expect(result[0].startsWith(emoji)).toBe(true);
-            });
-
-            test('should handle non-ASCII characters', () => {
-                const message = 'Héllo Wörld Tëst';
-                const result = splitMessage(message, 100);
-
-                expect(result).toEqual(['Héllo Wörld Tëst']);
-            });
-
-            test('should handle CJK characters', () => {
-                const message = '你好世界 Hello';
-                const result = splitMessage(message, 100);
-
-                expect(result).toEqual(['你好世界 Hello']);
             });
 
             test('should split long text with mixed unicode', () => {

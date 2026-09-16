@@ -79,6 +79,22 @@ const eslintConfig = [
             '@hughescr/module-boundaries/no-internal-in-barrel':          'error',
             '@hughescr/module-boundaries/no-star-export-from-non-barrel': 'error',
 
+            // Base config's import-x/order leaves pathGroupsExcludedImportTypes at its plugin
+            // default (['builtin', 'external', 'object']), which always skips pathGroups for
+            // anything already classified builtin/external — so it can never pin `bun:*`
+            // consistently: import-x classifies `bun:sqlite` as builtin under Bun's own
+            // module list but external under Node's, so `bun:*` vs `node:*` order flipped
+            // between `bun --bun eslint` and plain `node eslint` on the same source. Clearing
+            // pathGroupsExcludedImportTypes lets the pathGroups match apply regardless of the
+            // runtime-dependent classification, pinning `bun:*` to the builtin group under both.
+            'import-x/order': ['warn', {
+                groups:                        ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
+                pathGroups:                    [{ pattern: 'bun:*', group: 'builtin' }],
+                pathGroupsExcludedImportTypes: [],
+                'newlines-between':            'never',
+                alphabetize:                   { order: 'asc', caseInsensitive: true },
+            }],
+
             // Prefer ?? over || when the left-hand side could be null/undefined
             // (|| swallows 0, '', false which are legitimate values).
             // Exception: use eslint-disable when '' should map to undefined (e.g. name || undefined).

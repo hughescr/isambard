@@ -196,38 +196,20 @@ describe('createAgentNamingHooks', () => {
             expect(updated?.args).toEqual({ a: 1 });
         });
 
-        it('rewrites a double-quoted literal and a bare `meta = {` (no `export const`) too', async () => {
+        // The two `tolerates missing whitespace` cases guard the `\s*` quantifiers in
+        // META_NAME_PATTERN: `meta={` and `name:'t'` are both valid JS a model may well emit,
+        // and must still be renamed.
+        it.each([
+            ['rewrites a double-quoted literal and a bare `meta = {` (no `export const`) too', 'meta = { name: "triage" }', 'meta = { name: "Izzy-workflow-triage" }'],
+            ['tolerates missing whitespace around the assignment (`meta={`)', 'meta={ name: "t" }', 'meta={ name: "Izzy-workflow-t" }'],
+            ['tolerates missing whitespace after the name colon (`name:\'t\'`)', 'export const meta = { name:\'t\' }', 'export const meta = { name:\'Izzy-workflow-t\' }'],
+            ['renames the `name` key, never a longer key that merely starts with "name"', 'export const meta = { nameish: \'x\', name: \'triage\' }', 'export const meta = { nameish: \'x\', name: \'Izzy-workflow-triage\' }'],
+        ])('%s', async (_description, script, expectedScript) => {
             const h = build();
 
-            const updated = await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script: 'meta = { name: "triage" }' } }));
+            const updated = await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script } }));
 
-            expect(updated?.script).toBe('meta = { name: "Izzy-workflow-triage" }');
-        });
-
-        it('tolerates missing whitespace around the assignment and after the name colon', async () => {
-            // Guards the `\s*` quantifiers in META_NAME_PATTERN: `meta={` and `name:'t'` are
-            // both valid JS a model may well emit, and must still be renamed.
-            const h = build();
-
-            const tightAssignment = await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script: 'meta={ name: "t" }' } }));
-            const tightColon = await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script: 'export const meta = { name:\'t\' }' } }));
-
-            expect(tightAssignment?.script).toBe('meta={ name: "Izzy-workflow-t" }');
-            expect(tightColon?.script).toBe('export const meta = { name:\'Izzy-workflow-t\' }');
-        });
-
-        it('renames the `name` key, never a longer key that merely starts with "name"', async () => {
-            const h = build();
-
-            const updated = await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script: 'export const meta = { nameish: \'x\', name: \'triage\' }' } }));
-
-            expect(updated?.script).toBe('export const meta = { nameish: \'x\', name: \'Izzy-workflow-triage\' }');
-        });
-
-        it('leaves a meta.name that already starts with Izzy- alone', async () => {
-            const h = build();
-
-            expect(await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script: 'export const meta = { name: \'Izzy-workflow-triage\' }' } }))).toBeUndefined();
+            expect(updated?.script).toBe(expectedScript);
         });
 
         it('is a no-op when the script has no meta name literal, or no meta block at all', async () => {
@@ -237,19 +219,18 @@ describe('createAgentNamingHooks', () => {
             expect(await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script: 'const name = \'x\'' } }))).toBeUndefined();
         });
 
-        it('does not reach past a nested closing brace for the name key', async () => {
+        // The nested-opening-brace case: the real meta.name is `nightly`; `worker` belongs to a
+        // nested object. Rewriting `worker` would leave the workflow registered as `nightly` —
+        // unprefixed, i.e. indistinguishable from one of Craig's own sessions. A no-op is the
+        // safe answer.
+        it.each([
+            ['leaves a meta.name that already starts with Izzy- alone', 'export const meta = { name: \'Izzy-workflow-triage\' }'],
+            ['does not reach past a nested closing brace for the name key', 'export const meta = { phases: [{ title: \'a\' }], name: \'triage\' }'],
+            ['does not reach past a nested OPENING brace either, so a nested object\'s own name key is never rewritten in place of meta.name', 'export const meta = { agent: { name: \'worker\' }, name: \'nightly\' };'],
+        ])('%s', async (_description, script) => {
             const h = build();
 
-            expect(await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script: 'export const meta = { phases: [{ title: \'a\' }], name: \'triage\' }' } }))).toBeUndefined();
-        });
-
-        it('does not reach past a nested OPENING brace either, so a nested object\'s own name key is never rewritten in place of meta.name', async () => {
-            // The real meta.name is `nightly`; `worker` belongs to a nested object. Rewriting
-            // `worker` would leave the workflow registered as `nightly` — unprefixed, i.e.
-            // indistinguishable from one of Craig's own sessions. A no-op is the safe answer.
-            const h = build();
-
-            expect(await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script: 'export const meta = { agent: { name: \'worker\' }, name: \'nightly\' };' } }))).toBeUndefined();
+            expect(await run(h, preToolUseInput({ tool_name: 'Workflow', tool_input: { script } }))).toBeUndefined();
         });
 
         it('anchors `meta =` to the start of a line, so a commented-out meta block cannot steal the rename from the real one', async () => {

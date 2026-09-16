@@ -22,8 +22,8 @@
  * Open with `VectorIndex.open(path)` for file-backed DB, or
  * `VectorIndex.openWithDb(db)` for a pre-opened in-memory DB (testing).
  */
-import { existsSync } from 'node:fs';
 import { Database } from 'bun:sqlite';
+import { existsSync } from 'node:fs';
 import * as sqliteVec from 'sqlite-vec';
 import type { LayerName } from '../memory-tool/types.js';
 import { VectorIndexClosedError, VectorIndexError, VectorIndexUnavailableError } from './errors.js';

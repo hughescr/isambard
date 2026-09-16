@@ -449,7 +449,7 @@ describe('createWebViewAdapter — platform precheck', () => {
         Object.defineProperty(process, 'platform', { value: originalPlatform, writable: true });
     });
 
-    test('throws on non-darwin when backend is webkit', () => {
+    test('throws on non-darwin when backend is webkit', async () => {
         Object.defineProperty(process, 'platform', { value: 'linux', writable: true });
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
@@ -457,7 +457,7 @@ describe('createWebViewAdapter — platform precheck', () => {
             factory,
             immediateDelay
         );
-        expect(adapter.navigate('https://example.com')).rejects.toThrow(/macOS/i);
+        await expect(adapter.navigate('https://example.com')).rejects.toThrow(/macOS/i);
     });
 
     test('does not throw on darwin when backend is webkit', async () => {
@@ -468,7 +468,7 @@ describe('createWebViewAdapter — platform precheck', () => {
             factory,
             immediateDelay
         );
-        expect(adapter.navigate('https://example.com')).resolves.toBeUndefined();
+        await expect(adapter.navigate('https://example.com')).resolves.toBeUndefined();
     });
 
     test('does not throw on non-darwin when backend is chrome', async () => {
@@ -479,7 +479,7 @@ describe('createWebViewAdapter — platform precheck', () => {
             factory,
             immediateDelay
         );
-        expect(adapter.navigate('https://example.com')).resolves.toBeUndefined();
+        await expect(adapter.navigate('https://example.com')).resolves.toBeUndefined();
     });
 });
 
@@ -527,7 +527,7 @@ describe('createWebViewAdapter — scroll validation', () => {
         const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const scrollSpy = spyOn(fakeView, 'scroll');
-        expect(adapter.scroll(Number.NaN, 0)).rejects.toThrow(/finite/i);
+        await expect(adapter.scroll(Number.NaN, 0)).rejects.toThrow(/finite/i);
         expect(scrollSpy).not.toHaveBeenCalled();
     });
 
@@ -536,7 +536,7 @@ describe('createWebViewAdapter — scroll validation', () => {
         const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const scrollSpy = spyOn(fakeView, 'scroll');
-        expect(adapter.scroll(0, Infinity)).rejects.toThrow(/finite/i);
+        await expect(adapter.scroll(0, Infinity)).rejects.toThrow(/finite/i);
         expect(scrollSpy).not.toHaveBeenCalled();
     });
 
@@ -545,7 +545,7 @@ describe('createWebViewAdapter — scroll validation', () => {
         const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const scrollSpy = spyOn(fakeView, 'scroll');
-        expect(adapter.scroll(-Infinity, 0)).rejects.toThrow(/finite/i);
+        await expect(adapter.scroll(-Infinity, 0)).rejects.toThrow(/finite/i);
         expect(scrollSpy).not.toHaveBeenCalled();
     });
 
@@ -553,14 +553,14 @@ describe('createWebViewAdapter — scroll validation', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
-        expect(adapter.scroll(0, 0)).resolves.toBeUndefined();
+        await expect(adapter.scroll(0, 0)).resolves.toBeUndefined();
     });
 
     test('scroll(-100, 200) does not reject', async () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
-        expect(adapter.scroll(-100, 200)).resolves.toBeUndefined();
+        await expect(adapter.scroll(-100, 200)).resolves.toBeUndefined();
     });
 });
 
@@ -1062,7 +1062,7 @@ describe('createWebViewAdapter — waitForSelector', () => {
         const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         fakeView.evaluate = mock(async (_expr: string): Promise<boolean> => true);
-        expect(adapter.waitForSelector('button')).resolves.toBeUndefined();
+        await expect(adapter.waitForSelector('button')).resolves.toBeUndefined();
         expect(fakeView.evaluate).toHaveBeenCalledWith('!!document.querySelector("button")');
     });
 
@@ -1072,7 +1072,7 @@ describe('createWebViewAdapter — waitForSelector', () => {
         await adapter.navigate('https://example.com');
         fakeView.evaluate = mock(async (_expr: string): Promise<null> => null);
         // timeout=1ms: evaluate returns null, deadline will be passed on next check
-        expect(adapter.waitForSelector('button', 1)).rejects.toThrow(/timeout|not found/i);
+        await expect(adapter.waitForSelector('button', 1)).rejects.toThrow(/timeout|not found/i);
     });
 
     test('waitForSelector releases mutex between polls — concurrent evaluate resolves within one poll', async () => {

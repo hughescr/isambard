@@ -493,7 +493,7 @@ describe('createApp', () => {
 
             // Import and call createApp - should throw raw error from factory
             const { createApp } = staticIndexModule;
-            expect(createApp()).rejects.toThrow('Memory backend initialization failed');
+            await expect(createApp()).rejects.toThrow('Memory backend initialization failed');
         });
 
         test('should handle non-Error exceptions in memory initialization', async () => {
@@ -560,7 +560,7 @@ describe('createApp', () => {
 
             // Import and call createApp - should throw raw string error
             const { createApp } = staticIndexModule;
-            expect(createApp()).rejects.toThrow('String error thrown');
+            await expect(createApp()).rejects.toThrow('String error thrown');
         });
     });
 
@@ -2282,7 +2282,7 @@ describe('createApp', () => {
 
             // Import and call createApp - should throw raw error from factory
             const { createApp } = staticIndexModule;
-            expect(createApp()).rejects.toThrow('Memory not available');
+            await expect(createApp()).rejects.toThrow('Memory not available');
         });
     });
 
@@ -2351,7 +2351,7 @@ describe('createApp', () => {
 
             // Import and call createApp - should throw raw error from factory
             const { createApp } = staticIndexModule;
-            expect(createApp()).rejects.toThrow('DynamoDB connection failed');
+            await expect(createApp()).rejects.toThrow('DynamoDB connection failed');
         });
 
         test('should throw fatal error when ChannelRegistryManager construction fails', async () => {
@@ -2423,7 +2423,7 @@ describe('createApp', () => {
 
             // Import and call createApp - should throw raw error from factory
             const { createApp } = staticIndexModule;
-            expect(createApp()).rejects.toThrow('Invalid configuration');
+            await expect(createApp()).rejects.toThrow('Invalid configuration');
         });
 
         test('should handle non-Error exceptions in ChannelRegistry initialization', async () => {
@@ -2490,7 +2490,7 @@ describe('createApp', () => {
 
             // Import and call createApp - should throw raw string error
             const { createApp } = staticIndexModule;
-            expect(createApp()).rejects.toThrow('String error in channel registry');
+            await expect(createApp()).rejects.toThrow('String error in channel registry');
         });
     });
 

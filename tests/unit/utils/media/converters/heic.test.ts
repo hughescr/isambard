@@ -78,7 +78,7 @@ describe('HEIC Image Converter', () => {
         test('throws error for non-image types', async () => {
             const inputBuffer = Buffer.from('pdf-data');
 
-            expect(convert(inputBuffer, 'application/pdf')).rejects.toThrow(
+            await expect(convert(inputBuffer, 'application/pdf')).rejects.toThrow(
                 'Unsupported content type for conversion: application/pdf'
             );
         });

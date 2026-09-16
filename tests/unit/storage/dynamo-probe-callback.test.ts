@@ -125,7 +125,7 @@ describe('runDynamoDBProbe', () => {
             const { eventSender } = makeStubRegistry();
 
             // resolves without throwing — void return is the contract
-            expect(runDynamoDBProbe(client, 'TestTable', eventSender, undefined, probeFn)).resolves.toBeUndefined();
+            await expect(runDynamoDBProbe(client, 'TestTable', eventSender, undefined, probeFn)).resolves.toBeUndefined();
         });
     });
 
@@ -179,7 +179,7 @@ describe('runDynamoDBProbe', () => {
 
             // Should resolve without throwing — the sendEvent failure must be absorbed
             // resolves without throwing — void return is the contract
-            expect(runDynamoDBProbe(client, 'TestTable', throwingEventSender, logger, probeFn)).resolves.toBeUndefined();
+            await expect(runDynamoDBProbe(client, 'TestTable', throwingEventSender, logger, probeFn)).resolves.toBeUndefined();
         });
 
         it('should log the sendEvent error via the logger when sendEvent throws', async () => {
@@ -215,7 +215,7 @@ describe('runDynamoDBProbe', () => {
 
             // No logger — should still resolve without crashing
             // resolves without throwing — void return is the contract
-            expect(runDynamoDBProbe(client, 'TestTable', throwingEventSender, undefined, probeFn)).resolves.toBeUndefined();
+            await expect(runDynamoDBProbe(client, 'TestTable', throwingEventSender, undefined, probeFn)).resolves.toBeUndefined();
         });
     });
 });

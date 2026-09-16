@@ -1144,24 +1144,12 @@ describe('ContactApprovalHandler - handleButton()', () => {
         mockLogger.info.mockClear();
     });
 
-    test('returns early for unknown prefix', async () => {
-        const { interaction, deferUpdate } = makeButtonInteraction('other-prefix:abc123');
-
-        await handler.handleButton(interaction);
-
-        expect(deferUpdate).not.toHaveBeenCalled();
-    });
-
-    test('returns early when customId has no colon', async () => {
-        const { interaction, deferUpdate } = makeButtonInteraction('contact-approve');
-
-        await handler.handleButton(interaction);
-
-        expect(deferUpdate).not.toHaveBeenCalled();
-    });
-
-    test('returns early when uuid is empty', async () => {
-        const { interaction, deferUpdate } = makeButtonInteraction('contact-approve:');
+    test.each([
+        { desc: 'unknown prefix', customId: 'other-prefix:abc123' },
+        { desc: 'customId has no colon', customId: 'contact-approve' },
+        { desc: 'uuid is empty', customId: 'contact-approve:' }
+    ])('returns early when $desc', async ({ customId }) => {
+        const { interaction, deferUpdate } = makeButtonInteraction(customId);
 
         await handler.handleButton(interaction);
 

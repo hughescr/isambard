@@ -108,10 +108,10 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             backend.fuzzyLookup.mockImplementation(async (): Promise<Contact[]> => [undefined] as unknown as Contact[]);
             const coord = new PersonHistoryCoordinator(makeOptions({ backend }));
 
-            expect(coord.getPersonHistory('craig')).rejects.toThrow(
+            await expect(coord.getPersonHistory('craig')).rejects.toThrow(
                 'contacts[0] undefined after contacts.length === 0 guard'
             );
-            expect(coord.getPersonHistory('craig')).rejects.toMatchObject({
+            await expect(coord.getPersonHistory('craig')).rejects.toMatchObject({
                 context: { location: 'getPersonHistory' },
             });
         });
@@ -647,7 +647,7 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             const provider = makeProvider('discord', [unknownPlatformEntry]);
             const coord    = new PersonHistoryCoordinator(makeOptions({ providers: [provider] }));
 
-            expect(coord.getPersonHistory('craig')).rejects.toThrow('Unexpected platform: rss');
+            await expect(coord.getPersonHistory('craig')).rejects.toThrow('Unexpected platform: rss');
         });
     });
 

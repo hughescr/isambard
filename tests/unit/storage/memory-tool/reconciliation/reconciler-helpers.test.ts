@@ -30,7 +30,7 @@ describe('delay', () => {
     test('should resolve after delay', async () => {
         const delayPromise = delay(10);
         jest.advanceTimersByTime(10);
-        expect(delayPromise).resolves.toBeUndefined();
+        await expect(delayPromise).resolves.toBeUndefined();
     });
 
     test('should reject immediately if signal is already aborted', async () => {
@@ -38,10 +38,10 @@ describe('delay', () => {
         controller.abort();
 
         const rejected = delay(100, controller.signal);
-        expect(rejected).rejects.toBeInstanceOf(DOMException);
-        expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
-        expect(rejected).rejects.toMatchObject({ message: 'Aborted' });
-        expect(rejected).rejects.toMatchObject({ message: 'Aborted' });
+        await expect(rejected).rejects.toBeInstanceOf(DOMException);
+        await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(rejected).rejects.toMatchObject({ message: 'Aborted' });
+        await expect(rejected).rejects.toMatchObject({ message: 'Aborted' });
     });
 
     test('should reject if signal aborted mid-delay', async () => {
@@ -72,8 +72,8 @@ describe('delay', () => {
 
     test('should return immediately when ms <= 0', async () => {
         // Early-return path resolves without registering any timer
-        expect(delay(0)).resolves.toBeUndefined();
-        expect(delay(-5)).resolves.toBeUndefined();
+        await expect(delay(0)).resolves.toBeUndefined();
+        await expect(delay(-5)).resolves.toBeUndefined();
     });
 });
 
@@ -180,8 +180,8 @@ describe('retryWithBackoff', () => {
             'test-context',
             controller.signal
         );
-        expect(rejected).rejects.toBeInstanceOf(DOMException);
-        expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(rejected).rejects.toBeInstanceOf(DOMException);
+        await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
     });
 
     test('should use exponential backoff delays', async () => {

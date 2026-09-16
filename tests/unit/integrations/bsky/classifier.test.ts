@@ -211,7 +211,7 @@ describe('createBskyClassifier — retry integration with fake timers', () => {
             },
         });
 
-        expect(prom).rejects.toBeInstanceOf(BskyRateLimitError);
+        await expect(prom).rejects.toBeInstanceOf(BskyRateLimitError);
         // Need to advance timers to let sleep promises resolve
         jest.runAllTimers();
         await prom.catch(() => undefined);
@@ -243,7 +243,7 @@ describe('createBskyClassifier — retry integration with fake timers', () => {
             },
         });
 
-        expect(prom).rejects.toBeInstanceOf(BskyAuthError);
+        await expect(prom).rejects.toBeInstanceOf(BskyAuthError);
         await prom.catch(() => undefined);
 
         expect(operation).toHaveBeenCalledTimes(1);

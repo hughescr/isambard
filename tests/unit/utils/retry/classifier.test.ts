@@ -87,38 +87,30 @@ describe.concurrent('defaultClassifier', () => {
 
 describe.concurrent('classifyNetworkError', () => {
     describe.concurrent('POSIX network error codes', () => {
-        it('should classify ETIMEDOUT as transient', () => {
-            const result = classifyNetworkError({ code: 'ETIMEDOUT', message: 'Connection timed out' });
+        it.each([
+            ['ETIMEDOUT', 'Connection timed out'],
+            ['ECONNRESET', 'Connection reset'],
+            ['ECONNREFUSED', 'Connection refused'],
+        ])('should classify %s as transient', (code, message) => {
+            const result = classifyNetworkError({ code, message });
 
             expect(result).toBeDefined();
             expect(result?.category).toBe('transient');
-            expect(result?.message).toBe('Connection timed out');
-        });
-
-        it('should classify ECONNRESET as transient', () => {
-            const result = classifyNetworkError({ code: 'ECONNRESET', message: 'Connection reset' });
-
-            expect(result).toBeDefined();
-            expect(result?.category).toBe('transient');
-            expect(result?.message).toBe('Connection reset');
-        });
-
-        it('should classify ECONNREFUSED as transient', () => {
-            const result = classifyNetworkError({ code: 'ECONNREFUSED', message: 'Connection refused' });
-
-            expect(result).toBeDefined();
-            expect(result?.category).toBe('transient');
-            expect(result?.message).toBe('Connection refused');
+            expect(result?.message).toBe(message);
         });
     });
 
     describe.concurrent('Smithy/AWS-SDK error codes', () => {
-        it('should classify FailedToOpenSocket as transient (Smithy transient socket error from production incident)', () => {
-            const result = classifyNetworkError({ code: 'FailedToOpenSocket', message: 'Failed to open socket' });
+        it.each([
+            ['FailedToOpenSocket', 'Failed to open socket'],
+            ['TimeoutError', 'Request timed out'],
+            ['NetworkingError', 'Networking error'],
+        ])('should classify %s as transient (Smithy error code)', (code, message) => {
+            const result = classifyNetworkError({ code, message });
 
             expect(result).toBeDefined();
             expect(result?.category).toBe('transient');
-            expect(result?.message).toBe('Failed to open socket');
+            expect(result?.message).toBe(message);
         });
 
         it('should classify FailedToOpenSocket without message using fallback', () => {
@@ -127,22 +119,6 @@ describe.concurrent('classifyNetworkError', () => {
             expect(result).toBeDefined();
             expect(result?.category).toBe('transient');
             expect(result?.message).toBe('Unknown error');
-        });
-
-        it('should classify TimeoutError as transient (Smithy emits when throwOnRequestTimeout is true)', () => {
-            const result = classifyNetworkError({ code: 'TimeoutError', message: 'Request timed out' });
-
-            expect(result).toBeDefined();
-            expect(result?.category).toBe('transient');
-            expect(result?.message).toBe('Request timed out');
-        });
-
-        it('should classify NetworkingError as transient (general Smithy networking failure)', () => {
-            const result = classifyNetworkError({ code: 'NetworkingError', message: 'Networking error' });
-
-            expect(result).toBeDefined();
-            expect(result?.category).toBe('transient');
-            expect(result?.message).toBe('Networking error');
         });
 
         it('should classify NetworkingError with custom fallback message when no message property', () => {
@@ -230,28 +206,16 @@ describe.concurrent('classifyNetworkError', () => {
             expect(result?.message).toBe('Request did not complete within 15000 ms');
         });
 
-        it('should classify TimeoutError by name from plain object (no code)', () => {
-            const result = classifyNetworkError({ name: 'TimeoutError', message: 'Timed out' });
+        it.each([
+            ['TimeoutError', 'Timed out'],
+            ['NetworkingError', 'Network error'],
+            ['FailedToOpenSocket', 'Failed to open socket'],
+        ])('should classify %s by name from plain object (no code)', (name, message) => {
+            const result = classifyNetworkError({ name, message });
 
             expect(result).toBeDefined();
             expect(result?.category).toBe('transient');
-            expect(result?.message).toBe('Timed out');
-        });
-
-        it('should classify NetworkingError by name when no code property', () => {
-            const result = classifyNetworkError({ name: 'NetworkingError', message: 'Network error' });
-
-            expect(result).toBeDefined();
-            expect(result?.category).toBe('transient');
-            expect(result?.message).toBe('Network error');
-        });
-
-        it('should classify FailedToOpenSocket by name when no code property', () => {
-            const result = classifyNetworkError({ name: 'FailedToOpenSocket', message: 'Failed to open socket' });
-
-            expect(result).toBeDefined();
-            expect(result?.category).toBe('transient');
-            expect(result?.message).toBe('Failed to open socket');
+            expect(result?.message).toBe(message);
         });
 
         it('should use fallback message when name-only error has no message', () => {
@@ -412,14 +376,18 @@ describe.concurrent('createHttpStatusClassifier', () => {
     });
 
     describe.concurrent('Network timeout errors', () => {
-        it('should classify ECONNREFUSED as transient (kills network error check)', () => {
-            const error = { code: 'ECONNREFUSED', message: 'Connection refused' };
+        it.each([
+            ['ECONNREFUSED', 'Connection refused'],
+            ['FailedToOpenSocket', 'Failed to open socket'],
+            ['TimeoutError', 'Request timed out'],
+            ['NetworkingError', 'Networking error occurred'],
+        ])('should classify %s as transient (network error code)', (code, message) => {
+            const error = { code, message };
             const classifier = createHttpStatusClassifier();
             const result = classifier(error);
 
-            // CRITICAL: Must be transient for network errors
             expect(result.category).toBe('transient');
-            expect(result.message).toBe('Connection refused');
+            expect(result.message).toBe(message);
         });
 
         it('should classify network error without message with default message', () => {
@@ -429,33 +397,6 @@ describe.concurrent('createHttpStatusClassifier', () => {
 
             expect(result.category).toBe('transient');
             expect(result.message).toBe('Unknown error');
-        });
-
-        it('should classify Smithy FailedToOpenSocket as transient (incident: DynamoDB transient socket failure)', () => {
-            const error = { code: 'FailedToOpenSocket', message: 'Failed to open socket' };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('transient');
-            expect(result.message).toBe('Failed to open socket');
-        });
-
-        it('should classify Smithy TimeoutError as transient (emitted when throwOnRequestTimeout is true)', () => {
-            const error = { code: 'TimeoutError', message: 'Request timed out' };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('transient');
-            expect(result.message).toBe('Request timed out');
-        });
-
-        it('should classify Smithy NetworkingError as transient (general Smithy networking failure)', () => {
-            const error = { code: 'NetworkingError', message: 'Networking error occurred' };
-            const classifier = createHttpStatusClassifier();
-            const result = classifier(error);
-
-            expect(result.category).toBe('transient');
-            expect(result.message).toBe('Networking error occurred');
         });
 
         it('should fall back to default classifier when error has no matching code or name', () => {

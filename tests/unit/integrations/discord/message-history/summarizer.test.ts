@@ -175,7 +175,7 @@ describe('createMessageSummarizer', () => {
 
             const summarizer = createMessageSummarizer({});
 
-            expect(summarizer.summarizeMessages([message])).rejects.toThrow('API rate limit exceeded');
+            await expect(summarizer.summarizeMessages([message])).rejects.toThrow('API rate limit exceeded');
         });
 
         test('should propagate error when one message fails in batch', async () => {
@@ -196,7 +196,7 @@ describe('createMessageSummarizer', () => {
 
             const summarizer = createMessageSummarizer({});
 
-            expect(summarizer.summarizeMessages(messages)).rejects.toThrow('Network error on second call');
+            await expect(summarizer.summarizeMessages(messages)).rejects.toThrow('Network error on second call');
         });
     });
 
@@ -308,7 +308,7 @@ describe('createMessageSummarizer', () => {
             });
 
             // First call should fail
-            expect(summarizer.summarizeMessages([message1])).rejects.toThrow('API error');
+            await expect(summarizer.summarizeMessages([message1])).rejects.toThrow('API error');
 
             // Second call should still work (semaphore was released properly)
             const result = await summarizer.summarizeMessages([message2]);
@@ -487,7 +487,7 @@ describe('createMessageSummarizer', () => {
 
             const summarizer = createMessageSummarizer({});
 
-            expect(summarizer.summarizeMessageBatch(messages)).rejects.toThrow('API error');
+            await expect(summarizer.summarizeMessageBatch(messages)).rejects.toThrow('API error');
         });
 
         test('should format batch prompt with author names and content', async () => {

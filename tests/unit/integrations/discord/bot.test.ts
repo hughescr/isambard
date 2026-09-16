@@ -3658,7 +3658,11 @@ describe('createDiscordBot', () => {
             expect(mockEmailSetup.listener.stop).not.toHaveBeenCalled();
         });
 
-        test('/allowlist command replies with unavailable message when emailSetup is absent', async () => {
+        test.each([
+            { commandName: 'allowlist', desc: 'emailSetup is absent', handlerLabel: 'emailSetup' },
+            { commandName: 'calendar', desc: 'calendarHandler is absent', handlerLabel: 'calendarHandler' },
+            { commandName: 'contact', desc: 'contactHandler is absent', handlerLabel: 'contactHandler' }
+        ])('/$commandName command replies with unavailable message when $desc', async ({ commandName }) => {
             // Capture the interactionCreate handler
             let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
 
@@ -3690,7 +3694,7 @@ describe('createDiscordBot', () => {
                 spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
             );
 
-            // Create bot WITHOUT emailSetup
+            // Create bot WITHOUT the relevant handler/setup
             createDiscordBot({
                 config: mockConfig,
 
@@ -3706,144 +3710,14 @@ describe('createDiscordBot', () => {
 
             expect(interactionCreateHandler).toBeDefined();
 
-            // Build a mock /allowlist ChatInputCommand interaction
+            // Build a mock ChatInputCommand interaction
             const replyMock = mock(async (_opts: unknown) => undefined);
             const mockInteraction = {
                 isButton:           mock(() => false),
                 isModalSubmit:      mock(() => false),
                 isStringSelectMenu: mock(() => false),
                 isChatInputCommand: mock(() => true),
-                commandName:        'allowlist',
-                reply:              replyMock,
-            };
-
-            await interactionCreateHandler!(mockInteraction);
-
-            expect(replyMock).toHaveBeenCalledTimes(1);
-            expect(replyMock).toHaveBeenCalledWith(expect.objectContaining({
-                flags: MessageFlags.Ephemeral,
-            }));
-        });
-
-        test('/calendar command replies with unavailable message when calendarHandler is absent', async () => {
-            // Capture the interactionCreate handler
-            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
-
-            const mockClient = {
-                on: mock((event: string, handler: (...args: unknown[]) => void) => {
-                    if(event === 'interactionCreate') {
-                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
-                    }
-                    return mockClient;
-                }),
-                once: mock((_event: string, _handler: (...args: unknown[]) => void) => {
-                    return mockClient;
-                }),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               mockRest(),
-            } as unknown as Client;
-
-            spies.push(
-                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
-                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                    discovered: 0,
-                    updated:    0,
-                    errors:     [],
-                }),
-                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
-            );
-
-            // Create bot WITHOUT calendarHandler
-            createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: mockChannelRegistry,
-            });
-
-            // Fire clientReady
-            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
-            if(clientReadyHandler) {
-                await Promise.resolve(clientReadyHandler(mockClient));
-            }
-
-            expect(interactionCreateHandler).toBeDefined();
-
-            const replyMock = mock(async (_opts: unknown) => undefined);
-            const mockInteraction = {
-                isButton:           mock(() => false),
-                isModalSubmit:      mock(() => false),
-                isStringSelectMenu: mock(() => false),
-                isChatInputCommand: mock(() => true),
-                commandName:        'calendar',
-                reply:              replyMock,
-            };
-
-            await interactionCreateHandler!(mockInteraction);
-
-            expect(replyMock).toHaveBeenCalledTimes(1);
-            expect(replyMock).toHaveBeenCalledWith(expect.objectContaining({
-                flags: MessageFlags.Ephemeral,
-            }));
-        });
-
-        test('/contact command replies with unavailable message when contactHandler is absent', async () => {
-            // Capture the interactionCreate handler
-            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
-
-            const mockClient = {
-                on: mock((event: string, handler: (...args: unknown[]) => void) => {
-                    if(event === 'interactionCreate') {
-                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
-                    }
-                    return mockClient;
-                }),
-                once: mock((_event: string, _handler: (...args: unknown[]) => void) => {
-                    return mockClient;
-                }),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               mockRest(),
-            } as unknown as Client;
-
-            spies.push(
-                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
-                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                    discovered: 0,
-                    updated:    0,
-                    errors:     [],
-                }),
-                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
-            );
-
-            // Create bot WITHOUT contactHandler
-            createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: mockChannelRegistry,
-            });
-
-            // Fire clientReady
-            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
-            if(clientReadyHandler) {
-                await Promise.resolve(clientReadyHandler(mockClient));
-            }
-
-            expect(interactionCreateHandler).toBeDefined();
-
-            const replyMock = mock(async (_opts: unknown) => undefined);
-            const mockInteraction = {
-                isButton:           mock(() => false),
-                isModalSubmit:      mock(() => false),
-                isStringSelectMenu: mock(() => false),
-                isChatInputCommand: mock(() => true),
-                commandName:        'contact',
+                commandName,
                 reply:              replyMock,
             };
 

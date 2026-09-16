@@ -1452,7 +1452,7 @@ describe('runContactReconciliation', () => {
             const sleep = mock(async () => {
                 throw new Error('timer unavailable');
             });
-            expect(runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50 })).rejects.toThrow('timer unavailable');
+            await expect(runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50 })).rejects.toThrow('timer unavailable');
         });
 
         test('stops the page when the signal becomes aborted during sleep', async () => {

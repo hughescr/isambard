@@ -189,7 +189,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
             // No tagIndex parameter
         );
 
-        expect(queryOpsWithoutIndex.searchByTags(new Set(['test']))).rejects.toThrow(
+        await expect(queryOpsWithoutIndex.searchByTags(new Set(['test']))).rejects.toThrow(
             'Tag index not configured'
         );
     });

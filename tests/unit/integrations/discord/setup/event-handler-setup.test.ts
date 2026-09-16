@@ -258,7 +258,10 @@ describe('initializeChannelRegistry', () => {
         spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
         initializeChannelRegistry(client, registry, responseRouter, rateLimiter);
-        for(let i = 0; i < 8; i++) { await Promise.resolve(); }
+        for(let i = 0; i < 8; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential microtask draining; each await is independent and order matters
+            await Promise.resolve();
+        }
 
         expect((client.channels as unknown as { fetch: ReturnType<typeof mock> }).fetch).not.toHaveBeenCalled();
         expect(rateLimiter.sendToChannel).not.toHaveBeenCalled();
@@ -272,7 +275,10 @@ describe('initializeChannelRegistry', () => {
         spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
         initializeChannelRegistry(client, registry, makeResponseRouter(), rateLimiter);
-        for(let i = 0; i < 8; i++) { await Promise.resolve(); }
+        for(let i = 0; i < 8; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential microtask draining; each await is independent and order matters
+            await Promise.resolve();
+        }
 
         expect(rateLimiter.sendToChannel).not.toHaveBeenCalled();
     });
@@ -285,7 +291,10 @@ describe('initializeChannelRegistry', () => {
         spies.push(infoSpy, spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
         initializeChannelRegistry(client, registry, makeResponseRouter(), rateLimiter);
-        for(let i = 0; i < 8; i++) { await Promise.resolve(); }
+        for(let i = 0; i < 8; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential microtask draining; each await is independent and order matters
+            await Promise.resolve();
+        }
 
         expect(infoSpy).toHaveBeenCalledWith({ targetChannelId: 'fallback-ch', msg: 'Channel registry error notification sent to fallback channel' });
     });

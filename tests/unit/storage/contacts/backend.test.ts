@@ -161,7 +161,7 @@ describe('ContactBackend', () => {
             };
             ddbMock.on(GetCommand).resolves(notFound());
 
-            expect(
+            await expect(
                 backend.putContact(contactZero)
             ).rejects.toBeInstanceOf(ContactNoIdentifiersError);
         });
@@ -173,7 +173,7 @@ describe('ContactBackend', () => {
             };
             ddbMock.on(GetCommand).resolves(notFound());
 
-            expect(
+            await expect(
                 backend.putContact(contactZero)
             ).rejects.toMatchObject({
                 code:    ErrorCode.CONTACT_NO_IDENTIFIERS,
@@ -187,7 +187,7 @@ describe('ContactBackend', () => {
                 identifiers: [] as unknown as Contact['identifiers'],
             };
             // No GetCommand mock needed — guard fires before DB access
-            expect(
+            await expect(
                 backend.putContact(contactZero)
             ).rejects.toBeInstanceOf(ContactNoIdentifiersError);
 
@@ -203,7 +203,7 @@ describe('ContactBackend', () => {
             ddbMock.on(GetCommand).resolves(notFound());
             ddbMock.on(BatchWriteCommand).resolves({});
 
-            expect(backend.putContact(contact1)).resolves.toBeUndefined();
+            await expect(backend.putContact(contact1)).resolves.toBeUndefined();
         });
     });
 
@@ -347,7 +347,7 @@ describe('ContactBackend', () => {
             ddbMock.on(GetCommand).resolves(notFound());
             ddbMock.on(BatchWriteCommand).resolves({});
 
-            expect(backend.putContact(contact24)).resolves.toBeUndefined();
+            await expect(backend.putContact(contact24)).resolves.toBeUndefined();
 
             // Should have issued BatchWriteCommand calls (24 lookups + 1 profile = 25 items, split into batches)
             expect(ddbMock.commandCalls(BatchWriteCommand).length).toBeGreaterThanOrEqual(1);
@@ -358,7 +358,7 @@ describe('ContactBackend', () => {
             ddbMock.on(GetCommand).resolves(notFound());
             ddbMock.on(BatchWriteCommand).resolves({});
 
-            expect(backend.putContact(contact25)).resolves.toBeUndefined();
+            await expect(backend.putContact(contact25)).resolves.toBeUndefined();
 
             // 25 lookups + 1 profile = 26 items → needs 2 BatchWrite calls
             const bwCalls = ddbMock.commandCalls(BatchWriteCommand);
@@ -629,7 +629,7 @@ describe('ContactBackend', () => {
             ddbMock.on(GetCommand).resolves(contactGetResponse(oldContact));
             ddbMock.on(BatchWriteCommand).resolves({});
 
-            expect(backend.putContact(newContact)).resolves.toBeUndefined();
+            await expect(backend.putContact(newContact)).resolves.toBeUndefined();
 
             // 24 new lookups + 1 profile put + 24 deletes = 49 items → at least 2 batches
             const bwCalls = ddbMock.commandCalls(BatchWriteCommand);
@@ -767,7 +767,7 @@ describe('ContactBackend', () => {
             ddbMock.on(GetCommand).resolves(notFound());
             ddbMock.on(BatchWriteCommand).rejects(new Error('DynamoDB unavailable'));
 
-            expect(backend.putContact(ALICE)).rejects.toThrow();
+            await expect(backend.putContact(ALICE)).rejects.toThrow();
         });
 
         test('retries when BatchWriteCommand returns UnprocessedItems on first call — uses injected sleep', async () => {
@@ -835,7 +835,7 @@ describe('ContactBackend', () => {
                 throw new Error('DynamoDB failure on profile write');
             });
 
-            expect(backend.putContact(ALICE, { sleep: mockSleep })).rejects.toThrow('DynamoDB failure on profile write');
+            await expect(backend.putContact(ALICE, { sleep: mockSleep })).rejects.toThrow('DynamoDB failure on profile write');
 
             // First BatchWrite call (lookup rows) must have succeeded
             const bwCalls = ddbMock.commandCalls(BatchWriteCommand);
@@ -876,7 +876,7 @@ describe('ContactBackend', () => {
                 throw new Error('DynamoDB failure on delete');
             });
 
-            expect(backend.putContact(updated, { sleep: mockSleep })).rejects.toThrow('DynamoDB failure on delete');
+            await expect(backend.putContact(updated, { sleep: mockSleep })).rejects.toThrow('DynamoDB failure on delete');
 
             // Verify the write ordering — calls 1 and 2 succeeded (new lookup + profile)
             expect(batchCallCount).toBeGreaterThanOrEqual(3);
@@ -954,7 +954,7 @@ describe('ContactBackend', () => {
         test('throws ContactNotFoundError when contact does not exist', async () => {
             ddbMock.on(GetCommand).resolves(notFound());
 
-            expect(backend.deleteContact(PERSON_ID)).rejects.toMatchObject({
+            await expect(backend.deleteContact(PERSON_ID)).rejects.toMatchObject({
                 code:    ErrorCode.CONTACT_NOT_FOUND,
                 context: { personId: PERSON_ID },
             });
@@ -963,7 +963,7 @@ describe('ContactBackend', () => {
         test('throws with Error instance', async () => {
             ddbMock.on(GetCommand).resolves(notFound());
 
-            expect(backend.deleteContact(PERSON_ID)).rejects.toBeInstanceOf(Error);
+            await expect(backend.deleteContact(PERSON_ID)).rejects.toBeInstanceOf(Error);
         });
 
         test('handles 30 identifiers across multiple batches', async () => {
@@ -1140,7 +1140,7 @@ describe('ContactBackend', () => {
         test('throws ContactNotFoundError when contact does not exist', async () => {
             ddbMock.on(GetCommand).resolves(notFound());
 
-            expect(
+            await expect(
                 backend.addIdentifier(PERSON_ID, { platform: 'bsky', value: 'alice.bsky.social' })
             ).rejects.toMatchObject({
                 code:    ErrorCode.CONTACT_NOT_FOUND,
@@ -1251,7 +1251,7 @@ describe('ContactBackend', () => {
         test('throws ContactNotFoundError when contact does not exist', async () => {
             ddbMock.on(GetCommand).resolves(notFound());
 
-            expect(
+            await expect(
                 backend.removeIdentifier(PERSON_ID, 'email', 'alice@example.com')
             ).rejects.toMatchObject({
                 code:    ErrorCode.CONTACT_NOT_FOUND,
@@ -1266,7 +1266,7 @@ describe('ContactBackend', () => {
             };
             ddbMock.on(GetCommand).resolves(contactGetResponse(singleIdentifier));
 
-            expect(
+            await expect(
                 backend.removeIdentifier(PERSON_ID, 'email', 'alice@example.com')
             ).rejects.toMatchObject({
                 code:    ErrorCode.CONTACT_LAST_IDENTIFIER,
@@ -1433,22 +1433,13 @@ describe('ContactBackend', () => {
             });
         });
 
-        test('returns exact match first', async () => {
-            const result = await backend.fuzzyLookup('alice@example.com');
-
-            expect(result).toHaveLength(1);
-            expect(result[0]).toEqual(ALICE);
-        });
-
-        test('matches displayName exactly', async () => {
-            const result = await backend.fuzzyLookup('Alice Smith');
-
-            expect(result).toHaveLength(1);
-            expect(result[0]).toEqual(ALICE);
-        });
-
-        test('case-insensitive matching', async () => {
-            const result = await backend.fuzzyLookup('ALICE SMITH');
+        test.each([
+            ['returns exact match first', 'alice@example.com'],
+            ['matches displayName exactly', 'Alice Smith'],
+            ['case-insensitive matching', 'ALICE SMITH'],
+            ['trims whitespace from query', '  Alice Smith  '],
+        ])('%s', async (_name, query) => {
+            const result = await backend.fuzzyLookup(query);
 
             expect(result).toHaveLength(1);
             expect(result[0]).toEqual(ALICE);
@@ -1466,13 +1457,6 @@ describe('ContactBackend', () => {
             const result = await backend.fuzzyLookup('smith');
 
             expect(result.length).toBeGreaterThan(0);
-            expect(result[0]).toEqual(ALICE);
-        });
-
-        test('trims whitespace from query', async () => {
-            const result = await backend.fuzzyLookup('  Alice Smith  ');
-
-            expect(result).toHaveLength(1);
             expect(result[0]).toEqual(ALICE);
         });
 

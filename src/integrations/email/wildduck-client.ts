@@ -243,6 +243,7 @@ function extractBody(content: string, isHtml: boolean, maxBytes: number): string
     const text = isHtml ? convert(content, { wordwrap: false }) : content;
     const buf = Buffer.from(text, 'utf8');
     let end   = Math.min(maxBytes, buf.length);
+    // eslint-disable-next-line no-bitwise -- UTF-8 continuation-byte mask (0xC0/0x80), not integer math
     while((buf[end]! & 0xC0) === 0x80) {
         end--;
     }

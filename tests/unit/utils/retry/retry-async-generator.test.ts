@@ -206,11 +206,11 @@ describe('retryAsyncGenerator', () => {
 
             const results: number[] = [];
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
                     results.push(value);
                 }
-            }).toThrow('Permanent error');
+            })()).rejects.toThrow('Permanent error');
 
             expect(results).toEqual([1]); // Got value before error
             expect(generatorFactory).toHaveBeenCalledTimes(1);
@@ -247,11 +247,11 @@ describe('retryAsyncGenerator', () => {
 
             const results: number[] = [];
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
                     results.push(value);
                 }
-            }).toThrow('Permanent error');
+            })()).rejects.toThrow('Permanent error');
 
             expect(results).toEqual([1]);
             expect(generatorFactory).toHaveBeenCalledTimes(2);
@@ -365,11 +365,11 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
                     // Never gets here
                 }
-            }).toThrow('Transient error');
+            })()).rejects.toThrow('Transient error');
 
             expect(generatorFactory).toHaveBeenCalledTimes(3); // maxAttempts
             expect(classifier).toHaveBeenCalledTimes(3);
@@ -388,11 +388,11 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
                     // Never gets here
                 }
-            }).toThrow('Original error message');
+            })()).rejects.toThrow('Original error message');
         });
     });
 
@@ -474,11 +474,11 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, { policy, classifier, deps })) {
                     // Never gets here
                 }
-            }).toThrow();
+            })()).rejects.toThrow();
 
             expect(generatorFactory).toHaveBeenCalledTimes(1);
             expect(sleepMock).not.toHaveBeenCalled();
@@ -807,11 +807,11 @@ describe('retryAsyncGenerator', () => {
 
             const results: number[] = [];
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
                     results.push(value);
                 }
-            }).toThrow('Permanent error');
+            })()).rejects.toThrow('Permanent error');
 
             expect(results).toEqual([1]);
             expect(generatorFactory).toHaveBeenCalledTimes(2);
@@ -992,11 +992,11 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock<ErrorClassifier>(() => ({ category: 'permanent', message: 'Permanent error' }));
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
                     expect(value).toBe(1);
                 }
-            }).toThrow('Permanent error');
+            })()).rejects.toThrow('Permanent error');
 
             expect(mockLogger.error).toHaveBeenCalledTimes(1);
             const errorLog = (mockLogger.error as ReturnType<typeof mock>).mock.calls[0][0];
@@ -1014,11 +1014,11 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
                     // Never gets here
                 }
-            }).toThrow('Transient error');
+            })()).rejects.toThrow('Transient error');
 
             expect(mockLogger.error).toHaveBeenCalledTimes(1);
             const errorLog = (mockLogger.error as ReturnType<typeof mock>).mock.calls[0][0];
@@ -1040,11 +1040,11 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'transient' }));
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
                     // Never gets here
                 }
-            }).toThrow();
+            })()).rejects.toThrow();
 
             const firstWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[0][0];
             const secondWarnLog = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[1][0];
@@ -1079,7 +1079,7 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, {
                     policy: { ...defaultPolicy, maxAttempts: 3 },
                     classifier,
@@ -1087,7 +1087,7 @@ describe('retryAsyncGenerator', () => {
                 })) {
                     // Never gets here
                 }
-            }).toThrow();
+            })()).rejects.toThrow();
 
             // Exactly 3 attempts, not 2 or 4 (kills attempt++ vs attempt-- mutations)
             expect(generatorFactory).toHaveBeenCalledTimes(3);
@@ -1101,7 +1101,7 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, {
                     policy: { ...defaultPolicy, maxAttempts: 5 },
                     classifier,
@@ -1109,7 +1109,7 @@ describe('retryAsyncGenerator', () => {
                 })) {
                     // Never gets here
                 }
-            }).toThrow();
+            })()).rejects.toThrow();
 
             // Exactly 5 attempts (verifies loop boundary)
             expect(generatorFactory).toHaveBeenCalledTimes(5);
@@ -1157,7 +1157,7 @@ describe('retryAsyncGenerator', () => {
             const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             // Test with maxAttempts = 1 (boundary case)
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, {
                     policy: { ...defaultPolicy, maxAttempts: 1 },
                     classifier,
@@ -1165,7 +1165,7 @@ describe('retryAsyncGenerator', () => {
                 })) {
                     // Never gets here
                 }
-            }).toThrow();
+            })()).rejects.toThrow();
 
             expect(generatorFactory).toHaveBeenCalledTimes(1);
 
@@ -1173,7 +1173,7 @@ describe('retryAsyncGenerator', () => {
             generatorFactory.mockClear();
 
             // Test with maxAttempts = 2 (verifies < vs <= boundary)
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, {
                     policy: { ...defaultPolicy, maxAttempts: 2 },
                     classifier,
@@ -1181,7 +1181,7 @@ describe('retryAsyncGenerator', () => {
                 })) {
                     // Never gets here
                 }
-            }).toThrow();
+            })()).rejects.toThrow();
 
             expect(generatorFactory).toHaveBeenCalledTimes(2);
         });
@@ -1197,7 +1197,7 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, {
                     policy: { ...defaultPolicy, maxAttempts: 4 },
                     classifier,
@@ -1205,7 +1205,7 @@ describe('retryAsyncGenerator', () => {
                 })) {
                     // Never gets here
                 }
-            }).toThrow();
+            })()).rejects.toThrow();
 
             // Exactly 4, not 3 or 5 (kills < vs <= mutations)
             expect(generatorFactory).toHaveBeenCalledTimes(4);
@@ -1226,7 +1226,7 @@ describe('retryAsyncGenerator', () => {
             const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             // Use maxAttempts = 3 to make it clear
-            expect(async () => {
+            await expect((async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, {
                     policy: { ...defaultPolicy, maxAttempts: 3 },
                     classifier,
@@ -1234,7 +1234,7 @@ describe('retryAsyncGenerator', () => {
                 })) {
                     // Never gets here
                 }
-            }).toThrow();
+            })()).rejects.toThrow();
 
             // Must be exactly 3, not 4 (which would happen with <= mutation)
             expect(generatorFactory).toHaveBeenCalledTimes(3);

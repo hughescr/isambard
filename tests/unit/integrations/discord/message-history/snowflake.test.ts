@@ -25,33 +25,21 @@ describe('snowflakeToTimestamp', () => {
             expect(result.error.issues[0]?.message).toBe(message);
         }
     });
-    // Known Discord snowflake: 175928847299117063
-    // This is a well-known Discord snowflake (Discord's announcement of snowflakes)
-    // Timestamp: 1462015105796 (April 30, 2016)
-    test('should convert a known snowflake to correct timestamp', () => {
-        const snowflake = '175928847299117063';
-        const timestamp = snowflakeToTimestamp(snowflake);
-
+    test.each([
+        // Known Discord snowflake: 175928847299117063
+        // This is a well-known Discord snowflake (Discord's announcement of snowflakes)
         // Expected timestamp: Discord epoch + (snowflake >> 22)
-        // 175928847299117063 >> 22 = 41944705796
-        // 1420070400000 + 41944705796 = 1462015105796
-        expect(timestamp.getTime()).toBe(1_462_015_105_796);
-    });
-
-    test('should convert Discord epoch snowflake (0) to Discord epoch date', () => {
+        // 175928847299117063 >> 22 = 41944705796; 1420070400000 + 41944705796 = 1462015105796
+        ['a known snowflake', '175928847299117063', 1_462_015_105_796],
         // A snowflake of "0" means timestamp bits are 0, so date = Discord epoch
-        const snowflake = '0';
-        const timestamp = snowflakeToTimestamp(snowflake);
-        expect(timestamp.getTime()).toBe(1_420_070_400_000);
-    });
-
-    test('should handle a recent snowflake correctly', () => {
+        ['Discord epoch snowflake (0)', '0', 1_420_070_400_000],
         // Snowflake: 1187456789012345678 (a more recent ID)
         // Timestamp bits: 1187456789012345678 >> 22 = 283111760380
         // Expected: 1420070400000 + 283111760380 = 1703182160380
-        const snowflake = '1187456789012345678';
+        ['a recent snowflake', '1187456789012345678', 1_703_182_160_380],
+    ])('should convert %s to correct timestamp', (_, snowflake, expectedMs) => {
         const timestamp = snowflakeToTimestamp(snowflake);
-        expect(timestamp.getTime()).toBe(1_703_182_160_380);
+        expect(timestamp.getTime()).toBe(expectedMs);
     });
 
     test.each([

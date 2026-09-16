@@ -459,7 +459,7 @@ describe('generateText', () => {
             mockQuery.mockImplementation(() => throwingGenerator());
 
             // Should throw, not return ''
-            expect(generateText('Test prompt', { timeoutMs: 0 })).rejects.toThrow('Network failure');
+            await expect(generateText('Test prompt', { timeoutMs: 0 })).rejects.toThrow('Network failure');
         });
 
         test('should return empty string when timeout fires and generator throws', async () => {

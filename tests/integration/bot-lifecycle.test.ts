@@ -315,7 +315,7 @@ describe('Bot Lifecycle Integration', () => {
             );
 
             // channelRegistry is REQUIRED and needs DynamoDB, so app creation should fail
-            expect(createApp()).rejects.toThrow('Failed to connect to DynamoDB');
+            await expect(createApp()).rejects.toThrow('Failed to connect to DynamoDB');
         });
     });
 

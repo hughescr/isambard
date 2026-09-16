@@ -17,50 +17,25 @@ import {
 } from '@/storage/memory-tool/types';
 
 describe.concurrent('memoryPathSchema', () => {
-    test('should accept root path', () => {
-        const result = memoryPathSchema.safeParse('/');
+    test.each([
+        { name: 'root path', path: '/' },
+        { name: 'valid simple path', path: '/notes' },
+        { name: 'valid nested path', path: '/projects/isambard/todo' },
+    ])('should accept $name', ({ path }) => {
+        const result = memoryPathSchema.safeParse(path);
         expect(result.success).toBe(true);
     });
 
-    test('should accept valid simple path', () => {
-        const result = memoryPathSchema.safeParse('/notes');
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept valid nested path', () => {
-        const result = memoryPathSchema.safeParse('/projects/isambard/todo');
-        expect(result.success).toBe(true);
-    });
-
-    test('should reject path not starting with /', () => {
-        const result = memoryPathSchema.safeParse('notes');
+    test.each([
+        { name: 'path not starting with /', input: 'notes', message: 'Path must start with /' },
+        { name: 'path with double slashes', input: '/notes//todo', message: 'Path cannot contain double slashes' },
+        { name: 'path with trailing slash (except root)', input: '/notes/', message: 'Path cannot end with /' },
+        { name: 'empty string', input: '', message: 'Path cannot be empty' },
+    ])('should reject $name', ({ input, message }) => {
+        const result = memoryPathSchema.safeParse(input);
         expect(result.success).toBe(false);
         if(!result.success) {
-            expect(result.error.issues[0]?.message).toContain('Path must start with /');
-        }
-    });
-
-    test('should reject path with double slashes', () => {
-        const result = memoryPathSchema.safeParse('/notes//todo');
-        expect(result.success).toBe(false);
-        if(!result.success) {
-            expect(result.error.issues[0]?.message).toContain('Path cannot contain double slashes');
-        }
-    });
-
-    test('should reject path with trailing slash (except root)', () => {
-        const result = memoryPathSchema.safeParse('/notes/');
-        expect(result.success).toBe(false);
-        if(!result.success) {
-            expect(result.error.issues[0]?.message).toContain('Path cannot end with /');
-        }
-    });
-
-    test('should reject empty string', () => {
-        const result = memoryPathSchema.safeParse('');
-        expect(result.success).toBe(false);
-        if(!result.success) {
-            expect(result.error.issues[0]?.message).toContain('Path cannot be empty');
+            expect(result.error.issues[0]?.message).toContain(message);
         }
     });
 
@@ -129,18 +104,12 @@ describe.concurrent('isMemoryPath', () => {
 });
 
 describe.concurrent('contentTypeSchema', () => {
-    test('should accept text/plain', () => {
-        const result = contentTypeSchema.safeParse('text/plain');
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept text/markdown', () => {
-        const result = contentTypeSchema.safeParse('text/markdown');
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept application/json', () => {
-        const result = contentTypeSchema.safeParse('application/json');
+    test.each([
+        'text/plain',
+        'text/markdown',
+        'application/json',
+    ])('should accept %s', (value) => {
+        const result = contentTypeSchema.safeParse(value);
         expect(result.success).toBe(true);
     });
 
@@ -151,18 +120,12 @@ describe.concurrent('contentTypeSchema', () => {
 });
 
 describe.concurrent('layerNameSchema', () => {
-    test('should accept "identity"', () => {
-        const result = layerNameSchema.safeParse('identity');
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept "state"', () => {
-        const result = layerNameSchema.safeParse('state');
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept "events"', () => {
-        const result = layerNameSchema.safeParse('events');
+    test.each([
+        'identity',
+        'state',
+        'events',
+    ])('should accept "%s"', (value) => {
+        const result = layerNameSchema.safeParse(value);
         expect(result.success).toBe(true);
     });
 

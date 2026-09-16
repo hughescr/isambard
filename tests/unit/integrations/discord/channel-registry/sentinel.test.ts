@@ -110,34 +110,16 @@ describe('sentinel utility', () => {
             expect(result.content).toBe('');
         });
 
-        it('should handle only sentinel', () => {
-            const result = processResponse('@@NO_RESPONSE@@');
+        it.each([
+            ['should handle only sentinel', '@@NO_RESPONSE@@', ''],
+            ['should trim whitespace from cleaned content', '  @@NO_RESPONSE@@  text  ', 'text'],
+            ['should handle sentinel at start', '@@NO_RESPONSE@@ This is why I am not responding.', 'This is why I am not responding.'],
+            ['should handle sentinel at end', 'This is why I am not responding. @@NO_RESPONSE@@', 'This is why I am not responding.'],
+            ['should handle sentinel in middle', 'Reasoning here @@NO_RESPONSE@@ more reasoning', 'Reasoning here  more reasoning'],
+        ] as const)('%s', (_name, input, expectedContent) => {
+            const result = processResponse(input);
             expect(result.shouldSend).toBe(false);
-            expect(result.content).toBe('');
-        });
-
-        it('should trim whitespace from cleaned content', () => {
-            const result = processResponse('  @@NO_RESPONSE@@  text  ');
-            expect(result.shouldSend).toBe(false);
-            expect(result.content).toBe('text');
-        });
-
-        it('should handle sentinel at start', () => {
-            const result = processResponse('@@NO_RESPONSE@@ This is why I am not responding.');
-            expect(result.shouldSend).toBe(false);
-            expect(result.content).toBe('This is why I am not responding.');
-        });
-
-        it('should handle sentinel at end', () => {
-            const result = processResponse('This is why I am not responding. @@NO_RESPONSE@@');
-            expect(result.shouldSend).toBe(false);
-            expect(result.content).toBe('This is why I am not responding.');
-        });
-
-        it('should handle sentinel in middle', () => {
-            const result = processResponse('Reasoning here @@NO_RESPONSE@@ more reasoning');
-            expect(result.shouldSend).toBe(false);
-            expect(result.content).toBe('Reasoning here  more reasoning');
+            expect(result.content).toBe(expectedContent);
         });
     });
 });

@@ -2808,7 +2808,15 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('## Recent Events\n/events/e1.md (2h ago):\nEvent 1 content\n\n/events/e2.md (1h ago):\nEvent 2 content');
         });
 
-        test('should not include Recent Focus when no state items exist', async () => {
+        // These four cases share identical setup (no data feeding the section, no
+        // optional service passed) and only differ in which section header must be
+        // absent from the result; parameterized per sonarjs/parameterized-tests.
+        test.each([
+            { section: '## Recent Focus', description: 'no state items exist' },
+            { section: '## Recent Events', description: 'no events exist' },
+            { section: '## Inbox', description: 'emailService is not provided' },
+            { section: '## Bluesky DMs', description: 'bskyDMService is not provided' },
+        ])('should not include $section when $description', async ({ section }) => {
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] }));
@@ -2816,18 +2824,7 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             const result = await contextBuilder.buildPerchContext();
 
-            expect(result).not.toContain('## Recent Focus');
-        });
-
-        test('should not include Recent Events when no events exist', async () => {
-            backend.getStateItemsScored = mock(async () => []);
-            backend.searchByTimeRange = mock(async () => []);
-            backend.listByLayer = mock(async () => ({ items: [] }));
-
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.buildPerchContext();
-
-            expect(result).not.toContain('## Recent Events');
+            expect(result).not.toContain(section);
         });
 
         test('should truncate state items exceeding maxStateItemMaxChars', async () => {
@@ -3027,17 +3024,8 @@ describe('createContextBuilder loading methods', () => {
         // Email inbox section (emailService DI)
         // -------------------------------------------------------------------
 
-        test('should skip inbox section when emailService is not provided', async () => {
-            backend.getStateItemsScored = mock(async () => []);
-            backend.searchByTimeRange = mock(async () => []);
-            backend.listByLayer = mock(async () => ({ items: [] }));
-
-            // No emailService passed
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.buildPerchContext();
-
-            expect(result).not.toContain('## Inbox');
-        });
+        // 'should skip inbox section when emailService is not provided' is covered by
+        // the parameterized "should not include $section when $description" test above.
 
         test('should include inbox section when emailService provided and unread > 0', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
@@ -3562,17 +3550,8 @@ describe('createContextBuilder loading methods', () => {
         // Bluesky DM section (bskyDMService DI)
         // -------------------------------------------------------------------
 
-        test('should skip DM section when bskyDMService is not provided', async () => {
-            backend.getStateItemsScored = mock(async () => []);
-            backend.searchByTimeRange = mock(async () => []);
-            backend.listByLayer = mock(async () => ({ items: [] }));
-
-            // No bskyDMService passed
-            const contextBuilder = createContextBuilder({ backend });
-            const result = await contextBuilder.buildPerchContext();
-
-            expect(result).not.toContain('## Bluesky DMs');
-        });
+        // 'should skip DM section when bskyDMService is not provided' is covered by
+        // the parameterized "should not include $section when $description" test above.
 
         test('should skip DM section when no unread conversations', async () => {
             backend.getStateItemsScored = mock(async () => []);

@@ -6,6 +6,12 @@ type LifecycleActorEvent = Parameters<ReturnType<typeof createServiceActor>['sen
 // @ts-expect-error The lifecycle actor must not accept an event outside ServiceLifecycleEvent.
 const _invalidLifecycleActorEvent: LifecycleActorEvent = { type: 'UNKNOWN_EVENT' };
 
+interface TransitionCase {
+    event:    LifecycleActorEvent
+    expected: 'disabled' | 'starting' | 'recovering' | 'online' | 'degraded' | 'offline'
+    desc:     string
+}
+
 // Helper to build an actor, start it, and send it to a desired state quickly
 function actorInState(targetState: 'disabled' | 'starting' | 'online' | 'offline' | 'recovering' | 'degraded') {
     const actor = createActor(serviceLifecycleMachine);
@@ -71,10 +77,16 @@ describe('serviceLifecycleMachine', () => {
     });
 
     describe('disabled state transitions', () => {
-        test('should transition disabled → starting on CONFIGURE', () => {
+        test.each([
+            { event: { type: 'CONFIGURE' }, expected: 'starting', desc: 'CONFIGURE transitions to starting' },
+            { event: { type: 'CONNECT_SUCCESS' }, expected: 'disabled', desc: 'CONNECT_SUCCESS is ignored' },
+            { event: { type: 'CONNECT_FAIL' }, expected: 'disabled', desc: 'CONNECT_FAIL is ignored' },
+            { event: { type: 'CONNECTION_LOST' }, expected: 'disabled', desc: 'CONNECTION_LOST is ignored' },
+            { event: { type: 'RECONNECT_ATTEMPT' }, expected: 'disabled', desc: 'RECONNECT_ATTEMPT is ignored' },
+        ] satisfies TransitionCase[])('should end in $expected when $desc', ({ event, expected }) => {
             const actor = actorInState('disabled');
-            actor.send({ type: 'CONFIGURE' });
-            expect(actor.getSnapshot().value).toBe('starting');
+            actor.send(event);
+            expect(actor.getSnapshot().value).toBe(expected);
             actor.stop();
         });
 
@@ -85,41 +97,18 @@ describe('serviceLifecycleMachine', () => {
             expect(actor.getSnapshot().context.epoch).toBe(1);
             actor.stop();
         });
-
-        test('should ignore CONNECT_SUCCESS in disabled state', () => {
-            const actor = actorInState('disabled');
-            actor.send({ type: 'CONNECT_SUCCESS' });
-            expect(actor.getSnapshot().value).toBe('disabled');
-            actor.stop();
-        });
-
-        test('should ignore CONNECT_FAIL in disabled state', () => {
-            const actor = actorInState('disabled');
-            actor.send({ type: 'CONNECT_FAIL' });
-            expect(actor.getSnapshot().value).toBe('disabled');
-            actor.stop();
-        });
-
-        test('should ignore CONNECTION_LOST in disabled state', () => {
-            const actor = actorInState('disabled');
-            actor.send({ type: 'CONNECTION_LOST' });
-            expect(actor.getSnapshot().value).toBe('disabled');
-            actor.stop();
-        });
-
-        test('should ignore RECONNECT_ATTEMPT in disabled state', () => {
-            const actor = actorInState('disabled');
-            actor.send({ type: 'RECONNECT_ATTEMPT' });
-            expect(actor.getSnapshot().value).toBe('disabled');
-            actor.stop();
-        });
     });
 
     describe('starting state transitions', () => {
-        test('should transition starting → online on CONNECT_SUCCESS', () => {
+        test.each([
+            { event: { type: 'CONNECT_SUCCESS' }, expected: 'online', desc: 'CONNECT_SUCCESS transitions to online' },
+            { event: { type: 'CONNECT_FAIL' }, expected: 'offline', desc: 'CONNECT_FAIL transitions to offline' },
+            { event: { type: 'RECONNECT_ATTEMPT' }, expected: 'starting', desc: 'RECONNECT_ATTEMPT is ignored' },
+            { event: { type: 'CONNECTION_LOST' }, expected: 'offline', desc: 'CONNECTION_LOST transitions to offline' },
+        ] satisfies TransitionCase[])('should end in $expected when $desc', ({ event, expected }) => {
             const actor = actorInState('starting');
-            actor.send({ type: 'CONNECT_SUCCESS' });
-            expect(actor.getSnapshot().value).toBe('online');
+            actor.send(event);
+            expect(actor.getSnapshot().value).toBe(expected);
             actor.stop();
         });
 
@@ -146,13 +135,6 @@ describe('serviceLifecycleMachine', () => {
             const actor = actorInState('starting');
             actor.send({ type: 'CONNECT_SUCCESS' });
             expect(actor.getSnapshot().context.lastError).toBeUndefined();
-            actor.stop();
-        });
-
-        test('should transition starting → offline on CONNECT_FAIL', () => {
-            const actor = actorInState('starting');
-            actor.send({ type: 'CONNECT_FAIL' });
-            expect(actor.getSnapshot().value).toBe('offline');
             actor.stop();
         });
 
@@ -205,20 +187,6 @@ describe('serviceLifecycleMachine', () => {
             actor.stop();
         });
 
-        test('should ignore RECONNECT_ATTEMPT in starting state', () => {
-            const actor = actorInState('starting');
-            actor.send({ type: 'RECONNECT_ATTEMPT' });
-            expect(actor.getSnapshot().value).toBe('starting');
-            actor.stop();
-        });
-
-        test('should transition starting → offline on CONNECTION_LOST', () => {
-            const actor = actorInState('starting');
-            actor.send({ type: 'CONNECTION_LOST' });
-            expect(actor.getSnapshot().value).toBe('offline');
-            actor.stop();
-        });
-
         test('should record offline details (failureCount, lastOfflineAt) on CONNECTION_LOST from starting', () => {
             const before = new Date();
             const actor = actorInState('starting');
@@ -243,10 +211,17 @@ describe('serviceLifecycleMachine', () => {
     });
 
     describe('online state transitions', () => {
-        test('should transition online → offline on CONNECTION_LOST', () => {
+        test.each([
+            { event: { type: 'CONNECTION_LOST' }, expected: 'offline', desc: 'CONNECTION_LOST transitions to offline' },
+            { event: { type: 'PARTIAL_FAILURE' }, expected: 'degraded', desc: 'PARTIAL_FAILURE transitions to degraded' },
+            { event: { type: 'CONFIGURE' }, expected: 'online', desc: 'CONFIGURE is ignored' },
+            { event: { type: 'CONNECT_SUCCESS' }, expected: 'online', desc: 'CONNECT_SUCCESS is ignored' },
+            { event: { type: 'RECONNECT_ATTEMPT' }, expected: 'online', desc: 'RECONNECT_ATTEMPT is ignored' },
+            { event: { type: 'RECOVERY_FAIL' }, expected: 'online', desc: 'RECOVERY_FAIL is ignored' },
+        ] satisfies TransitionCase[])('should end in $expected when $desc', ({ event, expected }) => {
             const actor = actorInState('online');
-            actor.send({ type: 'CONNECTION_LOST' });
-            expect(actor.getSnapshot().value).toBe('offline');
+            actor.send(event);
+            expect(actor.getSnapshot().value).toBe(expected);
             actor.stop();
         });
 
@@ -268,13 +243,6 @@ describe('serviceLifecycleMachine', () => {
             actor.stop();
         });
 
-        test('should transition online → degraded on PARTIAL_FAILURE', () => {
-            const actor = actorInState('online');
-            actor.send({ type: 'PARTIAL_FAILURE' });
-            expect(actor.getSnapshot().value).toBe('degraded');
-            actor.stop();
-        });
-
         test('should not change epoch on PARTIAL_FAILURE', () => {
             const actor = actorInState('online');
             const epochBefore = actor.getSnapshot().context.epoch;
@@ -282,41 +250,18 @@ describe('serviceLifecycleMachine', () => {
             expect(actor.getSnapshot().context.epoch).toBe(epochBefore);
             actor.stop();
         });
-
-        test('should ignore CONFIGURE in online state', () => {
-            const actor = actorInState('online');
-            actor.send({ type: 'CONFIGURE' });
-            expect(actor.getSnapshot().value).toBe('online');
-            actor.stop();
-        });
-
-        test('should ignore CONNECT_SUCCESS in online state', () => {
-            const actor = actorInState('online');
-            actor.send({ type: 'CONNECT_SUCCESS' });
-            expect(actor.getSnapshot().value).toBe('online');
-            actor.stop();
-        });
-
-        test('should ignore RECONNECT_ATTEMPT in online state', () => {
-            const actor = actorInState('online');
-            actor.send({ type: 'RECONNECT_ATTEMPT' });
-            expect(actor.getSnapshot().value).toBe('online');
-            actor.stop();
-        });
-
-        test('should ignore RECOVERY_FAIL in online state', () => {
-            const actor = actorInState('online');
-            actor.send({ type: 'RECOVERY_FAIL' });
-            expect(actor.getSnapshot().value).toBe('online');
-            actor.stop();
-        });
     });
 
     describe('degraded state transitions', () => {
-        test('should transition degraded → online on RECOVERED', () => {
+        test.each([
+            { event: { type: 'RECOVERED' }, expected: 'online', desc: 'RECOVERED transitions to online' },
+            { event: { type: 'CONNECTION_LOST' }, expected: 'offline', desc: 'CONNECTION_LOST transitions to offline' },
+            { event: { type: 'CONFIGURE' }, expected: 'degraded', desc: 'CONFIGURE is ignored' },
+            { event: { type: 'RECONNECT_ATTEMPT' }, expected: 'degraded', desc: 'RECONNECT_ATTEMPT is ignored' },
+        ] satisfies TransitionCase[])('should end in $expected when $desc', ({ event, expected }) => {
             const actor = actorInState('degraded');
-            actor.send({ type: 'RECOVERED' });
-            expect(actor.getSnapshot().value).toBe('online');
+            actor.send(event);
+            expect(actor.getSnapshot().value).toBe(expected);
             actor.stop();
         });
 
@@ -329,13 +274,6 @@ describe('serviceLifecycleMachine', () => {
             actor.stop();
         });
 
-        test('should transition degraded → offline on CONNECTION_LOST', () => {
-            const actor = actorInState('degraded');
-            actor.send({ type: 'CONNECTION_LOST' });
-            expect(actor.getSnapshot().value).toBe('offline');
-            actor.stop();
-        });
-
         test('should increment epoch on CONNECTION_LOST from degraded', () => {
             const actor = actorInState('degraded');
             const epochBefore = actor.getSnapshot().context.epoch;
@@ -343,27 +281,18 @@ describe('serviceLifecycleMachine', () => {
             expect(actor.getSnapshot().context.epoch).toBe(epochBefore + 1);
             actor.stop();
         });
-
-        test('should ignore CONFIGURE in degraded state', () => {
-            const actor = actorInState('degraded');
-            actor.send({ type: 'CONFIGURE' });
-            expect(actor.getSnapshot().value).toBe('degraded');
-            actor.stop();
-        });
-
-        test('should ignore RECONNECT_ATTEMPT in degraded state', () => {
-            const actor = actorInState('degraded');
-            actor.send({ type: 'RECONNECT_ATTEMPT' });
-            expect(actor.getSnapshot().value).toBe('degraded');
-            actor.stop();
-        });
     });
 
     describe('offline state transitions', () => {
-        test('should transition offline → recovering on RECONNECT_ATTEMPT', () => {
+        test.each([
+            { event: { type: 'RECONNECT_ATTEMPT' }, expected: 'recovering', desc: 'RECONNECT_ATTEMPT transitions to recovering' },
+            { event: { type: 'CONFIGURE' }, expected: 'starting', desc: 'CONFIGURE transitions to starting' },
+            { event: { type: 'CONNECT_SUCCESS' }, expected: 'online', desc: 'CONNECT_SUCCESS transitions to online' },
+            { event: { type: 'CONNECTION_LOST' }, expected: 'offline', desc: 'CONNECTION_LOST is ignored' },
+        ] satisfies TransitionCase[])('should end in $expected when $desc', ({ event, expected }) => {
             const actor = actorInState('offline');
-            actor.send({ type: 'RECONNECT_ATTEMPT' });
-            expect(actor.getSnapshot().value).toBe('recovering');
+            actor.send(event);
+            expect(actor.getSnapshot().value).toBe(expected);
             actor.stop();
         });
 
@@ -375,25 +304,11 @@ describe('serviceLifecycleMachine', () => {
             actor.stop();
         });
 
-        test('should transition offline → starting on CONFIGURE', () => {
-            const actor = actorInState('offline');
-            actor.send({ type: 'CONFIGURE' });
-            expect(actor.getSnapshot().value).toBe('starting');
-            actor.stop();
-        });
-
         test('should increment epoch on CONFIGURE from offline', () => {
             const actor = actorInState('offline');
             const epochBefore = actor.getSnapshot().context.epoch;
             actor.send({ type: 'CONFIGURE' });
             expect(actor.getSnapshot().context.epoch).toBe(epochBefore + 1);
-            actor.stop();
-        });
-
-        test('should transition offline → online on CONNECT_SUCCESS', () => {
-            const actor = actorInState('offline');
-            actor.send({ type: 'CONNECT_SUCCESS' });
-            expect(actor.getSnapshot().value).toBe('online');
             actor.stop();
         });
 
@@ -409,20 +324,20 @@ describe('serviceLifecycleMachine', () => {
             expect(ctx.failureCount).toBe(0);
             actor.stop();
         });
-
-        test('should ignore CONNECTION_LOST in offline state', () => {
-            const actor = actorInState('offline');
-            actor.send({ type: 'CONNECTION_LOST' });
-            expect(actor.getSnapshot().value).toBe('offline');
-            actor.stop();
-        });
     });
 
     describe('recovering state transitions', () => {
-        test('should transition recovering → online on CONNECT_SUCCESS', () => {
+        test.each([
+            { event: { type: 'CONNECT_SUCCESS' }, expected: 'online', desc: 'CONNECT_SUCCESS transitions to online' },
+            { event: { type: 'CONNECT_FAIL' }, expected: 'offline', desc: 'CONNECT_FAIL transitions to offline' },
+            { event: { type: 'RECOVERY_FAIL' }, expected: 'offline', desc: 'RECOVERY_FAIL transitions to offline' },
+            { event: { type: 'CONFIGURE' }, expected: 'recovering', desc: 'CONFIGURE is ignored' },
+            { event: { type: 'RECONNECT_ATTEMPT' }, expected: 'recovering', desc: 'RECONNECT_ATTEMPT is ignored' },
+            { event: { type: 'CONNECTION_LOST' }, expected: 'offline', desc: 'CONNECTION_LOST transitions to offline' },
+        ] satisfies TransitionCase[])('should end in $expected when $desc', ({ event, expected }) => {
             const actor = actorInState('recovering');
-            actor.send({ type: 'CONNECT_SUCCESS' });
-            expect(actor.getSnapshot().value).toBe('online');
+            actor.send(event);
+            expect(actor.getSnapshot().value).toBe(expected);
             actor.stop();
         });
 
@@ -435,25 +350,11 @@ describe('serviceLifecycleMachine', () => {
             actor.stop();
         });
 
-        test('should transition recovering → offline on CONNECT_FAIL', () => {
-            const actor = actorInState('recovering');
-            actor.send({ type: 'CONNECT_FAIL' });
-            expect(actor.getSnapshot().value).toBe('offline');
-            actor.stop();
-        });
-
         test('should increment failureCount on CONNECT_FAIL from recovering', () => {
             const actor = actorInState('recovering');
             const failureBefore = actor.getSnapshot().context.failureCount;
             actor.send({ type: 'CONNECT_FAIL' });
             expect(actor.getSnapshot().context.failureCount).toBe(failureBefore + 1);
-            actor.stop();
-        });
-
-        test('should transition recovering → offline on RECOVERY_FAIL', () => {
-            const actor = actorInState('recovering');
-            actor.send({ type: 'RECOVERY_FAIL' });
-            expect(actor.getSnapshot().value).toBe('offline');
             actor.stop();
         });
 
@@ -469,27 +370,6 @@ describe('serviceLifecycleMachine', () => {
             const actor = actorInState('recovering');
             actor.send({ type: 'RECOVERY_FAIL', error: 'Auth failed' });
             expect(actor.getSnapshot().context.lastError).toEqual({ code: 'CONNECTION_FAILED', message: 'Auth failed' });
-            actor.stop();
-        });
-
-        test('should ignore CONFIGURE in recovering state', () => {
-            const actor = actorInState('recovering');
-            actor.send({ type: 'CONFIGURE' });
-            expect(actor.getSnapshot().value).toBe('recovering');
-            actor.stop();
-        });
-
-        test('should ignore RECONNECT_ATTEMPT in recovering state', () => {
-            const actor = actorInState('recovering');
-            actor.send({ type: 'RECONNECT_ATTEMPT' });
-            expect(actor.getSnapshot().value).toBe('recovering');
-            actor.stop();
-        });
-
-        test('should transition recovering → offline on CONNECTION_LOST', () => {
-            const actor = actorInState('recovering');
-            actor.send({ type: 'CONNECTION_LOST' });
-            expect(actor.getSnapshot().value).toBe('offline');
             actor.stop();
         });
 
@@ -646,10 +526,17 @@ describe('createServiceActor', () => {
         actor.stop();
     });
 
-    test('should start in disabled state when initialState is "disabled"', () => {
-        const actor = createServiceActor('disabled');
+    test.each([
+        'disabled',
+        'online',
+        'offline',
+        'starting',
+        'recovering',
+        'degraded',
+    ] as const)('should start in %s state when initialState is %j', (state) => {
+        const actor = createServiceActor(state);
         actor.start();
-        expect(actor.getSnapshot().value).toBe('disabled');
+        expect(actor.getSnapshot().value).toBe(state);
         actor.stop();
     });
 
@@ -672,41 +559,6 @@ describe('createServiceActor', () => {
         expect(explicitSnapshots).toEqual(defaultSnapshots);
         defaultActor.stop();
         explicitActor.stop();
-    });
-
-    test('should start in online state when initialState is "online"', () => {
-        const actor = createServiceActor('online');
-        actor.start();
-        expect(actor.getSnapshot().value).toBe('online');
-        actor.stop();
-    });
-
-    test('should start in offline state when initialState is "offline"', () => {
-        const actor = createServiceActor('offline');
-        actor.start();
-        expect(actor.getSnapshot().value).toBe('offline');
-        actor.stop();
-    });
-
-    test('should start in starting state when initialState is "starting"', () => {
-        const actor = createServiceActor('starting');
-        actor.start();
-        expect(actor.getSnapshot().value).toBe('starting');
-        actor.stop();
-    });
-
-    test('should start in recovering state when initialState is "recovering"', () => {
-        const actor = createServiceActor('recovering');
-        actor.start();
-        expect(actor.getSnapshot().value).toBe('recovering');
-        actor.stop();
-    });
-
-    test('should start in degraded state when initialState is "degraded"', () => {
-        const actor = createServiceActor('degraded');
-        actor.start();
-        expect(actor.getSnapshot().value).toBe('degraded');
-        actor.stop();
     });
 
     test('should allow transitions after starting from non-disabled initialState', () => {
