@@ -13,13 +13,13 @@ import * as channelRegistryModule from '@/integrations/discord/channel-registry/
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
 import * as handlersModule from '@/integrations/discord/handlers';
-import * as utilsModule from '@/utils';
 import type { IngressGate } from '@/integrations/discord/ingress-gate';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
 import { initializeChannelRegistry, setupChannelCleanupHandlers, setupMessageProcessing } from '@/integrations/discord/setup/event-handler-setup';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 import type { ServiceHealthRegistry } from '@/services';
+import * as utilsModule from '@/utils';
 
 // ============================================================================
 // initializeChannelRegistry
@@ -258,7 +258,7 @@ describe('initializeChannelRegistry', () => {
         spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
         initializeChannelRegistry(client, registry, responseRouter, rateLimiter);
-        for(let i = 0; i < 8; i++) await Promise.resolve();
+        for(let i = 0; i < 8; i++) { await Promise.resolve(); }
 
         expect((client.channels as unknown as { fetch: ReturnType<typeof mock> }).fetch).not.toHaveBeenCalled();
         expect(rateLimiter.sendToChannel).not.toHaveBeenCalled();
@@ -272,7 +272,7 @@ describe('initializeChannelRegistry', () => {
         spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
         initializeChannelRegistry(client, registry, makeResponseRouter(), rateLimiter);
-        for(let i = 0; i < 8; i++) await Promise.resolve();
+        for(let i = 0; i < 8; i++) { await Promise.resolve(); }
 
         expect(rateLimiter.sendToChannel).not.toHaveBeenCalled();
     });
@@ -285,7 +285,7 @@ describe('initializeChannelRegistry', () => {
         spies.push(infoSpy, spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('boom')), spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
 
         initializeChannelRegistry(client, registry, makeResponseRouter(), rateLimiter);
-        for(let i = 0; i < 8; i++) await Promise.resolve();
+        for(let i = 0; i < 8; i++) { await Promise.resolve(); }
 
         expect(infoSpy).toHaveBeenCalledWith({ targetChannelId: 'fallback-ch', msg: 'Channel registry error notification sent to fallback channel' });
     });

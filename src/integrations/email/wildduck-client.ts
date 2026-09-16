@@ -244,7 +244,6 @@ function extractBody(content: string, isHtml: boolean, maxBytes: number): string
     const buf = Buffer.from(text, 'utf8');
     let end   = Math.min(maxBytes, buf.length);
     while((buf[end]! & 0xC0) === 0x80) {
-        // eslint-disable-next-line no-bitwise -- UTF-8 continuation byte detection requires bitwise
         end--;
     }
     // A Buffer created from UTF-8 text cannot start with a continuation byte; an

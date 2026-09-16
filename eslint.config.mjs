@@ -34,9 +34,6 @@ const eslintConfig = [
             'dist/',
             'node_modules/',
 
-            // Byte-frozen evidence from the 22dfa9b audit; the historical validator checks its hash.
-            'docs/audits/suppressions/evidence/probe-babel-parens.ts',
-
             '.stryker-tmp/',
             'reports/',
 
@@ -240,21 +237,6 @@ const eslintConfig = [
             }],
             // Every spyOn() must be paired with restoreAllMocks() or mockRestore() in afterEach
             '@hughescr/test-hygiene/require-mock-cleanup': 'error',
-        },
-    },
-    {
-        // This maintained audit scanner uses TypeScript as a development tool.
-        files: ['docs/audits/suppressions/resolution-comment-inventory.ts'],
-        rules: {
-            'import-x/no-extraneous-dependencies': ['error', {
-                devDependencies: [
-                    '**/*.test.*',
-                    '**/*.spec.*',
-                    '**/test/**',
-                    '**/scripts/**',
-                    'docs/audits/suppressions/resolution-comment-inventory.ts',
-                ],
-            }],
         },
     }
 ];

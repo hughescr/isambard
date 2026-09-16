@@ -1052,32 +1052,32 @@ describe('AllowlistCommandHandler - completion boundaries', () => {
             arrange:    (allowlist: PersonAllowlist, getContact: ReturnType<typeof mock>) => void
         }[] = [
             { name: 'empty list', subcommand: 'list', arrange: () => {} },
-            { name: 'populated list', subcommand: 'list', arrange: (allowlist, getContact) => {
+            { name:       'populated list', subcommand: 'list', arrange:    (allowlist, getContact) => {
                 const personId = createContactId('alice');
                 (allowlist.list as ReturnType<typeof mock>).mockResolvedValue([{ personId, addedAt: '2024-01-01T00:00:00Z', addedBy: 'discord-command' }]);
                 getContact.mockResolvedValue(makeContact());
             } },
-            { name: 'list failure', subcommand: 'list', arrange: (allowlist) => {
+            { name:       'list failure', subcommand: 'list', arrange:    (allowlist) => {
                 (allowlist.list as ReturnType<typeof mock>).mockRejectedValue(new Error('list failed'));
             } },
             { name: 'add invalid ID', subcommand: 'add', options: { person: 'INVALID ID' }, arrange: () => {} },
             { name: 'add missing contact', subcommand: 'add', options: { person: 'alice' }, arrange: () => {} },
-            { name: 'add existing person', subcommand: 'add', options: { person: 'alice' }, arrange: (allowlist, getContact) => {
+            { name:       'add existing person', subcommand: 'add', options:    { person: 'alice' }, arrange:    (allowlist, getContact) => {
                 (allowlist.isPersonAllowed as ReturnType<typeof mock>).mockReturnValue(true);
                 getContact.mockResolvedValue(makeContact());
             } },
-            { name: 'add success', subcommand: 'add', options: { person: 'alice' }, arrange: (_allowlist, getContact) => {
+            { name:       'add success', subcommand: 'add', options:    { person: 'alice' }, arrange:    (_allowlist, getContact) => {
                 getContact.mockResolvedValue(makeContact());
             } },
-            { name: 'add failure', subcommand: 'add', options: { person: 'alice' }, arrange: (_allowlist, getContact) => {
+            { name:       'add failure', subcommand: 'add', options:    { person: 'alice' }, arrange:    (_allowlist, getContact) => {
                 getContact.mockRejectedValue(new Error('read failed'));
             } },
             { name: 'remove invalid ID', subcommand: 'remove', options: { person: 'INVALID ID' }, arrange: () => {} },
             { name: 'remove absent person', subcommand: 'remove', options: { person: 'alice' }, arrange: () => {} },
-            { name: 'remove success', subcommand: 'remove', options: { person: 'alice' }, arrange: (allowlist) => {
+            { name:       'remove success', subcommand: 'remove', options:    { person: 'alice' }, arrange:    (allowlist) => {
                 (allowlist.isPersonAllowed as ReturnType<typeof mock>).mockReturnValue(true);
             } },
-            { name: 'remove failure', subcommand: 'remove', options: { person: 'alice' }, arrange: (allowlist) => {
+            { name:       'remove failure', subcommand: 'remove', options:    { person: 'alice' }, arrange:    (allowlist) => {
                 (allowlist.isPersonAllowed as ReturnType<typeof mock>).mockReturnValue(true);
                 (allowlist.removePerson as ReturnType<typeof mock>).mockRejectedValue(new Error('remove failed'));
             } },

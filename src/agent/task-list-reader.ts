@@ -150,7 +150,7 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                     const content = await readFileFn(path.join(taskDir, file.name), 'utf8');
                     try {
                         return validateTaskFile(JSON.parse(content));
-                    } catch(error) {
+                    } catch (error) {
                         logger.debug({ error, file: file.name, msg: 'Failed to parse task file' });
                         return undefined;
                     }

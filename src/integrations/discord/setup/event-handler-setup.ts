@@ -27,7 +27,7 @@ import { safeAsyncHandler } from '@/utils';
 // ---------------------------------------------------------------------------
 
 const NOOP_RECONNECTION_REGISTRY: Pick<ServiceHealthRegistry, 'sendEvent'> = {
-    sendEvent:          () => undefined,
+    sendEvent: () => undefined,
 };
 // Stryker restore all
 

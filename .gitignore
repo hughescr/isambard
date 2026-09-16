@@ -9,7 +9,6 @@ build/
 
 # Testing
 coverage/
-.verification/
 *.lcov
 .stryker-tmp/
 stryker.log

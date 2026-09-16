@@ -14,7 +14,7 @@ import {
     type UpdateCommandOutput,
     type ScanCommandInput
 } from '@aws-sdk/lib-dynamodb';
-import { DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
+import { type DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
 import { withDynamoTimeout } from '@/storage/dynamo-retry';
 
 export interface DynamoDBKey {

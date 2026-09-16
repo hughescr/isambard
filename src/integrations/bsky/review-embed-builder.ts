@@ -2,21 +2,21 @@ import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'disc
 import { truncate } from 'lodash-es';
 
 export interface BskyReplyApprovalEmbedParams {
-    type:              'reply'
-    text:              string             // the post text to be sent
-    targetHandle:      string             // who we're replying to
-    parentUri?:        string             // AT URI of parent post
-    parentCid?:        string             // CID of parent post
-    rootUri?:          string             // AT URI of root post
-    rootCid?:          string             // CID of root post
-    parentText?:       string             // preview of parent post text (optional)
+    type:         'reply'
+    text:         string             // the post text to be sent
+    targetHandle: string             // who we're replying to
+    parentUri?:   string             // AT URI of parent post
+    parentCid?:   string             // CID of parent post
+    rootUri?:     string             // AT URI of root post
+    rootCid?:     string             // CID of root post
+    parentText?:  string             // preview of parent post text (optional)
 }
 
 export interface BskyDmApprovalEmbedParams {
-    type:              'dm'
-    text:              string             // the DM text to be sent
-    recipientHandles:  string[]           // all recipient handles
-    convoId?:          string             // conversation ID for sending on approval
+    type:             'dm'
+    text:             string             // the DM text to be sent
+    recipientHandles: string[]           // all recipient handles
+    convoId?:         string             // conversation ID for sending on approval
 }
 
 export type BskyApprovalEmbedParams = BskyReplyApprovalEmbedParams | BskyDmApprovalEmbedParams;
