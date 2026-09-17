@@ -37,10 +37,25 @@ case "$(uname)" in
   *)      NICE="" ;;
 esac
 
-# $WAIT and $NICE are intentionally unquoted: empty expands to nothing,
-# and multi-word values must split into separate arguments.
+# Prune stale cached verdicts for *static* mutants before running Stryker. Stryker core's
+# incremental differ only invalidates a cached Survived/NoCoverage mutant when a NEW test
+# covers it — but a static (module-level) mutant has no covering tests at all, so once it
+# survives once, that verdict is reused forever even after a killing test is added. See
+# tools/prune-static-survivors.ts for the full diagnosis.
+#
+# This runs INSIDE the lock (via the `sh -c` wrapper below), not before it: pruning
+# reports/stryker-incremental.json outside the lock could race a concurrent `bun mutate`
+# that is actively reading or writing that same file, which is exactly what the lock
+# exists to prevent. The prune step is idempotent and cheap (~30 entries), so paying for
+# it on every locked run costs nothing measurable.
+#
+# `sh -c "$INNER" sh "$@"` is the standard way to hand a constructed script both a name
+# for $0 and the caller's positional args for "$@" inside that script.
+INNER='bun tools/prune-static-survivors.ts && exec '"$NICE"' stryker run "$@"'
+
+# $WAIT is intentionally unquoted: empty expands to nothing, not an empty argument.
 # shellcheck disable=SC2086
-lockf $WAIT "$LOCKFILE" $NICE stryker run "$@" || {
+lockf $WAIT "$LOCKFILE" sh -c "$INNER" sh "$@" || {
   ec=$?
   if [ "$ec" -eq 75 ]; then
     echo "Another \`bun mutate\` holds the lock; use \`bun mutate:wait\` to wait for it instead of failing." >&2

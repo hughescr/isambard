@@ -260,4 +260,4 @@ Export only what other modules need. Run `bun dead-code` (knip) to verify no unu
 - [ ] Tests for client, history provider, and MCP server with 100% mutation score
 - [ ] `bun run typecheck` — zero errors
 - [ ] `bun run lint` — zero warnings
-- [ ] `bun run mutate` — 100% mutation score for changed files
+- [ ] `bun run mutate` — 100% mutation score for changed files (static/module-level mutants always re-execute locally — `tools/run-stryker.sh` prunes their stale cached verdicts before every run — so a killing test you just added will actually be picked up)
