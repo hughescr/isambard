@@ -51,6 +51,18 @@ describe('cacheDir', () => {
             expect(libIdx).toBeLessThan(cachesIdx);
             expect(cachesIdx).toBeLessThan(llamaIdx);
         });
+
+        // Regression for a wave-3 arbiter finding: starting Bun with a relative HOME makes
+        // os.homedir() return a relative string, so `path.join(home, ...)` yields a relative
+        // path even though cacheDir()'s doc contract promises an absolute one. Bun reads
+        // process.env.HOME only at startup, so a relative HOME can't be simulated by setting
+        // it mid-test; instead we inject the home directly through cacheDir's `home` param.
+        it('resolves a relative injected home to the absolute Library/Caches/llama.cpp path', () => {
+            const result = cacheDir('relative/home');
+            const expected = path.join(path.resolve('relative/home'), 'Library', 'Caches', 'llama.cpp');
+            expect(result).toBe(expected);
+            expect(path.isAbsolute(result)).toBe(true);
+        });
     });
 
     describe('on linux', () => {

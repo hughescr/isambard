@@ -17,20 +17,27 @@ import type { ModelQuant, ModelSlug } from './types.js';
  * On macOS this is ~/Library/Caches/llama.cpp.
  * On Linux (if Izzy ever runs there), falls back to ${XDG_CACHE_HOME:-~/.cache}/llama.cpp.
  * Note: the Linux fallback only matters if Isambard is deployed on Linux.
+ *
+ * @param home - Home directory to build the cache path under. Defaults to `homedir()`;
+ * overridable so tests can pin the absolute-path contract without relying on
+ * `process.env.HOME`, which Bun only reads at startup. Resolved against the process cwd
+ * before use so the returned path is always absolute, even if `home` itself is relative
+ * (as `os.homedir()` can be when Bun is started with a relative `HOME`).
  */
-export function cacheDir(): string {
-    const home = homedir();
+export function cacheDir(home: string = homedir()): string {
+    const resolvedHome = path.resolve(home);
     // macOS
     if(process.platform === 'darwin') {
         // macOS: ~/Library/Caches/llama.cpp (shared with homebrew llama-cli)
-        return path.join(home, 'Library', 'Caches', 'llama.cpp');
+        // Stryker disable next-line llm: home is already absolute via path.resolve, so join/resolve and the embedded-slash form produce the same path
+        return path.join(resolvedHome, 'Library', 'Caches', 'llama.cpp');
     }
     // Linux (XDG or fallback)
     const xdgCache = process.env.XDG_CACHE_HOME;
     // An empty XDG_CACHE_HOME must be treated as unset (XDG Base Directory spec): with `??` the empty
     // value would win and yield the relative path 'llama.cpp', resolved against the process cwd.
     // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty XDG_CACHE_HOME must fall back to ~/.cache per the XDG Base Directory spec, so `||` is intentional here
-    const cacheBase = xdgCache || path.join(home, '.cache');
+    const cacheBase = xdgCache || path.join(resolvedHome, '.cache');
     return path.join(cacheBase, 'llama.cpp');
 }
 
