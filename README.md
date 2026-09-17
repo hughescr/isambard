@@ -144,7 +144,8 @@ The per-turn provider line combines Codex and DeepSeek data from utraque's schem
 | `bun run deploy:running` | Update running worktree from origin |
 | `bun run dev` | Development with hot reload |
 | `bun test` | Run tests |
-| `bun run mutate` | Mutation testing (Stryker) |
+| `bun run mutate` | Mutation testing (Stryker), LLM mutator frozen to cached mutants |
+| `bun run mutate:discover` | Mutation testing with the LLM mutator unfrozen, growing the cache within its per-run budget — see [docs/mutation-testing.md](docs/mutation-testing.md) |
 | `bun run lint` | ESLint check |
 | `bun run typecheck` | TypeScript validation |
 | `bun run sst-dev` | SST development mode |

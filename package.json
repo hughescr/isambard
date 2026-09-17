@@ -23,6 +23,8 @@
     "lint:fix": "eslint --cache --fix --format overview .",
     "lint:overview": "eslint --cache --concurrency=auto --format overview . && bun tools/stryker-directive-check.ts",
     "mutate": "tools/run-stryker.sh",
+    "mutate:discover": "MUTATE_DISCOVER=1 tools/run-stryker.sh",
+    "mutate:discover:wait": "MUTATE_DISCOVER=1 tools/run-stryker.sh --wait",
     "mutate:wait": "tools/run-stryker.sh --wait",
     "sst-deploy": "sst deploy",
     "sst-dev": "sst dev",

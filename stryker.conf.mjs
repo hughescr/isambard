@@ -36,7 +36,7 @@ const strykerConfig = await withMutators({
     warnings:         { slow: false },
     llmMutator:       {
         heuristics: { enabled: true },
-        dynamicLLM: { enabled: !isCI, parallelBatches: 12 },        // costs money, needs credentials
+        dynamicLLM: { enabled: !isCI, frozen: !process.env.MUTATE_DISCOVER, parallelBatches: 12 },        // costs money, needs credentials; frozen (cache-only) at the gate, unfrozen by `bun run mutate:discover` (see docs/mutation-testing.md)
         provider:   'anthropic-agent-sdk',
         cacheDir:   '.stryker-llm-cache',
     },
