@@ -54,6 +54,14 @@ const eslintConfig = [
         }
     },
     {
+        // tools/**/*.ts are dev/ops CLIs (backfills, the mutation-directive checker), never shipped
+        // runtime code — same category as scripts/**, which the base config already allows.
+        files: ['tools/**/*.ts'],
+        rules: {
+            'import-x/no-extraneous-dependencies': ['error', { devDependencies: ['tools/**'] }],
+        },
+    },
+    {
         files: ['eslint.config.mjs', 'eslint-boundaries.config.mjs', 'stryker.conf.mjs'],
         rules: {
             'import-x/no-extraneous-dependencies': ['error', {

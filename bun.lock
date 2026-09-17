@@ -34,6 +34,7 @@
       },
       "devDependencies": {
         "@ast-grep/cli": "^0.45.3",
+        "@babel/parser": "^7.29.8",
         "@hughescr/eslint-config-default": "^6.0.1",
         "@hughescr/eslint-plugin-module-boundaries": "^1.0.0",
         "@hughescr/eslint-plugin-test-hygiene": "^1.0.0",
