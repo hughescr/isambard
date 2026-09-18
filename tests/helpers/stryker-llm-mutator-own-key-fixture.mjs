@@ -12,8 +12,10 @@ const packageName = ['@hughescr', 'stryker-llm-mutator'].join('/');
 const {
     arrayMethodSwapMutator,
     callArgumentTweakMutator,
-    createLlmMutator,
+    classifyMutation,
+    createLlmMutators,
     injectMutators,
+    isLlmMutatorName,
     promiseCombinatorSwapMutator,
     stringMethodArgSwapMutator
 } = await import(packageName);
@@ -110,16 +112,16 @@ const llmMap = new Map(llmCases.map(({ name, source, original, occurrence = 1, c
     assert.ok(offset !== -1);
     return [path.join(process.cwd(), name), new Map([[
         `1:${offset}-1:${offset + original.length}`,
-        candidates.map(replacement => ({ original, replacement })),
+        candidates.map(replacement => ({ original, replacement, category: classifyMutation(original, replacement) })),
     ]])];
 }));
 const drops = [];
-injectMutators([createLlmMutator(llmMap, line => drops.push(line))]);
+injectMutators(createLlmMutators(llmMap, line => drops.push(line)));
 const llmResult = await instrumenter.instrument(llmCases.map(({ name, source }) => ({
     name: path.join(process.cwd(), name), mutate: true, content: source,
 })), options);
 for(const { name, expected } of llmCases) {
-    const actual = llmResult.mutants.filter(mutant => mutant.fileName === path.join(process.cwd(), name) && mutant.mutatorName === 'llm');
+    const actual = llmResult.mutants.filter(mutant => mutant.fileName === path.join(process.cwd(), name) && isLlmMutatorName(mutant.mutatorName));
     assert.deepEqual(actual.map(mutant => mutant.replacement).toSorted(), expected, `${name} lost or mis-placed cached candidates`);
 }
 assert.equal(drops.length, 2);
