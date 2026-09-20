@@ -4,7 +4,8 @@
  * The skill-agent loader syncs agents and skills from a source directory
  * to the scratch/.claude/ directory structure for Claude Agent SDK.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn, jest } from 'bun:test';
+import * as fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 import { syncAgentsAndSkills } from '@/agent/skill-agent-loader';
@@ -30,6 +31,7 @@ describe('syncAgentsAndSkills', () => {
     afterEach(async () => {
         // Clean up mock filesystem
         resetMockFs();
+        jest.restoreAllMocks();
     });
 
     test('should create target agents and skills directories if they do not exist', async () => {
@@ -348,13 +350,23 @@ describe('syncAgentsAndSkills', () => {
             await mockFsPromises.mkdir(child, { recursive: true });
             await mockFsPromises.writeFile(path.join(child, 'AGENT.md'), '# Agent');
         }));
-        const releaseCopies = Promise.withResolvers<void>();
+        // mockFsPromises does not define copyFile, so the loader would otherwise reach the real
+        // node:fs/promises.copyFile: a libuv round-trip whose ENOENT lands on a later macrotask,
+        // racing the checkpoint below. Reject it on the microtask queue so the whole copy chain
+        // is driven by promises this test controls.
+        const cloneUnsupported = new Error('ENOTSUP: clone unsupported') as NodeJS.ErrnoException;
+        cloneUnsupported.code = 'ENOTSUP';
+        spyOn(fsPromises, 'copyFile').mockImplementation(() => Promise.reject(cloneUnsupported));
+        const readFileImpl = mockFsPromises.readFile.getMockImplementation()!;
+        const heldReads: PromiseWithResolvers<void>[] = [];
         let active = 0;
         let peak = 0;
         mockFsPromises.readFile.mockImplementation(async () => {
+            const gate = Promise.withResolvers<void>();
+            heldReads.push(gate);
             active++;
             peak = Math.max(peak, active);
-            await releaseCopies.promise;
+            await gate.promise;
             active--;
             return '# Agent';
         });
@@ -362,11 +374,23 @@ describe('syncAgentsAndSkills', () => {
         const operation = syncAgentsAndSkills(tempSourceRoot, tempTargetRoot);
         try {
             await waitForEventLoopCheckpoint();
+            // Exactly the limit is admitted at once: not serialized, not unbounded.
+            expect(heldReads).toHaveLength(8);
+            expect(peak).toBe(8);
+            // The ninth copy starts only once one of the admitted eight has finished.
+            heldReads[0].resolve();
+            await waitForEventLoopCheckpoint();
+            expect(heldReads).toHaveLength(9);
+            expect(active).toBe(8);
             expect(peak).toBe(8);
         } finally {
-            releaseCopies.resolve();
+            mockFsPromises.readFile.mockImplementation(readFileImpl);
+            for(const gate of heldReads) {
+                gate.resolve();
+            }
             await operation;
         }
+        expect(peak).toBe(8);
         const listings = await Promise.all(Array.from({ length: 12 }, (_, index) =>
             mockFsPromises.readdir(path.join(tempTargetRoot, 'agents', `nested-${index}`))));
         expect(listings.every(names => names.includes('AGENT.md'))).toBe(true);

@@ -6,7 +6,7 @@
  * wrapped so a settled `perch`/`wrapup` turn's response is delivered to the well-known
  * `perch-time` channel.
  */
-import { afterEach, describe, expect, it, jest, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import { mockLogger } from '../../../../setup';
 import * as agentModule from '@/agent';
 import type { PerchConfig, TurnResult } from '@/agent';
@@ -60,6 +60,14 @@ function deliveryDeps(overrides: Record<string, unknown> = {}): Pick<SetupParams
 }
 
 describe('setupPerchDriverAndScheduler', () => {
+    // The shared `mockLogger` preload singleton can arrive carrying calls recorded by
+    // whichever randomly-ordered file ran before this one; the `not.toHaveBeenCalled()`
+    // assertions below must only see this test's own calls.
+    beforeEach(() => {
+        mockLogger.error.mockClear();
+        mockLogger.info.mockClear();
+    });
+
     afterEach(() => {
         jest.restoreAllMocks();
         mockLogger.error.mockClear();

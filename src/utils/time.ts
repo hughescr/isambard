@@ -151,6 +151,7 @@ export function resolveTimezone(userTimezone?: string): string {
     }
 
     try {
+        // Stryker disable next-line llm: Luxon's zoneName getter returns `this.isValid ? this.zone.name : null`; DateTime.local() with no arguments always yields a valid DateTime, so `.zoneName` and `.zone.name` are observationally identical here.
         return DateTime.local().zoneName;
     } catch{
         // Silent: DateTime.local().zoneName throws only on extreme misconfiguration where the system timezone

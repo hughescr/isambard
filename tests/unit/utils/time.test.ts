@@ -481,6 +481,35 @@ describe('formatTimeHeader', () => {
         }
     });
 
+    test('gives Izzy her own time-of-day bucket, distinct from the user\'s', () => {
+        const originalTimezone = process.env.TZ;
+        process.env.TZ = 'UTC';
+
+        try {
+            // FIXED_TIME is 2026-02-09T22:30:00.000Z. Izzy's zone (forced to UTC via TZ) sees
+            // hour 22 -> 'night'. America/Los_Angeles is fixed at UTC-8 in tests/setup.ts's
+            // Intl.DateTimeFormat mock (no DST), so it sees hour (22 - 8) = 14 -> 'afternoon'.
+            // The two zones land in different getTimeOfDay buckets so a mix-up between
+            // izzyTimezone and userTimezone in formatTimeHeader is observable.
+            const result = formatTimeHeader('America/Los_Angeles');
+            const lines = result.split('\n');
+
+            expect(lines[2]).toStartWith('- Izzy: ');
+            expect(lines[2]).toContain('UTC');
+            expect(lines[2]).toContain('night');
+
+            expect(lines[3]).toStartWith('- User: ');
+            expect(lines[3]).toContain('America/Los_Angeles');
+            expect(lines[3]).toContain('afternoon');
+        } finally {
+            if(originalTimezone === undefined) {
+                delete process.env.TZ;
+            } else {
+                process.env.TZ = originalTimezone;
+            }
+        }
+    });
+
     test('should format User line with local time, timezone, day of week, and time of day when different from server', () => {
         const serverTz = resolveTimezone();
         const differentTz = serverTz === 'Europe/London' ? 'America/New_York' : 'Europe/London';

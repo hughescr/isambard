@@ -11,7 +11,7 @@
  * - A DiscordCapability facade routes chunks through the outbox with the right item type
  */
 
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { Client, TextChannel } from 'discord.js';
 import { mockLogger } from '../../../setup';
 import { InvariantViolationError } from '@/errors';
@@ -34,6 +34,7 @@ describe('sendEnvelopeResponse', () => {
     beforeEach(() => {
         mockLogger.info.mockClear();
         mockLogger.warn.mockClear();
+        mockLogger.error.mockClear();
         mockResolveEnvelopeTarget = mock();
         mockResponseRouter = {
             resolveEnvelopeTarget: mockResolveEnvelopeTarget,
@@ -56,6 +57,17 @@ describe('sendEnvelopeResponse', () => {
                 fetch: mock(async () => mockTargetChannel),
             },
         } as unknown as Client;
+    });
+
+    // `mockLogger` is the suite-wide preload singleton shared by every test file, and
+    // `bunfig.toml` randomizes file order. The missing-well-known-channel tests below
+    // drive `logger.error`; leaving those calls recorded lets them surface in whichever
+    // file happens to run next (seen as an order-dependent failure of perch-setup's
+    // `not.toHaveBeenCalled()` sentinel test under `--seed 1072740724`).
+    afterEach(() => {
+        mockLogger.info.mockClear();
+        mockLogger.warn.mockClear();
+        mockLogger.error.mockClear();
     });
 
     test('sends chunks to the resolved channel', async () => {
