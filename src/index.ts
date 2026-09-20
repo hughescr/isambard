@@ -384,7 +384,7 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
         logger,
         quota:    {
             fetch:                globalThis.fetch,
-            url:                  `${gateway.baseUrl.replace(/\/$/, '')}/v1/utraque/providers`,
+            url:                  `${gateway.baseUrl.replace(/\/$/, '')}/utraque/providers/v2`,
             headers:              providerHeaders,
             preferProviderReport: gateway.enabled,
             anthropicQuotaSource: 'sdk',

@@ -21,13 +21,13 @@ type JsonValue = boolean | number | string | null | JsonObject | JsonValue[];
 interface JsonObject { [key: string]: JsonValue | undefined }
 
 function observation(overrides: Partial<ProviderObservation> = {}): ProviderObservation {
-    return { source: 'codex', collectedAt: NOW, available: true, quotas: [], balances: [], spendControls: [], ...overrides };
+    return { collectedAt: NOW, available: true, quotas: [], balances: [], spendLimits: [], ...overrides };
 }
 
 function provider(overrides: Partial<ProviderStatus> = {}): ProviderStatus {
     return {
         provider:    'codex', status:      'ok', lastAttempt: NOW,
-        freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quotaAfter:  observation(), ...overrides,
+        freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quota:       observation(), ...overrides,
     };
 }
 
@@ -36,7 +36,7 @@ function snapshot(providers: readonly ProviderStatus[], overrides: Partial<Provi
 }
 
 function quota(overrides: Partial<ProviderQuota> = {}): ProviderQuota {
-    return { id: 'limit', usedPercent: 35, resetsAt: THU_0900, ...overrides };
+    return { id: 'limit', bucket: 'limit', kind: 'other', usedPercent: 35, resetsAt: THU_0900, ...overrides };
 }
 
 function tokens(overrides: Partial<ProviderTokenMix> = {}): ProviderTokenMix {
@@ -46,7 +46,7 @@ function tokens(overrides: Partial<ProviderTokenMix> = {}): ProviderTokenMix {
 function history(providerName: string, overrides: Partial<ProviderHistory> = {}): ProviderHistory {
     const recentTokens = tokens({ inputTokens: 700, outputTokens: 1400, cacheCreationTokens: 2100, cacheReadTokens: 2800, totalTokens: 7000 });
     return {
-        source:       'ccusage', coverage:     'local_only', costBasis:    'calculated_api_reference_usd',
+        collector:    'ccusage', coverage:     'local_only', costBasis:    'calculated_api_reference_usd',
         startedAt:    new Date('2026-09-09T22:06:00Z'), finishedAt:   NOW,
         recentSince:  new Date('2026-09-03T00:00:00Z'), recentUntil:  new Date('2026-09-09T00:00:00Z'), recentDays:   7,
         recentTokens,
@@ -64,7 +64,7 @@ function prices(providerName: string, models: ProviderReferencePrices['models'] 
     model: `${providerName}-cheap`, input: 1, output: 1, cacheRead: 1, cacheWrite: 1, eligible: true,
 }]): ProviderReferencePrices {
     return {
-        source: 'models.dev', observedAt: NOW, stale: false, unit: 'usd_per_million_tokens', models, assumptions: ['base_tier'],
+        catalog: 'models.dev', observedAt: NOW, stale: false, unit: 'usd_per_million_tokens', models, assumptions: ['base_tier'],
     };
 }
 
@@ -104,31 +104,41 @@ function quotaLineJson(line: string): JsonObject {
 describe('provider quota JSON', () => {
     it.each([[1_209_600, '2w'], [172_800, '2d'], [7200, '2h'], [90, '90s'], [-1800, '-1800s']] as const)(
         'renders a %s-second duration as %s', (durationSeconds, window) => {
-            const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota({ durationSeconds })] }) })]));
+            const data = providerJson(snapshot([provider({ quota: observation({ quotas: [quota({ durationSeconds })] }) })]));
             expect(object(array(data.quotas)[0]).window).toBe(window);
         }
     );
 
     it.each([
-        ['session kind', { id: 'limit', kind: 'session' }, '5h'],
-        ['five-hour kind', { id: 'limit', kind: 'five_hour' }, '5h'],
-        ['session id', { id: 'session' }, '5h'],
-        ['five-hour id', { id: 'five_hour' }, '5h'],
-        ['weekly kind', { id: 'limit', kind: 'weekly_all' }, '1w'],
-        ['seven-day kind', { id: 'limit', kind: 'seven_day_team' }, '1w'],
-        ['weekly id', { id: 'weekly_all' }, '1w'],
-        ['seven-day id', { id: 'seven_day_team' }, '1w'],
-        ['unrecognized kind', { id: 'limit', kind: 'daily_custom' }, undefined],
-        ['unknown id', { id: 'monthly' }, undefined],
-        ['weekly inside id', { id: 'custom_weekly_all' }, undefined],
-        ['seven-day inside id', { id: 'custom_seven_day_team' }, undefined],
-    ] as const)('infers the window from the %s alone', (_case, identity, expected) => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota(identity)] }) })]));
+        ['session', '5h'],
+        ['weekly', '1w'],
+        ['weekly_scoped', '1w'],
+        ['other', undefined],
+    ] as const)('infers the window from a `%s` kind when the duration is absent', (kind, expected) => {
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [quota({ id: 'codex:primary', bucket: 'codex', kind })] }) })]));
+        expect(object(array(data.quotas)[0]).window).toBe(expected);
+    });
+
+    it.each([
+        ['session', 'five_hour'], ['session', 'session'], ['weekly', 'weekly_all'], ['seven-day', 'seven_day_team'],
+    ] as const)('no longer infers a window from a legacy %s id', (_case, id) => {
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [quota({ id, bucket: id, kind: 'other' })] }) })]));
+        expect(object(array(data.quotas)[0]).window).toBeUndefined();
+    });
+
+    it.each([
+        ['a week-long `session`', 'session', 604_800, '1w'],
+        ['a five-hour `weekly`', 'weekly', 18_000, '5h'],
+    ] as const)('lets the reported duration win over the kind for %s', (_case, kind, durationSeconds, expected) => {
+        // Live Codex Pro labels its one-week window `session`: kind is assigned by slot position, not by duration.
+        const data = providerJson(snapshot([provider({ quota: observation({
+            quotas: [quota({ id: 'codex:primary', bucket: 'codex', kind, slot: 'primary', durationSeconds })],
+        }) })]));
         expect(object(array(data.quotas)[0]).window).toBe(expected);
     });
 
     it('uses explicit UTC timestamps and preserves fractional percentages', () => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({
+        const data = providerJson(snapshot([provider({ quota: observation({
             quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 35.25 })],
         }) })]));
         expect(data.observed_at).toBe('2026-09-09T22:07:00.000Z');
@@ -139,16 +149,17 @@ describe('provider quota JSON', () => {
     });
 
     it('infers known 5h and 1w windows when duration is absent', () => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [
-            quota({ id: 'session', kind: 'session' }), quota({ id: 'weekly_all', kind: 'weekly_all' }),
-            quota({ id: 'seven_day', kind: 'seven_day' }),
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
+            quota({ id: 'codex:primary', bucket: 'codex', kind: 'session', slot: 'primary' }),
+            quota({ id: 'codex:secondary', bucket: 'codex', kind: 'weekly', slot: 'secondary' }),
+            quota({ id: 'codex_team:secondary:gpt-5', bucket: 'codex_team', kind: 'weekly_scoped', slot: 'secondary' }),
         ] }) })]));
         expect(array(data.quotas).map(value => object(value).window)).toEqual(['5h', '1w', '1w']);
     });
 
     it('retains meaningful scope labels while omitting a redundant slot', () => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota({
-            id:    'weekly_primary', name:  'Weekly primary', group: 'general', slot:  'primary',
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [quota({
+            id:    'weekly_primary', name:  'Weekly primary', kind:  'weekly', group: 'general', slot:  'primary',
             scope: { model: { id: 'gpt-5', displayName: 'GPT Five' }, surface: { id: 'chat', displayName: 'Chat UI' } },
         })] }) })]));
         expect(array(data.quotas)).toEqual([{
@@ -158,26 +169,35 @@ describe('provider quota JSON', () => {
         }]);
     });
 
-    it('retains a slot only when duplicate id and window buckets need it', () => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [
-            quota({ id: 'shared', durationSeconds: 18_000, slot: 'primary' }),
-            quota({ id: 'shared', durationSeconds: 18_000, slot: 'secondary' }),
+    it('labels the slot when two rows share a bucket, whatever their windows', () => {
+        // Codex reports `codex:primary` (5h) and `codex:secondary` (1w) against the one `codex` bucket.
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
+            quota({ id: 'codex:primary', bucket: 'codex', kind: 'session', slot: 'primary', durationSeconds: 18_000 }),
+            quota({ id: 'codex:secondary', bucket: 'codex', kind: 'weekly', slot: 'secondary', durationSeconds: 604_800 }),
         ] }) })]));
-        expect(array(data.quotas).map(value => object(object(value).scope).slot)).toEqual(['primary', 'secondary']);
+        expect(array(data.quotas).map(value => object(value).scope)).toEqual([{ slot: 'primary' }, { slot: 'secondary' }]);
+    });
+
+    it('omits the slot from a lone Codex row', () => {
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
+            quota({ id: 'codex:primary', bucket: 'codex', kind: 'session', slot: 'primary', durationSeconds: 604_800 }),
+        ] }) })]));
+        expect(array(data.quotas)).toEqual([{
+            id: 'codex:primary', window: '1w', used_percent: 35, remaining_percent: 65, resets_at: '2026-09-10T17:00:00.000Z',
+        }]);
     });
 
     it.each([
-        ['no slot', quota({ id: 'shared', durationSeconds: 18_000 }), quota({ id: 'shared', durationSeconds: 18_000, slot: 'secondary' })],
-        ['different id', quota({ id: 'shared', durationSeconds: 18_000, slot: 'primary' }), quota({ id: 'other', durationSeconds: 18_000, slot: 'secondary' })],
-        ['different window', quota({ id: 'shared', durationSeconds: 18_000, slot: 'primary' }), quota({ id: 'shared', durationSeconds: 604_800, slot: 'secondary' })],
-        ['same slot', quota({ id: 'shared', durationSeconds: 18_000, slot: 'primary' }), quota({ id: 'shared', durationSeconds: 18_000, slot: 'primary' })],
+        ['no slot', quota({ id: 'codex', bucket: 'codex' }), quota({ id: 'codex:secondary', bucket: 'codex', slot: 'secondary' })],
+        ['different bucket', quota({ id: 'codex:primary', bucket: 'codex', slot: 'primary' }), quota({ id: 'codex_team:secondary', bucket: 'codex_team', slot: 'secondary' })],
+        ['same slot', quota({ id: 'codex:primary', bucket: 'codex', slot: 'primary' }), quota({ id: 'codex:primary:gpt-5', bucket: 'codex', slot: 'primary' })],
     ] as const)('omits a slot when there is %s', (_case, current, candidate) => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [current, candidate] }) })]));
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [current, candidate] }) })]));
         expect(object(array(data.quotas)[0]).scope).toBeUndefined();
     });
 
     it('retains each scope label field independently and omits empty labels', () => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
             quota({ id: 'one', scope: { model: { id: 'o3' } } }),
             quota({ id: 'two', scope: { surface: { displayName: 'API' } } }),
             quota({ id: 'three', group: 'general' }),
@@ -190,7 +210,7 @@ describe('provider quota JSON', () => {
     });
 
     it('omits optional quota identity and reset fields exactly when absent or redundant', () => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
             quota({ id: 'same', name: 'same', resetsAt: undefined }), quota({ id: 'unnamed', name: undefined, resetsAt: undefined }),
         ] }) })]));
         expect(data.quotas).toEqual([
@@ -200,7 +220,7 @@ describe('provider quota JSON', () => {
     });
 
     it('renders inactive, expired, and active quota states distinctly', () => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
             quota({ id: 'disabled', active: false }), quota({ id: 'expired', resetsAt: NOW }),
             quota({ id: 'active', resetsAt: new Date(NOW.getTime() + 1) }),
         ] }) })]));
@@ -210,38 +230,50 @@ describe('provider quota JSON', () => {
         ]);
     });
 
-    it('filters the retired Spark meter only from Codex and retains shared Codex quota', () => {
-        const spark = quota({ id: 'codex_bengalfox', name: 'GPT-5.3-Codex-Spark', scope: { model: { displayName: 'GPT-5.3-Codex-Spark' } } });
-        const shared = quota({ id: 'codex_shared', name: 'Shared Codex' });
+    it('filters the retired Spark bucket only from Codex and retains shared Codex quota', () => {
+        const spark = quota({
+            id:     'codex_bengalfox:primary', bucket: 'codex_bengalfox', kind:   'session', slot:   'primary',
+            name:   'GPT-5.3-Codex-Spark', scope:  { model: { displayName: 'GPT-5.3-Codex-Spark' } },
+        });
+        const shared = quota({ id: 'codex:primary', bucket: 'codex', kind: 'session', slot: 'primary' });
         const data = renderJson(snapshot([
-            provider({ quotaAfter: observation({
-                quotas:        [spark, shared],
-                balances:      [{ kind: 'requests', scopeId: 'codex_bengalfox', total: '7' }, { kind: 'requests', scopeId: 'codex_shared', total: '93' }],
-                spendControls: [{ scopeId: 'codex_bengalfox', reached: true }, { scopeId: 'codex_shared', reached: true }],
+            provider({ quota: observation({
+                quotas:   [spark, shared],
+                balances: [
+                    { kind: 'workspace_credits', limitId: 'codex_bengalfox', amountUnit: 'credits', remaining: '7' },
+                    { kind: 'workspace_credits', limitId: 'codex', amountUnit: 'credits', remaining: '93' },
+                    { kind: 'account_balance', currency: 'USD', remaining: '9.35' },
+                ],
+                spendLimits: [{ limitId: 'codex_bengalfox', reached: true }, { limitId: 'codex', reached: true }, { reached: true }],
             }) }),
-            provider({ provider: 'other', quotaAfter: observation({ source: 'other', quotas: [spark] }) }),
+            provider({ provider: 'other', quota: observation({ quotas: [spark] }) }),
         ]));
-        expect(array(object(data.codex).quotas).map(value => object(value).id)).toEqual(['codex_shared']);
-        expect(array(object(data.codex).balances).map(value => object(value).scope_id)).toEqual(['codex_shared']);
-        expect(array(object(data.codex).spend_controls).map(value => object(value).scope_id)).toEqual(['codex_shared']);
-        expect(array(object(data.other).quotas).map(value => object(value).id)).toEqual(['codex_bengalfox']);
+        expect(array(object(data.codex).quotas).map(value => object(value).id)).toEqual(['codex:primary']);
+        expect(array(object(data.codex).balances).map(value => object(value).limit_id)).toEqual(['codex', undefined]);
+        expect(array(object(data.codex).spend_limits)).toEqual([{ limit_id: 'codex', reached: true }, { reached: true }]);
+        expect(array(object(data.other).quotas).map(value => object(value).id)).toEqual(['codex_bengalfox:primary']);
     });
 
     it.each([
-        ['id', quota({ id: 'codex_bengalfox' })],
+        ['bucket', quota({ id: 'different', bucket: 'codex_bengalfox' })],
         ['name', quota({ id: 'different', name: 'GPT-5.3-Codex-Spark' })],
         ['model id', quota({ id: 'different', scope: { model: { id: 'gpt-5.3-codex-spark' } } })],
         ['model display name', quota({ id: 'different', scope: { model: { displayName: 'GPT-5.3-Codex-Spark' } } })],
     ] as const)('filters the verified Spark %s alias', (_case, spark) => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [spark] }) })]));
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [spark] }) })]));
         expect(data.quotas).toBeUndefined();
     });
 
-    it('filters balances and spend controls linked to a Spark alias with a nonstandard id', () => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({
-            quotas:        [quota({ id: 'retired-meter', name: 'GPT-5.3-Codex-Spark' })],
-            balances:      [{ kind: 'requests', scopeId: 'retired-meter', total: '7' }],
-            spendControls: [{ scopeId: 'retired-meter', reached: true }],
+    it('does not filter a Codex row on its id alone', () => {
+        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [quota({ id: 'codex_bengalfox', bucket: 'codex' })] }) })]));
+        expect(array(data.quotas).map(value => object(value).id)).toEqual(['codex_bengalfox']);
+    });
+
+    it('filters balances and spend limits linked to a Spark alias through its bucket, not its id', () => {
+        const data = providerJson(snapshot([provider({ quota: observation({
+            quotas:      [quota({ id: 'retired-meter:primary', bucket: 'retired-meter', slot: 'primary', name: 'GPT-5.3-Codex-Spark' })],
+            balances:    [{ kind: 'workspace_credits', limitId: 'retired-meter', remaining: '7' }],
+            spendLimits: [{ limitId: 'retired-meter', reached: true }],
         }) })]));
         expect(data).toEqual({
             quota_lookup: { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
@@ -250,38 +282,37 @@ describe('provider quota JSON', () => {
     });
 
     it('filters known Spark-scoped Codex rows even when the quota meter is absent', () => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({
+        const data = providerJson(snapshot([provider({ quota: observation({
             balances: [
-                { kind: 'requests', scopeId: 'codex_bengalfox', total: '7' },
-                { kind: 'requests', scopeId: 'codex_shared', total: '93' },
+                { kind: 'workspace_credits', limitId: 'codex_bengalfox', amountUnit: 'credits', remaining: '7' },
+                { kind: 'workspace_credits', limitId: 'codex', amountUnit: 'credits', remaining: '93' },
             ],
-            spendControls: [
-                { scopeId: 'codex_bengalfox', reached: true },
-                { scopeId: 'codex_shared', reached: true },
+            spendLimits: [
+                { limitId: 'codex_bengalfox', reached: true },
+                { limitId: 'codex', reached: true },
             ],
         }) })]));
         expect(data).toEqual({
-            quota_lookup:   { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
-            observed_at:    '2026-09-09T22:07:00.000Z',
-            balances:       [{ kind: 'requests', scope_id: 'codex_shared', total: '93' }],
-            spend_controls: [{ scope_id: 'codex_shared', reached: true }],
+            quota_lookup: { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
+            observed_at:  '2026-09-09T22:07:00.000Z',
+            balances:     [{ kind: 'workspace_credits', limit_id: 'codex', remaining: '93', amount_unit: 'credits' }],
+            spend_limits: [{ limit_id: 'codex', reached: true }],
         });
     });
 
-    it('retains the same scope id when it belongs to a non-Codex provider', () => {
+    it('retains the same limit id when it belongs to a non-Codex provider', () => {
         const data = providerJson(snapshot([provider({
-            provider:   'other',
-            quotaAfter: observation({
-                source:        'other',
-                balances:      [{ kind: 'requests', scopeId: 'codex_bengalfox', total: '7' }],
-                spendControls: [{ scopeId: 'codex_bengalfox', reached: true }],
+            provider: 'other',
+            quota:    observation({
+                balances:    [{ kind: 'requests', limitId: 'codex_bengalfox', remaining: '7' }],
+                spendLimits: [{ limitId: 'codex_bengalfox', reached: true }],
             }),
         })]), 'other');
         expect(data).toEqual({
-            quota_lookup:   { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
-            observed_at:    '2026-09-09T22:07:00.000Z',
-            balances:       [{ kind: 'requests', scope_id: 'codex_bengalfox', total: '7' }],
-            spend_controls: [{ scope_id: 'codex_bengalfox', reached: true }],
+            quota_lookup: { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
+            observed_at:  '2026-09-09T22:07:00.000Z',
+            balances:     [{ kind: 'requests', limit_id: 'codex_bengalfox', remaining: '7' }],
+            spend_limits: [{ limit_id: 'codex_bengalfox', reached: true }],
         });
     });
 });
@@ -298,7 +329,7 @@ describe('rough token estimates', () => {
                 { model: 'gpt-5.6-sol', input: 2, output: 4, cacheRead: 0.2, eligible: true },
                 { model: 'gpt-5.6-luna', input: 1, output: 2, cacheRead: 0.1, eligible: true },
             ]),
-            quotaAfter: observation({ quotas: [
+            quota: observation({ quotas: [
                 quota({ id: 'five_hour', group: 'session', durationSeconds: 18_000, usedPercent: 20, resetsAt: ESTIMATE_RESET }),
                 quota({ id: 'weekly', group: 'weekly', durationSeconds: 604_800, usedPercent: 35 }),
             ] }),
@@ -307,13 +338,13 @@ describe('rough token estimates', () => {
         const data = providerJson(report);
         expect(data.estimates).toEqual({
             history: {
-                source:           'ccusage', coverage:         'local_only', cost_basis:       'calculated_api_reference_usd',
+                collector:        'ccusage', coverage:         'local_only', cost_basis:       'calculated_api_reference_usd',
                 finished_at:      '2026-09-09T22:07:00.000Z',
                 recent_7d_tokens: { input: 700, output: 1400, cache_creation: 2100, cache_read: 2800, total: 7000 },
                 recent_7d_period: { since: '2026-09-03T00:00:00.000Z', until: '2026-09-09T00:00:00.000Z' },
             },
             reference_prices: {
-                source:      'models.dev', observed_at: '2026-09-09T22:07:00.000Z', unit:        'usd_per_million_tokens',
+                catalog:     'models.dev', observed_at: '2026-09-09T22:07:00.000Z', unit:        'usd_per_million_tokens',
                 assumptions: ['base_tier'],
             },
         });
@@ -350,7 +381,7 @@ describe('rough token estimates', () => {
                 { model: 'gpt-5.6-luna', input: 1, output: 2, cacheRead: 0.1, eligible: true },
                 { model: 'gpt-5.6-sol', input: 2, output: 4, cacheRead: 0.2, eligible: true },
             ]),
-            quotaAfter: observation({ quotas: [quota({
+            quota: observation({ quotas: [quota({
                 id: 'sol-weekly', durationSeconds: 604_800, scope: { model: { id: 'router-sol', displayName: 'GPT-5.6-SOL' } },
             })] }),
         })]));
@@ -366,8 +397,8 @@ describe('rough token estimates', () => {
             history: history('codex', {
                 recentModels: [{ model: 'gpt-5.6-sol', tokens: sample, costUsd: 0.002 }],
             }),
-            prices:     prices('codex', [{ model: 'gpt-5.6-sol', input: 2, output: 4, cacheRead: 0.2, eligible: true }]),
-            quotaAfter: observation({ quotas: [quota({
+            prices: prices('codex', [{ model: 'gpt-5.6-sol', input: 2, output: 4, cacheRead: 0.2, eligible: true }]),
+            quota:  observation({ quotas: [quota({
                 id: 'sol-weekly', durationSeconds: 604_800, scope: { model: { id: 'GPT-5.6-SOL' } },
             })] }),
         })]));
@@ -382,8 +413,8 @@ describe('rough token estimates', () => {
         ['unknown group', { group: 'special' }],
     ] as const)('omits an estimate for an unmapped %s scope', (_case, scope) => {
         const data = providerJson(snapshot([provider({
-            history:    history('codex'), prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, ...scope })] }),
+            history: history('codex'), prices:  prices('codex'),
+            quota:   observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, ...scope })] }),
         })]));
 
         expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
@@ -391,8 +422,8 @@ describe('rough token estimates', () => {
 
     it('omits an estimate when a provider does not identify the quota window', () => {
         const data = providerJson(snapshot([provider({
-            history:    history('codex'), prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [quota({ id: 'custom', kind: 'custom', resetsAt: ESTIMATE_RESET })] }),
+            history: history('codex'), prices:  prices('codex'),
+            quota:   observation({ quotas: [quota({ id: 'custom', kind: 'other', resetsAt: ESTIMATE_RESET })] }),
         })]));
 
         expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
@@ -400,8 +431,8 @@ describe('rough token estimates', () => {
 
     it('omits a model-scoped weekly estimate with no matching local history', () => {
         const data = providerJson(snapshot([provider({
-            history:    history('codex'), prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [quota({
+            history: history('codex'), prices:  prices('codex'),
+            quota:   observation({ quotas: [quota({
                 id: 'unknown-weekly', durationSeconds: 604_800, scope: { model: { id: 'unknown-model' } },
             })] }),
         })]));
@@ -418,7 +449,7 @@ describe('rough token estimates', () => {
                 { model: 'gpt-5.6-luna', input: 1, output: 2, cacheRead: 0.1, eligible: true },
                 { model: 'gpt-5.6-sol', input: 2, output: 4, cacheRead: 0.2, eligible: true },
             ]),
-            quotaAfter: observation({ quotas: [quota({
+            quota: observation({ quotas: [quota({
                 id:              'sol-five-hour', durationSeconds: 18_000, usedPercent:     20, resetsAt:        ESTIMATE_RESET,
                 scope:           { model: { id: 'gpt-5.6-sol' } },
             })] }),
@@ -434,7 +465,7 @@ describe('rough token estimates', () => {
                 { model: 'z-model', input: 1, output: 1, cacheRead: 1, eligible: true },
                 { model: 'a-model', input: 1, output: 1, cacheRead: 1, eligible: true },
             ]),
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+            quota: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         })]));
 
         expect(object(array(data.quotas)[0]).estimate_model).toBe('a-model');
@@ -460,9 +491,9 @@ describe('rough token estimates', () => {
             blocks: [{ ...history('codex').blocks[0], ...blockOverride }],
         });
         const data = providerJson(snapshot([provider({
-            history:    reportHistory,
-            prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [
+            history: reportHistory,
+            prices:  prices('codex'),
+            quota:   observation({ quotas: [
                 quota({ id: 'five_hour', durationSeconds: 18_000, usedPercent: 20, resetsAt: ESTIMATE_RESET }),
                 quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 35 }),
             ] }),
@@ -478,8 +509,8 @@ describe('rough token estimates', () => {
         ['no used models', { recentModels: [] }],
     ] as const)('omits a weekly estimate with %s', (_case, historyOverride) => {
         const data = providerJson(snapshot([provider({
-            history:    history('codex', historyOverride), prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+            history: history('codex', historyOverride), prices:  prices('codex'),
+            quota:   observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         })]));
 
         expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBeUndefined();
@@ -494,8 +525,8 @@ describe('rough token estimates', () => {
                     used,
                 ],
             }),
-            prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+            prices: prices('codex'),
+            quota:  observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         })]));
 
         expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBe(13_000);
@@ -508,8 +539,8 @@ describe('rough token estimates', () => {
                 recentTokens: oneToken,
                 recentModels: [{ model: 'one-token', tokens: oneToken, costUsd: 1 }],
             }),
-            prices:     prices('codex', [{ model: 'one-token', input: 1, output: 1, eligible: true }]),
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 50 })] }),
+            prices: prices('codex', [{ model: 'one-token', input: 1, output: 1, eligible: true }]),
+            quota:  observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 50 })] }),
         })]));
 
         expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBe(1_000_000);
@@ -526,8 +557,8 @@ describe('rough token estimates', () => {
                     { model: 'output-model', tokens: outputOnly, costUsd: 0.6 },
                 ],
             }),
-            prices:     prices('codex', [{ model: 'mixed-price', input: 1, output: 2, eligible: true }]),
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 50 })] }),
+            prices: prices('codex', [{ model: 'mixed-price', input: 1, output: 2, eligible: true }]),
+            quota:  observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 50 })] }),
         })]));
 
         expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBe(600_000);
@@ -535,8 +566,8 @@ describe('rough token estimates', () => {
 
     it('renders zero remaining at a full bucket and omits an estimate before there is a usable ratio', () => {
         const data = providerJson(snapshot([provider({
-            history:    history('codex'), prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [
+            history: history('codex'), prices:  prices('codex'),
+            quota:   observation({ quotas: [
                 quota({ id: 'empty', durationSeconds: 604_800, usedPercent: 0 }),
                 quota({ id: 'full', durationSeconds: 604_800, usedPercent: 100 }),
             ] }),
@@ -548,12 +579,12 @@ describe('rough token estimates', () => {
 
     it('estimates the one-percent boundary and suppresses lower or overflowing ratios', () => {
         const subOnePercent = providerJson(snapshot([provider({
-            history:    history('codex'), prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [quota({ id: 'sub-one-percent', durationSeconds: 604_800, usedPercent: 0.5 })] }),
+            history: history('codex'), prices:  prices('codex'),
+            quota:   observation({ quotas: [quota({ id: 'sub-one-percent', durationSeconds: 604_800, usedPercent: 0.5 })] }),
         })]));
         const onePercent = providerJson(snapshot([provider({
-            history:    history('codex'), prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [quota({ id: 'one-percent', durationSeconds: 604_800, usedPercent: 1 })] }),
+            history: history('codex'), prices:  prices('codex'),
+            quota:   observation({ quotas: [quota({ id: 'one-percent', durationSeconds: 604_800, usedPercent: 1 })] }),
         })]));
         const overflow = providerJson(snapshot([provider({
             history: history('codex', {
@@ -563,7 +594,7 @@ describe('rough token estimates', () => {
                 { model: 'ordinary', input: 1, output: 1, cacheRead: 1, eligible: true },
                 { model: 'overflowing', input: Number.MAX_VALUE, output: Number.MAX_VALUE, cacheRead: Number.MAX_VALUE, eligible: true },
             ]),
-            quotaAfter: observation({ quotas: [quota({
+            quota: observation({ quotas: [quota({
                 id: 'overflow', durationSeconds: 604_800, usedPercent: 35, scope: { model: { id: 'overflowing' } },
             })] }),
         })]));
@@ -573,8 +604,8 @@ describe('rough token estimates', () => {
                     model: 'codex-history-model', tokens: history('codex').recentTokens, costUsd: Number.MAX_VALUE / 1_000_000,
                 }],
             }),
-            prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [quota({ id: 'rounding-overflow', durationSeconds: 604_800, usedPercent: 50 })] }),
+            prices: prices('codex'),
+            quota:  observation({ quotas: [quota({ id: 'rounding-overflow', durationSeconds: 604_800, usedPercent: 50 })] }),
         })]));
 
         expect(object(array(subOnePercent.quotas)[0])).toEqual({
@@ -602,8 +633,8 @@ describe('rough token estimates', () => {
                 recentTokens: unitInput,
                 recentModels: [{ model: 'boundary', tokens: unitInput, costUsd }],
             }),
-            prices:     prices('codex', [{ model: 'boundary', input: 1, output: 1, eligible: true }]),
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 50 })] }),
+            prices: prices('codex', [{ model: 'boundary', input: 1, output: 1, eligible: true }]),
+            quota:  observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 50 })] }),
         })]));
 
         expect(object(array(data.quotas)[0]).estimate_tokens_remaining).toBe(expected);
@@ -614,14 +645,14 @@ describe('rough token estimates', () => {
             model: 'shared-model', input: 1, output: 1, cacheRead: 1, cacheWrite: 10, eligible: true,
         }];
         const anthropic = provider({
-            provider:   'anthropic', history:    history('anthropic'), prices:     prices('anthropic', referenceModels),
-            quotaAfter: observation({
-                source: 'anthropic', quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })],
+            provider: 'anthropic', history:  history('anthropic'), prices:   prices('anthropic', referenceModels),
+            quota:    observation({
+                quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })],
             }),
         });
         const codex = provider({
-            history:    history('codex'), prices:     prices('codex', referenceModels),
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+            history: history('codex'), prices:  prices('codex', referenceModels),
+            quota:   observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         });
 
         expect(object(array(providerJson(snapshot([anthropic]), 'anthropic').quotas)[0]).estimate_tokens_remaining).toBe(3500);
@@ -634,7 +665,7 @@ describe('rough token estimates', () => {
             prices:   prices('anthropic', [{
                 model: 'gpt-5.5', input: 1, output: 1, cacheRead: 1, cacheWrite: 1, eligible: true,
             }]),
-            quotaAfter: observation({ source: 'anthropic', quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+            quota: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         });
 
         expect(object(array(providerJson(snapshot([anthropic]), 'anthropic').quotas)[0]).estimate_model).toBe('gpt-5.5');
@@ -648,8 +679,8 @@ describe('rough token estimates', () => {
         });
         const price = { model: 'shared-model', input: 1, output: 1, eligible: true };
         const usable = provider({
-            provider:   'anthropic', history:    noCacheHistory, prices:     prices('anthropic', [price]),
-            quotaAfter: observation({ source: 'anthropic', quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+            provider: 'anthropic', history:  noCacheHistory, prices:   prices('anthropic', [price]),
+            quota:    observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         });
         const missingUsedRate = provider({
             ...usable,
@@ -671,11 +702,10 @@ describe('rough token estimates', () => {
             recentModels: [{ model: 'shared-model', tokens: tokenMix, costUsd: 0.0003 }],
         });
         const status = provider({
-            provider:   providerName,
-            history:    oneTokenCacheHistory,
-            prices:     prices(providerName, [price]),
-            quotaAfter: observation({
-                source: providerName,
+            provider: providerName,
+            history:  oneTokenCacheHistory,
+            prices:   prices(providerName, [price]),
+            quota:    observation({
                 quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })],
             }),
         });
@@ -693,7 +723,7 @@ describe('rough token estimates', () => {
                 { model: 'underflow', input: Number.MIN_VALUE, output: Number.MIN_VALUE, eligible: true },
                 { model: 'usable', input: 1, output: 1, eligible: true },
             ]),
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+            quota: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         })]));
 
         expect(object(array(data.quotas)[0])).toMatchObject({
@@ -709,7 +739,7 @@ describe('rough token estimates', () => {
 
         expect(data.estimates).toEqual({
             reference_prices: {
-                source: 'models.dev', observed_at: '2026-09-09T22:07:00.000Z', stale: true, unit: 'usd_per_million_tokens',
+                catalog: 'models.dev', observed_at: '2026-09-09T22:07:00.000Z', stale: true, unit: 'usd_per_million_tokens',
             },
         });
     });
@@ -718,7 +748,7 @@ describe('rough token estimates', () => {
         const data = providerJson(snapshot([provider({ history: history('codex') })]));
 
         expect(object(data.estimates).history).toEqual({
-            source:           'ccusage', coverage:         'local_only', cost_basis:       'calculated_api_reference_usd',
+            collector:        'ccusage', coverage:         'local_only', cost_basis:       'calculated_api_reference_usd',
             finished_at:      '2026-09-09T22:07:00.000Z',
             recent_7d_tokens: { input: 700, output: 1400, cache_creation: 2100, cache_read: 2800, total: 7000 },
             recent_7d_period: { since: '2026-09-03T00:00:00.000Z', until: '2026-09-09T00:00:00.000Z' },
@@ -727,13 +757,13 @@ describe('rough token estimates', () => {
 
     it('keeps price provenance and live quota when local history is absent', () => {
         const data = providerJson(snapshot([provider({
-            prices:     prices('codex'),
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+            prices: prices('codex'),
+            quota:  observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         })]));
 
         expect(data.estimates).toEqual({
             reference_prices: {
-                source:      'models.dev', observed_at: '2026-09-09T22:07:00.000Z', unit:        'usd_per_million_tokens',
+                catalog:     'models.dev', observed_at: '2026-09-09T22:07:00.000Z', unit:        'usd_per_million_tokens',
                 assumptions: ['base_tier'],
             },
         });
@@ -742,16 +772,16 @@ describe('rough token estimates', () => {
 
     it('keeps live quota but suppresses estimates when the local history section failed', () => {
         const data = providerJson(snapshot([provider({
-            history:    history('codex'),
-            prices:     prices('codex'),
-            errors:     [{ section: 'history', code: 'timed_out' }],
-            quotaAfter: observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
+            history: history('codex'),
+            prices:  prices('codex'),
+            errors:  [{ section: 'history', code: 'timed_out' }],
+            quota:   observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         })]));
 
         expect(array(data.quotas)).toHaveLength(1);
         expect(data.estimates).toEqual({
             reference_prices: {
-                source:      'models.dev', observed_at: '2026-09-09T22:07:00.000Z', unit:        'usd_per_million_tokens',
+                catalog:     'models.dev', observed_at: '2026-09-09T22:07:00.000Z', unit:        'usd_per_million_tokens',
                 assumptions: ['base_tier'],
             },
         });
@@ -768,19 +798,19 @@ describe('rough token estimates', () => {
                 { model: 'deepseek-no-cache-rate', input: 0.5, output: 0.5, eligible: true },
                 { model: 'deepseek-retired', input: 0.5, output: 0.5, cacheRead: 0.5, eligible: false },
             ]),
-            quotaAfter: observation({
-                source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '9.33' }],
+            quota: observation({
+                balances: [{ kind: 'prepaid', currency: 'USD', remaining: '9.33' }],
             }),
         });
 
         expect(object(providerJson(snapshot([deepseek]), 'deepseek').estimates).remaining_by_model).toEqual([
             {
-                estimate_model:            'deepseek-flash', currency:                  'USD', balance:                   '9.33',
+                estimate_model:            'deepseek-flash', currency:                  'USD', remaining:                 '9.33',
                 estimate_tokens_remaining: 9_300_000, estimate_tokens_per_usd:   1_000_000,
                 basis:                     'models_dev_observed_mix',
             },
             {
-                estimate_model:            'deepseek-pro', currency:                  'USD', balance:                   '9.33',
+                estimate_model:            'deepseek-pro', currency:                  'USD', remaining:                 '9.33',
                 estimate_tokens_remaining: 4_700_000, estimate_tokens_per_usd:   500_000,
                 basis:                     'models_dev_observed_mix',
             },
@@ -798,9 +828,9 @@ describe('rough token estimates', () => {
                 recentTokens: unitInput,
                 recentModels: [{ model: 'boundary', tokens: unitInput, costUsd: unitPrice / 1_000_000 }],
             }),
-            prices:     prices('deepseek', [{ model: 'boundary', input: unitPrice, output: unitPrice, eligible: true }]),
-            quotaAfter: observation({
-                source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '1' }],
+            prices: prices('deepseek', [{ model: 'boundary', input: unitPrice, output: unitPrice, eligible: true }]),
+            quota:  observation({
+                balances: [{ kind: 'prepaid', currency: 'USD', remaining: '1' }],
             }),
         });
 
@@ -813,32 +843,31 @@ describe('rough token estimates', () => {
 
     it('selects only an available unscoped finite USD balance', () => {
         const data = providerJson(snapshot([provider({
-            provider:   'deepseek', history:    history('deepseek'), prices:     prices('deepseek'),
-            quotaAfter: observation({
-                source:   'deepseek',
+            provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
+            quota:    observation({
                 balances: [
-                    { kind: 'eur', currency: 'EUR', total: '1' },
-                    { kind: 'scoped', currency: 'USD', scopeId: 'team', total: '2' },
-                    { kind: 'unknown', currency: 'USD', available: false, total: '3' },
-                    { kind: 'unlimited', currency: 'USD', unlimited: true, total: '4' },
+                    { kind: 'eur', currency: 'EUR', remaining: '1' },
+                    { kind: 'scoped', currency: 'USD', limitId: 'team', remaining: '2' },
+                    { kind: 'unknown', currency: 'USD', available: false, remaining: '3' },
+                    { kind: 'unlimited', currency: 'USD', unlimited: true, remaining: '4' },
                     { kind: 'missing', currency: 'USD' },
-                    { kind: 'usable', currency: 'USD', total: '9.33' },
+                    { kind: 'usable', currency: 'USD', remaining: '9.33' },
                 ],
             }),
         })]), 'deepseek');
 
         expect(object(data.estimates).remaining_by_model).toEqual([{
-            estimate_model:            'deepseek-cheap', currency:                  'USD', balance:                   '9.33',
+            estimate_model:            'deepseek-cheap', currency:                  'USD', remaining:                 '9.33',
             estimate_tokens_remaining: 9_300_000, estimate_tokens_per_usd:   1_000_000,
             basis:                     'models_dev_observed_mix',
         }]);
     });
 
     it.each(['not-a-number', '-1', 'Infinity'])(
-        'omits DeepSeek remaining estimates for the invalid balance %s', (total) => {
+        'omits DeepSeek remaining estimates for the invalid balance %s', (remaining) => {
             const data = providerJson(snapshot([provider({
-                provider:   'deepseek', history:    history('deepseek'), prices:     prices('deepseek'),
-                quotaAfter: observation({ source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total }] }),
+                provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
+                quota:    observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining }] }),
             })]), 'deepseek');
 
             expect(object(data.estimates).remaining_by_model).toBeUndefined();
@@ -847,24 +876,24 @@ describe('rough token estimates', () => {
 
     it('omits DeepSeek remaining estimates when no balance matches the required scope and currency', () => {
         const data = providerJson(snapshot([provider({
-            provider:   'deepseek', history:    history('deepseek'), prices:     prices('deepseek'),
-            quotaAfter: observation({ source: 'deepseek', balances: [{ kind: 'eur', currency: 'EUR', total: '9.33' }] }),
+            provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
+            quota:    observation({ balances: [{ kind: 'eur', currency: 'EUR', remaining: '9.33' }] }),
         })]), 'deepseek');
 
         expect(object(data.estimates).remaining_by_model).toBeUndefined();
     });
 
     it('requires DeepSeek history and prices independently and never estimates another provider balance', () => {
-        const balance = observation({ source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '9.33' }] });
+        const balance = observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '9.33' }] });
         const withoutHistory = providerJson(snapshot([provider({
-            provider: 'deepseek', prices: prices('deepseek'), quotaAfter: balance,
+            provider: 'deepseek', prices: prices('deepseek'), quota: balance,
         })]), 'deepseek');
         const withoutPrices = providerJson(snapshot([provider({
-            provider: 'deepseek', history: history('deepseek'), quotaAfter: balance,
+            provider: 'deepseek', history: history('deepseek'), quota: balance,
         })]), 'deepseek');
         const codex = providerJson(snapshot([provider({
-            history:    history('codex'), prices:     prices('codex'),
-            quotaAfter: observation({ balances: [{ kind: 'prepaid', currency: 'USD', total: '9.33' }] }),
+            history: history('codex'), prices:  prices('codex'),
+            quota:   observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '9.33' }] }),
         })]));
 
         expect(object(withoutHistory.estimates).remaining_by_model).toBeUndefined();
@@ -880,12 +909,12 @@ describe('rough token estimates', () => {
                 recentTokens: noCache,
                 recentModels: [{ model: 'deepseek-model', tokens: noCache, costUsd: 0.0003 }],
             }),
-            prices:     prices('deepseek', [{ model: 'deepseek-no-cache-rate', input: 1, output: 2, eligible: true }]),
-            quotaAfter: observation({ source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '1' }] }),
+            prices: prices('deepseek', [{ model: 'deepseek-no-cache-rate', input: 1, output: 2, eligible: true }]),
+            quota:  observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '1' }] }),
         })]), 'deepseek');
 
         expect(object(data.estimates).remaining_by_model).toEqual([{
-            estimate_model:            'deepseek-no-cache-rate', currency:                  'USD', balance:                   '1',
+            estimate_model:            'deepseek-no-cache-rate', currency:                  'USD', remaining:                 '1',
             estimate_tokens_remaining: 600_000, estimate_tokens_per_usd:   600_000,
             basis:                     'models_dev_observed_mix',
         }]);
@@ -895,12 +924,12 @@ describe('rough token estimates', () => {
         const tiny = Number.MIN_VALUE;
         const tinyPrice = prices('deepseek', [{ model: 'tiny', input: tiny, output: tiny, cacheRead: tiny, eligible: true }]);
         const hugeBalance = providerJson(snapshot([provider({
-            provider:   'deepseek', history:    history('deepseek'), prices:     prices('deepseek'),
-            quotaAfter: observation({ source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: `${Number.MAX_VALUE}` }] }),
+            provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
+            quota:    observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: `${Number.MAX_VALUE}` }] }),
         })]), 'deepseek');
         const tinyRate = providerJson(snapshot([provider({
-            provider:   'deepseek', history:    history('deepseek'), prices:     tinyPrice,
-            quotaAfter: observation({ source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '0' }] }),
+            provider: 'deepseek', history:  history('deepseek'), prices:   tinyPrice,
+            quota:    observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '0' }] }),
         })]), 'deepseek');
 
         expect(object(hugeBalance.estimates).remaining_by_model).toBeUndefined();
@@ -909,39 +938,57 @@ describe('rough token estimates', () => {
 
     it('allows a zero DeepSeek balance but suppresses remaining estimates for stale or spend-blocked quota', () => {
         const base = provider({
-            provider:   'deepseek', history:    history('deepseek'), prices:     prices('deepseek'),
-            quotaAfter: observation({ source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '0' }] }),
+            provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
+            quota:    observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '0' }] }),
         });
         const zero = providerJson(snapshot([base]), 'deepseek');
         expect(object(zero.estimates).remaining_by_model).toEqual([{
-            estimate_model:            'deepseek-cheap', currency:                  'USD', balance:                   '0', estimate_tokens_remaining: 0,
+            estimate_model:            'deepseek-cheap', currency:                  'USD', remaining:                 '0', estimate_tokens_remaining: 0,
             estimate_tokens_per_usd:   1_000_000, basis:                     'models_dev_observed_mix',
         }]);
 
         for(const blocked of [
             { ...base, freshness: { cached: false, stale: true, ageSeconds: 1 } },
-            { ...base, errors: [{ section: 'balances', code: 'timed_out' }] },
-            { ...base, quotaAfter: observation({
-                source: 'deepseek', available: false, balances: [{ kind: 'prepaid', currency: 'USD', total: '9.33' }],
+            { ...base, quota: observation({
+                available: false, balances: [{ kind: 'prepaid', currency: 'USD', remaining: '9.33' }],
             }) },
-            { ...base, quotaAfter: observation({
-                source:        'deepseek', balances:      [{ kind: 'prepaid', currency: 'USD', total: '9.33' }],
-                spendControls: [{ scopeId: 'monthly', reached: true }],
+            { ...base, quota: observation({
+                balances:    [{ kind: 'prepaid', currency: 'USD', remaining: '9.33' }],
+                spendLimits: [{ limitId: 'monthly', reached: true }],
             }) },
         ]) {
             expect(object(providerJson(snapshot([blocked]), 'deepseek').estimates).remaining_by_model).toBeUndefined();
         }
     });
 
-    it('retains DeepSeek remaining estimates after an unrelated report section fails', () => {
+    it.each([
+        ['a spend limit that has not been reached', [{ reached: false }]],
+        ['a spend limit with an unspecified reached state', [{ limitId: 'x' }]],
+    ])('still produces DeepSeek remaining estimates alongside %s', (_case, spendLimits) => {
         const data = providerJson(snapshot([provider({
-            provider:   'deepseek', history:    history('deepseek'), prices:     prices('deepseek'),
-            errors:     [{ section: 'spend_controls', code: 'timed_out' }],
-            quotaAfter: observation({ source: 'deepseek', balances: [{ kind: 'prepaid', currency: 'USD', total: '1' }] }),
+            provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
+            quota:    observation({
+                balances: [{ kind: 'prepaid', currency: 'USD', remaining: '1' }],
+                spendLimits,
+            }),
         })]), 'deepseek');
 
         expect(object(data.estimates).remaining_by_model).toEqual([{
-            estimate_model:            'deepseek-cheap', currency:                  'USD', balance:                   '1',
+            estimate_model:            'deepseek-cheap', currency:                  'USD', remaining:                 '1',
+            estimate_tokens_remaining: 1_000_000, estimate_tokens_per_usd:   1_000_000,
+            basis:                     'models_dev_observed_mix',
+        }]);
+    });
+
+    it('retains DeepSeek remaining estimates after an unrelated report section fails', () => {
+        const data = providerJson(snapshot([provider({
+            provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
+            errors:   [{ section: 'spend_limits', code: 'timed_out' }],
+            quota:    observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '1' }] }),
+        })]), 'deepseek');
+
+        expect(object(data.estimates).remaining_by_model).toEqual([{
+            estimate_model:            'deepseek-cheap', currency:                  'USD', remaining:                 '1',
             estimate_tokens_remaining: 1_000_000, estimate_tokens_per_usd:   1_000_000,
             basis:                     'models_dev_observed_mix',
         }]);
@@ -949,9 +996,9 @@ describe('rough token estimates', () => {
 
     it('keeps Anthropic history for SDK quota estimates without exposing the skipped quota lookup', () => {
         const anthropic = provider({
-            provider:   'anthropic', status:     'error', quotaAfter: undefined,
-            errors:     [{ section: 'quota_after', code: 'credential_unavailable' }],
-            history:    history('anthropic'), prices:     prices('anthropic'),
+            provider: 'anthropic', status:   'error', quota:    undefined,
+            errors:   [{ section: 'quota', code: 'credential_unavailable' }],
+            history:  history('anthropic'), prices:   prices('anthropic'),
         });
         const self = {
             ...initialLedger('conversation'),
@@ -1015,9 +1062,9 @@ describe('rough token estimates', () => {
             },
         };
         const anthropic = provider({
-            provider:   'anthropic', status:     'error', quotaAfter: undefined,
-            errors:     [{ section: 'quota_after', code: 'credential_unavailable' }],
-            history:    history('anthropic'), prices:     prices('anthropic'),
+            provider: 'anthropic', status:   'error', quota:    undefined,
+            errors:   [{ section: 'quota', code: 'credential_unavailable' }],
+            history:  history('anthropic'), prices:   prices('anthropic'),
         });
         const codex = provider({ history: history('codex'), prices: prices('codex') });
         const line = composeAmbientLines({
@@ -1040,9 +1087,9 @@ describe('rough token estimates', () => {
             },
         };
         const anthropic = provider({
-            provider:   'anthropic', status:     'error', quotaAfter: undefined,
-            errors:     [{ section: 'quota_after', code: 'credential_unavailable' }],
-            history:    history('anthropic'), prices:     prices('anthropic'),
+            provider: 'anthropic', status:   'error', quota:    undefined,
+            errors:   [{ section: 'quota', code: 'credential_unavailable' }],
+            history:  history('anthropic'), prices:   prices('anthropic'),
         });
         const line = composeAmbientLines({
             self,
@@ -1063,22 +1110,33 @@ describe('rough token estimates', () => {
 describe('balances and report state', () => {
     it('preserves monetary strings and distinguishes balance states', () => {
         const balances: ProviderBalance[] = [
-            { kind: 'enterprise', scopeId: 'org', unlimited: true }, { kind: 'prepaid', scopeId: 'team', available: false },
-            { kind: 'cash', currency: 'USD', total: '9.35' }, { kind: 'credits', total: '120', amountUnit: 'credits' }, { kind: 'grant' },
+            { kind: 'enterprise', limitId: 'org', unlimited: true }, { kind: 'prepaid', limitId: 'team', available: false },
+            { kind: 'cash', currency: 'USD', remaining: '9.35' }, { kind: 'credits', remaining: '120', amountUnit: 'credits' }, { kind: 'grant' },
         ];
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({ balances }) })]));
+        const data = providerJson(snapshot([provider({ quota: observation({ balances }) })]));
         expect(array(data.balances)).toEqual([
-            { kind: 'enterprise', scope_id: 'org', status: 'unlimited' }, { kind: 'prepaid', scope_id: 'team', status: 'unknown' },
-            { kind: 'cash', currency: 'USD', total: '9.35' }, { kind: 'credits', total: '120', amount_unit: 'credits' },
+            { kind: 'enterprise', limit_id: 'org', status: 'unlimited' }, { kind: 'prepaid', limit_id: 'team', status: 'unknown' },
+            { kind: 'cash', currency: 'USD', remaining: '9.35' }, { kind: 'credits', remaining: '120', amount_unit: 'credits' },
             { kind: 'grant', status: 'reported' },
         ]);
     });
 
-    it('shows only reached spend controls', () => {
-        const data = providerJson(snapshot([provider({ quotaAfter: observation({
-            spendControls: [{ scopeId: 'soft', reached: false }, { scopeId: 'hard', reached: true }],
+    it('shows only reached spend limits, keyed by limit id', () => {
+        const data = providerJson(snapshot([provider({ quota: observation({
+            spendLimits: [
+                { limitId: 'codex', reached: false, enabled: true, limit: '100', used: '17.5', usedPercent: 17.5 },
+                { limitId: 'codex_team', reached: true, enabled: true, limit: '50', used: '50', usedPercent: 100 },
+                { enabled: true, limit: '20', used: '3', usedPercent: 15 },
+            ],
         }) })]));
-        expect(data.spend_controls).toEqual([{ scope_id: 'hard', reached: true }]);
+        expect(data.spend_limits).toEqual([{ limit_id: 'codex_team', reached: true }]);
+    });
+
+    it('omits spend limits entirely when none is reached', () => {
+        const data = providerJson(snapshot([provider({ quota: observation({
+            spendLimits: [{ limitId: 'codex', reached: false }, { limitId: 'codex_team' }],
+        }) })]));
+        expect(data.spend_limits).toBeUndefined();
     });
 
     it('ages cached data from report generation and keeps report status separate', () => {
@@ -1118,7 +1176,7 @@ describe('balances and report state', () => {
 
     it('expires a report exactly at its expiry boundary', () => {
         const data = providerJson(snapshot([provider({
-            quotaAfter: observation({ quotas: [quota({ id: 'fresh-until-boundary' })] }),
+            quota: observation({ quotas: [quota({ id: 'fresh-until-boundary' })] }),
         })], { expiresAt: NOW }));
         expect(data).toEqual({
             quota_lookup: {
@@ -1130,8 +1188,8 @@ describe('balances and report state', () => {
 
     it.each([
         ['stale', provider({ freshness: { cached: false, stale: true, ageSeconds: 0 } }), 'quota_data_stale'],
-        ['missing', provider({ quotaAfter: undefined }), 'quota_api_no_observation'],
-        ['unknown reading', provider({ quotaAfter: observation({ available: false }) }), 'quota_api_no_reading'],
+        ['missing', provider({ quota: undefined }), 'quota_api_no_observation'],
+        ['unknown reading', provider({ quota: observation({ available: false }) }), 'quota_api_no_reading'],
     ] as const)('marks a %s quota reading unknown', (_case, status, error) => {
         const lookup = object(providerJson(snapshot([status])).quota_lookup);
         expect(lookup).toMatchObject({ status: 'unknown', error, last_attempt_at: '2026-09-09T22:07:00.000Z' });
@@ -1140,8 +1198,8 @@ describe('balances and report state', () => {
     it('labels a 429 as a quota API error and shows retry time', () => {
         const retryAt = new Date('2026-09-09T22:12:00Z');
         const data = providerJson(snapshot([provider({
-            provider:   'anthropic', status:     'partial', quotaAfter: undefined,
-            errors:     [{ section: 'quota_after', code: 'rate_limited', retryAt }, { section: 'history', code: 'timed_out' }],
+            provider: 'anthropic', status:   'partial', quota:    undefined,
+            errors:   [{ section: 'quota', code: 'rate_limited', retryAt }, { section: 'history', code: 'timed_out' }],
         })]), 'anthropic');
         expect(data.quota_lookup).toEqual({
             status:          'unknown', error:           'quota_api_rate_limited', last_attempt_at: '2026-09-09T22:07:00.000Z',
@@ -1152,10 +1210,23 @@ describe('balances and report state', () => {
         expect(JSON.stringify(data.errors)).not.toContain('rate_limited');
     });
 
+    it('shows the real upstream attempt time beside the retry time when the quota error carries it', () => {
+        const retryAt = new Date('2026-09-09T22:12:00Z');
+        const attemptedAt = new Date('2026-09-09T22:03:00Z');
+        const data = providerJson(snapshot([provider({
+            provider: 'anthropic', status:   'partial', quota:    undefined,
+            errors:   [{ section: 'quota', code: 'rate_limited', retryAt, attemptedAt }],
+        })]), 'anthropic');
+        expect(data.quota_lookup).toEqual({
+            status:          'unknown', error:           'quota_api_rate_limited', last_attempt_at: '2026-09-09T22:07:00.000Z',
+            retry_at:        '2026-09-09T22:12:00.000Z', attempted_at:    '2026-09-09T22:03:00.000Z',
+        });
+    });
+
     it('maps multiple quota API errors and preserves unrelated report errors', () => {
         const data = providerJson(snapshot([provider({ status: 'partial', errors: [
-            { section: 'quota_after', code: 'unauthorized' }, { section: 'balances', code: 'timed_out' },
-            { section: 'quota_after', code: 'malformed' },
+            { section: 'quota', code: 'unauthorized' }, { section: 'balances', code: 'timed_out' },
+            { section: 'quota', code: 'malformed' },
         ] })]));
         expect(data.quota_lookup).toEqual({
             status:          'unknown', error:           'quota_api_multiple_errors', last_attempt_at: '2026-09-09T22:07:00.000Z',
@@ -1168,8 +1239,8 @@ describe('balances and report state', () => {
 
     it('keeps non-quota errors visible without discarding fresh quota', () => {
         const data = providerJson(snapshot([provider({
-            status:     'partial', errors:     [{ section: 'balances', code: 'timed_out' }],
-            quotaAfter: observation({ quotas: [quota({ resetsAt: undefined })] }),
+            status: 'partial', errors: [{ section: 'balances', code: 'timed_out' }],
+            quota:  observation({ quotas: [quota({ resetsAt: undefined })] }),
         })]));
         expect(object(data.quota_lookup).status).toBe('ok');
         expect(array(data.quotas)).toHaveLength(1);
@@ -1194,7 +1265,7 @@ describe('balances and report state', () => {
         ['HTTP_429', 'quota_api_rate_limited'],
         ['Token Expired', 'quota_api_token_expired'],
     ] as const)('normalizes the quota API error code %s', (code, expected) => {
-        const data = providerJson(snapshot([provider({ quotaAfter: undefined, errors: [{ section: 'quota_after', code }] })]));
+        const data = providerJson(snapshot([provider({ quota: undefined, errors: [{ section: 'quota', code }] })]));
         expect(data.quota_lookup).toEqual({
             status: 'unknown', error: expected, last_attempt_at: '2026-09-09T22:07:00.000Z',
         });
@@ -1202,7 +1273,7 @@ describe('balances and report state', () => {
 
     it('maps http_429 to the quota API rate-limit error', () => {
         const data = providerJson(snapshot([provider({
-            quotaAfter: undefined, errors: [{ section: 'quota_after', code: 'http_429' }],
+            quota: undefined, errors: [{ section: 'quota', code: 'http_429' }],
         })]));
         expect(data).toEqual({
             quota_lookup: {
@@ -1215,8 +1286,8 @@ describe('balances and report state', () => {
 describe('shared burn pace', () => {
     function paceReport(current: ProviderQuota, prior: ProviderQuota, elapsedMs: number, priorCollectedAt?: Date): ProviderSnapshot {
         const previousAt = priorCollectedAt ?? new Date(NOW.getTime() - elapsedMs);
-        const previous = snapshot([provider({ quotaAfter: observation({ collectedAt: previousAt, quotas: [prior] }) })], { generatedAt: previousAt });
-        return snapshot([provider({ quotaAfter: observation({ quotas: [current] }) })], { previous });
+        const previous = snapshot([provider({ quota: observation({ collectedAt: previousAt, quotas: [prior] }) })], { generatedAt: previousAt });
+        return snapshot([provider({ quota: observation({ quotas: [current] }) })], { previous });
     }
 
     it('computes positive pace at the exact one-minute boundary', () => {
@@ -1262,9 +1333,9 @@ describe('shared burn pace', () => {
         const noReset = providerJson(paceReport(
             quota({ resetsAt: undefined, usedPercent: 35 }), quota({ resetsAt: undefined, usedPercent: 34 }), 3_600_000
         ));
-        const noPrevious = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota()] }) })]));
-        const noPriorQuota = providerJson(snapshot([provider({ quotaAfter: observation({ quotas: [quota()] }) })], {
-            previous: snapshot([provider({ quotaAfter: observation({ collectedAt: new Date(NOW.getTime() - 3_600_000) }) })]),
+        const noPrevious = providerJson(snapshot([provider({ quota: observation({ quotas: [quota()] }) })]));
+        const noPriorQuota = providerJson(snapshot([provider({ quota: observation({ quotas: [quota()] }) })], {
+            previous: snapshot([provider({ quota: observation({ collectedAt: new Date(NOW.getTime() - 3_600_000) }) })]),
         }));
         for(const data of [noReset, noPrevious, noPriorQuota]) {
             expect(object(array(data.quotas)[0]).shared_burn_percent_per_hour).toBeUndefined();
@@ -1287,8 +1358,8 @@ describe('direct Anthropic fallback', () => {
 
     it('uses direct fallback only for unknown Anthropic data and retains other providers', () => {
         const report = snapshot([
-            provider({ provider: 'anthropic', status: 'error', quotaAfter: undefined }),
-            provider({ provider: 'deepseek', quotaAfter: observation({ source: 'deepseek' }) }),
+            provider({ provider: 'anthropic', status: 'error', quota: undefined }),
+            provider({ provider: 'deepseek', quota: observation() }),
         ], { anthropicFallback: fallback({ sevenDay: { utilization: 61 } }) });
         const data = renderJson(report);
         expect(array(object(data.anthropic).quotas)).toEqual([{
@@ -1299,12 +1370,12 @@ describe('direct Anthropic fallback', () => {
 
     it.each([
         ['stale source', { freshness: { cached: false, stale: true, ageSeconds: 0 } }, {}],
-        ['missing observation', { quotaAfter: undefined }, {}],
-        ['unknown reading', { quotaAfter: observation({ source: 'anthropic', available: false }) }, {}],
-        ['quota API error', { errors: [{ section: 'quota_after', code: 'timed_out' }] }, {}],
+        ['missing observation', { quota: undefined }, {}],
+        ['unknown reading', { quota: observation({ available: false }) }, {}],
+        ['quota API error', { errors: [{ section: 'quota', code: 'timed_out' }] }, {}],
         ['expired report', {}, { expiresAt: new Date(NOW.getTime() - 1) }],
     ] as const)('uses the direct fallback for an Anthropic %s', (_case, providerOverrides, snapshotOverrides) => {
-        const anthropic = provider({ provider: 'anthropic', quotaAfter: observation({ source: 'anthropic' }), ...providerOverrides });
+        const anthropic = provider({ provider: 'anthropic', quota: observation(), ...providerOverrides });
         const data = renderJson(snapshot([anthropic], {
             anthropicFallback: fallback({ fiveHour: { utilization: 42 } }), ...snapshotOverrides,
         }));
@@ -1312,18 +1383,18 @@ describe('direct Anthropic fallback', () => {
     });
 
     it('keeps fresh Anthropic provider data instead of replacing it', () => {
-        const anthropic = provider({ provider: 'anthropic', quotaAfter: observation({ source: 'anthropic', quotas: [quota({ id: 'provider-limit' })] }) });
+        const anthropic = provider({ provider: 'anthropic', quota: observation({ quotas: [quota({ id: 'provider-limit' })] }) });
         const data = renderJson(snapshot([anthropic], { anthropicFallback: fallback({ fiveHour: { utilization: 99 } }) }));
         expect(object(array(object(data.anthropic).quotas)[0]).id).toBe('provider-limit');
     });
 
     it('keeps a fresh protocol observation when its optional available field is omitted', () => {
         const anthropic = provider({
-            provider:   'anthropic',
-            quotaAfter: {
-                source:        'anthropic', collectedAt:   NOW,
-                quotas:        [quota({ id: 'protocol-limit', usedPercent: 17 })],
-                balances:      [], spendControls: [],
+            provider: 'anthropic',
+            quota:    {
+                collectedAt: NOW,
+                quotas:      [quota({ id: 'protocol-limit', usedPercent: 17 })],
+                balances:    [], spendLimits: [],
             },
         });
         const data = renderJson(snapshot([anthropic], { anthropicFallback: fallback({ fiveHour: { utilization: 99 } }) }));
@@ -1339,7 +1410,7 @@ describe('direct Anthropic fallback', () => {
 
     it('does not replace fresh data after an unrelated report section failed', () => {
         const anthropic = provider({
-            provider: 'anthropic', status: 'partial', errors: [{ section: 'balances', code: 'timed_out' }], quotaAfter: observation({ source: 'anthropic' }),
+            provider: 'anthropic', status: 'partial', errors: [{ section: 'balances', code: 'timed_out' }], quota: observation(),
         });
         const data = renderJson(snapshot([anthropic], { anthropicFallback: fallback({ fiveHour: { utilization: 99 } }) }));
         expect(object(object(data.anthropic).quota_lookup).status).toBe('ok');
@@ -1370,7 +1441,7 @@ describe('direct Anthropic fallback', () => {
 
 describe('mutation regression boundaries', () => {
     it('serializes quota headroom to ten decimal places', () => {
-        const line = render(snapshot([provider({ quotaAfter: observation({ quotas: [quota({ usedPercent: 33.333_333_333_33 })] }) })]));
+        const line = render(snapshot([provider({ quota: observation({ quotas: [quota({ usedPercent: 33.333_333_333_33 })] }) })]));
         expect(line).toContain('"remaining_percent": 66.6666666667,');
     });
 });

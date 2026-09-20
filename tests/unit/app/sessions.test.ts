@@ -1960,19 +1960,19 @@ describe('createSessionAmbience', () => {
             input_tokens: 100, output_tokens: 200, cache_creation_tokens: 300, cache_read_tokens: 400, total_tokens: 1000,
         };
         const report = {
-            schema_version: 1,
+            schema_version: 2,
             generated_at:   generated,
             providers:      [{
                 provider:         'anthropic', status:           'partial', last_attempt:     generated,
                 source_freshness: { cached: false, stale: false, age_seconds: 0 },
-                errors:           [{ section: 'quota_after', code: 'credential_unavailable' }],
+                errors:           [{ section: 'quota', code: 'credential_unavailable', retryable: false, message: 'report source unavailable' }],
                 history:          {
-                    source:      'ccusage', coverage:    'local_only', cost_basis:  'calculated_api_reference_usd',
+                    collector:   'ccusage', coverage:    'local_only', cost_basis:  'calculated_api_reference_usd',
                     started_at:  generated, finished_at: generated,
                     seven_days:  {
                         since:  '2026-09-03T00:00:00Z', until:  '2026-09-09T00:00:00Z',
                         models: [{
-                            source:      'claude', model:       'claude-sonnet-5', provider:    'anthropic', ...tokenFields,
+                            log_source:  'claude', model:       'claude-sonnet-5', provider:    'anthropic', ...tokenFields,
                             cost_usd:    0.001, cost_status: 'available',
                         }],
                     },
@@ -1984,7 +1984,7 @@ describe('createSessionAmbience', () => {
                     }],
                 },
                 reference_prices: {
-                    source:      'models.dev', observed_at: generated, unit:        'usd_per_million_tokens',
+                    catalog:     'models.dev', observed_at: generated, unit:        'usd_per_million_tokens',
                     models:      [{ model: 'claude-haiku-4-5-20251001', input: 1, output: 1, cache_read: 1, cache_write: 1, eligible: true }],
                 },
             }],

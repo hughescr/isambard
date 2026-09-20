@@ -375,7 +375,7 @@ function historyEstimateData(history: ProviderHistory | undefined): Record<strin
     return history === undefined
         ? undefined
         : {
-            source:           history.source,
+            collector:        history.collector,
             coverage:         history.coverage,
             cost_basis:       history.costBasis,
             finished_at:      iso(history.finishedAt),
@@ -388,7 +388,7 @@ function referencePriceData(prices: ProviderReferencePrices | undefined): Record
     return prices === undefined
         ? undefined
         : {
-            source:      prices.source,
+            catalog:     prices.catalog,
             observed_at: iso(prices.observedAt),
             stale:       prices.stale ? true : undefined,
             unit:        prices.unit,
@@ -403,18 +403,19 @@ function deepSeekRemainingData(
 ): readonly Record<string, unknown>[] {
     const prices = provider.prices;
     // providerData passes true only after quotaLookupData verified this observation.
-    const observation = provider.quotaAfter!;
+    const observation = provider.quota!;
+    // utraque's error sections are only 'quota', 'history' and 'reference_prices' (README
+    // Vocabularies) — there is no 'balances' section to check here.
     if(provider.provider !== 'deepseek' || history === undefined || prices === undefined || !quotaFresh
-      || provider.errors.some(error => error.section === 'balances')
-      || observation.spendControls.some(control => control.reached)) {
+      || observation.spendLimits.some(limit => limit.reached === true)) {
         return [];
     }
     const balance = observation.balances.find(candidate => candidate.currency === 'USD'
-      && candidate.scopeId === undefined && candidate.available !== false && candidate.unlimited !== true && candidate.total !== undefined);
-    if(balance?.total === undefined) {
+      && candidate.limitId === undefined && candidate.available !== false && candidate.unlimited !== true && candidate.remaining !== undefined);
+    if(balance?.remaining === undefined) {
         return [];
     }
-    const balanceValue = Number(balance.total);
+    const balanceValue = Number(balance.remaining);
     if(!Number.isFinite(balanceValue) || balanceValue < 0) {
         return [];
     }
@@ -429,7 +430,7 @@ function deepSeekRemainingData(
             : [{
                 estimate_model:            price.model,
                 currency:                  'USD',
-                balance:                   balance.total,
+                remaining:                 balance.remaining,
                 estimate_tokens_remaining: tokensRemaining,
                 estimate_tokens_per_usd:   tokensPerUsd,
                 basis:                     'models_dev_observed_mix',
@@ -468,32 +469,37 @@ function scopeLabel(label: { id?: string, displayName?: string } | undefined): {
     return { id: label.id, name: label.displayName };
 }
 
+/**
+ * The reported duration wins: Codex assigns `kind` by slot position, not by length, so live Codex Pro
+ * labels its one-week window `session`. The closed `kind` is only the fallback when no duration is reported.
+ */
 function quotaWindow(quota: ProviderQuota): string | undefined {
     if(quota.durationSeconds !== undefined) {
         return formatDuration(quota.durationSeconds);
     }
-    if(quota.kind === 'session' || quota.kind === 'five_hour' || quota.id === 'session' || quota.id === 'five_hour') {
+    if(quota.kind === 'session') {
         return '5h';
     }
-    if(quota.kind?.startsWith('weekly') || quota.kind?.startsWith('seven_day')
-      || quota.id.startsWith('weekly') || quota.id.startsWith('seven_day')) {
+    if(quota.kind === 'weekly' || quota.kind === 'weekly_scoped') {
         return '1w';
     }
     return undefined;
 }
 
-/** Spark was retired from Isambard; hide its dedicated meter without hiding shared Codex quota. */
+/** Spark was retired from Isambard; hide its dedicated bucket without hiding the shared Codex one. */
 function isSparkQuota(provider: string, quota: ProviderQuota): boolean {
-    return provider === 'codex' && (quota.id === 'codex_bengalfox'
+    return provider === 'codex' && (quota.bucket === 'codex_bengalfox'
       || quota.name === 'GPT-5.3-Codex-Spark'
       || quota.scope?.model?.id === 'gpt-5.3-codex-spark'
       || quota.scope?.model?.displayName === 'GPT-5.3-Codex-Spark');
 }
 
+/**
+ * A slot is only worth labelling when it tells sibling rows of one bucket apart (Codex's
+ * `codex:primary` / `codex:secondary` both draw on the `codex` bucket); a row without a slot has nothing to label.
+ */
 function needsSlot(quota: ProviderQuota, quotas: readonly ProviderQuota[]): boolean {
-    return quotas.some(candidate => candidate.id === quota.id
-      && quotaWindow(candidate) === quotaWindow(quota)
-      && candidate.slot !== quota.slot);
+    return quotas.some(candidate => candidate.bucket === quota.bucket && candidate.slot !== quota.slot);
 }
 
 function quotaScope(quota: ProviderQuota, includeSlot: boolean): Record<string, unknown> | undefined {
@@ -516,7 +522,7 @@ function burnPace(quota: ProviderQuota, currentAt: Date, previous: ProviderStatu
     if(quota.resetsAt === undefined) {
         return undefined;
     }
-    const priorObservation = previous?.quotaAfter;
+    const priorObservation = previous?.quota;
     if(priorObservation === undefined) {
         return undefined;
     }
@@ -575,7 +581,7 @@ function providerQuotaData(
 function providerBalanceData(balance: ProviderBalance): Record<string, unknown> {
     const identity = {
         kind:     balance.kind,
-        scope_id: balance.scopeId,
+        limit_id: balance.limitId,
     };
     if(balance.unlimited === true) {
         return { ...identity, status: 'unlimited' };
@@ -586,9 +592,9 @@ function providerBalanceData(balance: ProviderBalance): Record<string, unknown> 
     return {
         ...identity,
         currency:    balance.currency,
-        total:       balance.total,
+        remaining:   balance.remaining,
         amount_unit: balance.amountUnit,
-        status:      balance.total === undefined ? 'reported' : undefined,
+        status:      balance.remaining === undefined ? 'reported' : undefined,
     };
 }
 
@@ -600,7 +606,7 @@ function quotaApiError(code: string): string {
 }
 
 function quotaLookupData(provider: ProviderStatus, reportExpiredAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
-    const quotaErrors = provider.errors.filter(error => error.section === 'quota_after');
+    const quotaErrors = provider.errors.filter(error => error.section === 'quota');
     const elapsed = Math.max(0, (now.getTime() - generatedAt.getTime()) / 1000);
     const base = {
         last_attempt_at:   iso(provider.lastAttempt),
@@ -612,18 +618,19 @@ function quotaLookupData(provider: ProviderStatus, reportExpiredAt: Date | undef
         if(provider.freshness.stale || reportExpiredAt !== undefined) {
             return { status: 'unknown', error: 'quota_data_stale', ...base };
         }
-        if(provider.quotaAfter === undefined) {
+        if(provider.quota === undefined) {
             return { status: 'unknown', error: 'quota_api_no_observation', ...base };
         }
-        return provider.quotaAfter.available === false
+        return provider.quota.available === false
             ? { status: 'unknown', error: 'quota_api_no_reading', ...base }
             : { status: 'ok', ...base };
     }
     if(quotaErrors.length === 1) {
         const failure = quotaErrors[0]!;
         return {
-            status:   'unknown', error:    quotaApiError(failure.code), ...base,
-            retry_at: failure.retryAt === undefined ? undefined : iso(failure.retryAt),
+            status:       'unknown', error:        quotaApiError(failure.code), ...base,
+            retry_at:     failure.retryAt === undefined ? undefined : iso(failure.retryAt),
+            attempted_at: failure.attemptedAt === undefined ? undefined : iso(failure.attemptedAt),
         };
     }
     return { status: 'unknown', error: 'quota_api_multiple_errors', ...base, errors: quotaErrors.map(entry => quotaApiError(entry.code)) };
@@ -631,7 +638,7 @@ function quotaLookupData(provider: ProviderStatus, reportExpiredAt: Date | undef
 
 function providerData(provider: ProviderStatus, previous: ProviderStatus | undefined, reportExpiredAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
     const quotaLookup = quotaLookupData(provider, reportExpiredAt, generatedAt, now);
-    const reportErrors = provider.errors.filter(error => error.section !== 'quota_after');
+    const reportErrors = provider.errors.filter(error => error.section !== 'quota');
     const history = usableHistory(provider);
     const remaining = deepSeekRemainingData(provider, history, quotaLookup.status === 'ok');
     const base = {
@@ -644,21 +651,23 @@ function providerData(provider: ProviderStatus, previous: ProviderStatus | undef
         return base;
     }
     // `quotaLookupData` returns `ok` only for a present, available observation.
-    const observation = provider.quotaAfter!;
-    const excludedScopeIds = new Set<string>();
+    const observation = provider.quota!;
+    // Spark's dedicated meter, credits and spend limit all key off its bucket (`balances[].limit_id` and
+    // `spend_limits[].limit_id` equal the paired `quotas[].bucket`); rows without a limit id are never Spark's.
+    const excludedBuckets = new Set<string>();
     if(provider.provider === 'codex') {
-        excludedScopeIds.add('codex_bengalfox');
+        excludedBuckets.add('codex_bengalfox');
     }
     const quotas = observation.quotas.filter((quota) => {
         if(isSparkQuota(provider.provider, quota)) {
-            excludedScopeIds.add(quota.id);
+            excludedBuckets.add(quota.bucket);
             return false;
         }
         return true;
     });
-    const balances = observation.balances.filter(balance => balance.scopeId === undefined || !excludedScopeIds.has(balance.scopeId));
-    const spendControls = observation.spendControls.filter(control => !excludedScopeIds.has(control.scopeId));
-    const reachedSpendControls = spendControls.filter(control => control.reached);
+    const balances = observation.balances.filter(balance => balance.limitId === undefined || !excludedBuckets.has(balance.limitId));
+    const spendLimits = observation.spendLimits.filter(limit => limit.limitId === undefined || !excludedBuckets.has(limit.limitId));
+    const reachedSpendLimits = spendLimits.filter(limit => limit.reached === true);
     return {
         ...base,
         observed_at: iso(observation.collectedAt),
@@ -667,18 +676,18 @@ function providerData(provider: ProviderStatus, previous: ProviderStatus | undef
             : quotas.map(quota => providerQuotaData(
                 provider.provider, quota, quotas, observation.collectedAt, previous, now, history, provider.prices
             )),
-        balances:       balances.length === 0 ? undefined : balances.map(balance => providerBalanceData(balance)),
-        spend_controls: reachedSpendControls.length === 0
+        balances:     balances.length === 0 ? undefined : balances.map(balance => providerBalanceData(balance)),
+        spend_limits: reachedSpendLimits.length === 0
             ? undefined
-            : reachedSpendControls.map(control => ({ scope_id: control.scopeId, reached: true })),
+            : reachedSpendLimits.map(limit => ({ limit_id: limit.limitId, reached: true })),
     };
 }
 
 function providerUnavailable(provider: ProviderStatus, reportExpired: boolean): boolean {
-    if(provider.freshness.stale || reportExpired || provider.errors.some(error => error.section === 'quota_after')) {
+    if(provider.freshness.stale || reportExpired || provider.errors.some(error => error.section === 'quota')) {
         return true;
     }
-    return provider.quotaAfter === undefined || provider.quotaAfter.available === false;
+    return provider.quota === undefined || provider.quota.available === false;
 }
 
 function windowData(

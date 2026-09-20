@@ -21,7 +21,7 @@ const GENERATED = '2026-09-11T20:00:01Z';
 
 function providerReport(overrides: Record<string, unknown> = {}) {
     return {
-        schema_version: 1,
+        schema_version: 2,
         generated_at:   GENERATED,
         providers:      [{
             provider:         'anthropic',
@@ -29,17 +29,31 @@ function providerReport(overrides: Record<string, unknown> = {}) {
             last_attempt:     GENERATED,
             source_freshness: { cached: false, stale: false, age_seconds: 0 },
             errors:           [],
-            quota_after:      {
-                source:       'anthropic',
+            quota:            {
                 collected_at: GENERATED,
                 quotas:       [
-                    { id: 'session', kind: 'session', group: 'session', used_percent: 31.5, unit: 'percent_0_100', duration_seconds: 18_000, resets_at: RESET },
-                    { id: 'weekly_all', kind: 'weekly_all', group: 'weekly', used_percent: 35, unit: 'percent_0_100', duration_seconds: 604_800, resets_at: RESET },
-                    { id: 'weekly_scoped:model:opus', kind: 'weekly_scoped', group: 'weekly', used_percent: 5, unit: 'percent_0_100', scope: { model: { id: 'opus', display_name: 'Opus' } } },
+                    { id: 'session', bucket: 'session', kind: 'session', group: 'session', used_percent: 31.5, unit: 'percent_0_100', duration_seconds: 18_000, resets_at: RESET },
+                    { id: 'weekly_all', bucket: 'weekly_all', kind: 'weekly', group: 'weekly', used_percent: 35, unit: 'percent_0_100', duration_seconds: 604_800, resets_at: RESET },
+                    { id: 'weekly_scoped:model=opus', bucket: 'weekly_scoped', kind: 'weekly_scoped', group: 'weekly', used_percent: 5, unit: 'percent_0_100', scope: { model: { id: 'opus', display_name: 'Opus' } } },
                 ],
             },
             ...overrides,
         }],
+    };
+}
+
+/** The live Codex `quota` section shape (schema 2): a slotted window, workspace credits and a reached-only spend limit. */
+function codexQuota(overrides: Record<string, unknown> = {}) {
+    return {
+        collected_at: GENERATED,
+        quotas:       [{
+            id:               'codex:primary', bucket:           'codex', kind:             'session', slot:             'primary', used_percent:     17, unit:             'percent_0_100',
+            duration_seconds: 604_800, resets_at:        RESET, plan:             { type: 'pro' },
+        }],
+        balances:     [{ kind: 'workspace_credits', limit_id: 'codex', amount_unit: 'credits', remaining: '0', available: false, unlimited: false }],
+        spend_limits: [{ limit_id: 'codex', reached: false }],
+        plan:         { type: 'pro' },
+        ...overrides,
     };
 }
 
@@ -51,12 +65,12 @@ function historyReport(provider = 'anthropic') {
         model = 'gpt-5.6-luna';
     }
     return {
-        source:      'ccusage', coverage:    'local_only', cost_basis:  'calculated_api_reference_usd',
+        collector:   'ccusage', coverage:    'local_only', cost_basis:  'calculated_api_reference_usd',
         started_at:  '2026-09-11T20:00:00Z', finished_at: GENERATED,
         seven_days:  {
             since:  '2026-09-05T00:00:00Z', until:  '2026-09-11T00:00:00Z',
             models: [{
-                source:                'claude', model, provider,
+                log_source:            'claude', model, provider,
                 input_tokens:          100, output_tokens:         200, cache_creation_tokens: 300, cache_read_tokens:     400,
                 total_tokens:          1000, cost_usd:              0.003, cost_status:           'available',
             }],
@@ -73,7 +87,7 @@ function historyReport(provider = 'anthropic') {
 
 function referencePrices(model = 'claude-haiku-4-5-20251001') {
     return {
-        source:      'models.dev', observed_at: GENERATED, unit:        'usd_per_million_tokens', assumptions: ['base_tier', 'cache_write_5m'],
+        catalog:     'models.dev', observed_at: GENERATED, unit:        'usd_per_million_tokens', assumptions: ['base_tier', 'cache_write_5m'],
         models:      [{ model, input: 1, output: 5, cache_read: 0.1, cache_write: 1.25, eligible: true }],
     };
 }
@@ -101,7 +115,7 @@ function harness(overrides: Partial<CreateQuotaPollerParams> = {}): Harness {
 
 describe('provider report parsing', () => {
     it('uses the documented local report and official Anthropic fallback endpoints', () => {
-        expect(DEFAULT_PROVIDER_REPORT_URL).toBe('http://127.0.0.1:8317/v1/utraque/providers');
+        expect(DEFAULT_PROVIDER_REPORT_URL).toBe('http://127.0.0.1:8317/utraque/providers/v2');
         expect(DEFAULT_ANTHROPIC_USAGE_URL).toBe('https://api.anthropic.com/api/oauth/usage');
     });
 
@@ -113,34 +127,103 @@ describe('provider report parsing', () => {
     it('preserves quota identifiers, scopes, durations, freshness and monetary balances', () => {
         const body = providerReport({
             source_freshness: { cached: true, stale: false, age_seconds: 12 },
-            quota_after:      {
-                source:         'anthropic',
-                collected_at:   GENERATED,
-                quotas:         [{ id: 'weekly_scoped:model:opus', kind: 'weekly_scoped', group: 'weekly', slot: 'secondary', used_percent: 5, unit: 'percent_0_100', duration_seconds: 604_800, scope: { model: { id: 'opus', display_name: 'Opus' }, surface: { id: 'cli' } } }],
-                balances:       [{ kind: 'prepaid', currency: 'USD', total: '9.35', available: true }],
-                spend_controls: [{ scope_id: 'monthly', reached: false }],
+            quota:            {
+                collected_at: GENERATED,
+                quotas:       [{ id: 'weekly_scoped:model=opus:surface=cli', bucket: 'weekly_scoped', kind: 'weekly_scoped', group: 'weekly', slot: 'secondary', used_percent: 5, unit: 'percent_0_100', duration_seconds: 604_800, scope: { model: { id: 'opus', display_name: 'Opus' }, surface: { id: 'cli' } } }],
+                balances:     [{ kind: 'account_balance', currency: 'USD', amount_unit: 'currency', remaining: '9.35', parts: [{ name: 'topped_up', amount: '9.35' }] }],
+                spend_limits: [{ limit_id: 'codex', reached: false }],
             },
         });
 
         const snapshot = parseProviderSnapshot(body);
 
         expect(snapshot?.providers[0]).toMatchObject({
-            freshness:  { cached: true, stale: false, ageSeconds: 12 },
-            quotaAfter: {
-                quotas:        [{ id: 'weekly_scoped:model:opus', kind: 'weekly_scoped', group: 'weekly', slot: 'secondary', durationSeconds: 604_800, scope: { model: { id: 'opus', displayName: 'Opus' }, surface: { id: 'cli' } } }],
-                balances:      [{ kind: 'prepaid', currency: 'USD', total: '9.35', available: true }],
-                spendControls: [{ scopeId: 'monthly', reached: false }],
+            freshness: { cached: true, stale: false, ageSeconds: 12 },
+            quota:     {
+                quotas:      [{ id: 'weekly_scoped:model=opus:surface=cli', bucket: 'weekly_scoped', kind: 'weekly_scoped', group: 'weekly', slot: 'secondary', durationSeconds: 604_800, scope: { model: { id: 'opus', displayName: 'Opus' }, surface: { id: 'cli' } } }],
+                balances:    [{ kind: 'account_balance', currency: 'USD', amountUnit: 'currency', remaining: '9.35' }],
+                spendLimits: [{ limitId: 'codex', reached: false }],
             },
         });
     });
 
+    it('parses the live Codex quota section: slotted window, workspace credits by limit id, and a reached-only spend limit', () => {
+        const snapshot = parseProviderSnapshot(providerReport({ provider: 'codex', quota: codexQuota() }));
+
+        expect(snapshot?.providers[0]?.quota).toEqual({
+            collectedAt: new Date(GENERATED),
+            available:   undefined,
+            quotas:      [{
+                id:              'codex:primary', bucket:          'codex', kind:            'session', slot:            'primary', usedPercent:     17,
+                name:            undefined, group:           undefined, durationSeconds: 604_800, resetsAt:        new Date(RESET), active:          undefined, scope:           undefined,
+            }],
+            balances: [{
+                kind: 'workspace_credits', limitId: 'codex', currency: undefined, amountUnit: 'credits', remaining: '0', available: false, unlimited: false,
+            }],
+            spendLimits: [{
+                limitId:     'codex', reached:     false, enabled:     undefined, limit:       undefined, used:        undefined, amountUnit:  undefined,
+                currency:    undefined, usedPercent: undefined, resetsAt:    undefined,
+            }],
+        });
+    });
+
+    it('parses a full Codex spend limit and an Anthropic extra-usage row that has no limit id', () => {
+        const codex = parseProviderSnapshot(providerReport({ provider: 'codex', quota:    codexQuota({ spend_limits: [{
+            limit_id: 'codex', limit: '50.00', used: '12.25', amount_unit: 'provider_units', used_percent: 24.5, unit: 'percent_0_100', resets_at: RESET, reached: false,
+        }] }) }));
+        const anthropic = parseProviderSnapshot(providerReport({ quota: { collected_at: GENERATED, spend_limits: [{
+            enabled: true, limit: '100.00', used: '3.50', amount_unit: 'provider_units', currency: 'USD', used_percent: 3.5, unit: 'percent_0_100',
+        }] } }));
+
+        expect(codex?.providers[0]?.quota?.spendLimits).toEqual([{
+            limitId:     'codex', enabled:     undefined, limit:       '50.00', used:        '12.25', amountUnit:  'provider_units', currency:    undefined,
+            usedPercent: 24.5, resetsAt:    new Date(RESET), reached:     false,
+        }]);
+        expect(anthropic?.providers[0]?.quota?.spendLimits).toEqual([{
+            limitId:     undefined, enabled:     true, limit:       '100.00', used:        '3.50', amountUnit:  'provider_units', currency:    'USD',
+            usedPercent: 3.5, resetsAt:    undefined, reached:     undefined,
+        }]);
+    });
+
+    it('keeps a spend limit row while dropping an unusable used_percent and non-object rows', () => {
+        const snapshot = parseProviderSnapshot(providerReport({ quota: { collected_at: GENERATED, spend_limits: [
+            { limit_id: 'fraction', used_percent: 0.5, unit: 'fraction_0_1' },
+            { limit_id: 'unitless', used_percent: 50 },
+            { limit_id: 'over', used_percent: 100.01, unit: 'percent_0_100' },
+            { limit_id: 'negative', used_percent: -0.01, unit: 'percent_0_100' },
+            { limit_id: 'full', used_percent: 100, unit: 'percent_0_100' },
+            { limit_id: 'empty', used_percent: 0, unit: 'percent_0_100' },
+            null, 'reached', 42,
+        ] } }));
+
+        expect(snapshot?.providers[0]?.quota?.spendLimits.map(limit => [limit.limitId, limit.usedPercent])).toEqual([
+            ['fraction', undefined], ['unitless', undefined], ['over', undefined], ['negative', undefined], ['full', 100], ['empty', 0],
+        ]);
+    });
+
+    it('drops a quota row that lacks a bucket or carries a kind outside the closed vocabulary', () => {
+        const snapshot = parseProviderSnapshot(providerReport({ quota: { collected_at: GENERATED, quotas:       [
+            { id: 'no-bucket', kind: 'session', used_percent: 1, unit: 'percent_0_100' },
+            { id: 'empty-bucket', bucket: '', kind: 'session', used_percent: 2, unit: 'percent_0_100' },
+            { id: 'no-kind', bucket: 'five_hour', used_percent: 3, unit: 'percent_0_100' },
+            { id: 'v1-kind', bucket: 'weekly_all', kind: 'weekly_all', used_percent: 4, unit: 'percent_0_100' },
+            { id: 'spend-control', bucket: 'codex', kind: 'spend_control', used_percent: 5, unit: 'percent_0_100' },
+            { id: 'other', bucket: 'cinder_cove', kind: 'other', used_percent: 6, unit: 'percent_0_100' },
+            { id: 'scoped', bucket: 'weekly_scoped', kind: 'weekly_scoped', used_percent: 7, unit: 'percent_0_100' },
+        ] } }));
+
+        expect(snapshot?.providers[0]?.quota?.quotas.map(quota => [quota.id, quota.bucket, quota.kind])).toEqual([
+            ['other', 'cinder_cove', 'other'], ['scoped', 'weekly_scoped', 'weekly_scoped'],
+        ]);
+    });
+
     it('takes a quota display name from its own field rather than borrowing the identifier', () => {
-        const body = providerReport({ quota_after: {
-            source:       'anthropic', collected_at: GENERATED,
-            quotas:       [{ id: 'session', kind: 'session', group: 'session', used_percent: 31.5, unit: 'percent_0_100', name: 'Claude session' }],
+        const body = providerReport({ quota: {
+            collected_at: GENERATED,
+            quotas:       [{ id: 'session', bucket: 'session', kind: 'session', group: 'session', used_percent: 31.5, unit: 'percent_0_100', name: 'Claude session' }],
         } });
 
-        expect(parseProviderSnapshot(body)?.providers[0]?.quotaAfter?.quotas[0]).toMatchObject({
+        expect(parseProviderSnapshot(body)?.providers[0]?.quota?.quotas[0]).toMatchObject({
             id:   'session',
             name: 'Claude session',
         });
@@ -152,13 +235,13 @@ describe('provider report parsing', () => {
         }));
 
         expect(snapshot?.providers[0]?.history).toMatchObject({
-            source:       'ccusage', coverage:     'local_only', costBasis:    'calculated_api_reference_usd', recentDays:   7,
+            collector:    'ccusage', coverage:     'local_only', costBasis:    'calculated_api_reference_usd', recentDays:   7,
             recentTokens: { inputTokens: 100, outputTokens: 200, cacheCreationTokens: 300, cacheReadTokens: 400, totalTokens: 1000 },
             recentModels: [{ model: 'claude-sonnet-5', costUsd: 0.003 }],
             blocks:       [{ active: true, gap: false, mixedProvider: false, costUsd: 0.0003, modelProviders: ['anthropic'] }],
         });
         expect(snapshot?.providers[0]?.prices).toEqual({
-            source:      'models.dev', observedAt:  new Date(GENERATED), stale:       false, unit:        'usd_per_million_tokens',
+            catalog:     'models.dev', observedAt:  new Date(GENERATED), stale:       false, unit:        'usd_per_million_tokens',
             assumptions: ['base_tier', 'cache_write_5m'],
             models:      [{ model: 'claude-haiku-4-5-20251001', input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, eligible: true }],
         });
@@ -197,7 +280,7 @@ describe('provider report parsing', () => {
         const sparkOnly = historyReport('codex');
         sparkOnly.seven_days.models[0].model = 'gpt-5.3-codex-spark';
         const parse = (history: ReturnType<typeof historyReport>) => parseProviderSnapshot(providerReport({
-            provider: 'codex', quota_after: { source: 'codex', collected_at: GENERATED }, history,
+            provider: 'codex', quota: { collected_at: GENERATED }, history,
         }))?.providers[0]?.history;
 
         expect(parse(empty)?.recentTokens.totalTokens).toBe(0);
@@ -214,7 +297,7 @@ describe('provider report parsing', () => {
         });
 
         expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toEqual({
-            source:       'ccusage',
+            collector:    'ccusage',
             coverage:     'local_only',
             costBasis:    'calculated_api_reference_usd',
             startedAt:    new Date('2026-09-11T20:00:00Z'),
@@ -246,7 +329,7 @@ describe('provider report parsing', () => {
             reference_prices: { ...referencePrices(), models: [{ model: 'claude-haiku', input: 0, output: 5, eligible: true }] },
         }));
 
-        expect(snapshot?.providers[0]?.quotaAfter).toBeDefined();
+        expect(snapshot?.providers[0]?.quota).toBeDefined();
         expect(snapshot?.providers[0]?.history).toBeUndefined();
         expect(snapshot?.providers[0]?.prices).toBeUndefined();
     });
@@ -278,9 +361,9 @@ describe('provider report parsing', () => {
         const rawHistory = historyReport('codex');
         rawHistory.seven_days.models = [spark, sparkId, current];
         const snapshot = parseProviderSnapshot(providerReport({
-            provider:    'codex',
-            quota_after: { source: 'codex', collected_at: GENERATED },
-            history:     rawHistory,
+            provider: 'codex',
+            quota:    { collected_at: GENERATED },
+            history:  rawHistory,
         }));
 
         expect(snapshot?.providers[0]?.history?.recentTokens).toEqual({
@@ -411,31 +494,37 @@ describe('provider report parsing', () => {
         expect(parseProviderSnapshot(providerReport({ reference_prices: missingModels }))?.providers[0]?.prices).toBeUndefined();
     });
 
-    it('rejects unknown schemas and refuses a future, negative-age, or wrong-provider source as fresh quota', () => {
-        expect(parseProviderSnapshot({ ...providerReport(), schema_version: 2 })).toBeUndefined();
+    it('rejects schema 1 and every other schema version, and refuses a future or negative-age reading', () => {
+        expect(parseProviderSnapshot({ ...providerReport(), schema_version: 1 })).toBeUndefined();
+        expect(parseProviderSnapshot({ ...providerReport(), schema_version: 3 })).toBeUndefined();
+        expect(parseProviderSnapshot({ ...providerReport(), schema_version: '2' })).toBeUndefined();
         expect(parseProviderSnapshot(providerReport({ source_freshness: { cached: false, stale: false, age_seconds: -1 } }))).toBeUndefined();
         expect(parseProviderSnapshot(providerReport({ last_attempt: '2026-09-11T20:00:02Z' }))).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ quota_after: { source: 'anthropic', collected_at: '2026-09-11T20:00:02Z' } }))?.providers[0]?.quotaAfter).toBeUndefined();
-        const snapshot = parseProviderSnapshot(providerReport({ quota_after: { source: 'codex', collected_at: GENERATED } }));
-        expect(snapshot?.providers[0]?.quotaAfter).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ quota: { collected_at: '2026-09-11T20:00:02Z' } }))?.providers[0]?.quota).toBeUndefined();
+    });
+
+    it('accepts an observation without a source field and keeps its reading under whichever provider carries it', () => {
+        const snapshot = parseProviderSnapshot(providerReport({ provider: 'codex', quota: { collected_at: GENERATED } }));
+        expect(snapshot?.providers[0]?.quota).toMatchObject({ collectedAt: new Date(GENERATED), quotas: [], balances: [], spendLimits: [] });
     });
 
     it('rejects empty or non-string required provider fields', () => {
         expect(parseProviderSnapshot(providerReport({ provider: '' }))).toBeUndefined();
         expect(parseProviderSnapshot(providerReport({ provider: 42 }))).toBeUndefined();
         expect(parseProviderSnapshot(providerReport({ status: '' }))).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ quota_after: { source: '', collected_at: GENERATED } }))?.providers[0]?.quotaAfter).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ quota: { collected_at: '' } }))?.providers[0]?.quota).toBeUndefined();
+        expect(parseProviderSnapshot(providerReport({ quota: [] }))?.providers[0]?.quota).toBeUndefined();
     });
 
     it('accepts one-character required strings and requires both freshness flags', () => {
         const oneCharacter = providerReport({
-            provider:    'p',
-            status:      'o',
-            quota_after: { source:       'p', collected_at: GENERATED, quotas:       [
-                { id: 'x', used_percent: 1, unit: 'percent_0_100' },
+            provider: 'p',
+            status:   'o',
+            quota:    { collected_at: GENERATED, quotas:       [
+                { id: 'x', bucket: 'b', kind: 'other', used_percent: 1, unit: 'percent_0_100' },
             ] },
         });
-        expect(parseProviderSnapshot(oneCharacter)?.providers[0]?.quotaAfter?.quotas[0]?.id).toBe('x');
+        expect(parseProviderSnapshot(oneCharacter)?.providers[0]?.quota?.quotas[0]).toMatchObject({ id: 'x', bucket: 'b', kind: 'other' });
         expect(parseProviderSnapshot(providerReport({ source_freshness: { stale: false, age_seconds: 0 } }))).toBeUndefined();
         expect(parseProviderSnapshot(providerReport({ source_freshness: { cached: false, age_seconds: 0 } }))).toBeUndefined();
     });
@@ -448,53 +537,71 @@ describe('provider report parsing', () => {
 
     it('preserves display-name-only scopes, omits an absent scope, and validates error entries independently', () => {
         const snapshot = parseProviderSnapshot(providerReport({
-            errors:      [{ section: 'quota_after', code: 'expired' }, { section: '', code: 'ignored' }, null],
-            quota_after: {
-                source:       'anthropic', collected_at: GENERATED,
+            errors: [{ section: 'quota', code: 'expired' }, { section: '', code: 'ignored' }, null],
+            quota:  {
+                collected_at: GENERATED,
                 quotas:       [
-                    { id: 'named-scope', used_percent: 5, unit: 'percent_0_100', scope: { model: { display_name: 'Named model' } } },
-                    { id: 'unscoped', used_percent: 6, unit: 'percent_0_100' },
+                    { id: 'named-scope', bucket: 'weekly_scoped', kind: 'weekly_scoped', used_percent: 5, unit: 'percent_0_100', scope: { model: { display_name: 'Named model' } } },
+                    { id: 'unscoped', bucket: 'weekly_all', kind: 'weekly', used_percent: 6, unit: 'percent_0_100' },
                 ],
             },
         }));
 
-        expect(snapshot?.providers[0]?.errors).toEqual([{ section: 'quota_after', code: 'expired' }]);
-        expect(snapshot?.providers[0]?.quotaAfter?.quotas[0]?.scope).toEqual({ model: { displayName: 'Named model' } });
-        expect(snapshot?.providers[0]?.quotaAfter?.quotas[1]?.scope).toBeUndefined();
+        expect(snapshot?.providers[0]?.errors).toEqual([{ section: 'quota', code: 'expired' }]);
+        expect(snapshot?.providers[0]?.quota?.quotas[0]?.scope).toEqual({ model: { displayName: 'Named model' } });
+        expect(snapshot?.providers[0]?.quota?.quotas[1]?.scope).toBeUndefined();
     });
 
     it('preserves an optional quota API retry timestamp after a rate-limited lookup', () => {
         const retryAt = '2026-09-11T20:05:00Z';
         const snapshot = parseProviderSnapshot(providerReport({
             status: 'partial',
-            errors: [{ section: 'quota_after', code: 'rate_limited', retry_at: retryAt }],
+            errors: [{ section: 'quota', code: 'rate_limited', retry_at: retryAt }],
         }));
 
         expect(snapshot?.providers[0]?.errors).toEqual([
-            { section: 'quota_after', code: 'rate_limited', retryAt: new Date(retryAt) },
+            { section: 'quota', code: 'rate_limited', retryAt: new Date(retryAt) },
+        ]);
+    });
+
+    it('preserves the real upstream attempt time on a quota error, even one predating the collection', () => {
+        const attemptedAt = '2026-09-11T19:58:00Z';
+        const snapshot = parseProviderSnapshot(providerReport({
+            status: 'partial',
+            errors: [
+                { section: 'quota', code: 'rate_limited', retryable: true, retry_at: '2026-09-11T20:05:00Z', attempted_at: attemptedAt, message: 'provider reading unavailable' },
+                { section: 'history', code: 'timeout', retryable: true, message: 'local usage history unavailable' },
+                { section: 'quota', code: 'unavailable', attempted_at: 'not-a-date' },
+            ],
+        }));
+
+        expect(snapshot?.providers[0]?.errors).toEqual([
+            { section: 'quota', code: 'rate_limited', retryAt: new Date('2026-09-11T20:05:00Z'), attemptedAt: new Date(attemptedAt) },
+            { section: 'history', code: 'timeout', retryAt: undefined, attemptedAt: undefined },
+            { section: 'quota', code: 'unavailable', retryAt: undefined, attemptedAt: undefined },
         ]);
     });
 
     it('leaves retry metadata undefined when the report has no valid retry timestamp', () => {
         const snapshot = parseProviderSnapshot(providerReport({
-            errors: [{ section: 'quota_after', code: 'timed_out' }, { section: 'quota_after', code: 'rate_limited', retry_at: 'invalid' }],
+            errors: [{ section: 'quota', code: 'timed_out' }, { section: 'quota', code: 'rate_limited', retry_at: 'invalid' }],
         }));
         expect(snapshot?.providers[0]?.errors.map(error => error.retryAt)).toEqual([undefined, undefined]);
     });
 
     it('accepts inclusive percentage boundaries and drops out-of-range or wrongly-unitized quotas', () => {
-        const snapshot = parseProviderSnapshot(providerReport({ quota_after: {
-            source:       'anthropic', collected_at: GENERATED,
+        const snapshot = parseProviderSnapshot(providerReport({ quota: {
+            collected_at: GENERATED,
             quotas:       [
-                { id: 'empty', used_percent: 0, unit: 'percent_0_100' },
-                { id: 'full', used_percent: 100, unit: 'percent_0_100' },
-                { id: 'negative', used_percent: -0.01, unit: 'percent_0_100' },
-                { id: 'over', used_percent: 100.01, unit: 'percent_0_100' },
-                { id: 'fraction', used_percent: 0.5, unit: 'fraction_0_1' },
+                { id: 'empty', bucket: 'five_hour', kind: 'session', used_percent: 0, unit: 'percent_0_100' },
+                { id: 'full', bucket: 'five_hour', kind: 'session', used_percent: 100, unit: 'percent_0_100' },
+                { id: 'negative', bucket: 'five_hour', kind: 'session', used_percent: -0.01, unit: 'percent_0_100' },
+                { id: 'over', bucket: 'five_hour', kind: 'session', used_percent: 100.01, unit: 'percent_0_100' },
+                { id: 'fraction', bucket: 'five_hour', kind: 'session', used_percent: 0.5, unit: 'fraction_0_1' },
             ],
         } }));
 
-        expect(snapshot?.providers[0]?.quotaAfter?.quotas.map(quota => [quota.id, quota.usedPercent])).toEqual([
+        expect(snapshot?.providers[0]?.quota?.quotas.map(quota => [quota.id, quota.usedPercent])).toEqual([
             ['empty', 0], ['full', 100],
         ]);
     });
@@ -642,10 +749,10 @@ describe('provider polling', () => {
         });
     });
 
-    it('adapts an Anthropic unified quota identified by id when kind is absent', async () => {
-        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
-            source:       'anthropic', collected_at: GENERATED,
-            quotas:       [{ id: 'five_hour', used_percent: 42, unit: 'percent_0_100', resets_at: RESET }],
+    it('adapts a legacy Anthropic five_hour bucket by its bucket name', async () => {
+        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota: {
+            collected_at: GENERATED,
+            quotas:       [{ id: 'five_hour', bucket: 'five_hour', kind: 'session', used_percent: 42, unit: 'percent_0_100', resets_at: RESET }],
         } })) });
 
         poller.start();
@@ -657,10 +764,10 @@ describe('provider polling', () => {
         });
     });
 
-    it('prefers a reported unified quota kind over the raw provider id when both are present', async () => {
-        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
-            source:       'anthropic', collected_at: GENERATED,
-            quotas:       [{ id: 'weekly_all', kind: 'session', used_percent: 42, unit: 'percent_0_100' }],
+    it('adapts by the upstream bucket rather than the derived id or the closed kind', async () => {
+        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota: {
+            collected_at: GENERATED,
+            quotas:       [{ id: 'custom:id', bucket: 'session', kind: 'other', used_percent: 42, unit: 'percent_0_100' }],
         } })) });
 
         poller.start();
@@ -676,8 +783,8 @@ describe('provider polling', () => {
         const report = providerReport({ history: historyReport(), reference_prices: referencePrices() });
         const codex = {
             ...report.providers[0],
-            provider:    'codex',
-            quota_after: { ...report.providers[0].quota_after, source: 'codex' },
+            provider: 'codex',
+            quota:    { ...report.providers[0].quota },
         };
         const { ledgers, poller } = harness({
             anthropicQuotaSource: 'sdk', fetch: async () => ok({ ...report, providers: [report.providers[0], codex] }),
@@ -745,15 +852,15 @@ describe('provider polling', () => {
     });
 
     it('excludes surface-scoped, slotted, inactive, and already-reset Anthropic report quotas', async () => {
-        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
-            source:       'anthropic', collected_at: GENERATED,
+        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota: {
+            collected_at: GENERATED,
             quotas:       [
-                { id: 'five_hour', kind: 'five_hour', used_percent: 42, unit: 'percent_0_100' },
-                { id: 'surface', kind: 'session', group: 'session', used_percent: 91, unit: 'percent_0_100', scope: { surface: { id: 'cli' } } },
-                { id: 'model', kind: 'session', group: 'session', used_percent: 90, unit: 'percent_0_100', scope: { model: { id: 'opus' } } },
-                { id: 'slot', kind: 'session', group: 'session', slot: 'secondary', used_percent: 92, unit: 'percent_0_100' },
-                { id: 'inactive', kind: 'session', group: 'session', active: false, used_percent: 93, unit: 'percent_0_100' },
-                { id: 'reset', kind: 'session', group: 'session', resets_at: GENERATED, used_percent: 94, unit: 'percent_0_100' },
+                { id: 'five_hour', bucket: 'five_hour', kind: 'session', used_percent: 42, unit: 'percent_0_100' },
+                { id: 'surface', bucket: 'session', kind: 'session', group: 'session', used_percent: 91, unit: 'percent_0_100', scope: { surface: { id: 'cli' } } },
+                { id: 'model', bucket: 'session', kind: 'session', group: 'session', used_percent: 90, unit: 'percent_0_100', scope: { model: { id: 'opus' } } },
+                { id: 'slot', bucket: 'session', kind: 'session', group: 'session', slot: 'secondary', used_percent: 92, unit: 'percent_0_100' },
+                { id: 'inactive', bucket: 'session', kind: 'session', group: 'session', active: false, used_percent: 93, unit: 'percent_0_100' },
+                { id: 'reset', bucket: 'session', kind: 'session', group: 'session', resets_at: GENERATED, used_percent: 94, unit: 'percent_0_100' },
             ],
         } })) });
 
@@ -767,9 +874,9 @@ describe('provider polling', () => {
     });
 
     it('accepts an unscoped provider quota identified only by its session group', async () => {
-        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
-            source:       'anthropic', collected_at: GENERATED,
-            quotas:       [{ id: 'primary', group: 'session', used_percent: 37, unit: 'percent_0_100' }],
+        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota: {
+            collected_at: GENERATED,
+            quotas:       [{ id: 'primary', bucket: 'primary', kind: 'other', group: 'session', used_percent: 37, unit: 'percent_0_100' }],
         } })) });
         poller.start();
         await poller.poll();
@@ -785,10 +892,13 @@ describe('provider polling', () => {
 
     it('selects Anthropic by provider name when another provider is listed first', async () => {
         const report = providerReport();
+        // The codex entry's quota has no windows, so it must be skipped rather than matched by
+        // position: if the provider lookup ever degraded to "take the first entry", this would
+        // dispatch nothing at all instead of the real Anthropic windows below.
         const codex = {
             ...report.providers[0],
-            provider:    'codex',
-            quota_after: { ...report.providers[0].quota_after, source: 'codex' },
+            provider: 'codex',
+            quota:    { collected_at: GENERATED },
         };
         const { ledgers, poller } = harness({ fetch: async () => ok({ ...report, providers: [codex, report.providers[0]] }) });
         poller.start();
@@ -805,15 +915,15 @@ describe('provider polling', () => {
         await unrelated.poller.poll();
         expect(unrelated.ledgers[0]?.dispatch).toHaveBeenCalledTimes(1);
 
-        const quotaError = harness({ fetch: async () => ok(providerReport({ errors: [{ section: 'quota_after', code: 'expired' }] })) });
+        const quotaError = harness({ fetch: async () => ok(providerReport({ errors: [{ section: 'quota', code: 'expired' }] })) });
         quotaError.poller.start();
         await quotaError.poller.poll();
         expect(quotaError.ledgers[0]?.dispatch).not.toHaveBeenCalled();
     });
 
     it('does not dispatch an observation whose source says it is unavailable', async () => {
-        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota_after: {
-            ...providerReport().providers[0].quota_after,
+        const { ledgers, poller } = harness({ fetch: async () => ok(providerReport({ quota: {
+            ...providerReport().providers[0].quota,
             available: false,
         } })) });
         poller.start();
@@ -876,7 +986,7 @@ describe('provider polling', () => {
         const first = providerReport({ status: 'first' });
         const second = { ...providerReport({ status: 'second' }), generated_at: '2026-09-11T20:00:02Z' };
         second.providers[0].last_attempt = '2026-09-11T20:00:02Z';
-        second.providers[0].quota_after.collected_at = '2026-09-11T20:00:02Z';
+        second.providers[0].quota.collected_at = '2026-09-11T20:00:02Z';
         const fetch = jest.fn<QuotaFetch>()
             .mockResolvedValueOnce(ok(first))
             .mockResolvedValueOnce(ok(second))
@@ -928,17 +1038,20 @@ describe('provider polling', () => {
         expect(poller.getSnapshot?.()?.expiresAt?.getTime()).toBe(Date.parse(GENERATED));
     });
 
-    it('marks a prior report stale and logs when a later 200 response has an invalid schema', async () => {
+    it.each([
+        ['a schema 1 body', { ...providerReport(), schema_version: 1 }],
+        ['a schema 2 body without providers', { schema_version: 2, generated_at: GENERATED }],
+    ] as const)('marks a prior report stale and logs when a later 200 response is %s', async (_case, body) => {
         const fetch = jest.fn<QuotaFetch>()
             .mockResolvedValueOnce(ok(providerReport()))
-            .mockResolvedValueOnce(ok({ schema_version: 2 }));
+            .mockResolvedValueOnce(ok(body));
         const { logger, poller } = harness({ fetch });
         poller.start();
         await poller.poll();
         await poller.poll();
 
         expect(poller.getSnapshot?.()?.providers[0]?.freshness.stale).toBe(true);
-        expect(logger.debug).toHaveBeenCalledWith('Quota poll: utraque provider report was not valid schema version 1');
+        expect(logger.debug).toHaveBeenCalledWith('Quota poll: utraque provider report was not valid schema version 2');
     });
 
     it('falls back after a missing report route and uses separate official OAuth headers', async () => {
@@ -1199,9 +1312,9 @@ describe('provider polling', () => {
         expect(ledgers[0]?.dispatch).not.toHaveBeenCalled();
         expect(poller.getSnapshot?.()).toBeUndefined();
 
-        releaseCurrent(ok(providerReport({ quota_after: {
-            source:       'anthropic', collected_at: GENERATED,
-            quotas:       [{ id: 'session', kind: 'session', group: 'session', used_percent: 55, unit: 'percent_0_100' }],
+        releaseCurrent(ok(providerReport({ quota: {
+            collected_at: GENERATED,
+            quotas:       [{ id: 'session', bucket: 'session', kind: 'session', group: 'session', used_percent: 55, unit: 'percent_0_100' }],
         } })));
         await poller.poll();
         expect(ledgers[0]?.dispatch).toHaveBeenCalledTimes(1);

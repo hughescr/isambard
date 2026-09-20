@@ -333,17 +333,17 @@ function providerSnapshot(usedPercent: number, reset = THU_0900): ProviderSnapsh
         providers:   [{
             provider:    'codex', status:      'ok', lastAttempt: NOW,
             freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [],
-            quotaAfter:  {
-                source:        'codex', collectedAt:   NOW, available:     true,
-                quotas:        [{ id: 'weekly_primary', slot: 'primary', group: 'general', usedPercent, durationSeconds: 604_800, resetsAt: reset }],
-                balances:      [], spendControls: [],
+            quota:       {
+                collectedAt: NOW, available:   true,
+                quotas:      [{ id: 'weekly_primary', bucket: 'weekly_primary', kind: 'weekly', slot: 'primary', group: 'general', usedPercent, durationSeconds: 604_800, resetsAt: reset }],
+                balances:    [], spendLimits: [],
             },
         }, {
             provider:    'deepseek', status:      'ok', lastAttempt: NOW,
             freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [],
-            quotaAfter:  {
-                source:        'deepseek', collectedAt:   NOW, available:     true, quotas:        [], spendControls: [],
-                balances:      [{ kind: 'prepaid', currency: 'USD', total: '9.35', available: true }],
+            quota:       {
+                collectedAt: NOW, available:   true, quotas:      [], spendLimits: [],
+                balances:    [{ kind: 'account_balance', currency: 'USD', amountUnit: 'currency', remaining: '9.35' }],
             },
         }],
     };
@@ -356,22 +356,22 @@ describe('composeAmbientLines: provider reports', () => {
         expect(line).toContain('"group": "general"');
         expect(line).toContain('"window": "1w"');
         expect(line).toContain('"remaining_percent": 65');
-        expect(line).toContain('"total": "9.35"');
+        expect(line).toContain('"remaining": "9.35"');
     });
 
     it('shows burn only for comparable samples in the same reset window', () => {
         const snapshot = providerSnapshot(35);
-        snapshot.providers[0].quotaAfter!.collectedAt = new Date(NOW.getTime() - 30 * 60_000);
+        snapshot.providers[0].quota!.collectedAt = new Date(NOW.getTime() - 30 * 60_000);
         const prior = providerSnapshot(25);
         prior.generatedAt = new Date(NOW.getTime() - 90 * 60_000);
         const priorCodex = prior.providers[0];
-        priorCodex.quotaAfter!.collectedAt = prior.generatedAt;
+        priorCodex.quota!.collectedAt = prior.generatedAt;
         // A previous snapshot can use a different provider order; burn must match by provider id.
         prior.providers = [prior.providers[1], priorCodex];
         snapshot.previous = prior;
         expect(compose({ providerSnapshot: snapshot })[0]).toContain('"shared_burn_percent_per_hour": 10');
 
-        priorCodex.quotaAfter!.quotas[0].resetsAt = new Date(THU_0900.getTime() - 1000);
+        priorCodex.quota!.quotas[0].resetsAt = new Date(THU_0900.getTime() - 1000);
         expect(compose({ providerSnapshot: snapshot })[0]).not.toContain('pp/h');
     });
 
@@ -379,12 +379,12 @@ describe('composeAmbientLines: provider reports', () => {
         const snapshot = providerSnapshot(35);
         const prior = providerSnapshot(25);
         prior.generatedAt = new Date(NOW.getTime() - 5 * 60_000);
-        prior.providers[0].quotaAfter!.collectedAt = prior.generatedAt;
+        prior.providers[0].quota!.collectedAt = prior.generatedAt;
         snapshot.previous = prior;
         expect(compose({ providerSnapshot: snapshot })[0]).toContain('"shared_burn_percent_per_hour": 120');
 
-        snapshot.providers[0].quotaAfter!.quotas[0].resetsAt = undefined;
-        prior.providers[0].quotaAfter!.quotas[0].resetsAt = undefined;
+        snapshot.providers[0].quota!.quotas[0].resetsAt = undefined;
+        prior.providers[0].quota!.quotas[0].resetsAt = undefined;
         expect(compose({ providerSnapshot: snapshot })[0]).not.toContain('pp/h');
     });
 
@@ -406,8 +406,8 @@ describe('composeAmbientLines: provider reports', () => {
         const snapshot = providerSnapshot(35);
         snapshot.providers = [{
             provider:    'anthropic', status:      'partial', lastAttempt: NOW,
-            freshness:   { cached: false, stale: false, ageSeconds: 0 }, quotaAfter:  undefined,
-            errors:      [{ section: 'quota_after', code: 'http_429', retryAt: TODAY_1500 }],
+            freshness:   { cached: false, stale: false, ageSeconds: 0 }, quota:       undefined,
+            errors:      [{ section: 'quota', code: 'http_429', retryAt: TODAY_1500 }],
         }, ...snapshot.providers];
         const data = quotaJson(compose({
             self: ledger('conversation', { quota: QUOTA }), providerSnapshot: snapshot, anthropicQuotaSource: 'sdk',
@@ -443,13 +443,12 @@ describe('composeAmbientLines: provider reports', () => {
         snapshot.providers = [{
             provider:    'anthropic', status:      'ok', lastAttempt: NOW,
             freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [],
-            quotaAfter:  {
-                source:        'anthropic',
-                collectedAt:   NOW,
-                available:     true,
-                balances:      [],
-                spendControls: [],
-                quotas:        [{ id: 'provider_five_hour', usedPercent: 17, durationSeconds: 18_000, resetsAt: TODAY_1500 }],
+            quota:       {
+                collectedAt: NOW,
+                available:   true,
+                balances:    [],
+                spendLimits: [],
+                quotas:      [{ id: 'provider_five_hour', bucket: 'five_hour', kind: 'session', usedPercent: 17, durationSeconds: 18_000, resetsAt: TODAY_1500 }],
             },
         }, ...snapshot.providers];
         const data = quotaJson(compose({ self: ledger('conversation', { quota: QUOTA }), providerSnapshot: snapshot })[0]);
@@ -467,7 +466,7 @@ describe('composeAmbientLines: provider reports', () => {
         const snapshot = providerSnapshot(35);
         snapshot.providers = [{
             provider:    'anthropic', status:      'error', lastAttempt: NOW,
-            freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quotaAfter:  undefined,
+            freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quota:       undefined,
         }, ...snapshot.providers];
         const data = quotaJson(compose({
             self:                 ledger('conversation', { quota: { ...QUOTA, source: 'poll' } }), providerSnapshot:     snapshot,
@@ -483,7 +482,7 @@ describe('composeAmbientLines: provider reports', () => {
         const snapshot = providerSnapshot(35);
         snapshot.providers = [{
             provider:    'anthropic', status:      'error', lastAttempt: NOW,
-            freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quotaAfter:  undefined,
+            freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quota:       undefined,
         }, ...snapshot.providers];
         const self = ledger('conversation', {
             quota: { fiveHour: { utilization: 99, resetsAt: NOW }, source: 'headers', at: NOW },
