@@ -6,18 +6,18 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { InputQueue } from '../../../../src/agent/session/input-queue';
 import { createInterruptFlag } from '../../../../src/agent/session/interrupt-flag';
-import { openSession } from '../../../../src/agent/session/session';
+import { openSession, sdkFrameToAgentStreamEvent } from '../../../../src/agent/session/session';
 import { fakeQueryFn } from '../../../helpers/fake-query';
 import { mockLogger } from '../../../setup';
 
 const OPTIONS = {} as Options;
 
 function initFrame(sessionId: string): SDKMessage {
-    return { type: 'system', subtype: 'init', session_id: sessionId } as unknown as SDKMessage;
+    return { type: 'system', subtype: 'init', session_id: sessionId } as unknown as Extract<SDKMessage, { type: 'system' }>;
 }
 
 function resultFrame(): SDKMessage {
-    return { type: 'result', subtype: 'success' } as unknown as SDKMessage;
+    return { type: 'result', subtype: 'success' } as unknown as Extract<SDKMessage, { type: 'system' }>;
 }
 
 /** A minimal test-double InputQueue: nothing under test here actually drains it. */
@@ -46,6 +46,27 @@ afterEach(() => {
 });
 
 describe('openSession', () => {
+    test('preserves non-init system frames for observability consumers', () => {
+        const frame = {
+            type:        'system',
+            subtype:     'task_progress',
+            task_id:     'task-abc',
+            summary:     'Inspecting stream adapters',
+            description: 'Fix system frames',
+            usage:       { total_tokens: 42, tool_uses: 1, duration_ms: 7 },
+        } as unknown as Extract<SDKMessage, { type: 'system' }>;
+
+        expect(sdkFrameToAgentStreamEvent(frame)).toEqual(frame);
+
+        const compactFrame = {
+            type:             'system',
+            subtype:          'compact_boundary',
+            compact_metadata: { trigger: 'auto', pre_tokens: 42_000 },
+        } as unknown as Extract<SDKMessage, { type: 'system' }>;
+
+        expect(sdkFrameToAgentStreamEvent(compactFrame)).toEqual(compactFrame);
+    });
+
     test('calls queryFn exactly once with prompt === the queue and options === the given options', () => {
         const { queryFn, instances } = fakeQueryFn();
         const queue = stubQueue();
@@ -342,8 +363,8 @@ describe('openSession', () => {
         const assistantToolUse = {
             type:    'assistant',
             message: { content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] },
-        } as unknown as SDKMessage;
-        const userFrame = { type: 'user', message: { content: 'hi' } } as unknown as SDKMessage;
+        } as unknown as Extract<SDKMessage, { type: 'system' }>;
+        const userFrame = { type: 'user', message: { content: 'hi' } } as unknown as Extract<SDKMessage, { type: 'system' }>;
 
         a.instances[0].emit(assistantToolUse);
         await flush();

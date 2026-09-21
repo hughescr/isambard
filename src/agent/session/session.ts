@@ -73,10 +73,7 @@ export function sdkFrameToAgentStreamEvent(frame: SDKMessage): AgentStreamEvent 
             };
         }
         case 'system': {
-            if(frame.subtype === 'init') {
-                return { type: 'system', subtype: 'init', session_id: frame.session_id };
-            }
-            return { type: 'system' };
+            return frame;
         }
         default: {
             return { type: 'system' };

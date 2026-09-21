@@ -161,7 +161,7 @@ interface UserEvent {
  */
 export interface SystemEvent {
     type:             'system'
-    subtype?:         'init' | 'status' | 'compact_boundary' | 'hook_response' | 'task_progress' | 'task_started' | 'task_notification' | 'background_tasks_changed' | 'hook_started'
+    subtype?:         string
     session_id?:      string
     /** Unique task ID — present on task_started, task_progress and task_notification subtypes */
     task_id?:         string
@@ -176,7 +176,7 @@ export interface SystemEvent {
     /** Task type, e.g. 'local_agent' | 'local_workflow' | 'local_bash' — present on task_started */
     task_type?:       string
     /** Terminal status of a background task — present on task_notification */
-    status?:          'completed' | 'failed' | 'stopped'
+    status?:          unknown
     /** Whether the task was registered in the background — present on task_started */
     is_backgrounded?: boolean
     /** Subagent type for Task-tool subagents — present on task_started */
