@@ -5,6 +5,7 @@
  * `role` field onto every log call it forwards.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { createStreamEventLogger, createRoleLogger, logAssistantErrors, logResultErrors, logToolUsage } from '../../../src/agent/stream-event-logger';
 import type { AgentStreamEvent } from '../../../src/agent/types';
 import { mockLogger } from '../../setup';
@@ -89,8 +90,8 @@ describe('one-shot stream log helpers', () => {
     test('logs every one-shot tool use', () => {
         logToolUsage({
             type:    'assistant',
-            message: { content: [{ type: 'tool_use', name: 'mcp__memory__view', input: { path: '/state' } }] },
-        });
+            message: { content: [{ type: 'tool_use', id: 'tool_read', name: 'mcp__memory__view', input: { path: '/state' } }] },
+        } as SDKMessage);
 
         expect(mockLogger.debug).toHaveBeenCalledWith({
             module: 'memory',

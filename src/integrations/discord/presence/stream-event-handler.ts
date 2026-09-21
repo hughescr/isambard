@@ -16,7 +16,7 @@
 import type { PresenceThrottle } from './presence-view.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
 import { getToolDescription } from './types.js';
-import { extractToolUses, redactSensitiveArgs, type ActivityPhase, type AgentStreamEvent, type LedgerEvent, type LedgerStore } from '@/agent';
+import { redactSensitiveArgs, type ActivityPhase, type AgentStreamEvent, type LedgerEvent, type LedgerStore } from '@/agent';
 
 /**
  * Stream event handler interface.
@@ -293,13 +293,8 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
         }
     }
 
-    interface AssistantContentBlock {
-        type:      string
-        thinking?: string
-        text?:     string
-    }
     const collectAssistantText = (event: Extract<AgentStreamEvent, { type: 'assistant' }>): string => {
-        const content: AssistantContentBlock[] | undefined = event.message?.content;
+        const content = event.message?.content;
         let completeText = '';
         // Stryker disable next-line llm: content is an array or undefined, and arrays are truthy, so ?? and || are equivalent.
         for(const block of content ?? []) {
@@ -316,7 +311,7 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
 
     const handleAssistantTools = (event: Extract<AgentStreamEvent, { type: 'assistant' }>): boolean => {
         let hadToolUseUpdate = false;
-        for(const toolUse of extractToolUses(event)) {
+        for(const toolUse of event.message?.content?.filter(block => block.type === 'tool_use') ?? []) {
             pendingToolInputs.set(toolUse.name, redactSensitiveArgs(toolUse.input));
             if(handleToolPhaseTransition(toolUse.name)) {
                 hadToolUseUpdate = true;

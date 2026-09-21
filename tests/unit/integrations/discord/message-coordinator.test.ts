@@ -273,7 +273,7 @@ describe('MessageCoordinator', () => {
                 type:    'assistant',
                 message: {
                     content: [
-                        { type: 'thinking', text: 'I am thinking...' },
+                        { type: 'thinking', thinking: 'I am thinking...' },
                         { type: 'text', text: 'Partial response...' }
                     ]
                 }
@@ -497,7 +497,7 @@ describe('MessageCoordinator', () => {
             trackerWithThinking.update({
                 type:    'assistant',
                 message: {
-                    content: [{ type: 'thinking', text: 'I am thinking deeply here...' }]
+                    content: [{ type: 'thinking', thinking: 'I am thinking deeply here...' }]
                 }
             });
 
@@ -772,7 +772,7 @@ describe('MessageCoordinator', () => {
             trackerWithThinking.update({
                 type:    'assistant',
                 message: {
-                    content: [{ type: 'thinking', text: 'I am thinking deeply...' }]
+                    content: [{ type: 'thinking', thinking: 'I am thinking deeply...' }]
                 }
             });
 

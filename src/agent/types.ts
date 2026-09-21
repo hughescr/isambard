@@ -7,6 +7,7 @@
 
 import type { MessageCreateOptions } from 'discord.js';
 import { z } from 'zod';
+import type { TextBlock, ThinkingBlock, ToolUseBlock } from './stream-extractors';
 
 // ============================================================================
 // Platform-Agnostic Branded IDs
@@ -81,21 +82,6 @@ export type AgentStreamEvent
       | SystemEvent;
 
 /**
- * Content block types that can appear in assistant messages.
- * - text: Text response content
- * - thinking: Extended thinking content (when enabled)
- * - tool_use: Tool invocation request
- * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
- */
-interface ContentBlock {
-    type:   string
-    text?:  string
-    id?:    string
-    name?:  string
-    input?: unknown
-}
-
-/**
  * Event emitted when the agent generates assistant content.
  * This can include thinking (no delta) or actual response text (with delta).
  * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
@@ -106,7 +92,7 @@ export interface AssistantEvent {
         text?: string
     }
     message?: {
-        content?: ContentBlock[]
+        content?: (Pick<TextBlock, 'type' | 'text'> | Pick<ThinkingBlock, 'type' | 'thinking'> | Pick<ToolUseBlock, 'type' | 'id' | 'name' | 'input'>)[]
     }
 }
 

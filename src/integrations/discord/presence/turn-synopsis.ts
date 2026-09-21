@@ -27,7 +27,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { PresenceThrottle } from './presence-view.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
 import { buildLedgerThinkingSynopsis, createLedgerStreamEventHandler, type LedgerStreamEventHandler } from './stream-event-handler.js';
-import type { AgentStreamEvent, Conductor, LedgerStore, LedgerTurn, TurnKind } from '@/agent';
+import { sdkFrameToAgentStreamEvent, type Conductor, type LedgerStore, type LedgerTurn, type TurnKind } from '@/agent';
 
 /**
  * Turn kinds that deliberately get NO synopsis handler. `compact` is the only member:
@@ -146,8 +146,7 @@ export function attachTurnSynopsis(deps: AttachTurnSynopsisDeps): () => void {
     // if that invariant is ever weakened this degrades to a silently dropped digest, never a
     // wrong status.
     function forwardFrame(_turnId: string, frame: SDKMessage): void {
-        // boundary cast: the synopsis handler reads only observability fields shared by the broader SDKMessage union and AgentStreamEvent
-        handler?.onStreamEvent(frame as unknown as AgentStreamEvent);
+        handler?.onStreamEvent(sdkFrameToAgentStreamEvent(frame));
     }
     const unsubscribeFrames = conductor.subscribeTurn(forwardFrame);
 

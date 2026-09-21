@@ -103,6 +103,7 @@ export { createInterruptFlag, type InterruptFlag } from './interrupt-flag';
 
 export {
     openSession,
+    sdkFrameToAgentStreamEvent,
     type SessionHandle,
     type SessionState,
     type OpenSessionParams

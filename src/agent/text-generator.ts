@@ -1,9 +1,10 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
+import { query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import removeMarkdown from 'remove-markdown';
+import type { TextBlock } from './stream-extractors';
 
 /**
  * Process-lifetime singleton promise for the temp directory.
@@ -83,42 +84,14 @@ interface TextGeneratorOptions {
      */
     label?:           string
 }
-
-/**
- * Content block from an assistant message.
- */
-interface ContentBlock {
-    type:  string
-    text?: string
-}
-
-/**
- * Boundary type for the events streamed by the Claude Agent SDK's `query()`.
- *
- * The SDK's published `SDKMessage` union is currently unusable as a type: it lists
- * `SDKControlRequestProgressMessage` and `SDKConversationResetMessage` as members,
- * but neither is defined anywhere in the shipped `.d.ts`. That undefined reference
- * collapses the whole union to the `error` type — silently tolerated by `tsc` under
- * `skipLibCheck`, but flagged by typed linting as an unresolvable type. Until the SDK
- * ships correct types, we describe only the fields we consume, discriminated by
- * `type` (and `subtype`/`result` on the terminal `result` event).
- */
-interface QueryEvent {
-    type:     string
-    subtype?: string
-    message?: unknown
-    result?:  string
-}
-
 /**
  * Extracts accumulated text from a query assistant event.
  */
-function extractTextFromEvent(event: { type: string, message?: unknown }): string {
+function extractTextFromEvent(event: SDKMessage): string {
     if(event.type !== 'assistant') {
         return '';
     }
-    const content = (event.message as { content?: unknown } | undefined)?.content as ContentBlock[] | undefined;
-    const textBlocks = (content ?? []).filter(block => block.type === 'text' && block.text);
+    const textBlocks = event.message.content.filter((block): block is TextBlock => block.type === 'text');
     return textBlocks.map(block => block.text).join('');
 }
 
@@ -220,7 +193,6 @@ async function executePrompt(
         let successResult: string | undefined;
         const tmpDir = await getTmpDir();
 
-        // boundary cast: the SDK's query() yields the broken `SDKMessage` union (see QueryEvent); laundering through `unknown` lets us consume the events under a resolvable type.
         const events = query({
             prompt,
             options: {
@@ -236,7 +208,7 @@ async function executePrompt(
                 abortController: controller,
                 ...(options?.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
             },
-        }) as unknown as AsyncIterable<QueryEvent>;
+        });
         for await (const event of events) {
             resultText += extractTextFromEvent(event);
             if(event.type === 'result') {

@@ -52,7 +52,7 @@ describe('StreamTracker', () => {
                 type:    'assistant',
                 message: {
                     content: [
-                        { type: 'thinking', text: 'Let me think about this...' },
+                        { type: 'thinking', thinking: 'Let me think about this...' },
                     ],
                 },
             };
@@ -92,7 +92,7 @@ describe('StreamTracker', () => {
                 type:    'assistant',
                 message: {
                     content: [
-                        { type: 'thinking', text: 'First thought' },
+                        { type: 'thinking', thinking: 'First thought' },
                         { type: 'text', text: 'Response text' },
                         {
                             type:  'tool_use',
@@ -178,13 +178,13 @@ describe('StreamTracker', () => {
             const event1: AssistantEvent = {
                 type:    'assistant',
                 message: {
-                    content: [{ type: 'thinking', text: 'First thought' }],
+                    content: [{ type: 'thinking', thinking: 'First thought' }],
                 },
             };
             const event2: AssistantEvent = {
                 type:    'assistant',
                 message: {
-                    content: [{ type: 'thinking', text: 'Latest thought' }],
+                    content: [{ type: 'thinking', thinking: 'Latest thought' }],
                 },
             };
 
@@ -296,7 +296,7 @@ describe('StreamTracker', () => {
                 type:    'assistant',
                 message: {
                     content: [
-                        { type: 'thinking', text: 'Some thinking' },
+                        { type: 'thinking', thinking: 'Some thinking' },
                         { type: 'text', text: 'Some text' },
                         {
                             type:  'tool_use',
@@ -471,7 +471,7 @@ describe('StreamTracker', () => {
                 type:    'assistant',
                 message: {
                     content: [
-                        { type: 'thinking', text: 'Previous thinking' },
+                        { type: 'thinking', thinking: 'Previous thinking' },
                     ],
                 },
             };
@@ -511,7 +511,7 @@ describe('StreamTracker', () => {
                 type:    'assistant',
                 message: {
                     content: [
-                        { type: 'thinking', text: 'Just thinking now' },
+                        { type: 'thinking', thinking: 'Just thinking now' },
                     ],
                 },
             };
@@ -621,7 +621,7 @@ describe('StreamTracker', () => {
                 type:    'assistant',
                 message: {
                     content: [
-                        { type: 'thinking', text: 'Previous thinking' },
+                        { type: 'thinking', thinking: 'Previous thinking' },
                     ],
                 },
             };
@@ -674,7 +674,7 @@ describe('StreamTracker', () => {
                 type:    'assistant',
                 message: {
                     content: [
-                        { type: 'thinking', text: 'Let me think about this' },
+                        { type: 'thinking', thinking: 'Let me think about this' },
                     ],
                 },
             };

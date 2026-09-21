@@ -9,6 +9,7 @@
  */
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import type { AssistantFrame, TextBlock, ToolUseBlock } from '../stream-extractors';
 
 /**
  * Discriminated union representing the current activity phase during message processing.
@@ -89,10 +90,6 @@ export function isActivityPhase(value: unknown): value is ActivityPhase {
     return result.success;
 }
 
-type AssistantFrame = Extract<SDKMessage, { type: 'assistant' }>;
-type AssistantContentBlock = AssistantFrame['message']['content'][number];
-type ToolUseBlock = Extract<AssistantContentBlock, { type: 'tool_use' }>;
-type TextBlock = Extract<AssistantContentBlock, { type: 'text' }>;
 type StreamEventFrame = Extract<SDKMessage, { type: 'stream_event' }>;
 type TaskProgressFrame = Extract<SDKMessage, { type: 'system', subtype: 'task_progress' }>;
 

@@ -1,5 +1,11 @@
 import { describe, test, expect } from 'bun:test';
-import { extractAssistantText, extractThinkingContent, extractToolUses, parseToolName, redactSensitiveArgs } from '@/agent/stream-extractors';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { extractAssistantText as extractSdkAssistantText, extractThinkingContent as extractSdkThinkingContent, extractToolUses as extractSdkToolUses, parseToolName, redactSensitiveArgs } from '@/agent/stream-extractors';
+
+const toSdkMessage = (message: unknown): SDKMessage => message as SDKMessage;
+const extractAssistantText = (message: unknown): string => extractSdkAssistantText(toSdkMessage(message));
+const extractThinkingContent = (message: unknown): string => extractSdkThinkingContent(toSdkMessage(message));
+const extractToolUses = (message: unknown) => extractSdkToolUses(toSdkMessage(message));
 
 describe('parseToolName', () => {
     test.each([
@@ -139,7 +145,7 @@ describe('extractToolUses', () => {
     test('should return empty array for non-assistant messages', () => {
         expect(extractToolUses({ type: 'user', message: { content: [] } })).toEqual([]);
         expect(extractToolUses({ type: 'user', message: { content: [{ type: 'tool_use', id: 'private', name: 'Read', input: {} }] } })).toEqual([]);
-        expect(extractToolUses({ type: 'assistant', message: {} })).toEqual([]);
+        expect(extractToolUses({ type: 'assistant', message: { content: [] } })).toEqual([]);
         expect(extractToolUses({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } })).toEqual([]);
     });
 
@@ -198,10 +204,10 @@ describe('extractToolUses', () => {
 describe('extractThinkingContent', () => {
     test('should return empty string for non-assistant messages', () => {
         expect(extractThinkingContent({ type: 'user', message: { content: [] } })).toBe('');
-        expect(extractThinkingContent({ type: 'user', message: { content: [{ type: 'thinking', text: 'private thought' }] } })).toBe('');
+        expect(extractThinkingContent({ type: 'user', message: { content: [{ type: 'thinking', thinking: 'private thought' }] } })).toBe('');
         expect(extractThinkingContent({ type: 'system', message: { content: [] } })).toBe('');
         expect(extractThinkingContent({ type: 'result', message: { content: [] } })).toBe('');
-        expect(extractThinkingContent({ type: 'assistant', message: {} })).toBe('');
+        expect(extractThinkingContent({ type: 'assistant', message: { content: [] } })).toBe('');
         expect(extractThinkingContent({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } })).toBe('');
     });
 
@@ -211,8 +217,8 @@ describe('extractThinkingContent', () => {
             message: {
                 content: [
                     {
-                        type: 'thinking',
-                        text: 'Let me think about this...',
+                        type:     'thinking',
+                        thinking: 'Let me think about this...',
                     },
                 ],
             },
@@ -225,9 +231,9 @@ describe('extractThinkingContent', () => {
             type:    'assistant',
             message: {
                 content: [
-                    { type: 'thinking', text: 'First thought' },
+                    { type: 'thinking', thinking: 'First thought' },
                     { type: 'text', text: 'Some response' },
-                    { type: 'thinking', text: 'Second thought' },
+                    { type: 'thinking', thinking: 'Second thought' },
                 ],
             },
         };
@@ -239,8 +245,8 @@ describe('extractThinkingContent', () => {
             type:    'assistant',
             message: {
                 content: [
-                    { type: 'thinking', text: ' First thought' },
-                    { type: 'thinking', text: 'Second thought ' },
+                    { type: 'thinking', thinking: ' First thought' },
+                    { type: 'thinking', thinking: 'Second thought ' },
                 ],
             },
         };
@@ -260,7 +266,7 @@ describe('extractAssistantText', () => {
     test('extracts and joins assistant text blocks', () => {
         expect(extractAssistantText({
             type:    'assistant',
-            message: { content: [{ type: 'text', text: ' First' }, { type: 'thinking', text: 'ignored' }, { type: 'text', text: 'Second ' }] },
+            message: { content: [{ type: 'text', text: ' First' }, { type: 'thinking', thinking: 'ignored' }, { type: 'text', text: 'Second ' }] },
         })).toBe('First\nSecond');
     });
 });

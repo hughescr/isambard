@@ -13,11 +13,11 @@
  *
  * @module agent/stream-event-logger
  */
-import type { SDKCompactBoundaryMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKCompactBoundaryMessage, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { SessionRole } from './session/types';
-import { extractAssistantText, extractToolUses, parseToolName, redactSensitiveArgs } from './stream-extractors';
-import type { AgentStreamEvent } from './types';
+import { extractToolUses, parseToolName, redactSensitiveArgs, type ToolUseBlock } from './stream-extractors';
+import type { AgentStreamEvent, AssistantEvent } from './types';
 
 /** Older SDK compact-boundary frames can omit metadata required by current SDK types. */
 interface CompactBoundaryIngress extends Pick<SDKCompactBoundaryMessage, 'type' | 'subtype'> {
@@ -96,7 +96,7 @@ export function logAssistantErrors(message: { type: string, error?: unknown }): 
  * by the one-shot path (src/agent/agent.ts).
  * @param message Stream message to extract tool uses from
  */
-export function logToolUsage(message: { type: string, message?: { content?: unknown } }): void {
+export function logToolUsage(message: SDKMessage): void {
     const toolUses = extractToolUses(message);
     for(const toolUse of toolUses) {
         const parsed = parseToolName(toolUse.name);
@@ -106,6 +106,18 @@ export function logToolUsage(message: { type: string, message?: { content?: unkn
             args:   redactSensitiveArgs(toolUse.input),
         });
     }
+}
+
+function toolUsesFromAssistant(message: AssistantEvent): ToolUseBlock[] {
+    return message.message?.content?.filter(block => block.type === 'tool_use') ?? [];
+}
+
+function assistantText(message: AssistantEvent): string {
+    return (message.message?.content ?? [])
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join('\n')
+        .trim();
 }
 
 /** A per-instance stream-event logger: `logStreamEvent` dispatches, `reset` clears pending tool-correlation state. */
@@ -161,9 +173,9 @@ export function createStreamEventLogger(log: FieldLogger = logger): StreamEventL
         }
     }
 
-    function logAssistantEvent(message: AgentStreamEvent): void {
+    function logAssistantEvent(message: AssistantEvent): void {
         // Stryker disable next-line llm: logAssistantEvent is reached only through logStreamEvent's switch on message.type, so message is never nullish.
-        const toolUses = extractToolUses(message);
+        const toolUses = toolUsesFromAssistant(message);
         // Stryker disable next-line llm: an array length is a non-negative integer, so > 0, >= 1 and !== 0 coincide.
         if(toolUses.length > 0) {
             // Log each tool request and track for response correlation
@@ -178,7 +190,7 @@ export function createStreamEventLogger(log: FieldLogger = logger): StreamEventL
             }
         } else {
             // No tool use - log thinking/responding
-            const hasText = Boolean(extractAssistantText(message));
+            const hasText = Boolean(assistantText(message));
             log.debug({
                 eventType: 'assistant',
                 hasText,

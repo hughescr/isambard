@@ -14,7 +14,7 @@ import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import { extractSessionId } from '../session-cleanup';
 import { createRoleLogger, createStreamEventLogger, type FieldLogger } from '../stream-event-logger';
-import type { AgentStreamEvent } from '../types';
+import type { AgentStreamEvent, AssistantEvent } from '../types';
 import type { InputQueue } from './input-queue';
 import type { InterruptFlag } from './interrupt-flag';
 import type { ContextUsageSummary, SessionQueryFn, SessionRole } from './types';
@@ -22,6 +22,67 @@ import type { ContextUsageSummary, SessionQueryFn, SessionRole } from './types';
 /** Lifecycle state of a {@link SessionHandle}. */
 export type SessionState = 'opening' | 'open' | 'closed' | 'failed';
 
+/**
+ * Adapts a raw SDK frame to the narrower observability event consumed by legacy observers.
+ * Assistant content remains the SDK union so thinking blocks retain their `thinking` payload.
+ */
+export function sdkFrameToAgentStreamEvent(frame: SDKMessage): AgentStreamEvent {
+    // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- observability intentionally ignores non-observability SDK frames.
+    switch(frame.type) {
+        case 'assistant': {
+            const content: NonNullable<NonNullable<AssistantEvent['message']>['content']> = [];
+            for(const block of frame.message.content) {
+                // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- adapter intentionally ignores SDK blocks outside the observability view.
+                switch(block.type) {
+                    case 'text': {
+                        content.push({ type: block.type, text: block.text });
+                        break;
+                    }
+                    case 'thinking': {
+                        content.push({ type: block.type, thinking: block.thinking });
+                        break;
+                    }
+                    case 'tool_use': {
+                        content.push({ type: block.type, id: block.id, name: block.name, input: block.input });
+                        break;
+                    }
+                }
+            }
+            return { type: 'assistant', message: { content } };
+        }
+        case 'user': {
+            return { type: 'user', message: { content: frame.message.content } };
+        }
+        case 'tool_progress': {
+            return {
+                type:                 'tool_progress',
+                tool_use_id:          frame.tool_use_id,
+                tool_name:            frame.tool_name,
+                elapsed_time_seconds: frame.elapsed_time_seconds,
+            };
+        }
+        case 'result': {
+            return {
+                type:              'result',
+                subtype:           frame.subtype,
+                duration_ms:       frame.duration_ms,
+                total_cost_usd:    frame.total_cost_usd,
+                is_error:          frame.is_error,
+                usage:             frame.usage,
+                queued_turn_count: frame.queued_turn_count,
+            };
+        }
+        case 'system': {
+            if(frame.subtype === 'init') {
+                return { type: 'system', subtype: 'init', session_id: frame.session_id };
+            }
+            return { type: 'system' };
+        }
+        default: {
+            return { type: 'system' };
+        }
+    }
+}
 /** Parameters for {@link openSession}. */
 export interface OpenSessionParams {
     /** Which of the two concurrent sessions this is. */
@@ -98,8 +159,7 @@ export function openSession(params: OpenSessionParams): SessionHandle {
         // in that observer, not a transport failure: catching it here keeps a healthy query from
         // being torn down (state 'failed', onClosed(error)) by someone else's mistake.
         try {
-            // boundary cast: AgentStreamEvent is the one-shot path's narrower observability-only view of a stream event; the two unions don't structurally overlap enough for a single `as`, but every SDKMessage shape the logger switches on (user/assistant/tool_progress/tool_result/result/system) is a subset of AgentStreamEvent's fields
-            streamEventLogger.logStreamEvent(frame as unknown as AgentStreamEvent);
+            streamEventLogger.logStreamEvent(sdkFrameToAgentStreamEvent(frame));
             onFrame(frame);
         } catch (error) {
             log.error({ error, msg: 'Frame observer threw' });

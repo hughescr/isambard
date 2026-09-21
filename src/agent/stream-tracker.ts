@@ -6,8 +6,9 @@
  * content, the last pending tool_use block, and the session id captured from the
  * system/init event.
  */
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { extractSessionId } from './session-cleanup';
-import { type ToolUseBlock, extractAssistantText, extractThinkingContent, extractToolUses } from './stream-extractors';
+import { type ToolUseBlock } from './stream-extractors';
 import type { AgentStreamEvent } from './types';
 
 /**
@@ -37,7 +38,7 @@ export class StreamTracker {
      * Update the tracker with a new stream event.
      * @param message The stream event to process
      */
-    update(message: AgentStreamEvent): void {
+    update(message: SDKMessage | AgentStreamEvent): void {
         // Extract session ID from system init events
         const extractedSessionId = extractSessionId(message);
         if(extractedSessionId) {
@@ -46,32 +47,44 @@ export class StreamTracker {
 
         // Process assistant events
         if(message.type === 'assistant') {
+            const content = message.message?.content;
+
             // Extract thinking content (replaces previous thinking)
-            const thinkingContent = extractThinkingContent(message);
+            const thinkingContent = (content ?? [])
+                .filter(block => block.type === 'thinking')
+                .map(block => block.thinking)
+                .filter(Boolean)
+                .join('\n')
+                .trim();
             if(thinkingContent) {
                 this.thinking = thinkingContent;
-            } else if(message.message?.content !== undefined) {
+            } else if(content !== undefined) {
                 // If there's content but no thinking, clear thinking
                 this.thinking = '';
             }
 
             // Extract text content (replaces previous text)
-            const textContent = extractAssistantText(message);
+            const textContent = (content ?? [])
+                .filter(block => block.type === 'text')
+                .map(block => block.text)
+                .filter(Boolean)
+                .join('\n')
+                .trim();
             if(textContent) {
                 this.text = textContent;
-            } else if(message.message?.content !== undefined) {
+            } else if(content !== undefined) {
                 // If there's content but no text, clear text
                 this.text = '';
             }
 
             // Extract tool_use blocks (capture the last one)
-            const toolUses = extractToolUses(message);
+            const toolUses = (content ?? []).filter(block => block.type === 'tool_use');
             // Stryker disable next-line llm: array length is a nonnegative integer, so > 0 and >= 1 are equivalent
             if(toolUses.length > 0) {
                 // Get the last tool_use block
                 // Stryker disable next-line llm: every filtered ToolUseBlock is a non-null object, so at(-1) is always truthy here and ?? and || agree
                 this.pendingToolUse = toolUses.at(-1) ?? null;
-            } else if(message.message?.content !== undefined) {
+            } else if(content !== undefined) {
                 // If there's content but no tool_use, clear pendingToolUse
                 this.pendingToolUse = null;
             }

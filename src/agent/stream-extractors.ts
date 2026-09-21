@@ -1,17 +1,23 @@
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { chain, isPlainObject } from 'lodash-es';
 
-export function extractAssistantText(message: { type: string, message?: { content?: unknown } }): string {
+/** Assistant frame emitted by the Claude Agent SDK. */
+export type AssistantFrame = Extract<SDKMessage, { type: 'assistant' }>;
+/** Content block from an SDK assistant frame. */
+export type AssistantContentBlock = AssistantFrame['message']['content'][number];
+/** Text content block from an SDK assistant frame. */
+export type TextBlock = Extract<AssistantContentBlock, { type: 'text' }>;
+/** Thinking content block from an SDK assistant frame. */
+export type ThinkingBlock = Extract<AssistantContentBlock, { type: 'thinking' }>;
+/** Tool-use content block from an SDK assistant frame. */
+export type ToolUseBlock = Extract<AssistantContentBlock, { type: 'tool_use' }>;
+
+export function extractAssistantText(message: SDKMessage): string {
     if(message.type !== 'assistant') {
         return '';
     }
 
-    interface ContentBlock {
-        type:  string
-        text?: string
-    }
-    const content = message.message?.content as ContentBlock[] | undefined;
-    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - filter on strings returns [] same as on []
-    const textBlocks = (content ?? []).filter(block => block.type === 'text');
+    const textBlocks = (message.message.content).filter((block): block is TextBlock => block.type === 'text');
     return chain(textBlocks).map('text').compact().join('\n').trim().value();
 }
 
@@ -20,31 +26,13 @@ export function extractAssistantText(message: { type: string, message?: { conten
  * @param message SDK message with potential content blocks
  * @returns Extracted thinking text or empty string
  */
-export function extractThinkingContent(message: { type: string, message?: { content?: unknown } }): string {
+export function extractThinkingContent(message: SDKMessage): string {
     if(message.type !== 'assistant') {
         return '';
     }
 
-    interface ContentBlock {
-        type:  string
-        text?: string
-    }
-    const content = message.message?.content as ContentBlock[] | undefined;
-    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - filter on strings returns [] same as on []
-    const thinkingBlocks = (content ?? []).filter(block => block.type === 'thinking');
-    return chain(thinkingBlocks).map('text').compact().join('\n').trim().value();
-}
-
-/**
- * Extract tool_use blocks from an assistant message
- * @param message Stream message to extract from
- * @returns Array of tool use blocks or empty array
- */
-export interface ToolUseBlock {
-    type:  'tool_use'
-    id:    string
-    name:  string
-    input: unknown
+    const thinkingBlocks = (message.message.content).filter((block): block is ThinkingBlock => block.type === 'thinking');
+    return chain(thinkingBlocks).map('thinking').compact().join('\n').trim().value();
 }
 
 /**
@@ -136,10 +124,10 @@ export function redactSensitiveArgs(input: unknown): unknown {
     return input;
 }
 
-export function extractToolUses(message: { type: string, message?: { content?: unknown } }): ToolUseBlock[] {
+/** Extract tool-use blocks from an assistant SDK message. */
+export function extractToolUses(message: SDKMessage): ToolUseBlock[] {
     if(message.type !== 'assistant') {
         return [];
     }
-    const content = message.message?.content as { type: string, id?: string, name?: string, input?: unknown }[] | undefined;
-    return (content ?? []).filter(block => block.type === 'tool_use') as ToolUseBlock[];
+    return message.message.content.filter((block): block is ToolUseBlock => block.type === 'tool_use');
 }

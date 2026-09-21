@@ -23,7 +23,6 @@ import type { Logger } from '@hughescr/logger';
 import { classifyClaudeError } from '../claude-retry';
 import { buildResumeNote } from '../resume-prompt-builder';
 import { StreamTracker, type StreamProgress  } from '../stream-tracker';
-import type { AgentStreamEvent } from '../types';
 import type { BuildBootBundleInput } from './boot-bundle';
 import { createCompactionGuard, type CompactionGuard } from './compaction-guard';
 import { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';
@@ -1111,8 +1110,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 beginSpontaneousTurn();
             }
         }
-        // boundary cast: AgentStreamEvent is the one-shot path's narrower observability-only view of a stream event; every SDKMessage shape StreamTracker.update switches on (system/task_started, assistant) is a subset of AgentStreamEvent's fields, matching the identical cast already documented in ./session.ts
-        currentTurn?.tracker.update(frame as unknown as AgentStreamEvent);
+        currentTurn?.tracker.update(frame);
         notifyTurnSubscribers(frame);
         ledgerStore.dispatch({ type: 'sdk_frame', frame, at: now() });
         // Stryker disable llm: `void` is a compile-time-only marker here; dropping it does not change the runtime call or its fire-and-forget behavior

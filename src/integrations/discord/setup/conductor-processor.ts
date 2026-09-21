@@ -32,7 +32,7 @@ import { processAttachments, toPlatformImages } from './coordinator-setup';
 import type { ResolvedDiscordNames } from './discord-envelope-provider';
 import {
     buildDiscordEnvelope, buildResumeNote, StreamTracker,
-    type AgendaEntry, type AgentStreamEvent, type BuildDiscordEnvelopeParams, type CalendarDelta, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type PlatformImage, type StateTopSetDelta, type TimeHeaderProvider
+    type AgendaEntry, type BuildDiscordEnvelopeParams, type CalendarDelta, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type PlatformImage, type StateTopSetDelta, type TimeHeaderProvider
 } from '@/agent';
 import { formatCalendarContext } from '@/integrations/caldav';
 import { formatTimeHeader } from '@/utils';
@@ -217,7 +217,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         const unsubscribe = conductor.subscribeTurn((turnId, frame) => {
             // Stryker disable next-line llm: subscribeTurn's turnId and envelope.id are both strings, for which loose and strict equality coincide (covers 30206).
             if(turnId === envelope.id) {
-                streamTracker.update(frame as AgentStreamEvent);
+                streamTracker.update(frame);
             }
         });
 
