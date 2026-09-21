@@ -112,8 +112,7 @@ export async function getSubtitlesOrTranscription(
             if(!(error instanceof MediaProcessingError)) {
                 throw error;
             }
-            const detail = error.context.detail;
-            const reason = detail === undefined || detail === '' ? error.message : detail;
+            const reason = error.context.detail!;
             return { kind: 'subtitles', subtitleOrdinal: subtitleTrack.subtitleOrdinal, outcome: { kind: 'unavailable', reason } };
         }
     }

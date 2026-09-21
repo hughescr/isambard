@@ -102,6 +102,18 @@ describe('buildMetadataMarkdown', () => {
         expect(md).toContain('[02:10] No speaker label here');
     });
 
+    it('omits a stream label when ffprobe did not report a stream index', () => {
+        const metadata: VideoMetadata = {
+            ...MINIMAL_METADATA,
+            subtitleTracks: [{ subtitleOrdinal: 0, language: 'eng' }],
+        };
+
+        const md = buildMetadataMarkdown(metadata, { kind: 'transcription', outcome: { kind: 'empty' } });
+
+        expect(md).toContain('- **Subtitle Tracks**: Track 0 — eng');
+        expect(md).not.toContain('stream undefined');
+    });
+
     it('floors fractional segment-time remainders', () => {
         const source: VideoTextSource = {
             kind:    'transcription',

@@ -73,21 +73,27 @@ const WITH_SUBTITLES_OUTPUT = JSON.stringify({
             index:          0,
         },
         {
-            codec_type: 'subtitle',
-            codec_name: 'subrip',
-            index:      1,
-            tags:       { language: 'eng', title: 'English' },
+            codec_type:  'audio',
+            codec_name:  'aac',
+            channels:    2,
+            sample_rate: '48000',
+            index:       1,
         },
         {
             codec_type: 'subtitle',
             codec_name: 'subrip',
             index:      2,
+            tags:       { language: 'eng', title: 'English' },
+        },
+        {
+            codec_type: 'subtitle',
+            codec_name: 'subrip',
+            index:      3,
             tags:       { language: 'fra' },
         },
     ],
     format: { duration: '300.0' },
 });
-
 describe('extractMetadata', () => {
     afterEach(() => {
         jest.restoreAllMocks();
@@ -225,8 +231,8 @@ describe('extractMetadata', () => {
     it('parses subtitle tracks with language and title', async () => {
         const metadata = await extractMetadata('/test/video.mp4', makeRunner(WITH_SUBTITLES_OUTPUT));
         expect(metadata.subtitleTracks).toHaveLength(2);
-        expect(metadata.subtitleTracks[0]).toMatchObject({ streamIndex: 1, subtitleOrdinal: 0, language: 'eng', title: 'English' });
-        expect(metadata.subtitleTracks[1]).toMatchObject({ streamIndex: 2, subtitleOrdinal: 1, language: 'fra' });
+        expect(metadata.subtitleTracks[0]).toMatchObject({ streamIndex: 2, subtitleOrdinal: 0, language: 'eng', title: 'English' });
+        expect(metadata.subtitleTracks[1]).toMatchObject({ streamIndex: 3, subtitleOrdinal: 1, language: 'fra' });
         expect(metadata.subtitleTracks[1]?.title).toBeUndefined();
     });
 
