@@ -130,8 +130,8 @@ describe('createDiscordMCPServer', () => {
         mockQuestionRegistry = {
             register: mock(() => Promise.resolve({
                 questionId: 'test-question-id',
-                answer:     null,
-                timedOut:   false,
+                state:      'cancelled',
+                reason:     'interrupted',
                 channelId:  '123456789012345678',
             })),
         };
@@ -261,7 +261,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.
 
 The channel must always be given explicitly — there is no ambient conversation context.`],
             ['addReaction', 'Add one or more emoji reactions to a Discord message. Accepts channel ID or #channel-name format.'],
-            ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.'],
+            ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. The returned state identifies whether the question was answered, timed out, or cancelled. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.'],
         ])('should have %s tool with description', (toolName, expectedDescription) => {
             const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -313,6 +313,7 @@ The channel must always be given explicitly — there is no ambient conversation
             }
             expect(registered.sendDiscordMessage.description).toContain('NEVER invent or guess channel IDs');
             expect(registered.askUserQuestion.description).toContain('25 maximum');
+            expect(registered.askUserQuestion.description).toContain('state');
             expect(registered.muteChannel.description).toContain('will not respond');
         });
 
@@ -1768,7 +1769,7 @@ The channel must always be given explicitly — there is no ambient conversation
             const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.askUserQuestion;
 
-            expect(tool.description).toBe('Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.');
+            expect(tool.description).toBe('Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. The returned state identifies whether the question was answered, timed out, or cancelled. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.');
         });
 
         test('should have correct input schema fields', () => {
@@ -2043,13 +2044,13 @@ The channel must always be given explicitly — there is no ambient conversation
 
             mockQuestionRegistry.register = mock(async () => ({
                 questionId: 'q1',
+                state:      'answered',
                 answer:     {
                     content:     'Blue',
                     responderId: 'user-123',
                     messageId:   'answer-message-id',
                     channelId:   '123456789012345678',
                 },
-                timedOut:  false,
                 channelId: '123456789012345678',
             }));
 
@@ -2068,7 +2069,8 @@ The channel must always be given explicitly — there is no ambient conversation
             expect(parsed.answer).toBe('Blue');
             expect(parsed.responderId).toBe('user-123');
             expect(parsed.channelId).toBe('123456789012345678');
-            expect(parsed.timedOut).toBe(false);
+            expect(parsed.state).toBe('answered');
+            expect(parsed.message).toBe('Question answered');
             expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
                 channelId:         '123456789012345678',
                 responderId:       'user-123',
@@ -2089,8 +2091,7 @@ The channel must always be given explicitly — there is no ambient conversation
 
             mockQuestionRegistry.register = mock(async () => ({
                 questionId: 'q1',
-                answer:     null,
-                timedOut:   true,
+                state:      'timed_out',
                 channelId:  '123456789012345678',
             }));
 
@@ -2102,11 +2103,11 @@ The channel must always be given explicitly — there is no ambient conversation
                 question:  'What is your favorite color?',
             });
 
-            expect(textContent(result.content[0])).toContain('timedOut');
+            expect(textContent(result.content[0])).toContain('timed_out');
 
             const parsed = JSON.parse(textContent(result.content[0]));
             expect(parsed.questionId).toBe('q1');
-            expect(parsed.timedOut).toBe(true);
+            expect(parsed.state).toBe('timed_out');
             expect(parsed.message).toBe('Question timed out without response');
             expect(parsed.channelId).toBe('123456789012345678');
             expect(mockLogger.info).toHaveBeenCalledWith({
@@ -2115,6 +2116,43 @@ The channel must always be given explicitly — there is no ambient conversation
                 threadId:   undefined,
                 msg:        'Question timed out without answer',
             });
+        });
+
+        test('should return a cancelled state with reason and no answer', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+            mockQuestionRegistry.register = mock(async () => ({
+                questionId: 'q1',
+                state:      'cancelled' as const,
+                reason:     'interrupted' as const,
+                channelId:  '123456789012345678',
+            }));
+
+            const handler = getToolHandler(createServer(), 'askUserQuestion');
+            const result = await handler({
+                channelId: '123456789012345678',
+                question:  'What is your favorite color?',
+            });
+            const parsed = JSON.parse(textContent(result.content[0]));
+
+            expect(parsed).toMatchObject({
+                questionId: 'q1',
+                channelId:  '123456789012345678',
+                state:      'cancelled',
+                reason:     'interrupted',
+                message:    expect.any(String),
+            });
+            expect(parsed).not.toHaveProperty('answer');
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                reason: 'interrupted',
+                msg:    'Question cancelled',
+            }));
         });
 
         test('should return error when channel not text-based', async () => {

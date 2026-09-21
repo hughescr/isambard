@@ -30,11 +30,12 @@ export class QuestionRegistry {
                 msg:           'Replacing existing pending question',
             });
 
+            existing.question.state = 'cancelled';
             this.cleanupQuestion(existing.question.questionId);
             existing.resolve({
                 questionId: existing.question.questionId,
-                answer:     null,
-                timedOut:   false,
+                state:      'cancelled',
+                reason:     'replaced',
                 channelId:  existing.question.channelId,
                 threadId:   existing.question.threadId,
             });
@@ -53,8 +54,7 @@ export class QuestionRegistry {
                     this.cleanupQuestion(question.questionId);
                     resolve({
                         questionId: question.questionId,
-                        answer:     null,
-                        timedOut:   true,
+                        state:      'timed_out',
                         channelId:  question.channelId,
                         threadId:   question.threadId,
                     });
@@ -124,8 +124,8 @@ export class QuestionRegistry {
         this.cleanupQuestion(questionId);
         stored.resolve({
             questionId: stored.question.questionId,
+            state:      'answered',
             answer,
-            timedOut:   false,
             channelId:  stored.question.channelId,
             threadId:   stored.question.threadId,
         });
@@ -144,8 +144,8 @@ export class QuestionRegistry {
         this.cleanupQuestion(questionId);
         stored.resolve({
             questionId: stored.question.questionId,
-            answer:     null,
-            timedOut:   false,
+            state:      'cancelled',
+            reason:     'interrupted',
             channelId:  stored.question.channelId,
             threadId:   stored.question.threadId,
         });
@@ -162,8 +162,8 @@ export class QuestionRegistry {
                 clearTimeout(stored.timer);
                 stored.resolve({
                     questionId: stored.question.questionId,
-                    answer:     null,
-                    timedOut:   false,
+                    state:      'cancelled',
+                    reason:     'shutdown',
                     channelId:  stored.question.channelId,
                     threadId:   stored.question.threadId,
                 });

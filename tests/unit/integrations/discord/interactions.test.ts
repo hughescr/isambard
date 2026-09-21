@@ -258,7 +258,10 @@ describe('createInteractionHandler', () => {
         expect(interaction.reply).not.toHaveBeenCalled();
         expect(interaction.update).toHaveBeenCalledWith({ components: [] });
         const result = await resultPromise;
-        expect(result.answer?.selectedOption).toBe('opt1');
+        expect(result).toMatchObject({
+            state:  'answered',
+            answer: { selectedOption: 'opt1' },
+        });
     });
 
     it('should resolve question with answer on button click', async () => {
@@ -283,12 +286,15 @@ describe('createInteractionHandler', () => {
         await handler.handleButtonInteraction(interaction);
 
         const result = await resultPromise;
-        expect(result.answer).toBeTruthy();
-        expect(result.answer?.content).toBe('opt1');
-        expect(result.answer?.selectedOption).toBe('opt1');
-        expect(result.answer?.responderId).toBe(createUserId('user2'));
-        expect(result.answer?.messageId).toBe('msg2');
-        expect(result.timedOut).toBe(false);
+        expect(result).toMatchObject({
+            state:  'answered',
+            answer: {
+                content:        'opt1',
+                selectedOption: 'opt1',
+                responderId:    createUserId('user2'),
+                messageId:      'msg2',
+            },
+        });
     });
 
     it('should log the selected button-answer context', async () => {
@@ -394,13 +400,16 @@ describe('createInteractionHandler', () => {
         await handler.handleButtonInteraction(interaction);
 
         const result = await resultPromise;
-        expect(result.answer).toEqual({
-            content:        'blue',
-            selectedOption: 'blue',
-            responderId:    createUserId('user3'),
-            messageId:      'msg-xyz',
-            channelId:      'ch1' as ChannelId,
-            threadId:       undefined,
+        expect(result).toMatchObject({
+            state:  'answered',
+            answer: {
+                content:        'blue',
+                selectedOption: 'blue',
+                responderId:    createUserId('user3'),
+                messageId:      'msg-xyz',
+                channelId:      'ch1' as ChannelId,
+                threadId:       undefined,
+            },
         });
     });
 
@@ -445,13 +454,16 @@ describe('createInteractionHandler', () => {
         await handler.handleButtonInteraction(mockInteraction);
 
         const result = await resultPromise;
-        expect(result.answer).toEqual({
-            content:        'yes',
-            selectedOption: 'yes',
-            responderId:    createUserId('user2'),
-            messageId:      'msg-thread',
-            channelId:      'parent-ch' as ChannelId,
-            threadId:       'thread-123', // Thread ID should be captured
+        expect(result).toMatchObject({
+            state:  'answered',
+            answer: {
+                content:        'yes',
+                selectedOption: 'yes',
+                responderId:    createUserId('user2'),
+                messageId:      'msg-thread',
+                channelId:      'parent-ch' as ChannelId,
+                threadId:       'thread-123', // Thread ID should be captured
+            },
         });
     });
 
@@ -478,7 +490,12 @@ describe('createInteractionHandler', () => {
         await handler.handleButtonInteraction(interaction);
 
         const result = await resultPromise;
-        expect(result.answer?.content).toBe('https://example.com:8080/path');
-        expect(result.answer?.selectedOption).toBe('https://example.com:8080/path');
+        expect(result).toMatchObject({
+            state:  'answered',
+            answer: {
+                content:        'https://example.com:8080/path',
+                selectedOption: 'https://example.com:8080/path',
+            },
+        });
     });
 });

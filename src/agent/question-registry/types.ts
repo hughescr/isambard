@@ -11,11 +11,15 @@ export type QuestionOption = z.infer<typeof questionOptionSchema>;
 
 export const questionStateSchema = z.enum(['waiting', 'answered', 'timed_out', 'cancelled']);
 type QuestionState = z.infer<typeof questionStateSchema>;
+type TerminalQuestionState = Exclude<QuestionState, 'waiting'>;
 
-export interface PendingQuestion {
+export interface ConversationLocation {
+    channelId: ChannelId
+    threadId?: string
+}
+
+export interface PendingQuestion extends ConversationLocation {
     questionId:      string              // UUID
-    channelId:       ChannelId
-    threadId?:       string               // If question was asked in a thread
     originMessageId: string         // Discord message ID of the question
     triggerUserId:   UserId           // User who started the conversation
     questionText:    string
@@ -26,19 +30,15 @@ export interface PendingQuestion {
     state:           QuestionState
 }
 
-export interface QuestionAnswer {
+export interface QuestionAnswer extends ConversationLocation {
     content:         string
     selectedOption?: string         // Button value if clicked
     responderId:     UserId
     messageId:       string
-    channelId:       ChannelId      // Channel where answer was given
-    threadId?:       string         // Thread ID if answered in a thread
 }
 
-export interface QuestionResult {
-    questionId: string              // The question that was answered
-    answer:     QuestionAnswer | null   // null if timed out
-    timedOut:   boolean
-    channelId:  ChannelId           // Channel where question was asked
-    threadId?:  string              // Thread if question was in a thread
-}
+export type QuestionResult = ConversationLocation & { questionId: string } & (
+  | { state: Extract<TerminalQuestionState, 'answered'>, answer: QuestionAnswer }
+  | { state: Extract<TerminalQuestionState, 'timed_out'> }
+  | { state: Extract<TerminalQuestionState, 'cancelled'>, reason: 'interrupted' | 'replaced' | 'shutdown' }
+);

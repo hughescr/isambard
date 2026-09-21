@@ -393,45 +393,71 @@ function formatQuestionResult(
     channelId: string,
     threadId?: string
 ): CallToolResult {
-    if(result.timedOut) {
-        logger.info({
-            questionId,
-            channelId,
-            threadId,
-            msg: 'Question timed out without answer',
-        });
+    switch(result.state) {
+        case 'answered': {
+            logger.info({
+                questionId,
+                channelId:         result.channelId,
+                threadId:          result.threadId,
+                responderId:       result.answer.responderId,
+                hasSelectedOption: Boolean(result.answer.selectedOption),
+                msg:               'Question answered',
+            });
 
-        return {
-            content: [{ type: 'text' as const, text: JSON.stringify({
-                questionId: result.questionId,
-                timedOut:   true,
-                message:    'Question timed out without response',
-                channelId:  result.channelId,
-                threadId:   result.threadId,
-            }) }],
-        };
+            return {
+                content: [{ type: 'text' as const, text: JSON.stringify({
+                    questionId:     result.questionId,
+                    state:          result.state,
+                    answer:         result.answer.content,
+                    selectedOption: result.answer.selectedOption,
+                    responderId:    result.answer.responderId,
+                    channelId:      result.channelId,
+                    threadId:       result.threadId,
+                    message:        'Question answered',
+                }) }],
+            };
+        }
+
+        case 'timed_out': {
+            logger.info({
+                questionId,
+                channelId,
+                threadId,
+                msg: 'Question timed out without answer',
+            });
+
+            return {
+                content: [{ type: 'text' as const, text: JSON.stringify({
+                    questionId: result.questionId,
+                    state:      result.state,
+                    message:    'Question timed out without response',
+                    channelId:  result.channelId,
+                    threadId:   result.threadId,
+                }) }],
+            };
+        }
+
+        case 'cancelled': {
+            logger.info({
+                questionId,
+                channelId: result.channelId,
+                threadId:  result.threadId,
+                reason:    result.reason,
+                msg:       'Question cancelled',
+            });
+
+            return {
+                content: [{ type: 'text' as const, text: JSON.stringify({
+                    questionId: result.questionId,
+                    state:      result.state,
+                    reason:     result.reason,
+                    message:    `Question cancelled: ${result.reason}`,
+                    channelId:  result.channelId,
+                    threadId:   result.threadId,
+                }) }],
+            };
+        }
     }
-
-    logger.info({
-        questionId,
-        channelId:         result.channelId,
-        threadId:          result.threadId,
-        responderId:       result.answer?.responderId,
-        hasSelectedOption: Boolean(result.answer?.selectedOption),
-        msg:               'Question answered',
-    });
-
-    return {
-        content: [{ type: 'text' as const, text: JSON.stringify({
-            questionId:     result.questionId,
-            answer:         result.answer?.content,
-            selectedOption: result.answer?.selectedOption,
-            responderId:    result.answer?.responderId,
-            channelId:      result.channelId,
-            threadId:       result.threadId,
-            timedOut:       false,
-        }) }],
-    };
 }
 
 /**
@@ -725,7 +751,7 @@ The channel must always be given explicitly — there is no ambient conversation
 
             tool(
                 'askUserQuestion',
-                'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.',
+                'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. The returned state identifies whether the question was answered, timed out, or cancelled. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.',
                 {
                     channelId:        z.string().describe('Channel to ask in - channel ID or #channel-name (e.g., #general)'),
                     question:         z.string().describe('Question text'),

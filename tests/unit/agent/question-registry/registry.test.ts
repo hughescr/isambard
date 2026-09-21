@@ -76,8 +76,7 @@ describe('QuestionRegistry', () => {
             expect(result.questionId).toBe('q1');
             expect(result.channelId).toBe('ch1' as ChannelId);
             expect(result.threadId).toBeUndefined();
-            expect(result.answer).toEqual(answer);
-            expect(result.timedOut).toBe(false);
+            expect(result).toMatchObject({ state: 'answered', answer });
         });
 
         it('should resolve promise with timeout after expiry', async () => {
@@ -101,8 +100,7 @@ describe('QuestionRegistry', () => {
             expect(result.questionId).toBe('q1');
             expect(result.channelId).toBe('ch1' as ChannelId);
             expect(result.threadId).toBeUndefined();
-            expect(result.answer).toBeNull();
-            expect(result.timedOut).toBe(true);
+            expect(result.state).toBe('timed_out');
         });
 
         it('should replace existing question for same location', async () => {
@@ -137,12 +135,14 @@ describe('QuestionRegistry', () => {
                 msg:           'Replacing existing pending question',
             });
 
-            // First promise should resolve with null (cancelled)
+            // First promise should resolve as replaced
             const result1 = await resultPromise1;
-            expect(result1.questionId).toBe('q1');
-            expect(result1.channelId).toBe('ch1' as ChannelId);
-            expect(result1.answer).toBeNull();
-            expect(result1.timedOut).toBe(false);
+            expect(result1).toMatchObject({
+                questionId: 'q1',
+                channelId:  'ch1' as ChannelId,
+                state:      'cancelled',
+                reason:     'replaced',
+            });
             expect(registry.getQuestion('q1')).toBeNull();
 
             // Second question should be active
@@ -359,8 +359,7 @@ describe('QuestionRegistry', () => {
             registry.resolveWithAnswer('q1', answer);
 
             const result = await resultPromise;
-            expect(result.answer).toEqual(answer);
-            expect(result.timedOut).toBe(false);
+            expect(result).toMatchObject({ state: 'answered', answer });
         });
 
         it('should update state to answered', async () => {
@@ -443,7 +442,7 @@ describe('QuestionRegistry', () => {
     });
 
     describe('cancel', () => {
-        it('should resolve promise with null', async () => {
+        it('should resolve promise as interrupted', async () => {
             const now = Date.now();
             const question: Omit<PendingQuestion, 'state'> = {
                 questionId:      'q1',
@@ -460,10 +459,12 @@ describe('QuestionRegistry', () => {
             registry.cancel('q1');
 
             const result = await resultPromise;
-            expect(result.questionId).toBe('q1');
-            expect(result.channelId).toBe('ch1' as ChannelId);
-            expect(result.answer).toBeNull();
-            expect(result.timedOut).toBe(false);
+            expect(result).toMatchObject({
+                questionId: 'q1',
+                channelId:  'ch1' as ChannelId,
+                state:      'cancelled',
+                reason:     'interrupted',
+            });
         });
 
         it('should remove question from registry', async () => {
@@ -544,18 +545,22 @@ describe('QuestionRegistry', () => {
 
             expect(exposed1?.state).toBe('cancelled');
 
-            // Both should resolve with null
+            // Both should resolve as shut down
             const result1 = await resultPromise1;
             const result2 = await resultPromise2;
 
-            expect(result1.questionId).toBe('q1');
-            expect(result1.channelId).toBe('ch1' as ChannelId);
-            expect(result1.answer).toBeNull();
-            expect(result1.timedOut).toBe(false);
-            expect(result2.questionId).toBe('q2');
-            expect(result2.channelId).toBe('ch2' as ChannelId);
-            expect(result2.answer).toBeNull();
-            expect(result2.timedOut).toBe(false);
+            expect(result1).toMatchObject({
+                questionId: 'q1',
+                channelId:  'ch1' as ChannelId,
+                state:      'cancelled',
+                reason:     'shutdown',
+            });
+            expect(result2).toMatchObject({
+                questionId: 'q2',
+                channelId:  'ch2' as ChannelId,
+                state:      'cancelled',
+                reason:     'shutdown',
+            });
 
             // Neither should be findable
             expect(registry.findPendingQuestion('ch1' as ChannelId)).toBeNull();
@@ -573,7 +578,7 @@ describe('QuestionRegistry', () => {
     });
 
     describe('timeout handling', () => {
-        it('should resolve promise with timedOut: true after timeout', async () => {
+        it('should resolve promise as timed out after expiry', async () => {
             const now = Date.now();
             const question: Omit<PendingQuestion, 'state'> = {
                 questionId:      'q1',
@@ -590,8 +595,7 @@ describe('QuestionRegistry', () => {
             jest.advanceTimersByTime(5000);
 
             const result = await resultPromise;
-            expect(result.answer).toBeNull();
-            expect(result.timedOut).toBe(true);
+            expect(result.state).toBe('timed_out');
         });
 
         it('should update state to timed_out', async () => {
@@ -644,8 +648,7 @@ describe('QuestionRegistry', () => {
             registry.resolveWithAnswer('q1', answer);
 
             const result = await resultPromise;
-            expect(result.answer).toEqual(answer);
-            expect(result.timedOut).toBe(false);
+            expect(result).toMatchObject({ state: 'answered', answer });
             expect(jest.getTimerCount()).toBe(0);
 
             // Advancing further should not trigger timeout
@@ -678,7 +681,7 @@ describe('QuestionRegistry', () => {
             // Should timeout after custom timeout
             jest.advanceTimersByTime(5000);
             const result = await resultPromise;
-            expect(result.timedOut).toBe(true);
+            expect(result.state).toBe('timed_out');
 
             customRegistry.stop();
         });
