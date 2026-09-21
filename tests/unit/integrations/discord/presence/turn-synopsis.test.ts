@@ -13,7 +13,7 @@ import type { PresenceThrottle } from '../../../../../src/integrations/discord/p
 import type { CreateLedgerStreamEventHandlerDeps, LedgerStreamEventHandler } from '../../../../../src/integrations/discord/presence/stream-event-handler.js';
 import { attachTurnSynopsis } from '../../../../../src/integrations/discord/presence/turn-synopsis.js';
 import * as frames from '../../../../helpers/sdk-frames';
-import { createLedgerStore, type EnvelopeMeta, type LedgerStore } from '@/agent';
+import { createLedgerStore, sdkFrameToAgentStreamEvent, type EnvelopeMeta, type LedgerStore } from '@/agent';
 
 /** Drains the seed's `await`-chain: the priming IIFE, its `await thinkingSynopsis` continuation, and the dispatch. */
 const flushPromises = async (): Promise<void> => {
@@ -115,7 +115,7 @@ describe('attachTurnSynopsis', () => {
         const frame = frames.assistantText('hi');
         h.emitFrame('env-1', frame);
 
-        expect(h.handlers[0]?.onStreamEvent).toHaveBeenCalledWith(frame);
+        expect(h.handlers[0]?.onStreamEvent).toHaveBeenCalledWith(sdkFrameToAgentStreamEvent(frame));
     });
 
     it('routes a frame whose callback turnId does NOT match the ledger turn (the awaitingTurnEnd sentinel)', () => {
@@ -131,7 +131,7 @@ describe('attachTurnSynopsis', () => {
         const frame = frames.assistantText('unbidden');
         h.emitFrame('none', frame);
 
-        expect(h.handlers[0]?.onStreamEvent).toHaveBeenCalledWith(frame);
+        expect(h.handlers[0]?.onStreamEvent).toHaveBeenCalledWith(sdkFrameToAgentStreamEvent(frame));
     });
 
     it('a spontaneous notification turn gets a handler whose dispatched synopsis LANDS on the ledger', () => {
