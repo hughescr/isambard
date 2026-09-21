@@ -1299,6 +1299,7 @@ describe('createEmailMCPServer', () => {
                 .mockResolvedValueOnce({
                     metadata:         { duration: 1, width: 10, height: 10, videoCodec: 'h264', frameRate: 30, subtitleTracks: [] },
                     frames:           [{ filename: 'frame-001.jpg', mediaType: 'image/jpeg', base64Data: 'AA==', originalSize: 1 }],
+                    text:             { kind: 'transcription', outcome: { kind: 'empty' } },
                     metadataMarkdown: 'Duration: 1s',
                     outputDir:        'unused',
                 })
@@ -3726,6 +3727,7 @@ describe('createEmailMCPServer', () => {
             const videoSpy = spyOn(utils, 'processLocalVideo').mockResolvedValue({
                 metadata:         { duration: 1, width: 1, height: 1, videoCodec: 'midi', frameRate: 1, subtitleTracks: [] },
                 frames:           [],
+                text:             { kind: 'transcription', outcome: { kind: 'empty' } },
                 metadataMarkdown: 'not a video',
                 outputDir:        'unused',
             });

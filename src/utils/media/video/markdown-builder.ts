@@ -1,4 +1,4 @@
-import type { VideoMetadata, TranscriptionResult } from './types';
+import type { VideoMetadata, VideoTextSource, TranscriptionOutcome } from './types';
 
 /** Format a duration in seconds to a human-readable string like "1h 2m 34s". */
 export function formatDuration(totalSeconds: number): string {
@@ -66,14 +66,16 @@ function buildTechnicalLines(metadata: VideoMetadata): string[] {
 
     // Stryker disable next-line llm: Array length is a non-negative integer, so `length > 0` and `length >= 1` are the same predicate.
     if(metadata.subtitleTracks.length > 0) {
-        const trackList = metadata.subtitleTracks.map((t) => {
-            // Stryker disable next-line llm: `x || 0` is a no-op for every producible index value (0 maps to 0, any other number is truthy); only NaN would differ, which the ffprobe schema rejects.
-            const parts: string[] = [`Track ${t.index}`];
-            if(t.language !== undefined) {
-                parts.push(t.language);
+        const trackList = metadata.subtitleTracks.map((track) => {
+            const parts: string[] = [`Track ${track.subtitleOrdinal}`];
+            if(track.streamIndex !== undefined) {
+                parts[0] = `${parts[0]} (stream ${track.streamIndex})`;
             }
-            if(t.title !== undefined) {
-                parts.push(t.title);
+            if(track.language !== undefined) {
+                parts.push(track.language);
+            }
+            if(track.title !== undefined) {
+                parts.push(track.title);
             }
             return parts.join(' — ');
         }).join(', ');
@@ -83,30 +85,34 @@ function buildTechnicalLines(metadata: VideoMetadata): string[] {
     return lines;
 }
 
-/** Build the transcription section lines. */
-function buildTranscriptionLines(transcription: TranscriptionResult): string[] {
+/** Build the transcription section lines for its explicit outcome. */
+function buildTranscriptionLines(outcome: TranscriptionOutcome): string[] {
     const lines = ['', '## Transcription', ''];
-    if(transcription.segments.length === 0) {
-        lines.push(transcription.fullText);
-        return lines;
+    switch(outcome.kind) {
+        case 'transcribed': {
+            for(const segment of outcome.segments) {
+                const timeLabel = formatSegmentTime(segment.startTime);
+                const speaker   = segment.speaker === undefined ? '' : `**${segment.speaker}**: `;
+                lines.push(`[${timeLabel}] ${speaker}${segment.text}`);
+            }
+            return lines;
+        }
+        case 'empty': {
+            lines.push('_No transcription segments_');
+            return lines;
+        }
+        case 'unavailable': {
+            lines.push(`_Unavailable: ${outcome.reason}_`);
+            return lines;
+        }
     }
-    for(const seg of transcription.segments) {
-        const timeLabel = formatSegmentTime(seg.startTime);
-        const speaker   = seg.speaker === undefined ? '' : `**${seg.speaker}**: `;
-        lines.push(`[${timeLabel}] ${speaker}${seg.text}`);
-    }
-    return lines;
 }
 
-/**
- * Build a markdown document summarising video metadata, subtitles, and transcription.
- * Pure function — no I/O.
- */
+/** Build markdown for exactly one selected video text source. Pure function — no I/O. */
 export function buildMetadataMarkdown(
-    metadata:       VideoMetadata,
-    subtitles?:     string,
-    transcription?: TranscriptionResult,
-    alt?:           string
+    metadata: VideoMetadata,
+    text:     VideoTextSource,
+    alt?:     string
 ): string {
     const lines: string[] = ['# Video Metadata', '', ...buildTechnicalLines(metadata)];
 
@@ -114,12 +120,25 @@ export function buildMetadataMarkdown(
         lines.push('', '## Description', '', alt);
     }
 
-    if(subtitles !== undefined) {
-        lines.push('', '## Subtitles', '', subtitles.trim());
-    }
-
-    if(transcription !== undefined) {
-        lines.push(...buildTranscriptionLines(transcription));
+    switch(text.kind) {
+        case 'subtitles': {
+            lines.push('', '## Subtitles', '');
+            switch(text.outcome.kind) {
+                case 'extracted': {
+                    lines.push(text.outcome.text.trim());
+                    break;
+                }
+                case 'unavailable': {
+                    lines.push(`_Unavailable: ${text.outcome.reason}_`);
+                    break;
+                }
+            }
+            break;
+        }
+        case 'transcription': {
+            lines.push(...buildTranscriptionLines(text.outcome));
+            break;
+        }
     }
 
     return lines.join('\n');

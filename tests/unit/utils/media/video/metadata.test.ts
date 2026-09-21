@@ -219,14 +219,14 @@ describe('extractMetadata', () => {
 
         const metadata = await extractMetadata('/test/video.mp4', makeRunner(output));
         expect(metadata).toMatchObject({ duration: 0, width: 0, height: 0, frameRate: 0 });
-        expect(metadata.subtitleTracks.map(track => track.index)).toEqual([0, 1]);
+        expect(metadata.subtitleTracks).toEqual([{ subtitleOrdinal: 0, language: 'eng' }, { subtitleOrdinal: 1, language: 'fra' }]);
     });
 
     it('parses subtitle tracks with language and title', async () => {
         const metadata = await extractMetadata('/test/video.mp4', makeRunner(WITH_SUBTITLES_OUTPUT));
         expect(metadata.subtitleTracks).toHaveLength(2);
-        expect(metadata.subtitleTracks[0]).toMatchObject({ index: 1, language: 'eng', title: 'English' });
-        expect(metadata.subtitleTracks[1]).toMatchObject({ index: 2, language: 'fra' });
+        expect(metadata.subtitleTracks[0]).toMatchObject({ streamIndex: 1, subtitleOrdinal: 0, language: 'eng', title: 'English' });
+        expect(metadata.subtitleTracks[1]).toMatchObject({ streamIndex: 2, subtitleOrdinal: 1, language: 'fra' });
         expect(metadata.subtitleTracks[1]?.title).toBeUndefined();
     });
 

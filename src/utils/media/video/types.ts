@@ -14,9 +14,12 @@ export interface VideoMetadata {
 }
 
 export interface SubtitleTrack {
-    index:     number
-    language?: string
-    title?:    string
+    /** Container-wide ffprobe stream index, present only when ffprobe reports one. */
+    streamIndex?:    number
+    /** Zero-based position among subtitle streams, used by ffmpeg's `0:s:N` selector. */
+    subtitleOrdinal: number
+    language?:       string
+    title?:          string
 }
 
 export interface SceneInfo {
@@ -32,16 +35,24 @@ export interface TranscriptionSegment {
     text:      string
 }
 
-export interface TranscriptionResult {
-    segments: TranscriptionSegment[]
-    fullText: string
-}
+export type TranscriptionOutcome
+    = | { kind: 'transcribed', segments: TranscriptionSegment[] }
+      | { kind: 'empty' }
+      | { kind: 'unavailable', reason: string };
+
+export type SubtitleOutcome
+    = | { kind: 'extracted', text: string }
+      | { kind: 'unavailable', reason: string };
+
+/** The sole textual source selected for a processed video. */
+export type VideoTextSource
+    = | { kind: 'subtitles', subtitleOrdinal: number, outcome: SubtitleOutcome }
+      | { kind: 'transcription', outcome: TranscriptionOutcome };
 
 export interface VideoProcessingResult {
     metadata:         VideoMetadata
     frames:           FetchedImage[]
-    subtitles?:       string
-    transcription?:   TranscriptionResult
+    text:             VideoTextSource
     metadataMarkdown: string
     outputDir:        string
 }

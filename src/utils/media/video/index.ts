@@ -1,6 +1,7 @@
 export type {
     VideoMetadata,
-    TranscriptionResult,
+    TranscriptionOutcome,
+    VideoTextSource,
     VideoProcessingResult,
     SpawnRunner,
     BinarySpawnRunner

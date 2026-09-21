@@ -51,10 +51,10 @@ export async function processLocalVideo(
     const frames = await extractSceneFrames(videoPath, scenes, metadata.frameRate, binaryRun);
 
     // 6. Get subtitles or transcription
-    const { subtitles, transcription } = await getSubtitlesOrTranscription(videoPath, metadata, outputDir, run);
+    const text = await getSubtitlesOrTranscription(videoPath, metadata, outputDir, run);
 
     // 7. Build metadata markdown
-    const metadataMarkdown = buildMetadataMarkdown(metadata, subtitles, transcription, alt);
+    const metadataMarkdown = buildMetadataMarkdown(metadata, text, alt);
 
     // 8. Write markdown to disk
     await writeFile(`${outputDir}/${METADATA_FILENAME}`, metadataMarkdown, 'utf8');
@@ -62,8 +62,7 @@ export async function processLocalVideo(
     return {
         metadata,
         frames,
-        ...(subtitles === undefined ? {} : { subtitles }),
-        ...(transcription === undefined ? {} : { transcription }),
+        text,
         metadataMarkdown,
         outputDir,
     };

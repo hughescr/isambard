@@ -23,7 +23,8 @@ export {
 
 export {
     type VideoMetadata,
-    type TranscriptionResult,
+    type TranscriptionOutcome,
+    type VideoTextSource,
     type VideoProcessingResult,
     type SpawnRunner,
     type BinarySpawnRunner,

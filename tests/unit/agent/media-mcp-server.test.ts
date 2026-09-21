@@ -230,6 +230,7 @@ const sampleAnalysis: Awaited<ReturnType<typeof utils.processVideo>> = {
         subtitleTracks: [],
     },
     frames:           [sampleFrame],
+    text:             { kind: 'transcription', outcome: { kind: 'empty' } },
     metadataMarkdown: '# Video metadata',
     outputDir:        'output',
 };

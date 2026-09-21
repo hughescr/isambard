@@ -157,9 +157,8 @@ describe('processLocalVideo', () => {
         expect(result.metadataMarkdown).toContain('# Video Metadata');
         expect(result.outputDir).toBe(`${TEST_DIR}/output`);
         expect(mockFsPromises.writeFile).toHaveBeenCalledWith(`${TEST_DIR}/output/video-metadata.md`, result.metadataMarkdown, 'utf8');
-        expect(Object.hasOwn(result, 'transcription')).toBe(true);
-        expect(result.transcription?.fullText).toContain('Hello world');
-        expect(Object.hasOwn(result, 'subtitles')).toBe(false);
+        expect(result.text.kind).toBe('transcription');
+        expect(result.text).toMatchObject({ kind: 'transcription', outcome: { kind: 'transcribed' } });
     });
 
     it('includes alt text in metadata markdown when provided', async () => {
@@ -209,10 +208,8 @@ describe('processLocalVideo', () => {
             binaryRun: makeBinaryRunner(),
         });
 
-        expect(result.subtitles).toBeDefined();
-        expect(result.transcription).toBeUndefined();
-        expect(Object.hasOwn(result, 'transcription')).toBe(false);
-        expect(Object.hasOwn(result, 'subtitles')).toBe(true);
+        expect(result.text.kind).toBe('subtitles');
+
         expect(result.metadataMarkdown).toContain('## Subtitles');
     });
 });
@@ -296,8 +293,8 @@ describe('processVideo', () => {
             binaryRun: makeBinaryRunner(),
         });
 
-        expect(result.subtitles).toBeDefined();
-        expect(result.transcription).toBeUndefined();
+        expect(result.text.kind).toBe('subtitles');
+
         expect(result.metadataMarkdown).toContain('## Subtitles');
     });
 });

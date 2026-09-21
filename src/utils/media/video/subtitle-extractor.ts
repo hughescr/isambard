@@ -1,4 +1,4 @@
-import type { VideoMetadata, TranscriptionResult, TranscriptionSegment, SpawnRunner } from './types';
+import type { VideoMetadata, VideoTextSource, TranscriptionOutcome, TranscriptionSegment, SpawnRunner } from './types';
 import { MediaProcessingError } from '@/errors';
 
 /** Parse an HH:MM:SS.mmm timestamp string to seconds. */
@@ -14,8 +14,8 @@ function parseTimestamp(ts: string): number {
     return hours * 3600 + minutes * 60 + seconds;
 }
 
-/** Parse WhisperKit CLI output into structured TranscriptionResult. */
-function parseWhisperKitOutput(output: string): TranscriptionResult {
+/** Parse WhisperKit CLI output into a discriminated transcription outcome. */
+function parseWhisperKitOutput(output: string): TranscriptionOutcome {
     const segmentRe = /\[(\d{2}:\d{2}:\d{2}[.,]\d+) *--> *(\d{2}:\d{2}:\d{2}[.,]\d+)\] *(.*)/gu;
     const segments: TranscriptionSegment[] = [];
 
@@ -36,29 +36,29 @@ function parseWhisperKitOutput(output: string): TranscriptionResult {
         match = segmentRe.exec(output);
     }
 
-    const fullText = segments.map(s => s.text).join(' ');
-    return { segments, fullText };
+    return segments.length === 0 ? { kind: 'empty' } : { kind: 'transcribed', segments };
 }
 
-/** Extract embedded subtitle track N as SRT text via ffmpeg piped output. */
+/** Extract subtitle stream ordinal N as SRT text via ffmpeg's `0:s:N` selector. */
 export async function extractEmbeddedSubtitles(
-    videoPath:  string,
-    trackIndex: number,
-    run:        SpawnRunner
+    videoPath:        string,
+    subtitleOrdinal:  number,
+    run:              SpawnRunner
 ): Promise<string> {
     const result = await run([
         'ffmpeg',
         '-i', videoPath,
-        '-map', `0:s:${trackIndex}`,
+        '-map', `0:s:${subtitleOrdinal}`,
         '-f', 'srt',
         'pipe:1',
     ]);
 
     if(result.exitCode !== 0) {
+        const detail = result.stderr === '' ? `ffmpeg exited with code ${result.exitCode}` : result.stderr;
         throw new MediaProcessingError(
-            `Subtitle extraction failed with exit code ${result.exitCode}: ${result.stderr}`,
+            `Subtitle extraction failed with exit code ${result.exitCode}: ${detail}`,
             'ffmpeg-subtitle',
-            result.stderr
+            detail
         );
     }
 
@@ -67,13 +67,13 @@ export async function extractEmbeddedSubtitles(
 
 /**
  * Transcribe audio from a video using WhisperKit CLI with speaker diarization.
- * Returns a graceful error result if whisperkit-cli is not found.
+ * Returns a graceful unavailable outcome if whisperkit-cli cannot produce a transcript.
  */
 export async function transcribeWithWhisperKit(
     videoPath:  string,
     outputDir:  string,
     run:        SpawnRunner
-): Promise<TranscriptionResult> {
+): Promise<TranscriptionOutcome> {
     const result = await run([
         'whisperkit-cli',
         'transcribe',
@@ -84,33 +84,40 @@ export async function transcribeWithWhisperKit(
     ]);
 
     if(result.exitCode !== 0) {
-        // whisperkit-cli not available or failed — return graceful error result
         const reason = result.stderr === '' ? `whisperkit-cli exited with code ${result.exitCode}` : result.stderr;
-        return {
-            segments: [],
-            fullText: `Transcription unavailable: ${reason}`,
-        };
+        return { kind: 'unavailable', reason };
     }
 
     return parseWhisperKitOutput(result.stdout);
 }
 
 /**
- * Determine and retrieve subtitles or transcription for a video.
- * Prefers embedded subtitles; falls back to WhisperKit transcription.
+ * Determine and retrieve the textual source for a video.
+ *
+ * Embedded subtitle extraction failures are represented as subtitle outcomes so
+ * callers can degrade gracefully; unexpected errors still propagate.
  */
 export async function getSubtitlesOrTranscription(
     videoPath: string,
     metadata:  VideoMetadata,
     outputDir: string,
     run:       SpawnRunner
-): Promise<{ subtitles?: string, transcription?: TranscriptionResult }> {
-    if(metadata.subtitleTracks.length > 0) {
-        const subtitles = await extractEmbeddedSubtitles(videoPath, 0, run);
-        return { subtitles };
+): Promise<VideoTextSource> {
+    const subtitleTrack = metadata.subtitleTracks[0];
+    if(subtitleTrack !== undefined) {
+        try {
+            const text = await extractEmbeddedSubtitles(videoPath, subtitleTrack.subtitleOrdinal, run);
+            return { kind: 'subtitles', subtitleOrdinal: subtitleTrack.subtitleOrdinal, outcome: { kind: 'extracted', text } };
+        } catch (error) {
+            if(!(error instanceof MediaProcessingError)) {
+                throw error;
+            }
+            const detail = error.context.detail;
+            const reason = detail === undefined || detail === '' ? error.message : detail;
+            return { kind: 'subtitles', subtitleOrdinal: subtitleTrack.subtitleOrdinal, outcome: { kind: 'unavailable', reason } };
+        }
     }
 
-    const transcription = await transcribeWithWhisperKit(videoPath, outputDir, run);
-    // Stryker disable next-line llm: transcribeWithWhisperKit returns a non-nullable TranscriptionResult, so the ?? null fallback is unreachable/equivalent.
-    return { transcription };
+    const outcome = await transcribeWithWhisperKit(videoPath, outputDir, run);
+    return { kind: 'transcription', outcome };
 }

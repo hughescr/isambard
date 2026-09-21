@@ -108,9 +108,10 @@ export async function extractMetadata(videoPath: string, run: SpawnRunner): Prom
     const subtitleTracks = streams
         .filter(s => s.codec_type === 'subtitle')
         .map((s, i): SubtitleTrack => ({
-            index:    s.index ?? i,
-            language: s.tags?.language,
-            title:    s.tags?.title,
+            subtitleOrdinal: i,
+            ...(s.index === undefined ? {} : { streamIndex: s.index }),
+            language:        s.tags?.language,
+            title:           s.tags?.title,
         }));
 
     if(videoStream === undefined) {
