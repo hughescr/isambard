@@ -951,6 +951,24 @@ describe('createMessageSearchService', () => {
             expect(result.messages.map(message => message.id)).toEqual([...expectedIds]);
         });
 
+        test('should return no messages and report every fetched message as overflow when limit is zero', async () => {
+            const messages = Array.from({ length: 20 }, (_, i) =>
+                createMockSearchResult({
+                    id:      `1000000000000000${String(i).padStart(4, '0')}`,
+                    content: `Message ${i}`,
+                }));
+
+            (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                Promise.resolve({ messages, hasMore: false })
+            );
+
+            const result = await service.getRecentMessages(testChannelId, 0);
+
+            expect(result.messages).toEqual([]);
+            expect(result.overflow?.count).toBe(20);
+            expect(mockSummarizer.summarizeMessageBatch).not.toHaveBeenCalled();
+        });
+
         test('should return the newest messages without summarizing older overflow', async () => {
             const messages = Array.from({ length: 20 }, (_, i) =>
                 createMockSearchResult({

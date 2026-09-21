@@ -181,14 +181,15 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
         // 6. Apply limit and handle overflow
         const totalFound = allMessages.length;
         const keepNewest = searchOptions?.keep === 'newest';
+        const newestPageStart = Math.max(allMessages.length - limit, 0);
         const returnMessages = keepNewest
-            ? allMessages.slice(-limit)
+            ? allMessages.slice(newestPageStart)
             : allMessages.slice(0, limit);
 
         let overflow: SearchResponse['overflow'] = undefined;
         if(allMessages.length > limit) {
             const overflowMessages = keepNewest
-                ? allMessages.slice(0, -limit)
+                ? allMessages.slice(0, newestPageStart)
                 : allMessages.slice(limit);
 
             if(searchOptions?.summarizeOverflow === false) {
