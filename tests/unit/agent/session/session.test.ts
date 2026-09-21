@@ -17,7 +17,7 @@ function initFrame(sessionId: string): SDKMessage {
 }
 
 function resultFrame(): SDKMessage {
-    return { type: 'result', subtype: 'success' } as unknown as Extract<SDKMessage, { type: 'system' }>;
+    return { type: 'result', subtype: 'success' } as unknown as Extract<SDKMessage, { type: 'result' }>;
 }
 
 /** A minimal test-double InputQueue: nothing under test here actually drains it. */
@@ -363,8 +363,8 @@ describe('openSession', () => {
         const assistantToolUse = {
             type:    'assistant',
             message: { content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] },
-        } as unknown as Extract<SDKMessage, { type: 'system' }>;
-        const userFrame = { type: 'user', message: { content: 'hi' } } as unknown as Extract<SDKMessage, { type: 'system' }>;
+        } as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+        const userFrame = { type: 'user', message: { content: 'hi' } } as unknown as Extract<SDKMessage, { type: 'user' }>;
 
         a.instances[0].emit(assistantToolUse);
         await flush();
