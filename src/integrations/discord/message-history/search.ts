@@ -42,6 +42,8 @@ interface SearchOptions {
     summarizeOverflow?: boolean
     /** Maximum number of messages to fetch from Discord API */
     fetchLimit?:        number
+    /** Which chronological page to return (default: oldest) */
+    keep?:              'oldest' | 'newest'
 }
 
 /**
@@ -178,11 +180,16 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
 
         // 6. Apply limit and handle overflow
         const totalFound = allMessages.length;
-        const returnMessages = allMessages.slice(0, limit);
+        const keepNewest = searchOptions?.keep === 'newest';
+        const returnMessages = keepNewest
+            ? allMessages.slice(-limit)
+            : allMessages.slice(0, limit);
 
         let overflow: SearchResponse['overflow'] = undefined;
         if(allMessages.length > limit) {
-            const overflowMessages = allMessages.slice(limit);
+            const overflowMessages = keepNewest
+                ? allMessages.slice(0, -limit)
+                : allMessages.slice(limit);
 
             if(searchOptions?.summarizeOverflow === false) {
                 // Count-only overflow (no Haiku calls)
@@ -232,6 +239,7 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
             {
                 summarizeOverflow: false,
                 fetchLimit:        effectiveLimit + 50,
+                keep:              'newest',
             }
         );
     }

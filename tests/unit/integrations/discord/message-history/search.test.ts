@@ -385,6 +385,34 @@ describe('createMessageSearchService', () => {
                 expect(result.messages).toHaveLength(5);
             });
 
+            test('should keep the oldest page by default for inbox catch-up', async () => {
+                const messages = Array.from({ length: 20 }, (_, i) =>
+                    createMockSearchResult({
+                        id:      `1000000000000000${String(i).padStart(4, '0')}`,
+                        content: `Message ${i}`,
+                    }));
+
+                (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({
+                        messages,
+                        hasMore: false,
+                    })
+                );
+
+                const result = await service.searchMessages({
+                    channelId: createChannelId(testChannelId),
+                    limit:     5,
+                });
+
+                expect(result.messages.map(message => message.id)).toEqual([
+                    '10000000000000000000',
+                    '10000000000000000001',
+                    '10000000000000000002',
+                    '10000000000000000003',
+                    '10000000000000000004',
+                ]);
+            });
+
             test('should use default limit of 10 when not specified', async () => {
                 const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
@@ -875,12 +903,37 @@ describe('createMessageSearchService', () => {
 
     describe('getRecentMessages', () => {
         test.each([
-            { description: 'with limit parameter', limit: 5, expectedLength: 5 },
-            { description: 'with default limit', limit: undefined, expectedLength: 10 },
-        ])('should respect limit $description', async ({ limit, expectedLength }) => {
+            {
+                description: 'with limit parameter',
+                limit:       5,
+                expectedIds: [
+                    '10000000000000000015',
+                    '10000000000000000016',
+                    '10000000000000000017',
+                    '10000000000000000018',
+                    '10000000000000000019',
+                ],
+            },
+            {
+                description: 'with default limit',
+                limit:       undefined,
+                expectedIds: [
+                    '10000000000000000010',
+                    '10000000000000000011',
+                    '10000000000000000012',
+                    '10000000000000000013',
+                    '10000000000000000014',
+                    '10000000000000000015',
+                    '10000000000000000016',
+                    '10000000000000000017',
+                    '10000000000000000018',
+                    '10000000000000000019',
+                ],
+            },
+        ])('should return the newest messages $description', async ({ limit, expectedIds }) => {
             const messages = Array.from({ length: 20 }, (_, i) =>
                 createMockSearchResult({
-                    id:      `10000000000000000${i}`,
+                    id:      `1000000000000000${String(i).padStart(4, '0')}`,
                     content: `Message ${i}`,
                 }));
 
@@ -895,13 +948,13 @@ describe('createMessageSearchService', () => {
                 ? await service.getRecentMessages(testChannelId)
                 : await service.getRecentMessages(testChannelId, limit);
 
-            expect(result.messages).toHaveLength(expectedLength);
+            expect(result.messages.map(message => message.id)).toEqual([...expectedIds]);
         });
 
-        test('should not call summarizer for overflow (count-only)', async () => {
+        test('should return the newest messages without summarizing older overflow', async () => {
             const messages = Array.from({ length: 20 }, (_, i) =>
                 createMockSearchResult({
-                    id:      `10000000000000000${i}`,
+                    id:      `1000000000000000${String(i).padStart(4, '0')}`,
                     content: `Message ${i}`,
                 }));
 
@@ -914,7 +967,13 @@ describe('createMessageSearchService', () => {
 
             const result = await service.getRecentMessages(testChannelId, 5);
 
-            expect(result.messages).toHaveLength(5);
+            expect(result.messages.map(message => message.id)).toEqual([
+                '10000000000000000015',
+                '10000000000000000016',
+                '10000000000000000017',
+                '10000000000000000018',
+                '10000000000000000019',
+            ]);
             expect(result.overflow).toBeDefined();
             expect(result.overflow!.count).toBe(15);
             expect(result.overflow!.summaries).toBeUndefined();
