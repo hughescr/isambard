@@ -116,6 +116,8 @@ describe('QuestionRegistry', () => {
             };
 
             const resultPromise1 = registry.register(question1);
+            const supersededQuestion = registry.getQuestion('q1');
+            expect(supersededQuestion).not.toBeNull();
 
             const question2: Omit<PendingQuestion, 'state'> = {
                 questionId:      'q2',
@@ -144,6 +146,7 @@ describe('QuestionRegistry', () => {
                 reason:     'replaced',
             });
             expect(registry.getQuestion('q1')).toBeNull();
+            expect(supersededQuestion?.state).toBe('cancelled');
 
             // Second question should be active
             const found = registry.findPendingQuestion('ch1' as ChannelId);

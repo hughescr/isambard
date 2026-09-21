@@ -2146,7 +2146,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 channelId:  '123456789012345678',
                 state:      'cancelled',
                 reason:     'interrupted',
-                message:    expect.any(String),
+                message:    'Question cancelled: interrupted',
             });
             expect(parsed).not.toHaveProperty('answer');
             expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
