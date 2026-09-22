@@ -381,12 +381,10 @@ src/
 │   ├── memory-tool/                 # Three-layer memory system (identity/state/events)
 │   │   ├── types.ts                 # Zod schemas, branded types, type guards, factory functions
 │   │   ├── key-generator.ts         # DynamoDB key structure (PK/SK/GSI1) and tag index keys
-│   │   ├── layer-config.ts          # Layer configuration (TTL, autoLoad per layer)
 │   │   ├── backend.ts               # Main backend facade
 │   │   ├── backend-core.ts          # Core CRUD operations
 │   │   ├── backend-query.ts         # Query operations (list, search, getAutoLoadItems)
 │   │   ├── backend-tag-index.ts     # Tag index CRUD with BatchWriteItem + atomic counters
-│   │   ├── handlers.ts              # Memory tool handlers (create, insert, str_replace, rename, search...)
 │   │   ├── sigmoid.ts               # sigmoidScore(): frequency × recency decay for state prioritization
 │   │   └── reconciliation/          # Tag index reconciliation (three phases: completeness/orphan/count)
 │   │       ├── types.ts             # Reconciliation config, state, and result types

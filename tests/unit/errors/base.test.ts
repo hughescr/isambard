@@ -124,17 +124,6 @@ describe('ErrorCode', () => {
         expect(ErrorCode.DYNAMO_TIMEOUT as string).toBe('DYNAMO_TIMEOUT');
     });
 
-    test('should have memory tool error codes', () => {
-        expect(ErrorCode.MEMORY_TOOL_ERROR as string).toBe('MEMORY_TOOL_ERROR');
-        expect(ErrorCode.PATH_NOT_FOUND as string).toBe('PATH_NOT_FOUND');
-        expect(ErrorCode.PATH_ALREADY_EXISTS as string).toBe('PATH_ALREADY_EXISTS');
-        expect(ErrorCode.INVALID_PATH as string).toBe('INVALID_PATH');
-        expect(ErrorCode.TEXT_NOT_FOUND as string).toBe('TEXT_NOT_FOUND');
-        expect(ErrorCode.CONTENT_TOO_LARGE as string).toBe('CONTENT_TOO_LARGE');
-        expect(ErrorCode.TEXT_NOT_UNIQUE as string).toBe('TEXT_NOT_UNIQUE');
-        expect(ErrorCode.INVALID_LINE_NUMBER as string).toBe('INVALID_LINE_NUMBER');
-    });
-
     test('should have discord error codes', () => {
         expect(ErrorCode.DISCORD_ERROR as string).toBe('DISCORD_ERROR');
         expect(ErrorCode.CHANNEL_NOT_FOUND_BY_ID as string).toBe('CHANNEL_NOT_FOUND_BY_ID');

@@ -1,4 +1,5 @@
 import { describe, test, expect, spyOn } from 'bun:test';
+import * as publicErrors from '@/errors';
 import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 import {
@@ -6,16 +7,6 @@ import {
     ItemNotFoundError,
     ValidationError,
     DynamoTimeoutError,
-    MemoryToolError,
-    PathNotFoundError,
-    PathAlreadyExistsError,
-    InvalidPathError,
-    TextNotFoundError,
-    ContentTooLargeError,
-    TextNotUniqueError,
-    InvalidLineNumberError,
-    ReconciliationError,
-    ReconciliationThrottledError,
     ContactNotFoundError,
     ContactLastIdentifierError,
     ContactNoIdentifiersError,
@@ -140,251 +131,6 @@ describe.concurrent('DynamoTimeoutError', () => {
     test('should have correct code', () => {
         const error = new DynamoTimeoutError('GetItem', 5000);
         expect(error.code).toBe(ErrorCode.DYNAMO_TIMEOUT);
-    });
-});
-
-describe.concurrent('MemoryToolError', () => {
-    test('should have correct inheritance chain', () => {
-        const error = new MemoryToolError('Test error');
-        expect(error).toBeInstanceOf(MemoryToolError);
-        expect(error).toBeInstanceOf(StorageError);
-        expect(error).toBeInstanceOf(IsambardError);
-        expect(error).toBeInstanceOf(Error);
-    });
-
-    test('should have correct name', () => {
-        const error = new MemoryToolError('Test error');
-        expect(error.name).toBe('MemoryToolError');
-    });
-
-    test('should have correct message', () => {
-        const error = new MemoryToolError('Test error');
-        expect(error.message).toBe('Test error');
-    });
-
-    test('should have default code', () => {
-        const error = new MemoryToolError('Test error');
-        expect(error.code).toBe(ErrorCode.MEMORY_TOOL_ERROR);
-    });
-
-    test('should preserve stack trace', () => {
-        const error = new MemoryToolError('Test error');
-        expect(error.stack).toBeDefined();
-        expect(error.stack).toContain('MemoryToolError');
-    });
-});
-
-describe.concurrent('PathNotFoundError', () => {
-    const testPath = '/memories/test/path';
-
-    test('should have correct inheritance chain', () => {
-        const error = new PathNotFoundError(testPath);
-        expect(error).toBeInstanceOf(PathNotFoundError);
-        expect(error).toBeInstanceOf(MemoryToolError);
-        expect(error).toBeInstanceOf(StorageError);
-        expect(error).toBeInstanceOf(IsambardError);
-        expect(error).toBeInstanceOf(Error);
-    });
-
-    test('should have correct name', () => {
-        const error = new PathNotFoundError(testPath);
-        expect(error.name).toBe('PathNotFoundError');
-    });
-
-    test('should have correct message format', () => {
-        const error = new PathNotFoundError(testPath);
-        expect(error.message).toBe(`Memory not found at path: ${testPath}`);
-    });
-
-    test('should have correct code', () => {
-        const error = new PathNotFoundError(testPath);
-        expect(error.code).toBe(ErrorCode.PATH_NOT_FOUND);
-    });
-
-    test('should store path in context', () => {
-        const error = new PathNotFoundError(testPath);
-        expect(error.context.path).toBe(testPath);
-    });
-});
-
-describe.concurrent('PathAlreadyExistsError', () => {
-    const testPath = '/memories/existing/path';
-
-    test('should have correct inheritance chain', () => {
-        const error = new PathAlreadyExistsError(testPath);
-        expect(error).toBeInstanceOf(PathAlreadyExistsError);
-        expect(error).toBeInstanceOf(MemoryToolError);
-        expect(error).toBeInstanceOf(StorageError);
-        expect(error).toBeInstanceOf(IsambardError);
-        expect(error).toBeInstanceOf(Error);
-    });
-
-    test('should have correct name', () => {
-        const error = new PathAlreadyExistsError(testPath);
-        expect(error.name).toBe('PathAlreadyExistsError');
-    });
-
-    test('should have correct message format', () => {
-        const error = new PathAlreadyExistsError(testPath);
-        expect(error.message).toBe(`Memory already exists at path: ${testPath}`);
-    });
-
-    test('should have correct code', () => {
-        const error = new PathAlreadyExistsError(testPath);
-        expect(error.code).toBe(ErrorCode.PATH_ALREADY_EXISTS);
-    });
-
-    test('should store path in context', () => {
-        const error = new PathAlreadyExistsError(testPath);
-        expect(error.context.path).toBe(testPath);
-    });
-});
-
-describe.concurrent('InvalidPathError', () => {
-    test('should have correct inheritance and properties', () => {
-        const error = new InvalidPathError('invalid/path', 'does not start with /memories');
-        expect(error).toBeInstanceOf(InvalidPathError);
-        expect(error).toBeInstanceOf(MemoryToolError);
-        expect(error.name).toBe('InvalidPathError');
-        expect(error.code).toBe(ErrorCode.INVALID_PATH);
-        expect(error.message).toBe('Invalid memory path "invalid/path": does not start with /memories');
-        expect(error.context.path).toBe('invalid/path');
-        expect(error.context.reason).toBe('does not start with /memories');
-    });
-});
-
-describe.concurrent('TextNotFoundError', () => {
-    test('should have correct error properties', () => {
-        const error = new TextNotFoundError('/memories/search/location', 'search query');
-        expect(error).toBeInstanceOf(TextNotFoundError);
-        expect(error).toBeInstanceOf(MemoryToolError);
-        expect(error.name).toBe('TextNotFoundError');
-        expect(error.code).toBe(ErrorCode.TEXT_NOT_FOUND);
-        expect(error.message).toBe('Text "search query" not found in memory at /memories/search/location');
-        expect(error.context.path).toBe('/memories/search/location');
-        expect(error.context.text).toBe('search query');
-    });
-});
-
-describe.concurrent('ContentTooLargeError', () => {
-    test('should have correct properties with default max size', () => {
-        const error = new ContentTooLargeError('/memories/large/content', 400_000);
-        expect(error).toBeInstanceOf(ContentTooLargeError);
-        expect(error).toBeInstanceOf(MemoryToolError);
-        expect(error.name).toBe('ContentTooLargeError');
-        expect(error.code).toBe(ErrorCode.CONTENT_TOO_LARGE);
-        expect(error.message).toBe(
-            'Memory content at /memories/large/content is too large: 400000 bytes (max: 350000 bytes)'
-        );
-        expect(error.context.path).toBe('/memories/large/content');
-        expect(error.context.size).toBe(400_000);
-        expect(error.context.maxSize).toBe(350_000);
-    });
-
-    test('should handle custom max size', () => {
-        const error = new ContentTooLargeError('/memories/large/content', 400_000, 300_000);
-        expect(error.message).toContain('max: 300000 bytes');
-        expect(error.context.maxSize).toBe(300_000);
-    });
-});
-
-describe.concurrent('TextNotUniqueError', () => {
-    test.each([
-        { count: 2, description: 'count=2' },
-        { count: 5, description: 'count=5' },
-        { count: 100, description: 'count=100' }
-    ])('should have correct error properties with $description', ({ count }) => {
-        const error = new TextNotUniqueError('/memories/search/location', 'duplicate text', count);
-        expect(error).toBeInstanceOf(TextNotUniqueError);
-        expect(error).toBeInstanceOf(MemoryToolError);
-        expect(error.name).toBe('TextNotUniqueError');
-        expect(error.code).toBe(ErrorCode.TEXT_NOT_UNIQUE);
-        expect(error.context.path).toBe('/memories/search/location');
-        expect(error.context.text).toBe('duplicate text');
-        expect(error.context.count).toBe(count);
-        expect(error.message).toBe(`Text "duplicate text" appears ${count} times in memory at /memories/search/location, expected exactly once`);
-    });
-});
-
-describe.concurrent('InvalidLineNumberError', () => {
-    test.each([
-        { lineNumber: 0, totalLines: 100, description: 'line number 0' },
-        { lineNumber: -5, totalLines: 100, description: 'negative line number' },
-        { lineNumber: 150, totalLines: 100, description: 'line exceeding total' }
-    ])('should have correct error properties with $description', ({ lineNumber, totalLines }) => {
-        const error = new InvalidLineNumberError('/memories/line/location', lineNumber, totalLines);
-        expect(error).toBeInstanceOf(InvalidLineNumberError);
-        expect(error).toBeInstanceOf(MemoryToolError);
-        expect(error.name).toBe('InvalidLineNumberError');
-        expect(error.code).toBe(ErrorCode.INVALID_LINE_NUMBER);
-        expect(error.context.path).toBe('/memories/line/location');
-        expect(error.context.lineNumber).toBe(lineNumber);
-        expect(error.context.totalLines).toBe(totalLines);
-        expect(error.message).toBe(`Invalid line number ${lineNumber} in memory at /memories/line/location (total lines: ${totalLines})`);
-    });
-});
-
-describe.concurrent('ReconciliationError', () => {
-    test('should have correct inheritance chain', () => {
-        const error = new ReconciliationError('Test error');
-        expect(error).toBeInstanceOf(ReconciliationError);
-        expect(error).toBeInstanceOf(MemoryToolError);
-        expect(error).toBeInstanceOf(StorageError);
-        expect(error).toBeInstanceOf(IsambardError);
-        expect(error).toBeInstanceOf(Error);
-    });
-
-    test('should have correct name', () => {
-        const error = new ReconciliationError('Test error');
-        expect(error.name).toBe('ReconciliationError');
-    });
-
-    test('should have correct message', () => {
-        const error = new ReconciliationError('Test error');
-        expect(error.message).toBe('Test error');
-    });
-
-    test('should have default code', () => {
-        const error = new ReconciliationError('Test error');
-        expect(error.code).toBe(ErrorCode.RECONCILIATION_ERROR);
-    });
-
-    test('should preserve stack trace', () => {
-        const error = new ReconciliationError('Test error');
-        expect(error.stack).toBeDefined();
-        expect(error.stack).toContain('ReconciliationError');
-    });
-});
-
-describe.concurrent('ReconciliationThrottledError', () => {
-    test('should have correct inheritance chain', () => {
-        const error = new ReconciliationThrottledError('scan');
-        expect(error).toBeInstanceOf(ReconciliationThrottledError);
-        expect(error).toBeInstanceOf(ReconciliationError);
-        expect(error).toBeInstanceOf(MemoryToolError);
-        expect(error).toBeInstanceOf(StorageError);
-        expect(error).toBeInstanceOf(IsambardError);
-        expect(error).toBeInstanceOf(Error);
-    });
-
-    test('should have correct name', () => {
-        const error = new ReconciliationThrottledError('scan');
-        expect(error.name).toBe('ReconciliationThrottledError');
-    });
-
-    test('should have correct message format', () => {
-        const error = new ReconciliationThrottledError('scan');
-        expect(error.message).toBe('Reconciliation throttled during scan');
-    });
-
-    test('should have correct code', () => {
-        const error = new ReconciliationThrottledError('scan');
-        expect(error.code).toBe(ErrorCode.RECONCILIATION_THROTTLED);
-    });
-
-    test('should store operation in context', () => {
-        const error = new ReconciliationThrottledError('putItem');
-        expect(error.context.operation).toBe('putItem');
     });
 });
 
@@ -559,5 +305,23 @@ describe.concurrent('Error.captureStackTrace handling', () => {
                 Object.defineProperty(Error, 'captureStackTrace', descriptor);
             }
         }
+    });
+});
+
+describe.concurrent('removed storage error public surface', () => {
+    test.each([
+        ['MemoryToolError', 'MEMORY_TOOL_ERROR'],
+        ['PathNotFoundError', 'PATH_NOT_FOUND'],
+        ['PathAlreadyExistsError', 'PATH_ALREADY_EXISTS'],
+        ['InvalidPathError', 'INVALID_PATH'],
+        ['TextNotFoundError', 'TEXT_NOT_FOUND'],
+        ['ContentTooLargeError', 'CONTENT_TOO_LARGE'],
+        ['TextNotUniqueError', 'TEXT_NOT_UNIQUE'],
+        ['InvalidLineNumberError', 'INVALID_LINE_NUMBER'],
+        ['ReconciliationError', 'RECONCILIATION_ERROR'],
+        ['ReconciliationThrottledError', 'RECONCILIATION_THROTTLED']
+    ])('does not expose %s or %s', (errorName, errorCode) => {
+        expect(publicErrors).not.toHaveProperty(errorName);
+        expect(ErrorCode).not.toHaveProperty(errorCode);
     });
 });

@@ -20,23 +20,12 @@ classDiagram
     StorageError <|-- ItemNotFoundError
     StorageError <|-- ValidationError
     StorageError <|-- DynamoTimeoutError
-    StorageError <|-- MemoryToolError
     StorageError <|-- ContactNotFoundError
     StorageError <|-- ContactLastIdentifierError
     StorageError <|-- ContactIdentifierLimitError
     StorageError <|-- ContactNoIdentifiersError
     StorageError <|-- BatchWriteExhaustedError
 
-    MemoryToolError <|-- PathNotFoundError
-    MemoryToolError <|-- PathAlreadyExistsError
-    MemoryToolError <|-- InvalidPathError
-    MemoryToolError <|-- TextNotFoundError
-    MemoryToolError <|-- ContentTooLargeError
-    MemoryToolError <|-- TextNotUniqueError
-    MemoryToolError <|-- InvalidLineNumberError
-    MemoryToolError <|-- ReconciliationError
-
-    ReconciliationError <|-- ReconciliationThrottledError
 
     DiscordError <|-- ChannelNotFoundByIdError
     DiscordError <|-- ChannelNotAccessibleError
@@ -74,16 +63,6 @@ classDiagram
     }
 
     class StorageError {
-        +code: ErrorCode
-        +context?: Record~string, unknown~
-    }
-
-    class MemoryToolError {
-        +code: ErrorCode
-        +context?: Record~string, unknown~
-    }
-
-    class ReconciliationError {
         +code: ErrorCode
         +context?: Record~string, unknown~
     }
@@ -162,7 +141,6 @@ classDiagram
 ### Extension Guidelines:
 1. **Always extend the nearest semantic parent**, not `IsambardError` directly
    - Storage operations → extend `StorageError`
-   - Memory operations → extend `MemoryToolError`
    - Discord operations → extend `DiscordError`
    - Channel operations → extend `ChannelRegistryError`
    - Email operations → extend `EmailError`
@@ -171,18 +149,18 @@ classDiagram
    - Browser automation → extend `BrowserError`
    - Media processing (video, audio, image conversion) → extend `MediaProcessingError` (extends `IsambardError` directly — media is cross-cutting, not a domain service)
    - Configuration validation → extend `ConfigValidationError` (extends `IsambardError` directly — fatal startup errors)
-2. **Use intermediate base classes** for logical groupings (e.g., `ReconciliationError` under `MemoryToolError`, `WildDuckError` under `EmailError`, `CaldavError` under `IsambardError`)
+2. **Use intermediate base classes** for logical groupings (e.g., `WildDuckError` under `EmailError`, `CaldavError` under `IsambardError`)
 3. **Preserve the hierarchy** to enable broad catch blocks when appropriate
 
 ## Naming Conventions
 
 ### Error Classes
-- **Always** end with `Error` (e.g., `PathNotFoundError`)
+- **Always** end with `Error` (e.g., `ContactNotFoundError`)
 - Use descriptive names reflecting the failure mode
 - Keep names concise but clear
 
 ### Error Codes
-- Use `SCREAMING_SNAKE_CASE` (e.g., `PATH_NOT_FOUND`)
+- Use `SCREAMING_SNAKE_CASE` (e.g., `CONTACT_NOT_FOUND`)
 - Match the error class semantics
 - Defined in `ErrorCode` enum in `codes.ts`
 
@@ -252,7 +230,7 @@ try {
 Import from the centralized barrel export for most use cases:
 
 ```typescript
-import { PathNotFoundError, ErrorCode, IsambardError } from '@/errors';
+import { ContactNotFoundError, ErrorCode, IsambardError } from '@/errors';
 ```
 
 ### Module-Specific Imports
@@ -275,8 +253,8 @@ All error codes are defined in `ErrorCode` enum in `codes.ts`. This enables:
 Example:
 ```typescript
 switch (error.code) {
-    case ErrorCode.PATH_NOT_FOUND:
-        return { status: 404, message: 'Memory not found' };
+    case ErrorCode.CONTACT_NOT_FOUND:
+        return { status: 404, message: 'Contact not found' };
     case ErrorCode.VALIDATION_ERROR:
         return { status: 400, message: 'Invalid input' };
     default:
@@ -323,12 +301,9 @@ if (error instanceof DynamoTimeoutError) {
 try {
     await operation();
 } catch (error) {
-    if (error instanceof ReconciliationThrottledError) {
-        // Specific handling for throttling
-        await scheduleRetry();
-    } else if (error instanceof ReconciliationError) {
-        // Broader reconciliation error handling
-        logReconciliationFailure(error);
+    if (error instanceof ContactNotFoundError) {
+        // Specific handling for a missing contact
+        await createContact(error.context.personId);
     } else if (error instanceof StorageError) {
         // General storage error handling
         logStorageFailure(error);
