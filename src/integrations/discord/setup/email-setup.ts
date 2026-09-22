@@ -1,13 +1,13 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { type Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { BLUE } from '../colors';
 import { createEmailMCPServer, generateTextWithSystemPrompt, type ActivityLogger, type NotifyFn } from '@/agent';
 import type { EmailConfig } from '@/config';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
-import type { DiscordCapability } from '@/integrations/discord/capability';
+import type { ChannelContent, DiscordCapability } from '@/integrations/discord/capability';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
 import {
     EmailClassifier,
@@ -397,17 +397,13 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 async function sendToAdminChannel(
     client:             Client,
     channelId:          string,
-    payload:            MessageCreateOptions,
+    payload:            ChannelContent,
     errorMsg:           string,
     discordCapability?: DiscordCapability
 ): Promise<void> {
     try {
         if(discordCapability) {
-            await discordCapability.sendToChannel(channelId, {
-                content:    payload.content,
-                embeds:     payload.embeds as EmbedBuilder[] | undefined,
-                components: payload.components as ActionRowBuilder[] | undefined,
-            }, { priority: 'high', type: 'email_notification' });
+            await discordCapability.sendToChannel(channelId, payload, { priority: 'high', type: 'email_notification' });
         } else {
             const channel = await client.channels.fetch(channelId);
             if(isSendableChannel(channel)) {

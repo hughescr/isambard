@@ -3,17 +3,17 @@ import { stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { logger, setTimezone } from '@hughescr/logger';
-import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import type { SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
 import { loadPlugins, QuestionRegistry, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createQuotaNotes, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
-import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
+import { InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCalendarCommand } from '@/integrations/caldav';
-import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, resolveChannelId, splitMessage, withDiscordRetry, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type EmbedderLike } from '@/storage';
@@ -650,23 +650,7 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
     const outboxDrainer: OutboxDrainer = createOutboxDrainer({
         outboxBackend,
         registry:  healthRegistry,
-        deliverFn: async (item) => {
-            const channel = await discordCapability.fetchChannel(item.destination);
-            if(channel === null) {
-                throw new ChannelNotFoundByIdError(item.destination);
-            }
-            if(item.payload.text) {
-                const chunks = splitMessage(item.payload.text);
-                for(const chunk of chunks) {
-                    // eslint-disable-next-line no-await-in-loop -- chunks must be sent sequentially to preserve message order
-                    await withDiscordRetry(() => channel.send(chunk));
-                }
-            }
-            if(item.payload.embeds && item.payload.embeds.length > 0) {
-                // Outbox schema stores embeds as unknown[]; callers always put EmbedBuilder instances in.
-                await withDiscordRetry(() => channel.send({ embeds: item.payload.embeds as EmbedBuilder[] }));
-            }
-        },
+        deliverFn: createOutboxReplayDeliverFn({ fetchChannel: channelId => discordCapability.fetchChannel(channelId) }),
         logger,
     });
     registerCleanup({ name: 'outbox drainer', run: () => outboxDrainer.stop() });

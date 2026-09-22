@@ -1,3 +1,5 @@
+export type { SerializedDiscordPayload } from './discord-payload';
+export { serializedDiscordPayloadSchema } from './discord-payload';
 export type { OutboxItem, OutboxItemType, OutboxPriority } from './types';
 export { OutboxBackend } from './backend';
 export type { OutboxDrainer } from './drainer';

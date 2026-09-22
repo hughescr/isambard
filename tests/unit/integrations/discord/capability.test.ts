@@ -1,6 +1,8 @@
 import { describe, test, expect, mock } from 'bun:test';
-import type { Client, Message, TextChannel } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type Client, type Message, type TextChannel } from 'discord.js';
+import { ChannelNotFoundByIdError } from '../../../../src/errors';
 import { DiscordCapabilityImpl, type DiscordCapabilityDeps, type DiscordCapabilityLogger, type SendOptions } from '../../../../src/integrations/discord/capability';
+import { createOutboxReplayDeliverFn } from '../../../../src/integrations/discord/outbox-replay';
 import type { ServiceHealthRegistry } from '../../../../src/services/health-registry';
 import type { OutboxBackend, OutboxItem } from '../../../../src/services/outbox';
 
@@ -32,6 +34,22 @@ function makeOutboxBackend(): OutboxBackend {
     return {
         enqueue: mock(async (_item: OutboxItem) => undefined),
     } as unknown as OutboxBackend;
+}
+
+function makeOutboxItem(overrides: Partial<OutboxItem>): OutboxItem {
+    return {
+        id:          'aaaaaaaa-1111-4222-8333-444444444444',
+        createdAt:   '2026-09-22T12:00:00.000Z',
+        type:        'email_approval',
+        service:     'discord',
+        destination: 'ch-1',
+        payload:     {},
+        priority:    'medium',
+        dedupeKey:   'dedupe',
+        progress:    {},
+        epoch:       0,
+        ...overrides,
+    };
 }
 
 function makeChannel(sendFn?: (...args: unknown[]) => Promise<Message>): TextChannel {
@@ -313,13 +331,16 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
     test('object content maps payload fields', async () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
-        const content = { content: 'object text', embeds: ['e1'] as unknown[], components: ['c1'] as unknown[] };
+        const embed = new EmbedBuilder().setTitle('Approval needed');
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId('approve').setLabel('Approve').setStyle(ButtonStyle.Success)
+        );
 
-        await cap.sendToChannel('ch-1', content as Parameters<typeof cap.sendToChannel>[1]);
+        await cap.sendToChannel('ch-1', { content: 'object text', embeds: [embed], components: [row] });
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.payload.text).toBe('object text');
-        expect(item.payload.embeds).toEqual(['e1']);
-        expect(item.payload.components).toEqual(['c1']);
+        expect(item.payload.embeds).toEqual([embed.toJSON()]);
+        expect(item.payload.components).toEqual([row.toJSON()]);
     });
 
     test('queued result returns outboxId matching the item id', async () => {
@@ -344,6 +365,64 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap } = makeCapability(false, outbox);
 
         await expect(cap.sendToChannel('ch-1', 'Hello')).rejects.toThrow('outbox down');
+    });
+
+    test('queues builder content as JSON-serialisable Discord API data', async () => {
+        const outbox = makeOutboxBackend();
+        const { cap } = makeCapability(false, outbox);
+        const embed = new EmbedBuilder().setTitle('Approval needed');
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId('approve').setLabel('Approve').setStyle(ButtonStyle.Success)
+        );
+
+        await cap.sendToChannel('ch-1', { embeds: [embed], components: [row] });
+
+        const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
+        expect(item.payload.embeds).toEqual([embed.toJSON()]);
+        expect(item.payload.components).toEqual([row.toJSON()]);
+        expect(item.payload.embeds?.[0]).not.toBeInstanceOf(EmbedBuilder);
+        expect(item.payload.components?.[0]).not.toBeInstanceOf(ActionRowBuilder);
+        // eslint-disable-next-line unicorn/prefer-structured-clone -- JSON round trip verifies durable JSON serialisability, not cloning.
+        expect(JSON.parse(JSON.stringify(item.payload))).toEqual(item.payload);
+    });
+});
+
+describe('createOutboxReplayDeliverFn', () => {
+    test('sends text chunks first, then embeds and components in one message', async () => {
+        const channel = makeChannel();
+        const fetchChannel = mock(async () => channel);
+        const deliver = createOutboxReplayDeliverFn({ fetchChannel });
+        const components = [{
+            type:       1,
+            components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }],
+        }];
+        const embeds = [{ title: 'Approval needed' }];
+        const item = makeOutboxItem({ payload: { text: 'Hello', embeds, components } });
+
+        await deliver(item);
+
+        expect(channel.send).toHaveBeenCalledTimes(2);
+        expect(channel.send).toHaveBeenNthCalledWith(1, 'Hello');
+        expect(channel.send).toHaveBeenNthCalledWith(2, { embeds, components });
+    });
+
+    test('sends components when the queued item has no embeds', async () => {
+        const channel = makeChannel();
+        const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) });
+        const components = [{
+            type:       1,
+            components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }],
+        }];
+
+        await deliver(makeOutboxItem({ payload: { components } }));
+
+        expect(channel.send).toHaveBeenCalledWith({ embeds: undefined, components });
+    });
+
+    test('rejects when the queued destination cannot be fetched', async () => {
+        const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => null) });
+
+        await expect(deliver(makeOutboxItem({}))).rejects.toThrow(ChannelNotFoundByIdError);
     });
 });
 

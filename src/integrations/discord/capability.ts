@@ -1,6 +1,6 @@
 import type { Client, Message, TextChannel, EmbedBuilder, ActionRowBuilder } from 'discord.js';
 import { withDiscordRetry } from '@/integrations/discord/retry';
-import type { ServiceHealthRegistry, OutboxBackend, OutboxItem, OutboxPriority, OutboxItemType } from '@/services';
+import { serializedDiscordPayloadSchema, type ServiceHealthRegistry, type OutboxBackend, type OutboxItem, type OutboxPriority, type OutboxItemType } from '@/services';
 
 /**
  * Result of a Discord send operation.
@@ -95,11 +95,11 @@ function buildOutboxItem(channelId: string, content: ChannelContent, options: Se
         destination: channelId,
         payload:     typeof content === 'string'
             ? { text: content }
-            : {
+            : serializedDiscordPayloadSchema.parse({
                 text:       content.content,
-                embeds:     content.embeds,
-                components: content.components,
-            },
+                embeds:     content.embeds?.map(embed => embed.toJSON()),
+                components: content.components?.map(component => component.toJSON()),
+            }),
         priority:  options?.priority ?? 'medium',
         dedupeKey: options?.dedupeKey ?? crypto.randomUUID(),
         progress:  {},

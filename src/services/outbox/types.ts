@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { serializedDiscordPayloadSchema } from './discord-payload';
 
 const outboxItemTypeSchema = z.enum([
     'agent_response',
@@ -14,12 +15,7 @@ export type OutboxItemType = z.infer<typeof outboxItemTypeSchema>;
 const outboxPrioritySchema = z.enum(['high', 'medium', 'low']);
 export type OutboxPriority = z.infer<typeof outboxPrioritySchema>;
 
-const outboxPayloadSchema = z.object({
-    text:        z.string().optional(),
-    embeds:      z.array(z.unknown()).optional(),
-    components:  z.array(z.unknown()).optional(),
-    attachments: z.array(z.unknown()).optional(),
-});
+const outboxPayloadSchema = serializedDiscordPayloadSchema;
 
 const outboxProgressSchema = z.object({
     lastAttemptAt: z.iso.datetime().optional(),

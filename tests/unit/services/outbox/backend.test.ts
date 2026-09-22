@@ -158,6 +158,49 @@ describe('OutboxBackend', () => {
             expect(result).toEqual([]);
         });
 
+        test('unwraps legacy marshalled Discord builders into API payload data', async () => {
+            const item = {
+                ...makeItem(),
+                payload: {
+                    embeds:     [{ data: { title: 'Approval needed' } }],
+                    components: [{
+                        data:       { type: 1 },
+                        components: [{ data: { type: 2, custom_id: 'approve', label: 'Approve', style: 3 } }],
+                    }],
+                },
+            };
+            ddbMock.on(QueryCommand).resolves({ Items: [item] });
+
+            const results = await backend.dequeue('discord');
+            const result = results[0];
+
+            expect(result.payload).toEqual({
+                embeds:     [{ title: 'Approval needed' }],
+                components: [{
+                    type:       1,
+                    components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }],
+                }],
+            });
+        });
+
+        test('preserves new Discord API payload data on dequeue', async () => {
+            const item = makeItem({
+                payload: {
+                    embeds:     [{ title: 'Approval needed' }],
+                    components: [{
+                        type:       1,
+                        components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }],
+                    }],
+                },
+            });
+            ddbMock.on(QueryCommand).resolves({ Items: [item] });
+
+            const results = await backend.dequeue('discord');
+            const result = results[0];
+
+            expect(result.payload).toEqual(item.payload);
+        });
+
         test('returns multiple parsed items in order returned by query', async () => {
             const item1 = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001', priority: 'high' });
             const item2 = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002', priority: 'low' });
