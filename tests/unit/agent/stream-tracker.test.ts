@@ -62,6 +62,20 @@ describe('StreamTracker', () => {
             expect(progress.thinking).toBe('Let me think about this...');
         });
 
+        test('should trim whitespace from extracted thinking', () => {
+            const event: AssistantEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'thinking', thinking: ' padded ' },
+                    ],
+                },
+            };
+
+            tracker.update(event);
+            expect(tracker.getProgress().thinking).toBe('padded');
+        });
+
         test('should omit empty thinking blocks while joining non-empty blocks with newlines', () => {
             const event: AssistantEvent = {
                 type:    'assistant',
@@ -479,6 +493,22 @@ describe('StreamTracker', () => {
             tracker.update(event);
             const progress = tracker.getProgress();
             expect(progress.text).toBe('First line\nSecond line\nThird line');
+        });
+
+        test('should omit empty text blocks while joining non-empty blocks with newlines', () => {
+            const event: AssistantEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'text', text: 'a' },
+                        { type: 'text', text: '' },
+                        { type: 'text', text: 'b' },
+                    ],
+                },
+            };
+
+            tracker.update(event);
+            expect(tracker.getProgress().text).toBe('a\nb');
         });
 
         test('should clear thinking when message has content but no thinking', () => {

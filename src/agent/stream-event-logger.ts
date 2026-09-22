@@ -113,6 +113,7 @@ function toolUsesFromAssistant(message: AssistantEvent): ToolUseBlock[] {
 }
 
 function assistantText(message: AssistantEvent): string {
+    // Stryker disable StringLiteral: Whitespace-only and empty joins both trim to falsy, while non-empty text remains truthy when this value is only passed to Boolean.
     return (message.message?.content ?? [])
         .filter(block => block.type === 'text')
         .map(block => block.text)
@@ -120,6 +121,7 @@ function assistantText(message: AssistantEvent): string {
         .trim();
 }
 
+// Stryker restore StringLiteral
 /** A per-instance stream-event logger: `logStreamEvent` dispatches, `reset` clears pending tool-correlation state. */
 export interface StreamEventLogger {
     /**
