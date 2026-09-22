@@ -167,7 +167,7 @@ export type JournalEntry
       | { type: 'turn_completed', at: Date, envelopeId: string, kind: EnvelopeKind, responseText?: string, truncated?: boolean }
       | { type: 'turn_failed', at: Date, envelopeId: string, kind: EnvelopeKind, error: string }
       | { type: 'task_started', at: Date, taskId: string, description: string }
-      /** A task that left the ledger's running set, with the terminal status the ledger gave it. `task_lost` (below) stays separate: loss is epistemic, not a fourth outcome. */
+      /** A task that left the ledger's running set, with the terminal status the ledger gave it; a later row for the same task records a late `task_notification` correcting that status, and the LAST row is its final outcome. `task_lost` (below) stays separate: loss is epistemic, not a fourth outcome. */
       | { type: 'task_finished', at: Date, taskId: string, description?: string, outcome: TaskFinishedOutcome }
       /**
        * Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25. Read-only — written

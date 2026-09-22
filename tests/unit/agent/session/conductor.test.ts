@@ -880,6 +880,81 @@ describe('createConductor', () => {
             );
         });
 
+        it.each([
+            ['failed', ['stopped', 'failed']],
+            ['completed', ['stopped', 'completed']],
+            ['stopped', ['stopped']],
+        ] as const)('a %s task_notification arriving after background_tasks_changed dropped the task journals its corrected outcome once', async (status, outcomes) => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'run a thing' }));
+            await flush();
+
+            // The payload drops the task a tick before its notification: the ledger finishes it
+            // as 'stopped', then corrects that finished record to the notification's status.
+            h.instances[0].emit(frames.backgroundTasksChanged([]));
+            await flush();
+            h.instances[0].emit(frames.taskNotification(status, { task_id: 'task-1' }));
+            await flush();
+            // A repeated identical notification changes nothing durable.
+            h.instances[0].emit(frames.taskNotification(status, { task_id: 'task-1' }));
+            await flush();
+
+            expect(h.journal.byKind('task_finished')).toEqual(outcomes.map(outcome => (
+                { type: 'task_finished', at: expect.any(Date), taskId: 'task-1', description: 'run a thing', outcome }
+            )));
+            expect(h.journal.byKind('task_lost')).toEqual([]);
+        });
+
+        it('a reused task id that finishes again journals only its own task_finished, not a correction of the earlier run', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'first run' }));
+            await flush();
+            h.instances[0].emit(frames.taskNotification('completed', { task_id: 'task-1' }));
+            await flush();
+
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'second run' }));
+            await flush();
+            h.instances[0].emit(frames.taskNotification('failed', { task_id: 'task-1' }));
+            await flush();
+
+            expect(h.journal.byKind('task_finished')).toEqual([
+                { type: 'task_finished', at: expect.any(Date), taskId: 'task-1', description: 'first run', outcome: 'completed' },
+                { type: 'task_finished', at: expect.any(Date), taskId: 'task-1', description: 'second run', outcome: 'failed' },
+            ]);
+        });
+
+        it('a finished task whose record the ledger later evicts journals nothing more for it', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-0', description: 'task 0' }));
+            await flush();
+            h.instances[0].emit(frames.taskNotification('completed', { task_id: 'task-0' }));
+            await flush();
+            // The ledger's finishedTasks cap (20) foreground tasks stop at the turn end, evicting
+            // task-0's finished record in that same event.
+            for(let i = 1; i <= 20; i += 1) {
+                h.instances[0].emit(frames.taskStarted({ task_id: `task-${i}`, description: `task ${i}`, is_backgrounded: false }));
+                // eslint-disable-next-line no-await-in-loop -- each frame must reach the ledger before the next is emitted
+                await flush();
+            }
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            expect(h.journal.byKind('task_finished').filter(entry => entry.taskId === 'task-0')).toEqual([
+                { type: 'task_finished', at: expect.any(Date), taskId: 'task-0', description: 'task 0', outcome: 'completed' },
+            ]);
+            expect(h.journal.byKind('task_finished')).toHaveLength(21);
+        });
+
         it('an explicit task_lost ledger event journals the named task as lost', async () => {
             const h = build();
             await openWith(h);

@@ -35,7 +35,7 @@ import {
 } from './envelope';
 import { InputQueue } from './input-queue';
 import { createInterruptFlag } from './interrupt-flag';
-import { finishedTaskStatus, type Ledger, type LedgerEvent, type LedgerStore } from './ledger';
+import { finishedTaskStatus, type Ledger, type LedgerEvent, type LedgerStore, type LedgerTask } from './ledger';
 import type { SessionJournal, ResumeStore } from './ports';
 import { computeRecovery } from './recovery';
 import { resultFrameToError } from './result-frame-error';
@@ -470,6 +470,11 @@ function isBackgroundKind(kind: TurnKind): boolean {
     return kind === 'notification' || kind === 'task' || kind === 'peer';
 }
 
+/** `ledger.finishedTasks` keyed by task id, the LATEST record winning for a reused id (as {@link finishedTaskStatus} reads it). */
+function latestFinishedTasks(ledger: Ledger): Map<string, LedgerTask> {
+    return new Map(ledger.finishedTasks.map(task => [task.id, task] as const));
+}
+
 /**
  * Creates a long-lived session conductor.
  * @param params See {@link CreateConductorParams}.
@@ -530,6 +535,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     const turnSubscribers = new Set<(turnId: string, frame: SDKMessage) => void>();
     const turnEndedWaiters: (() => void)[] = [];
     let previousTasks = new Map(ledgerStore.get().tasks.map(task => [task.id, task] as const));
+    let previousFinishedTasks = latestFinishedTasks(ledgerStore.get());
     let previousCompaction = ledgerStore.get().compaction;
     /**
      * Adoptions waiting for a spontaneous assistant frame to attach themselves to, OLDEST FIRST —
@@ -583,7 +589,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * `ledger.tasks` — an explicit `task_lost` event, or `session_opened` resetting the task list
      * wholesale on a fallback reopen, both journal `task_lost`; anything else (normally a
      * `task_notification` frame) journals `task_finished` carrying the terminal status the ledger
-     * gave the task on its way to `ledger.finishedTasks`.
+     * gave the task on its way to `ledger.finishedTasks`. A task that had ALREADY finished before
+     * this event but whose finished status the event changed — a `task_notification` landing after
+     * `background_tasks_changed` dropped the task as `'stopped'`, or after a loss — journals another
+     * `task_finished` with the corrected outcome (see {@link journalFinishedCorrections}).
      */
     function journalTaskLifecycle(ledger: Ledger, event: LedgerEvent): void {
         // Stryker disable next-line llm: LedgerTask.id is always a string (built from the SDK frame's task_id), so `task.id + ''` is the identity and the id set is unchanged
@@ -605,7 +614,28 @@ export function createConductor(params: CreateConductorParams): Conductor {
                     : { type: 'task_finished', at: now(), taskId: id, description: task.description, outcome: finishedOutcomeOf(ledger, id) });
             }
         }
+        const currentFinishedTasks = latestFinishedTasks(ledger);
+        journalFinishedCorrections(ledger, currentFinishedTasks);
         previousTasks = new Map(ledger.tasks.map(task => [task.id, task] as const));
+        previousFinishedTasks = currentFinishedTasks;
+    }
+
+    /**
+     * Journals a fresh `task_finished` for every task that was already finished (and not running)
+     * before this event but whose latest finished status the event changed. The ledger corrects a
+     * finished record in place when a task's `task_notification` arrives after the task left
+     * `tasks`, so the row journaled when it left would otherwise stay wrong. A repeated identical
+     * notification leaves the status unchanged and journals nothing; a record the event evicted
+     * past the finished-tasks cap has no status to compare and journals nothing; a reused id that
+     * was running again before this event is left to the running-set diff above.
+     */
+    function journalFinishedCorrections(ledger: Ledger, currentFinishedTasks: ReadonlyMap<string, LedgerTask>): void {
+        for(const [id, before] of previousFinishedTasks) {
+            const after = currentFinishedTasks.get(id);
+            if(after !== undefined && after.status !== before.status && !previousTasks.has(id)) {
+                journal.append({ type: 'task_finished', at: now(), taskId: id, description: after.description, outcome: finishedOutcomeOf(ledger, id) });
+            }
+        }
     }
 
     /**
