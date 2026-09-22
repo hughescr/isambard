@@ -22,9 +22,11 @@ describe('outboxItemSchema', () => {
 });
 
 describe('serializedDiscordPayloadSchema', () => {
-    test.each([null, [], 'x'])('rejects malformed embed element %p without throwing', (embed) => {
-        expect(serializedDiscordPayloadSchema.safeParse({ embeds: [embed] }).success).toBe(false);
-    });
+    for (const [description, embed] of [['null', null], ['array', []], ['string', 'x']] as const) {
+        test(`rejects malformed ${description} embed element without throwing`, () => {
+            expect(serializedDiscordPayloadSchema.safeParse({ embeds: [embed] }).success).toBe(false);
+        });
+    }
 
     test.each([
         { type: 2, components: [] },
