@@ -46,6 +46,28 @@ describe('extractEmbeddedSubtitles', () => {
     it('throws MediaProcessingError when ffmpeg exits with non-zero code', async () => {
         await expect(extractEmbeddedSubtitles('/test/video.mp4', 0, makeFailRunner('no subtitle track'))).rejects.toBeInstanceOf(MediaProcessingError);
     });
+
+    it('includes ffmpeg stderr in a non-zero-exit error and labels its operation', async () => {
+        try {
+            await extractEmbeddedSubtitles('/test/video.mp4', 0, makeFailRunner('no subtitle track', 9));
+            expect.unreachable('extractEmbeddedSubtitles should throw');
+        } catch (error) {
+            expect(error).toBeInstanceOf(MediaProcessingError);
+            const mediaError = error as MediaProcessingError;
+            expect(mediaError.message).toContain('no subtitle track');
+            expect(mediaError.context.operation).toBe('ffmpeg-subtitle');
+        }
+    });
+
+    it('uses the ffmpeg exit-code fallback when stderr is empty', async () => {
+        try {
+            await extractEmbeddedSubtitles('/test/video.mp4', 0, makeFailRunner('', 9));
+            expect.unreachable('extractEmbeddedSubtitles should throw');
+        } catch (error) {
+            expect(error).toBeInstanceOf(MediaProcessingError);
+            expect((error as MediaProcessingError).message).toContain('ffmpeg exited with code 9');
+        }
+    });
 });
 
 describe('transcribeWithWhisperKit', () => {
@@ -157,6 +179,15 @@ describe('WhisperKit timestamp and segment edge cases', () => {
         await expect(transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(output))).resolves.toEqual({
             kind:     'transcribed',
             segments: [{ startTime: 10, endTime: 12, text: 'UPPER!: body' }],
+        });
+    });
+
+    it('does not infer a speaker when a valid-looking label follows punctuation', async () => {
+        const output = '[00:00:10.000 --> 00:00:12.000]Dr. Who: hello\n';
+
+        await expect(transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(output))).resolves.toEqual({
+            kind:     'transcribed',
+            segments: [{ startTime: 10, endTime: 12, text: 'Dr. Who: hello' }],
         });
     });
 

@@ -168,6 +168,15 @@ describe('markdown edge-case rendering', () => {
         expect(noChannelCount).not.toContain('44100 Hz');
     });
 
+    it('omits audio details when only the codec is known', () => {
+        const md = buildMetadataMarkdown(
+            { ...MINIMAL_METADATA, audioCodec: 'aac' },
+            { kind: 'transcription', outcome: { kind: 'empty' } }
+        );
+
+        expect(md.split('\n')).toContain('- **Audio Codec**: aac');
+    });
+
     it('renders technical metadata and the chosen subtitle source in stable order', () => {
         const source: VideoTextSource = {
             kind:            'subtitles',
