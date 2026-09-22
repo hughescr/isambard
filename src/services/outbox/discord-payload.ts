@@ -8,9 +8,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const apiEmbedSchema = z.custom<APIEmbed>(isRecord);
 const apiActionRowSchema = z.custom<APIActionRowComponent<APIComponentInMessageActionRow>>(
     value => isRecord(value)
-        && value.type === ComponentType.ActionRow
-        && Array.isArray(value.components)
-        && value.components.every(isRecord)
+      && value.type === ComponentType.ActionRow
+      && Array.isArray(value.components)
+      && value.components.every(isRecord)
 );
 
 const discordPayloadBaseSchema = z.object({

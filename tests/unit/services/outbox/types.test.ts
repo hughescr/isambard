@@ -22,7 +22,7 @@ describe('outboxItemSchema', () => {
 });
 
 describe('serializedDiscordPayloadSchema', () => {
-    for (const [description, embed] of [['null', null], ['array', []], ['string', 'x']] as const) {
+    for(const [description, embed] of [['null', null], ['array', []], ['string', 'x']] as const) {
         test(`rejects malformed ${description} embed element without throwing`, () => {
             expect(serializedDiscordPayloadSchema.safeParse({ embeds: [embed] }).success).toBe(false);
         });
@@ -47,10 +47,10 @@ describe('serializedDiscordPayloadSchema', () => {
 
     test('preserves extra API payload fields', () => {
         const payload = {
-            embeds: [{ title: 'Approval needed', future_embed_field: 'kept' }],
+            embeds:     [{ title: 'Approval needed', future_embed_field: 'kept' }],
             components: [{
-                type:       1,
-                components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3, future_component_field: 'kept' }],
+                type:             1,
+                components:       [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3, future_component_field: 'kept' }],
                 future_row_field: 'kept',
             }],
         };
