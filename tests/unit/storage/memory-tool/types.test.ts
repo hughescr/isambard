@@ -28,6 +28,7 @@ describe.concurrent('memoryPathSchema', () => {
 
     test.each([
         { name: 'path not starting with /', input: 'notes', message: 'Path must start with /' },
+        { name: 'path containing a slash but not starting with one', input: 'memories/notes.md', message: 'Path must start with /' },
         { name: 'path with double slashes', input: '/notes//todo', message: 'Path cannot contain double slashes' },
         { name: 'path with trailing slash (except root)', input: '/notes/', message: 'Path cannot end with /' },
         { name: 'empty string', input: '', message: 'Path cannot be empty' },
