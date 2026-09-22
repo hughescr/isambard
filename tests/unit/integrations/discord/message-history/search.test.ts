@@ -413,6 +413,28 @@ describe('createMessageSearchService', () => {
                 ]);
             });
 
+            test('should keep every message when newest page limit exceeds the fetched set', async () => {
+                const messages = [
+                    createMockSearchResult({ id: '100000000000000003', content: 'Third' }),
+                    createMockSearchResult({ id: '100000000000000001', content: 'First' }),
+                    createMockSearchResult({ id: '100000000000000002', content: 'Second' }),
+                ];
+
+                (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({ messages, hasMore: false })
+                );
+
+                const result = await service.getRecentMessages(testChannelId, 5);
+
+                expect(result.messages.map(message => message.id)).toEqual([
+                    '100000000000000001',
+                    '100000000000000002',
+                    '100000000000000003',
+                ]);
+                expect(result.overflow).toBeUndefined();
+                expect(mockSummarizer.summarizeMessageBatch).not.toHaveBeenCalled();
+            });
+
             test('should use default limit of 10 when not specified', async () => {
                 const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
