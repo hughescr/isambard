@@ -45,6 +45,15 @@ describe('computeRecovery', () => {
         expect(computeRecovery(entries).lostTasks).toEqual([]);
     });
 
+    test('a task_launched row for a started task does not resolve it', () => {
+        const entries: JournalEntry[] = [
+            { type: 'task_started', at: AT, taskId: 'task-1', description: 'do the thing' },
+            { type: 'task_launched', at: AT, taskId: 'task-1', toolUseId: 'tu-1', toolName: 'Agent', envelopeId: 'env-1', kind: 'discord' },
+        ];
+
+        expect(computeRecovery(entries).lostTasks).toEqual([{ taskId: 'task-1', description: 'do the thing' }]);
+    });
+
     test('task_started followed by task_lost is not (again) reported lost', () => {
         const entries: JournalEntry[] = [
             { type: 'task_started', at: AT, taskId: 'task-1', description: 'do the thing' },
