@@ -32,6 +32,7 @@ describe('serializedDiscordPayloadSchema', () => {
         { type: 2, components: [] },
         { type: 1 },
         { type: 1, components: [null] },
+        { type: 1, components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }, null] },
     ])('rejects malformed component row %p without throwing', (component) => {
         expect(serializedDiscordPayloadSchema.safeParse({ components: [component] }).success).toBe(false);
     });

@@ -451,6 +451,24 @@ describe('createOutboxReplayDeliverFn', () => {
         expect(channel.send).toHaveBeenCalledWith({ embeds, components: undefined });
     });
 
+    test('rejects when sending a text chunk fails', async () => {
+        const channel = makeChannel(async () => {
+            throw new Error('Missing Permissions');
+        });
+        const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) });
+
+        await expect(deliver(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toThrow('Missing Permissions');
+    });
+
+    test('rejects when sending the embeds and components fails', async () => {
+        const channel = makeChannel(async () => {
+            throw new Error('Missing Permissions');
+        });
+        const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) });
+
+        await expect(deliver(makeOutboxItem({ payload: { embeds: [{ title: 'Approval needed' }] } }))).rejects.toThrow('Missing Permissions');
+    });
+
     test('rejects when the queued destination cannot be fetched', async () => {
         const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => null) });
 

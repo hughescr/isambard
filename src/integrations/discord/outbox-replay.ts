@@ -22,7 +22,7 @@ export function createOutboxReplayDeliverFn(deps: OutboxReplayDeps): (item: Outb
                 await withDiscordRetry(() => channel.send(chunk));
             }
         }
-        if((item.payload.embeds?.length ?? 0) > 0 || (item.payload.components?.length ?? 0) > 0) {
+        if((item.payload.embeds ?? []).length > 0 || (item.payload.components ?? []).length > 0) {
             await withDiscordRetry(() => channel.send({
                 embeds:     item.payload.embeds,
                 components: item.payload.components,
