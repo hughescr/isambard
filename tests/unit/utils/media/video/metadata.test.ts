@@ -394,3 +394,34 @@ describe('parseFfprobeOutput', () => {
         expect(result.streams?.[0]?.width).toBeUndefined();
     });
 });
+
+describe('subtitle ordinal mapping', () => {
+    it('keeps the subtitle ordinal independent from a non-sequential stream index', async () => {
+        const output = JSON.stringify({
+            streams: [
+                { codec_type: 'video', codec_name: 'h264', width: 1280, height: 720, avg_frame_rate: '30/1' },
+                { codec_type: 'subtitle', index: 9, tags: { language: 'deu' } },
+            ],
+            format: { duration: '10' },
+        });
+
+        await expect(extractMetadata('/test/video.mp4', makeRunner(output))).resolves.toMatchObject({
+            subtitleTracks: [{ subtitleOrdinal: 0, streamIndex: 9, language: 'deu' }],
+        });
+    });
+});
+
+describe('missing subtitle stream index', () => {
+    it('omits rather than assigns an undefined streamIndex property', async () => {
+        const output = JSON.stringify({
+            streams: [
+                { codec_type: 'video', codec_name: 'h264', width: 1280, height: 720, avg_frame_rate: '30/1' },
+                { codec_type: 'subtitle', tags: { language: 'eng' } },
+            ],
+            format: { duration: '10' },
+        });
+
+        const metadata = await extractMetadata('/test/video.mp4', makeRunner(output));
+        expect(metadata.subtitleTracks[0]).not.toHaveProperty('streamIndex');
+    });
+});

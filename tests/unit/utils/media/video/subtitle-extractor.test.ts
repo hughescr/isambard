@@ -125,3 +125,44 @@ describe('getSubtitlesOrTranscription', () => {
         });
     });
 });
+
+describe('WhisperKit timestamp and segment edge cases', () => {
+    it('parses multi-hour comma timestamps using the full time arithmetic', async () => {
+        const output = '[01:23:45,125 --> 01:23:46,875]  SPEAKER_00: Comma fraction\n';
+
+        await expect(transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(output))).resolves.toEqual({
+            kind:     'transcribed',
+            segments: [{ startTime: 5025.125, endTime: 5026.875, speaker: 'SPEAKER_00', text: 'Comma fraction' }],
+        });
+    });
+
+    it('accepts compact timestamp delimiters and preserves segment source order', async () => {
+        const output = [
+            '[00:00:10.000-->00:00:12.000]Jane Doe: First',
+            '[00:00:13.000 --> 00:00:14.000]Second',
+        ].join('\n');
+
+        await expect(transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(output))).resolves.toEqual({
+            kind:     'transcribed',
+            segments: [
+                { startTime: 10, endTime: 12, speaker: 'Jane Doe', text: 'First' },
+                { startTime: 13, endTime: 14, text: 'Second' },
+            ],
+        });
+    });
+
+    it('trims trailing text whitespace without accepting invalid speaker prefixes', async () => {
+        const output = '[00:00:10.000 --> 00:00:12.000]  UPPER!: body   \n';
+
+        await expect(transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeTextRunner(output))).resolves.toEqual({
+            kind:     'transcribed',
+            segments: [{ startTime: 10, endTime: 12, text: 'UPPER!: body' }],
+        });
+    });
+
+    it('reports negative WhisperKit exit codes instead of attempting to parse output', async () => {
+        await expect(transcribeWithWhisperKit('/test/video.mp4', '/tmp/out', makeFailRunner('', -1))).resolves.toEqual({
+            kind: 'unavailable', reason: 'whisperkit-cli exited with code -1',
+        });
+    });
+});

@@ -142,3 +142,96 @@ describe('buildMetadataMarkdown', () => {
         expect(md).not.toContain('Subtitle Tracks');
     });
 });
+
+describe('markdown edge-case rendering', () => {
+    it('formats a duration whose hour and minute remainders exercise both divisors', () => {
+        expect(formatDuration(7198)).toBe('1h 59m 58s');
+    });
+
+    it('renders mono, multi-channel, and no-channel audio details exactly', () => {
+        const mono = buildMetadataMarkdown(
+            { ...MINIMAL_METADATA, audioCodec: 'mp3', audioChannels: 1 },
+            { kind: 'transcription', outcome: { kind: 'empty' } }
+        );
+        const surround = buildMetadataMarkdown(
+            { ...MINIMAL_METADATA, audioCodec: 'ac3', audioChannels: 6, audioSampleRate: 48_000 },
+            { kind: 'transcription', outcome: { kind: 'empty' } }
+        );
+        const noChannelCount = buildMetadataMarkdown(
+            { ...MINIMAL_METADATA, audioCodec: 'aac', audioSampleRate: 44_100 },
+            { kind: 'transcription', outcome: { kind: 'empty' } }
+        );
+
+        expect(mono).toContain('- **Audio Codec**: mp3 (mono)');
+        expect(surround).toContain('- **Audio Codec**: ac3 (6-channel, 48000 Hz)');
+        expect(noChannelCount).toContain('- **Audio Codec**: aac');
+        expect(noChannelCount).not.toContain('44100 Hz');
+    });
+
+    it('renders technical metadata and the chosen subtitle source in stable order', () => {
+        const source: VideoTextSource = {
+            kind:            'subtitles',
+            subtitleOrdinal: 0,
+            outcome:         { kind: 'extracted', text: '  first subtitle  ' },
+        };
+
+        expect(buildMetadataMarkdown(FULL_METADATA, source)).toBe([
+            '# Video Metadata',
+            '',
+            '## Technical Details',
+            '- **Duration**: 2m 34s',
+            '- **Resolution**: 1920x1080',
+            '- **Video Codec**: h264',
+            '- **Frame Rate**: 30 fps',
+            '- **Video Bitrate**: 4000 kbps',
+            '- **Audio Codec**: aac (stereo, 44100 Hz)',
+            '- **Subtitle Tracks**: Track 0 (stream 2) — eng — English, Track 1 (stream 3) — fra',
+            '',
+            '## Subtitles',
+            '',
+            'first subtitle',
+        ].join('\n'));
+    });
+
+    it('renders a defined empty description and empty subtitle payload as sections', () => {
+        const source: VideoTextSource = {
+            kind:            'subtitles',
+            subtitleOrdinal: 0,
+            outcome:         { kind: 'extracted', text: '' },
+        };
+        const md = buildMetadataMarkdown(MINIMAL_METADATA, source, '');
+
+        expect(md).toContain('fps\n\n## Description\n\n\n\n## Subtitles\n\n');
+        expect(md).toEndWith('## Subtitles\n\n');
+    });
+});
+
+describe('transcription line ordering', () => {
+    it('appends transcription segments in their supplied order after the transcription heading', () => {
+        const source: VideoTextSource = {
+            kind:    'transcription',
+            outcome: {
+                kind:     'transcribed',
+                segments: [
+                    { startTime: 1, endTime: 2, text: 'First segment' },
+                    { startTime: 3, endTime: 4, text: 'Second segment' },
+                ],
+            },
+        };
+
+        expect(buildMetadataMarkdown(MINIMAL_METADATA, source)).toBe([
+            '# Video Metadata',
+            '',
+            '## Technical Details',
+            '- **Duration**: 1m 0s',
+            '- **Resolution**: 1280x720',
+            '- **Video Codec**: h264',
+            '- **Frame Rate**: 30 fps',
+            '',
+            '## Transcription',
+            '',
+            '[00:01] First segment',
+            '[00:03] Second segment',
+        ].join('\n'));
+    });
+});
