@@ -7,7 +7,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const apiEmbedSchema = z.custom<APIEmbed>(isRecord);
 const apiActionRowSchema = z.custom<APIActionRowComponent<APIComponentInMessageActionRow>>(
-    value => isRecord(value) && value.type === ComponentType.ActionRow && Array.isArray(value.components)
+    value => isRecord(value)
+        && value.type === ComponentType.ActionRow
+        && Array.isArray(value.components)
+        && value.components.every(isRecord)
 );
 
 const discordPayloadBaseSchema = z.object({
@@ -55,5 +58,6 @@ function unwrapLegacyDiscordBuilders(value: unknown): unknown {
 }
 
 /** Durable Discord API payload stored in the generic outbox. */
+// Legacy pre-#49 outbox rows: can be safely deleted after 2026-09-25. Replace with discordPayloadBaseSchema.
 export const serializedDiscordPayloadSchema = z.preprocess(unwrapLegacyDiscordBuilders, discordPayloadBaseSchema);
 export type SerializedDiscordPayload = z.infer<typeof discordPayloadBaseSchema>;

@@ -13,7 +13,7 @@ export type { ReconnectionLoop } from './reconnection-loop';
 export { createReconnectionLoop } from './reconnection-loop';
 
 // Outbox
-export type { SerializedDiscordPayload, OutboxItem, OutboxItemType, OutboxPriority } from './outbox';
+export type { OutboxItem, OutboxItemType, OutboxPriority } from './outbox';
 export { serializedDiscordPayloadSchema, OutboxBackend } from './outbox';
 export type { OutboxDrainer } from './outbox';
 export { createOutboxDrainer } from './outbox';

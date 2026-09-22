@@ -343,6 +343,18 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         expect(item.payload.components).toEqual([row.toJSON()]);
     });
 
+    test('queues object content without embeds or components', async () => {
+        const outbox  = makeOutboxBackend();
+        const { cap } = makeCapability(false, outbox);
+
+        await cap.sendToChannel('ch-1', { content: 'object text' });
+
+        const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
+        expect(item.payload).toEqual({ text: 'object text' });
+        expect(item.payload.embeds).toBeUndefined();
+        expect(item.payload.components).toBeUndefined();
+    });
+
     test('queued result returns outboxId matching the item id', async () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
@@ -417,6 +429,26 @@ describe('createOutboxReplayDeliverFn', () => {
         await deliver(makeOutboxItem({ payload: { components } }));
 
         expect(channel.send).toHaveBeenCalledWith({ embeds: undefined, components });
+    });
+
+    test('sends text-only queued items exactly once', async () => {
+        const channel = makeChannel();
+        const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) });
+
+        await deliver(makeOutboxItem({ payload: { text: 'Hello' } }));
+
+        expect(channel.send).toHaveBeenCalledTimes(1);
+        expect(channel.send).toHaveBeenCalledWith('Hello');
+    });
+
+    test('sends embeds when the queued item has no components', async () => {
+        const channel = makeChannel();
+        const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) });
+        const embeds = [{ title: 'Approval needed' }];
+
+        await deliver(makeOutboxItem({ payload: { embeds } }));
+
+        expect(channel.send).toHaveBeenCalledWith({ embeds, components: undefined });
     });
 
     test('rejects when the queued destination cannot be fetched', async () => {

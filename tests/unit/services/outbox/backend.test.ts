@@ -158,6 +158,7 @@ describe('OutboxBackend', () => {
             expect(result).toEqual([]);
         });
 
+        // Legacy pre-#49 outbox rows: can be safely deleted after 2026-09-25.
         test('unwraps legacy marshalled Discord builders into API payload data', async () => {
             const item = {
                 ...makeItem(),
