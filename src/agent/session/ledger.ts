@@ -551,6 +551,18 @@ function finishedStatusOf(status: string | undefined): Exclude<LedgerTask['statu
     return 'completed';
 }
 
+/**
+ * The terminal status `ledger` recorded for `taskId` in `finishedTasks`, or `undefined` when it
+ * holds no finished record for that id (still running, never tracked, or already evicted past
+ * the finished-tasks cap). The LATEST record wins, since the SDK can reuse a task id and the one
+ * just finished is appended last. Lets a caller journal how a task ended without re-deriving
+ * {@link finishedStatusOf}'s mapping.
+ */
+export function finishedTaskStatus(ledger: Ledger, taskId: string): Exclude<LedgerTask['status'], 'running'> | undefined {
+    const finished = ledger.finishedTasks.findLast(task => task.id === taskId);
+    return finished === undefined ? undefined : finishedStatusOf(finished.status);
+}
+
 /** The frame's final usage merged into the task's progress; the progress so far when it carries none. */
 function notifiedProgress(task: LedgerTask, frame: TaskNotificationFrame, at: Date): LedgerTaskProgress | undefined {
     if(frame.usage === undefined) {

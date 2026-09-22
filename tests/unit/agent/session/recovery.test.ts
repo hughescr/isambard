@@ -5,7 +5,7 @@ import type { JournalEntry } from '@/agent/session/types';
 const AT = new Date(0);
 
 describe('computeRecovery', () => {
-    test('empty journal -> all empty/undefined/false', () => {
+    test('empty journal -> all empty/undefined', () => {
         const result = computeRecovery([]);
 
         expect(result).toEqual({
@@ -13,7 +13,6 @@ describe('computeRecovery', () => {
             undelivered:          [],
             deliveredEnvelopeIds: [],
             lastSessionId:        undefined,
-            lastOpenWasFallback:  false,
         });
     });
 
@@ -27,7 +26,17 @@ describe('computeRecovery', () => {
         expect(result.lostTasks).toEqual([{ taskId: 'task-1', description: 'do the thing' }]);
     });
 
-    test('task_started followed by task_completed is not lost', () => {
+    test.each(['completed', 'failed', 'stopped'] as const)('task_started followed by task_finished (%s) is not lost', (outcome) => {
+        const entries: JournalEntry[] = [
+            { type: 'task_started', at: AT, taskId: 'task-1', description: 'do the thing' },
+            { type: 'task_finished', at: AT, taskId: 'task-1', outcome },
+        ];
+
+        expect(computeRecovery(entries).lostTasks).toEqual([]);
+    });
+
+    // Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25.
+    test('task_started followed by a legacy task_completed is not lost', () => {
         const entries: JournalEntry[] = [
             { type: 'task_started', at: AT, taskId: 'task-1', description: 'do the thing' },
             { type: 'task_completed', at: AT, taskId: 'task-1' },
@@ -140,30 +149,19 @@ describe('computeRecovery', () => {
         expect(computeRecovery(entries).undelivered).toEqual([]);
     });
 
-    test('lastSessionId and lastOpenWasFallback come from the latest session_opened entry', () => {
+    test('lastSessionId comes from the latest session_opened entry', () => {
         const entries: JournalEntry[] = [
             {
-                type: 'session_opened', at: AT, role: 'conversation', sessionId: 'session-old', resumed: false,
+                type: 'session_opened', at: AT, role: 'conversation', sessionId: 'session-old', outcome: 'fresh', cause: 'boot',
             },
             {
-                type: 'session_opened', at: AT, role: 'conversation', sessionId: 'session-new', resumed: false, fallback: true,
+                type: 'session_opened', at: AT, role: 'conversation', sessionId: 'session-new', outcome: 'resume_fallback', cause: 'crash_reopen',
             },
         ];
 
         const result = computeRecovery(entries);
 
         expect(result.lastSessionId).toBe('session-new');
-        expect(result.lastOpenWasFallback).toBe(true);
-    });
-
-    test('lastOpenWasFallback defaults to false when the latest session_opened has no fallback field', () => {
-        const entries: JournalEntry[] = [
-            {
-                type: 'session_opened', at: AT, role: 'conversation', sessionId: 'session-1', resumed: true,
-            },
-        ];
-
-        expect(computeRecovery(entries).lastOpenWasFallback).toBe(false);
     });
 });
 
@@ -210,7 +208,7 @@ describe('lastKnownAt', () => {
             { type: 'turn_completed', at: turnAt, envelopeId: 'env-1', kind: 'discord', responseText: 'hi' },
             { type: 'envelope_submitted', at: laterSubmission, envelopeId: 'env-2', kind: 'discord' },
             {
-                type: 'session_opened', at: laterSubmission, role: 'conversation', sessionId: 'session-1', resumed: false,
+                type: 'session_opened', at: laterSubmission, role: 'conversation', sessionId: 'session-1', outcome: 'fresh', cause: 'boot',
             },
         ];
 
@@ -263,7 +261,9 @@ describe('taskLaunchEntries', () => {
         };
         const entries: JournalEntry[] = [
             first,
-            { type: 'session_opened', at: AT, role: 'conversation', sessionId: 'sess-1', resumed: false },
+            {
+                type: 'session_opened', at: AT, role: 'conversation', sessionId: 'sess-1', outcome: 'fresh', cause: 'boot',
+            },
             second,
         ];
 

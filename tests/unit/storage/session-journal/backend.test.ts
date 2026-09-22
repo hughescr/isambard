@@ -37,6 +37,67 @@ describe('SessionJournalBackend', () => {
         test('rejects an unknown response_delivered disposition', () => {
             expect(journalEntrySchema.safeParse({ ...responseDelivered, disposition: 'delayed' }).success).toBe(false);
         });
+
+        const sessionOpenedBase = {
+            at: '2026-09-05T10:00:00.000Z', type: 'session_opened', role: 'conversation', sessionId: 'sess-1',
+        } as const;
+
+        test('a session_opened row with outcome and cause parses to that outcome and cause', () => {
+            expect(journalEntrySchema.parse({ ...sessionOpenedBase, outcome: 'resumed', cause: 'crash_reopen' })).toEqual({
+                type: 'session_opened', at: new Date('2026-09-05T10:00:00.000Z'), role: 'conversation', sessionId: 'sess-1', outcome: 'resumed', cause: 'crash_reopen',
+            });
+        });
+
+        test.each(['fresh', 'resumed', 'resume_fallback'] as const)('accepts session_opened outcome %s', (outcome) => {
+            expect(journalEntrySchema.safeParse({ ...sessionOpenedBase, outcome, cause: 'boot' }).success).toBe(true);
+        });
+
+        test.each(['boot', 'crash_reopen', 'requested_reopen'] as const)('accepts session_opened cause %s', (cause) => {
+            expect(journalEntrySchema.safeParse({ ...sessionOpenedBase, outcome: 'fresh', cause }).success).toBe(true);
+        });
+
+        test('rejects an unknown session_opened outcome', () => {
+            expect(journalEntrySchema.safeParse({ ...sessionOpenedBase, outcome: 'reopened', cause: 'boot' }).success).toBe(false);
+        });
+
+        test('rejects an unknown session_opened cause', () => {
+            expect(journalEntrySchema.safeParse({ ...sessionOpenedBase, outcome: 'fresh', cause: 'restart' }).success).toBe(false);
+        });
+
+        test('rejects a new-shape session_opened row with no cause', () => {
+            expect(journalEntrySchema.safeParse({ ...sessionOpenedBase, outcome: 'fresh' }).success).toBe(false);
+        });
+
+        // Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25.
+        test.each([
+            ['{ resumed: true }', { resumed: true }, 'resumed'],
+            ['{ resumed: false }', { resumed: false }, 'fresh'],
+            ['{ resumed: false, fallback: true }', { resumed: false, fallback: true }, 'resume_fallback'],
+            ['{ resumed: true, fallback: false }', { resumed: true, fallback: false }, 'resumed'],
+            // Never produced by any writer; normalised deterministically (fallback wins) rather than rejected.
+            ['{ resumed: true, fallback: true }', { resumed: true, fallback: true }, 'resume_fallback'],
+        ] as const)('a legacy session_opened %s row normalises deterministically, with no cause', (_label, legacyFields, outcome) => {
+            expect(journalEntrySchema.parse({ ...sessionOpenedBase, ...legacyFields })).toEqual({
+                type: 'session_opened', at: new Date('2026-09-05T10:00:00.000Z'), role: 'conversation', sessionId: 'sess-1', outcome,
+            });
+        });
+
+        // Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25.
+        test('a legacy session_opened row still validates its common fields', () => {
+            expect(journalEntrySchema.safeParse({ ...sessionOpenedBase, role: 'nobody', resumed: true }).success).toBe(false);
+        });
+
+        test.each(['completed', 'failed', 'stopped'] as const)('accepts task_finished outcome %s', (outcome) => {
+            expect(journalEntrySchema.parse({
+                at: '2026-09-05T10:00:00.000Z', type: 'task_finished', taskId: 't1', description: 'd', outcome,
+            })).toEqual({ type: 'task_finished', at: new Date('2026-09-05T10:00:00.000Z'), taskId: 't1', description: 'd', outcome });
+        });
+
+        test('rejects a task_finished row with an unknown or missing outcome', () => {
+            const row = { at: '2026-09-05T10:00:00.000Z', type: 'task_finished', taskId: 't1' };
+            expect(journalEntrySchema.safeParse({ ...row, outcome: 'running' }).success).toBe(false);
+            expect(journalEntrySchema.safeParse(row).success).toBe(false);
+        });
     });
 
     describe('append', () => {
@@ -184,13 +245,17 @@ describe('SessionJournalBackend', () => {
             {
                 ...BASE, SK: 'e', type: 'task_started', taskId: 't1', description: 'do the thing',
             },
+            // Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25.
             { ...BASE, SK: 'f', type: 'task_completed', taskId: 't1', description: 'do the thing' },
+            {
+                ...BASE, SK: 'f2', type: 'task_finished', taskId: 't1', description: 'do the thing', outcome: 'failed',
+            },
             { ...BASE, SK: 'g', type: 'task_lost', taskId: 't1', description: 'do the thing' },
             { ...BASE, SK: 'h', type: 'compaction_started', trigger: 'manual' },
             { ...BASE, SK: 'i', type: 'compaction_completed' },
             { ...BASE, SK: 'j', type: 'compaction_failed', error: 'timeout' },
             {
-                ...BASE, SK: 'k', type: 'session_opened', role: 'perch', sessionId: 'sess-1', resumed: true, fallback: true,
+                ...BASE, SK: 'k', type: 'session_opened', role: 'perch', sessionId: 'sess-1', outcome: 'resume_fallback', cause: 'requested_reopen',
             },
             { ...BASE, SK: 'l', type: 'session_ended', sessionId: 'sess-1' },
             { ...BASE, SK: 'm', type: 'shutdown' },
@@ -242,6 +307,26 @@ describe('SessionJournalBackend', () => {
             expect(entries).toHaveLength(1);
             expect(entries[0]).toMatchObject({ ...expectedFields, at: expect.any(Date) as Date });
             expect(entries[0]?.type as string).toBe(type);
+        });
+
+        // Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25.
+        test('stored legacy task_completed and session_opened rows still parse, the latter normalised to an outcome', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [
+                { ...BASE, SK: 'r1', type: 'task_completed', taskId: 't1' },
+                {
+                    ...BASE, SK: 'r2', type: 'session_opened', role: 'conversation', sessionId: 'sess-1', resumed: false, fallback: true,
+                },
+            ] });
+
+            const entries = await backend.readSince('conversation', '2026-09-01T00:00:00.000Z');
+
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+            expect(entries).toEqual([
+                { type: 'task_completed', at: new Date('2026-09-05T10:00:00.000Z'), taskId: 't1' },
+                {
+                    type: 'session_opened', at: new Date('2026-09-05T10:00:00.000Z'), role: 'conversation', sessionId: 'sess-1', outcome: 'resume_fallback',
+                },
+            ]);
         });
 
         test('a session_reopen_requested row with no reason is rejected as malformed', async () => {

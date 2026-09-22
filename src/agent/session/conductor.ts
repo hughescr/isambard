@@ -35,7 +35,7 @@ import {
 } from './envelope';
 import { InputQueue } from './input-queue';
 import { createInterruptFlag } from './interrupt-flag';
-import type { Ledger, LedgerEvent, LedgerStore } from './ledger';
+import { finishedTaskStatus, type Ledger, type LedgerEvent, type LedgerStore } from './ledger';
 import type { SessionJournal, ResumeStore } from './ports';
 import { computeRecovery } from './recovery';
 import { resultFrameToError } from './result-frame-error';
@@ -45,8 +45,11 @@ import type {
     Clock,
     Envelope,
     EnvelopeMeta,
+    SessionOpenCause,
+    SessionOpenOutcome,
     SessionQueryFn,
     SessionRole,
+    TaskFinishedOutcome,
     TimerHandle,
     TurnKind
 } from './types';
@@ -579,7 +582,8 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * causing {@link LedgerEvent} (not just the resulting snapshot) to tell WHY a task left
      * `ledger.tasks` — an explicit `task_lost` event, or `session_opened` resetting the task list
      * wholesale on a fallback reopen, both journal `task_lost`; anything else (normally a
-     * `task_notification` frame) journals the ordinary `task_completed`.
+     * `task_notification` frame) journals `task_finished` carrying the terminal status the ledger
+     * gave the task on its way to `ledger.finishedTasks`.
      */
     function journalTaskLifecycle(ledger: Ledger, event: LedgerEvent): void {
         // Stryker disable next-line llm: LedgerTask.id is always a string (built from the SDK frame's task_id), so `task.id + ''` is the identity and the id set is unchanged
@@ -598,10 +602,28 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 const lost = isReopen || id === explicitlyLostTaskId;
                 journal.append(lost
                     ? { type: 'task_lost', at: now(), taskId: id, description: task.description }
-                    : { type: 'task_completed', at: now(), taskId: id, description: task.description });
+                    : { type: 'task_finished', at: now(), taskId: id, description: task.description, outcome: finishedOutcomeOf(ledger, id) });
             }
         }
         previousTasks = new Map(ledger.tasks.map(task => [task.id, task] as const));
+    }
+
+    /**
+     * The terminal status the ledger gave `taskId` as it moved it to `finishedTasks`. The reducer
+     * appends that record before any subscriber runs, so it is normally there; the one way it is
+     * not is more tasks than the ledger's finished-tasks cap finishing in a single event (a turn
+     * end stopping that many foreground tasks, or one `background_tasks_changed` dropping that
+     * many), which evicts the earliest of them on the spot. With the record gone this does not
+     * guess from the event: it journals `'completed'`, the pre-#61 reading of every finished task,
+     * and logs at debug.
+     */
+    function finishedOutcomeOf(ledger: Ledger, taskId: string): TaskFinishedOutcome {
+        const outcome = finishedTaskStatus(ledger, taskId);
+        if(outcome === undefined) {
+            logger.debug({ taskId }, 'Conductor: finished task has no finished record in the ledger; journaling outcome completed');
+            return 'completed';
+        }
+        return outcome;
     }
 
     /**
@@ -1181,12 +1203,12 @@ export function createConductor(params: CreateConductorParams): Conductor {
         });
     }
 
-    async function finishOpen(sessionId: string, resumed: boolean, fallback: boolean): Promise<void> {
+    async function finishOpen(sessionId: string, { outcome, cause }: { outcome: SessionOpenOutcome, cause: SessionOpenCause }): Promise<void> {
         currentSessionId = sessionId;
         opened = true;
         const at = now();
         journal.append({
-            type: 'session_opened', at, role, sessionId, resumed, ...(fallback ? { fallback: true as const } : {}),
+            type: 'session_opened', at, role, sessionId, outcome, cause,
         });
         ledgerStore.dispatch({ type: 'session_opened', sessionId, at });
         await resumeStore.save(role, sessionId);
@@ -1320,20 +1342,21 @@ export function createConductor(params: CreateConductorParams): Conductor {
      *   controlled path has to `discardHandle` the old handle first (so its `onClosed` is not read
      *   as a crash), and `discardHandle` clears `currentQueue`, so by the time this function runs
      *   there is no dying queue left to ask.
+     * @param cause Which of the two paths this is, journaled on the replacement's `session_opened`.
      */
-    async function reopenReplacementSession(handshake: string, inFlightItem: QueuedItem | undefined, carryOver: SDKUserMessage[]): Promise<void> {
+    async function reopenReplacementSession(handshake: string, inFlightItem: QueuedItem | undefined, carryOver: SDKUserMessage[], cause: 'crash_reopen' | 'requested_reopen'): Promise<void> {
         try {
             try {
                 const { handle, sessionId } = await openWithHandle(currentSessionId, handshake);
                 try {
-                    await finishOpen(sessionId, true, false);
+                    await finishOpen(sessionId, { outcome: 'resumed', cause });
                 } catch (finishError) {
                     discardHandle(handle);
                     throw finishError;
                 }
             } catch{
                 const { sessionId } = await openWithHandle(undefined, handshake);
-                await finishOpen(sessionId, false, true);
+                await finishOpen(sessionId, { outcome: 'resume_fallback', cause });
             }
         } catch (reopenError) {
             reopening = false;
@@ -1396,7 +1419,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         // Taken before any open: openWithHandle reassigns currentQueue as part of settling.
         const carryOver = currentQueue?.takePending() ?? [];
         const handshake = `[BOOT] Session reopened at ${now().toISOString()} after the previous session ended unexpectedly. Host handshake — nothing to do, no reply expected.`;
-        reopenInFlight = reopenReplacementSession(handshake, inFlightItem, carryOver);
+        reopenInFlight = reopenReplacementSession(handshake, inFlightItem, carryOver, 'crash_reopen');
         // Stryker disable next-line AwaitDrop: onClosed discards this wrapper promise, while lifecycle synchronization observes the separately assigned reopenInFlight promise directly.
         await reopenInFlight;
     }
@@ -1415,7 +1438,8 @@ export function createConductor(params: CreateConductorParams): Conductor {
         await reopenReplacementSession(
             `[BOOT] Session reopened at ${now().toISOString()} to apply ${reason}. Host handshake — nothing to do, no reply expected.`,
             undefined,
-            carryOver
+            carryOver,
+            'requested_reopen'
         );
     }
 
@@ -1464,7 +1488,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             try {
                 const { handle, sessionId } = await openWithHandle(stored, openHandshakeText(true));
                 try {
-                    await finishOpen(sessionId, true, false);
+                    await finishOpen(sessionId, { outcome: 'resumed', cause: 'boot' });
                 } catch (finishError) {
                     discardHandle(handle);
                     throw finishError;
@@ -1476,7 +1500,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             }
         }
         const { sessionId } = await openWithHandle(undefined, openHandshakeText(false));
-        await finishOpen(sessionId, false, stored !== undefined);
+        await finishOpen(sessionId, stored === undefined ? { outcome: 'fresh', cause: 'boot' } : { outcome: 'resume_fallback', cause: 'boot' });
         maybeStartRequestedReopen();
         return { sessionId, resumed: false };
     }

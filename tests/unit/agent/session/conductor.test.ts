@@ -168,7 +168,7 @@ describe('createConductor', () => {
     });
 
     describe('open()', () => {
-        it('with no stored resume id: opens fresh, journals session_opened without fallback, saves the id', async () => {
+        it('with no stored resume id: opens fresh, journals session_opened outcome fresh with cause boot, saves the id', async () => {
             const h = build();
 
             const result = await openWith(h, 'sess-fresh');
@@ -176,12 +176,12 @@ describe('createConductor', () => {
             expect(result).toEqual({ sessionId: 'sess-fresh', resumed: false });
             expect(h.instances).toHaveLength(1);
             expect(h.journal.byKind('session_opened')).toEqual([
-                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-fresh', resumed: false },
+                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-fresh', outcome: 'fresh', cause: 'boot' },
             ]);
             await expect(h.resumeStore.load('conversation')).resolves.toBe('sess-fresh');
         });
 
-        it('with a stored resume id: passes it to buildOptions and journals resumed:true, no fallback', async () => {
+        it('with a stored resume id: passes it to buildOptions and journals outcome resumed with cause boot', async () => {
             const h = build();
             await h.resumeStore.save('conversation', 'sess-old');
             const buildOptions = jest.fn<CreateConductorParams['buildOptions']>().mockReturnValue({});
@@ -192,11 +192,11 @@ describe('createConductor', () => {
             expect(result).toEqual({ sessionId: 'sess-old', resumed: true });
             expect(buildOptions).toHaveBeenCalledWith('sess-old');
             expect(h2.journal.byKind('session_opened')).toEqual([
-                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-old', resumed: true },
+                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-old', outcome: 'resumed', cause: 'boot' },
             ]);
         });
 
-        it('resume attempt failing immediately falls back to a fresh open with fallback:true', async () => {
+        it('resume attempt failing immediately falls back to a fresh open journaled as outcome resume_fallback with cause boot', async () => {
             const h = build();
             await h.resumeStore.save('conversation', 'sess-old');
             const resumeError = new Error('resume rejected by CLI');
@@ -211,7 +211,7 @@ describe('createConductor', () => {
             expect(result).toEqual({ sessionId: 'sess-new', resumed: false });
             expect(h.instances).toHaveLength(2);
             expect(h.journal.byKind('session_opened')).toEqual([
-                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-new', resumed: false, fallback: true },
+                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-new', outcome: 'resume_fallback', cause: 'boot' },
             ]);
             expect(h.logger.warn).toHaveBeenCalledWith(
                 { error: resumeError },
@@ -240,7 +240,7 @@ describe('createConductor', () => {
 
             expect(result).toEqual({ sessionId: 'sess-new', resumed: false });
             expect(h.journal.byKind('session_opened').at(-1)).toEqual(
-                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-new', resumed: false, fallback: true }
+                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-new', outcome: 'resume_fallback', cause: 'boot' }
             );
         });
 
@@ -778,7 +778,7 @@ describe('createConductor', () => {
     });
 
     describe('task lifecycle journaling', () => {
-        it('a task_started frame journals task_started, and its task_notification journals exactly one task_completed even if repeated', async () => {
+        it('a task_started frame journals task_started, and its task_notification journals exactly one task_finished even if repeated', async () => {
             const h = build();
             await openWith(h);
             void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
@@ -790,7 +790,7 @@ describe('createConductor', () => {
             expect(h.journal.byKind('task_started')).toEqual([
                 { type: 'task_started', at: expect.any(Date), taskId: 'task-1', description: 'run a thing' },
             ]);
-            expect(h.journal.byKind('task_completed')).toEqual([]);
+            expect(h.journal.byKind('task_finished')).toEqual([]);
             expect(h.journal.byKind('task_lost')).toEqual([]);
 
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'run a thing' }));
@@ -803,7 +803,7 @@ describe('createConductor', () => {
                 { type: 'task_started', at: expect.any(Date), taskId: 'task-1', description: 'run a thing' },
                 { type: 'task_started', at: expect.any(Date), taskId: 'task-2', description: 'run another thing' },
             ]);
-            expect(h.journal.byKind('task_completed')).toEqual([]);
+            expect(h.journal.byKind('task_finished')).toEqual([]);
             expect(h.journal.byKind('task_lost')).toEqual([]);
 
             h.instances[0].emit(frames.taskNotification('completed', { task_id: 'task-1' }));
@@ -813,10 +813,71 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.taskNotification('completed', { task_id: 'task-1' }));
             await flush();
 
-            expect(h.journal.byKind('task_completed')).toEqual([
-                { type: 'task_completed', at: expect.any(Date), taskId: 'task-1', description: 'run a thing' },
+            expect(h.journal.byKind('task_finished')).toEqual([
+                { type: 'task_finished', at: expect.any(Date), taskId: 'task-1', description: 'run a thing', outcome: 'completed' },
             ]);
+            expect(h.journal.byKind('task_completed')).toEqual([]);
             expect(h.journal.byKind('task_lost')).toEqual([]);
+        });
+
+        it.each(['completed', 'failed', 'stopped'] as const)('a %s task_notification journals task_finished with that outcome', async (status) => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'run a thing' }));
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-2', description: 'run another thing' }));
+            await flush();
+
+            h.instances[0].emit(frames.taskNotification(status, { task_id: 'task-2' }));
+            await flush();
+
+            expect(h.journal.byKind('task_finished')).toEqual([
+                { type: 'task_finished', at: expect.any(Date), taskId: 'task-2', description: 'run another thing', outcome: status },
+            ]);
+            expect(h.logger.debug).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('no finished record'));
+        });
+
+        it('a foreground task stopped when its turn ends journals task_finished with outcome stopped', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'run a thing', is_backgrounded: false }));
+            await flush();
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            expect(h.journal.byKind('task_finished')).toEqual([
+                { type: 'task_finished', at: expect.any(Date), taskId: 'task-1', description: 'run a thing', outcome: 'stopped' },
+            ]);
+        });
+
+        it('a task whose finished record the ledger already evicted journals outcome completed and logs at debug', async () => {
+            const h = build();
+            await openWith(h);
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            // One more foreground task than the ledger's finishedTasks cap (20): all of them stop
+            // in the same turn-end event, so the first is appended and then evicted at once.
+            for(let i = 0; i < 21; i += 1) {
+                h.instances[0].emit(frames.taskStarted({ task_id: `task-${i}`, description: `task ${i}`, is_backgrounded: false }));
+                // eslint-disable-next-line no-await-in-loop -- each frame must reach the ledger before the next is emitted
+                await flush();
+            }
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            const finished = h.journal.byKind('task_finished');
+            expect(finished).toHaveLength(21);
+            expect(finished[0]).toEqual({ type: 'task_finished', at: expect.any(Date), taskId: 'task-0', description: 'task 0', outcome: 'completed' });
+            expect(finished.slice(1).map(entry => entry.outcome)).toEqual(Array.from({ length: 20 }, () => 'stopped'));
+            expect(h.logger.debug).toHaveBeenCalledWith(
+                { taskId: 'task-0' },
+                'Conductor: finished task has no finished record in the ledger; journaling outcome completed'
+            );
         });
 
         it('an explicit task_lost ledger event journals the named task as lost', async () => {
@@ -832,10 +893,10 @@ describe('createConductor', () => {
             expect(h.journal.byKind('task_lost')).toEqual([
                 { type: 'task_lost', at: expect.any(Date), taskId: 'task-1', description: 'lost by supervisor' },
             ]);
-            expect(h.journal.byKind('task_completed')).toEqual([]);
+            expect(h.journal.byKind('task_finished')).toEqual([]);
         });
 
-        it('tasks still in flight when a mid-life reopen wipes the ledger\'s task list are journaled task_lost, not task_completed', async () => {
+        it('tasks still in flight when a mid-life reopen wipes the ledger\'s task list are journaled task_lost, not task_finished', async () => {
             const h = build();
             await openWith(h, 'sess-1');
             void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
@@ -853,7 +914,7 @@ describe('createConductor', () => {
             expect(h.journal.byKind('task_lost')).toEqual([
                 { type: 'task_lost', at: expect.any(Date), taskId: 'task-1', description: 'abandoned task' },
             ]);
-            expect(h.journal.byKind('task_completed')).toEqual([]);
+            expect(h.journal.byKind('task_finished')).toEqual([]);
         });
     });
 
@@ -1583,8 +1644,8 @@ describe('createConductor', () => {
             await flush();
 
             expect(h.journal.byKind('session_opened')).toEqual([
-                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-1', resumed: false },
-                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-1', resumed: true },
+                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-1', outcome: 'fresh', cause: 'boot' },
+                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-1', outcome: 'resumed', cause: 'crash_reopen' },
             ]);
             expect(turnPrompts(h.instances[1])).toHaveLength(1);
 
@@ -1609,7 +1670,7 @@ describe('createConductor', () => {
             await flush();
 
             expect(h.journal.byKind('session_opened').at(-1)).toEqual(
-                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-2', resumed: false, fallback: true }
+                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-2', outcome: 'resume_fallback', cause: 'crash_reopen' }
             );
         });
 
@@ -1752,7 +1813,7 @@ describe('createConductor', () => {
             h.instances[2].emit(frames.init('sess-2'));
             await flush();
 
-            expect(h.journal.byKind('session_opened').at(-1)).toMatchObject({ sessionId: 'sess-2', fallback: true });
+            expect(h.journal.byKind('session_opened').at(-1)).toMatchObject({ sessionId: 'sess-2', outcome: 'resume_fallback', cause: 'crash_reopen' });
         });
 
         it('discarding an older handle never clears a newer concurrently-opened handle', async () => {
@@ -3661,6 +3722,20 @@ describe('createConductor', () => {
             expect(h.instances[1].receivedParams?.options.resume).toBe('sess-1');
         });
 
+        it('journals the resumed replacement as outcome resumed with cause requested_reopen', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+
+            expect(h.journal.byKind('session_opened').at(-1)).toEqual(
+                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-1', outcome: 'resumed', cause: 'requested_reopen' }
+            );
+        });
+
         it('pushes a boot handshake naming the reason, before any frame is awaited', async () => {
             const h = build();
             await openWith(h, 'sess-1');
@@ -3935,7 +4010,7 @@ describe('createConductor', () => {
             await flush();
 
             expect(h.journal.byKind('session_opened').at(-1)).toEqual(
-                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-2', resumed: false, fallback: true }
+                { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-2', outcome: 'resume_fallback', cause: 'requested_reopen' }
             );
         });
 
@@ -4163,12 +4238,12 @@ describe('createConductor', () => {
 
             h.instances[0].emit(frames.taskStarted({ task_id: 'other-task', description: 'another task' }));
             await flush();
-            expect(h.journal.byKind('task_completed')).toEqual([]);
+            expect(h.journal.byKind('task_finished')).toEqual([]);
 
             h.instances[0].emit(frames.taskNotification('completed', { task_id: '' }));
             await flush();
-            expect(h.journal.byKind('task_completed')).toEqual([
-                { type: 'task_completed', at: expect.any(Date), taskId: '', description: 'empty id task' },
+            expect(h.journal.byKind('task_finished')).toEqual([
+                { type: 'task_finished', at: expect.any(Date), taskId: '', description: 'empty id task', outcome: 'completed' },
             ]);
 
             h.instances[0].emit(frames.taskStarted({ task_id: '', description: 'lost empty id task' }));

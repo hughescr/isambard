@@ -7,7 +7,7 @@ function envelopeSubmitted(at: Date) {
 }
 
 function sessionOpened(at: Date, overrides: Partial<Extract<JournalEntry, { type: 'session_opened' }>> = {}): Extract<JournalEntry, { type: 'session_opened' }> {
-    return { type: 'session_opened', at, role: 'conversation', sessionId: 'sess-1', resumed: false, ...overrides };
+    return { type: 'session_opened', at, role: 'conversation', sessionId: 'sess-1', outcome: 'fresh', cause: 'boot', ...overrides };
 }
 
 describe('FakeJournal', () => {

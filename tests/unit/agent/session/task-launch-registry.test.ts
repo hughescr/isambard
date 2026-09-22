@@ -148,7 +148,9 @@ describe('createTaskLaunchRegistry', () => {
                 {
                     type: 'task_launched', at: new Date('2026-09-08T00:00:00Z'), taskId: 'task-1', toolUseId: 'tool-1', toolName: 'Agent', envelopeId: 'env-1', kind: 'discord', channelId: 'chan-1', authorId: 'user-1',
                 },
-                { type: 'session_opened', at: new Date('2026-09-08T00:00:01Z'), role: 'conversation', sessionId: 'sess-1', resumed: false },
+                {
+                    type: 'session_opened', at: new Date('2026-09-08T00:00:01Z'), role: 'conversation', sessionId: 'sess-1', outcome: 'fresh', cause: 'boot',
+                },
             ]);
 
             expect(registry.lookup({ taskId: 'task-1', toolUseId: 'tool-1' })).toEqual(launch());

@@ -4,14 +4,13 @@
  * own: which background tasks never reached a terminal state (lost), which discord/catchup
  * turns finished but were never confirmed delivered (undelivered, carrying the response text so
  * the conductor can send it exactly once on restart), the full set of envelope ids already
- * confirmed delivered (to seed the P8 delivery guard), and the most recently opened session id
- * plus whether that open was a fallback (resume refused, fresh session created).
+ * confirmed delivered (to seed the P8 delivery guard), and the most recently opened session id.
  *
  * @module agent/session/recovery
  */
 import type { EnvelopeKind, JournalEntry } from './types';
 
-/** A background task with a `task_started` entry but no later `task_completed`/`task_lost`. */
+/** A background task with a `task_started` entry but no later `task_finished`/`task_lost` (or legacy `task_completed`). */
 export interface LostTask {
     taskId:       string
     description?: string
@@ -37,8 +36,6 @@ export interface RecoveryResult {
     deliveredEnvelopeIds: string[]
     /** The `sessionId` of the latest `session_opened` entry, or `undefined` when none was seen. */
     lastSessionId?:       string
-    /** The `fallback` flag of the latest `session_opened` entry (`false` when absent or none was seen). */
-    lastOpenWasFallback:  boolean
 }
 
 /**
@@ -63,13 +60,21 @@ interface RecoveryAccumulator {
     lastSessionOpened:     Extract<JournalEntry, { type: 'session_opened' }> | undefined
 }
 
-/** Folds a task-lifecycle entry (`task_started`/`task_completed`/`task_lost`) into `acc`; every other entry type is a no-op here. */
+/**
+ * Folds a task-lifecycle entry (`task_started`/`task_finished`/`task_lost`) into `acc`; every other
+ * entry type is a no-op here. A finished task resolves whatever its outcome, and so does a lost one.
+ */
 function applyTaskEntry(acc: RecoveryAccumulator, entry: JournalEntry): void {
     if(entry.type === 'task_started') {
         acc.taskDescriptions.set(entry.taskId, entry.description);
-    } else if(entry.type === 'task_completed' || entry.type === 'task_lost') {
+    } else if(entry.type === 'task_finished' || entry.type === 'task_lost' || isLegacyTaskCompleted(entry)) {
         acc.resolvedTaskIds.add(entry.taskId);
     }
+}
+
+/** Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25. A `task_completed` row resolves its task exactly like `task_finished`. */
+function isLegacyTaskCompleted(entry: JournalEntry): entry is Extract<JournalEntry, { type: 'task_completed' }> {
+    return entry.type === 'task_completed';
 }
 
 /** Folds an envelope-lifecycle entry (`envelope_submitted`/`turn_completed`/`response_delivered`) into `acc`; every other entry type is a no-op here. */
@@ -135,7 +140,6 @@ export function computeRecovery(entries: readonly JournalEntry[]): RecoveryResul
         undelivered,
         deliveredEnvelopeIds: [...acc.deliveredIds],
         lastSessionId:        acc.lastSessionOpened?.sessionId,
-        lastOpenWasFallback:  acc.lastSessionOpened?.fallback ?? false,
     };
 }
 

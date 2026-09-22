@@ -137,6 +137,23 @@ export interface Envelope {
 export type TurnKind = EnvelopeKind;
 
 /**
+ * How a session open ended up: a brand-new session (`fresh`), the requested transcript picked up
+ * again (`resumed`), or a resume that was attempted and refused, so a fresh session was created in
+ * its place (`resume_fallback`).
+ */
+export type SessionOpenOutcome = 'fresh' | 'resumed' | 'resume_fallback';
+
+/**
+ * Why a session open happened: the process starting up (`boot`), the live session going away
+ * mid-life (`crash_reopen`), or the host asking for a controlled close-and-resume
+ * (`requested_reopen`, following a `session_reopen_requested` row).
+ */
+export type SessionOpenCause = 'boot' | 'crash_reopen' | 'requested_reopen';
+
+/** How a background task ended, as the ledger recorded it when the task left `ledger.tasks`. */
+export type TaskFinishedOutcome = 'completed' | 'failed' | 'stopped';
+
+/**
  * Append-only record of session lifecycle facts, written by the conductor to the
  * {@link https://en.wikipedia.org/wiki/Write-ahead_logging | write-ahead} journal so a crash
  * mid-turn can be replayed on restart. Every member carries `at: Date`.
@@ -150,6 +167,13 @@ export type JournalEntry
       | { type: 'turn_completed', at: Date, envelopeId: string, kind: EnvelopeKind, responseText?: string, truncated?: boolean }
       | { type: 'turn_failed', at: Date, envelopeId: string, kind: EnvelopeKind, error: string }
       | { type: 'task_started', at: Date, taskId: string, description: string }
+      /** A task that left the ledger's running set, with the terminal status the ledger gave it. `task_lost` (below) stays separate: loss is epistemic, not a fourth outcome. */
+      | { type: 'task_finished', at: Date, taskId: string, description?: string, outcome: TaskFinishedOutcome }
+      /**
+       * Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25. Read-only — written
+       * by builds before `task_finished` existed, for every terminal task whatever its status, so
+       * its outcome is unknown. Nothing writes it any more.
+       */
       | { type: 'task_completed', at: Date, taskId: string, description?: string }
       | { type: 'task_lost', at: Date, taskId: string, description?: string }
       /**
@@ -166,7 +190,12 @@ export type JournalEntry
       /** Metadata only: the summary itself is never persisted (see conductor.ts's module doc). */
       | { type: 'compaction_completed', at: Date }
       | { type: 'compaction_failed', at: Date, error: string }
-      | { type: 'session_opened', at: Date, role: SessionRole, sessionId: string, resumed: boolean, fallback?: boolean }
+      /**
+       * Every writer sets `cause`. It is optional only because legacy pre-#61 journal rows
+       * (`{ resumed, fallback? }`, normalised to `outcome` on read) never recorded one: can be
+       * safely deleted after 2026-09-25 — make `cause` required then.
+       */
+      | { type: 'session_opened', at: Date, role: SessionRole, sessionId: string, outcome: SessionOpenOutcome, cause?: SessionOpenCause }
       /**
        * A controlled close-and-resume the host asked for — today, because the identity behind
        * this session's SDK `systemPrompt` changed, and the SDK fixes that prompt at `query()`

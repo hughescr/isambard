@@ -10,6 +10,7 @@ import { mockLogger } from '../../../setup';
 import {
     type Ledger,
     type LedgerEvent,
+    finishedTaskStatus,
     initialLedger,
     reduceLedger
 } from '@/agent/session/ledger';
@@ -1568,6 +1569,36 @@ describe('reduceLedger: context, process, phase, session', () => {
         const next = reduceLedger(opened, frozenEvent({ type: 'session_opened', sessionId: 'sess-1', at: T2 }));
 
         expect(next).toBe(opened);
+    });
+});
+
+describe('finishedTaskStatus', () => {
+    function notified(ledger: Ledger, taskId: string, status: 'completed' | 'failed' | 'stopped'): Ledger {
+        return reduceLedger(ledger, frozenEvent({ type: 'sdk_frame', at: T2, frame: frames.taskNotification(status, { task_id: taskId }) }));
+    }
+
+    it('reads each finished task\'s own terminal status', () => {
+        const started = startTask(startTask(startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1), { task_id: 'task-2' }, T1), { task_id: 'task-3' }, T1);
+        const ledger = notified(notified(notified(started, 'task-1', 'completed'), 'task-2', 'failed'), 'task-3', 'stopped');
+
+        expect(finishedTaskStatus(ledger, 'task-1')).toBe('completed');
+        expect(finishedTaskStatus(ledger, 'task-2')).toBe('failed');
+        expect(finishedTaskStatus(ledger, 'task-3')).toBe('stopped');
+    });
+
+    it('reads the latest finished record when an id finished more than once', () => {
+        const once = notified(startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1), 'task-1', 'failed');
+        const twice = notified(startTask(once, { task_id: 'task-1' }, T3), 'task-1', 'completed');
+
+        expect(twice.finishedTasks).toMatchObject([{ id: 'task-1', status: 'failed' }, { id: 'task-1', status: 'completed' }]);
+        expect(finishedTaskStatus(twice, 'task-1')).toBe('completed');
+    });
+
+    it('is undefined for a task that is still running or was never tracked', () => {
+        const ledger = notified(startTask(startTask(initialLedger('conversation'), { task_id: 'task-1' }, T1), { task_id: 'task-2' }, T1), 'task-2', 'failed');
+
+        expect(finishedTaskStatus(ledger, 'task-1')).toBeUndefined();
+        expect(finishedTaskStatus(ledger, 'ghost')).toBeUndefined();
     });
 });
 
