@@ -129,7 +129,7 @@ Boundary mapping between Discord-specific types and the agent's platform-agnosti
 - **Zod schemas**: all external data (config, DynamoDB records, MCP tool arguments, API responses) is validated at the boundary with Zod before entering typed TypeScript.
 - **Branded types**: `MemoryPath`, `LayerName`, `ChannelId`, `GuildId`, `UserId`, `MessageId` and others prevent mixing identifiers of different kinds. Factory functions (`createLayerName()`, `createContentType()`) and type guards (`isLayerName()`, `isContentType()`) replace unsafe `as` casts with runtime-validated construction.
 - **Class-based components**: `EventDeltaTracker`, `AnswerClassifier`, `StreamTracker`, `QuestionRegistry`, `DiscordRateLimiter`, `PresenceManager`, `MessageCoordinator` are proper TypeScript classes with private fields.
-- **Retry with exponential backoff**: `src/utils/retry/` provides generic async and async-generator retry wrappers with error classification for intelligent retry decisions. Applied to Claude API calls, DynamoDB operations, and Discord API calls.
+- **Retry with exponential backoff**: `src/utils/retry/` supplies the `RetryPolicy` type, error classifiers, and the `retryAsync` / `retryAsyncGenerator` wrappers. `retryAsync` is used for Discord and Bluesky calls; the conductor implements its own retry loop over the same policy and classification types for Claude; DynamoDB relies on the AWS SDK's `maxAttempts` plus `withDynamoTimeout`.
 - **Structured logging**: log entries carry correlation IDs for tracing requests across subsystem boundaries.
 - **`assertNever()`**: exhaustiveness helper for discriminated union switches that throws `InvariantViolationError` at runtime if an unhandled variant slips through.
 - **Lost-task recovery from the journal**: crash recovery (`src/agent/session/recovery.ts`) reads a role's session journal window at boot to find background tasks that never reached a terminal state, reporting them as lost rather than silently forgetting them — see "Session journal" above.
@@ -137,7 +137,7 @@ Boundary mapping between Discord-specific types and the agent's platform-agnosti
 
 ## Configuration and Errors
 
-`src/config/` loads all configuration from environment variables using the `env-var` package for type coercion, validated by Zod schemas at startup. Retry constants live in `config/retry-config.ts` and are imported by the retry utilities.
+`src/config/` loads all configuration from environment variables using the `env-var` package for type coercion, validated by Zod schemas at startup. `config/retry-config.ts` holds the Claude retry policy, validated with utils' `retryPolicySchema`, and `src/app/sessions.ts` reads it; utils does not import config.
 
 `src/errors/` defines `IsambardError` as the base class for all application errors. It carries a typed `code: ErrorCode` field and a context bag for structured diagnostics. Two main subtrees exist: `StorageError` (DynamoDB, memory tool, contacts, reconciliation errors) and `DiscordError` (channel registry, presence, permission errors). A separate `PathSecurityError` handles file path validation failures. All error codes are centralized in `ErrorCode` enum in `errors/codes.ts`.
 

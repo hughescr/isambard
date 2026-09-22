@@ -1462,8 +1462,6 @@ describe('sessionConfigSchema', () => {
             compactThresholdPercent: 60,
             humanWaitTargetMs:       10_000,
             humanWaitCeilingMs:      30_000,
-            perchWrapUpLeadMs:       300_000,
-            perchInterruptGraceMs:   120_000,
             bootEventsWindowMs:      24 * 60 * 60 * 1000,
             shutdownTurnWaitMs:      60_000,
             shutdownDeadlineMs:      120_000,
@@ -1477,6 +1475,21 @@ describe('sessionConfigSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).not.toHaveProperty('mode');
+        }
+    });
+
+    test('silently strips legacy perch millisecond fields', () => {
+        const toMillisecondField = (prefix: string) => `${prefix}Ms`;
+        const legacyFields = {
+            [toMillisecondField('perchWrapUpLead')]:     300_000,
+            [toMillisecondField('perchInterruptGrace')]: 120_000,
+        };
+        const result = sessionConfigSchema.safeParse(legacyFields);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            for(const field of Object.keys(legacyFields)) {
+                expect(result.data).not.toHaveProperty(field);
+            }
         }
     });
 

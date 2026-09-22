@@ -17,28 +17,13 @@ describe.concurrent('retryConfigSchema', () => {
                     backoffMultiplier: 2,
                     jitterFraction:    0.1,
                 },
-                discord: {
-                    maxAttempts:       2,
-                    baseDelayMs:       500,
-                    maxDelayMs:        30_000,
-                    backoffMultiplier: 2,
-                    jitterFraction:    0.1,
-                },
-                dynamodb: {
-                    defaultTimeoutMs: 10_000,
-                    queryTimeoutMs:   15_000,
-                },
             });
         });
     });
 
     describe('bounded integer fields', () => {
         const boundedFields = [
-            ['claude',   'maxAttempts',      1,    5,     3,     true],
-            ['discord',  'maxAttempts',      1,    3,     2,     true],
-            ['discord',  'baseDelayMs',      100,  5000,  1000,  false],
-            ['dynamodb', 'defaultTimeoutMs', 1000, 60_000, 20_000, false],
-            ['dynamodb', 'queryTimeoutMs',   1000, 60_000, 30_000, false],
+            ['claude', 'maxAttempts', 1, 5, 3, true],
         ] as const;
 
         test.each(boundedFields)(
@@ -84,7 +69,7 @@ describe.concurrent('retryConfigSchema', () => {
             }
         );
 
-        test.each(boundedFields.filter(f => f[5]))(
+        test.each(boundedFields)(
             '%s.%s should reject non-integer values',
             (section, field, _min, _max, validValue, _requiresInteger) => {
                 const result = retryConfigSchema.safeParse({
@@ -118,8 +103,6 @@ describe('loadRetryConfig', () => {
 
     test('should use defaults when no env vars are set', () => {
         delete process.env.CLAUDE_RETRY_MAX_ATTEMPTS;
-        delete process.env.DISCORD_RETRY_MAX_ATTEMPTS;
-        delete process.env.DYNAMODB_TIMEOUT_MS;
 
         const config = loadRetryConfig();
 
@@ -128,8 +111,6 @@ describe('loadRetryConfig', () => {
 
     test('should return independent default category objects across loader calls', () => {
         delete process.env.CLAUDE_RETRY_MAX_ATTEMPTS;
-        delete process.env.DISCORD_RETRY_MAX_ATTEMPTS;
-        delete process.env.DYNAMODB_TIMEOUT_MS;
 
         const first = loadRetryConfig();
         const second = loadRetryConfig();
@@ -144,40 +125,6 @@ describe('loadRetryConfig', () => {
         const config = loadRetryConfig();
 
         expect(config.claude.maxAttempts).toBe(4);
-        expect(config.discord.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.discord.maxAttempts);
-        expect(config.dynamodb.defaultTimeoutMs).toBe(DEFAULT_RETRY_CONFIG.dynamodb.defaultTimeoutMs);
-    });
-
-    test('should override Discord maxAttempts from env var', () => {
-        process.env.DISCORD_RETRY_MAX_ATTEMPTS = '3';
-
-        const config = loadRetryConfig();
-
-        expect(config.discord.maxAttempts).toBe(3);
-        expect(config.claude.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.claude.maxAttempts);
-        expect(config.dynamodb.defaultTimeoutMs).toBe(DEFAULT_RETRY_CONFIG.dynamodb.defaultTimeoutMs);
-    });
-
-    test('should override DynamoDB timeout from env var', () => {
-        process.env.DYNAMODB_TIMEOUT_MS = '25000';
-
-        const config = loadRetryConfig();
-
-        expect(config.dynamodb.defaultTimeoutMs).toBe(25_000);
-        expect(config.claude.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.claude.maxAttempts);
-        expect(config.discord.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.discord.maxAttempts);
-    });
-
-    test('should override multiple env vars simultaneously', () => {
-        process.env.CLAUDE_RETRY_MAX_ATTEMPTS = '5';
-        process.env.DISCORD_RETRY_MAX_ATTEMPTS = '2';
-        process.env.DYNAMODB_TIMEOUT_MS = '30000';
-
-        const config = loadRetryConfig();
-
-        expect(config.claude.maxAttempts).toBe(5);
-        expect(config.discord.maxAttempts).toBe(2);
-        expect(config.dynamodb.defaultTimeoutMs).toBe(30_000);
     });
 
     test('should handle invalid env var (out of range) gracefully', () => {
@@ -192,22 +139,6 @@ describe('loadRetryConfig', () => {
         const config = loadRetryConfig();
 
         expect(config.claude.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.claude.maxAttempts);
-    });
-
-    test('should handle empty Discord env var by using defaults', () => {
-        process.env.DISCORD_RETRY_MAX_ATTEMPTS = '';
-
-        const config = loadRetryConfig();
-
-        expect(config.discord.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.discord.maxAttempts);
-    });
-
-    test('should handle empty DynamoDB env var by using defaults', () => {
-        process.env.DYNAMODB_TIMEOUT_MS = '';
-
-        const config = loadRetryConfig();
-
-        expect(config.dynamodb.defaultTimeoutMs).toBe(DEFAULT_RETRY_CONFIG.dynamodb.defaultTimeoutMs);
     });
 
     test('should preserve other retry policy fields when overriding', () => {
