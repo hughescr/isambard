@@ -71,6 +71,29 @@ const eslintConfig = [
     },
     boundariesConfig,
     {
+        // #40 lint-fence prep (#49): the outbox takes Discord wire types from
+        // discord-api-types/v10, so it must not need a discord.js/@discordjs exemption
+        // when the real #40 fence lands. Flat config REPLACES (not merges) a rule's
+        // options across matching entries for the same file, so this re-states the base
+        // config's lodash restriction (@hughescr/eslint-config-default) alongside the new
+        // patterns rather than silently dropping it for files under src/services/outbox.
+        files: ['src/services/outbox/**/*.ts'],
+        rules: {
+            'no-restricted-imports': ['error', {
+                paths: [
+                    { name: 'lodash', message: 'Use lodash-es instead for proper ESM tree-shaking.' },
+                    { name: 'discord.js', message: 'Outbox code must use discord-api-types/v10 for Discord wire types, not discord.js (#40 bans discord.js outside src/integrations/discord and src/app; see #49).' },
+                ],
+                patterns: [
+                    {
+                        group:   ['@discordjs/*'],
+                        message: 'Outbox code must use discord-api-types/v10 for Discord wire types, not @discordjs/* (#40 bans @discordjs/* outside src/integrations/discord and src/app; see #49).',
+                    },
+                ],
+            }],
+        },
+    },
+    {
         files:           ['src/**/*.ts', 'src/**/*.tsx'],
         languageOptions: {
             parserOptions: {

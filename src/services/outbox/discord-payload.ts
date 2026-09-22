@@ -1,4 +1,4 @@
-import { ComponentType, type APIActionRowComponent, type APIComponentInMessageActionRow, type APIEmbed } from 'discord.js';
+import { ComponentType, type APIActionRowComponent, type APIComponentInMessageActionRow, type APIEmbed } from 'discord-api-types/v10';
 import { z } from 'zod';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
