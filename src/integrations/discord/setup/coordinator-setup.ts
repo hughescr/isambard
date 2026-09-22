@@ -13,7 +13,7 @@ import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry
 import type { InboxManager } from '../inbox';
 import { MessageCoordinator } from '../message-coordinator';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import { sendEnvelopeResponse } from '../response-sender';
+import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from '../response-sender';
 import { createChannelId, type ChannelId, type DiscordMessageContext } from '../types';
 import { createConductorProcessor, type DiscordEnvelopeProvider } from './conductor-processor';
 import {
@@ -269,7 +269,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                         return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
                     }
                     case 'partial': {
-                        return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : [])) };
+                        return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: queuedOutboxIdsFromPartialResponse(sendResult) };
                     }
                     case 'skipped': {
                         return { kind: 'skipped', reason: sendResult.reason };

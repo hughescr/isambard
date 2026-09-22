@@ -293,6 +293,24 @@ describe('createWakeTurnDelivery', () => {
         expect(settled).toBe(true);
     });
 
+    it('uses the sender-resolved channel ID when a perch envelope has no origin channel', async () => {
+        const h = build();
+        let deliveredOutcome: SendOutcome | undefined;
+        h.conductor.deliver.mockImplementation(async (_id: string, send: () => Promise<SendOutcome>) => {
+            deliveredOutcome = await send();
+            return deliveredOutcome.kind === 'skipped'
+                ? { outcome: 'skipped' as const }
+                : { outcome: 'committed' as const, disposition: deliveredOutcome.disposition };
+        });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
+
+        await h.deliver(makeEnvelope({ id: 'env-perch-empty-channel', kind: 'perch', channelId: undefined }), makeTurnResult());
+
+        expect(deliveredOutcome).toEqual({
+            kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [],
+        });
+    });
+
     it('a fallback delivery does not resolve until the routing (and then the send) settles — proves deliverToFallback\'s conductor.deliver chain is genuinely awaited, not fired and forgotten', async () => {
         const h = build();
         jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });

@@ -12,7 +12,8 @@ import {
     AmbiguousChannelError,
     WellKnownChannelNotFoundError,
     PresenceError,
-    StatusGenerationError
+    StatusGenerationError,
+    ResponseUnavailableError
 } from '@/errors/discord';
 
 describe.concurrent('DiscordError', () => {
@@ -184,6 +185,14 @@ describe.concurrent('StatusGenerationError', () => {
     ])('should support cause: %s', (_label, causeValue) => {
         const error = new StatusGenerationError('Status generation failed', causeValue);
         expect(error.cause).toBe(causeValue);
+    });
+});
+
+describe.concurrent('ResponseUnavailableError', () => {
+    test('has a stable name for response delivery error handling', () => {
+        const error = new ResponseUnavailableError();
+
+        expect(error.name).toBe('ResponseUnavailableError');
     });
 });
 

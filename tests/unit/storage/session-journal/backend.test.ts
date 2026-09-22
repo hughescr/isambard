@@ -7,6 +7,7 @@ import {
 import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../setup';
 import { SessionJournalBackend } from '@/storage/session-journal/backend';
+import { journalEntrySchema } from '@/storage/session-journal/types';
 
 describe('SessionJournalBackend', () => {
     let ddbMock: ReturnType<typeof mockClient>;
@@ -22,6 +23,20 @@ describe('SessionJournalBackend', () => {
         ddbMock.restore();
         jest.restoreAllMocks();
         jest.useRealTimers();
+    });
+
+    describe('journal entry schema', () => {
+        const responseDelivered = {
+            at: new Date('2026-09-05T10:00:00.000Z'), type: 'response_delivered', envelopeId: 'e1', channelId: 'chan-1', messageIds: ['m1'],
+        } as const;
+
+        test.each(['sent', 'queued'] as const)('accepts response_delivered disposition %s', (disposition) => {
+            expect(journalEntrySchema.safeParse({ ...responseDelivered, disposition }).success).toBe(true);
+        });
+
+        test('rejects an unknown response_delivered disposition', () => {
+            expect(journalEntrySchema.safeParse({ ...responseDelivered, disposition: 'delayed' }).success).toBe(false);
+        });
     });
 
     describe('append', () => {

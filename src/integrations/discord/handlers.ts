@@ -8,7 +8,7 @@ import type { InboxManager } from './inbox';
 import type { IngressGate } from './ingress-gate';
 import type { MessageCoordinator } from './message-coordinator';
 import type { DiscordRateLimiter } from './rate-limiter';
-import { sendEnvelopeResponse } from './response-sender';
+import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from './response-sender';
 import { withDiscordRetry } from './retry';
 import { type DiscordMessageContext, type UserId, type ChannelId, createGuildId, createChannelId, createUserId  } from './types';
 import { buildDiscordEnvelope, type QuestionRegistry, type AnswerClassifier, type Conductor, type ContextBuilder, type TimeHeaderProvider } from '@/agent';
@@ -547,7 +547,7 @@ async function submitPerchChannelMessage(
                         return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
                     }
                     case 'partial': {
-                        return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : [])) };
+                        return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: queuedOutboxIdsFromPartialResponse(sendResult) };
                     }
                     case 'skipped': {
                         return { kind: 'skipped', reason: sendResult.reason };

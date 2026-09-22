@@ -834,6 +834,90 @@ describe('runConductorInboxInit', () => {
             }), { priority: 'other' });
         });
 
+        test('commits only queued chunks when a boot-time redelivery is partial', async () => {
+            let deliveredResult: SendOutcome | undefined;
+            const conductor = makeFakeConductor({
+                deliver: mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
+                    deliveredResult = await send();
+                    return { outcome: 'committed' as const, disposition: 'queued' as const };
+                }),
+            });
+            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({
+                status:    'partial',
+                channelId: 'channel-1' as never,
+                chunks:    [
+                    { status: 'sent' },
+                    { status: 'queued', outboxId: 'outbox-2' },
+                ],
+            }));
+            const journal = makeFakeJournal({
+                readSince: mock(async () => [
+                    { type: 'envelope_submitted', at: 0, envelopeId: 'env-partial', kind: 'discord', channelId: 'chan-1' },
+                    { type: 'turn_completed', at: 1, envelopeId: 'env-partial', responseText: 'a stale reply' },
+                ]),
+            });
+
+            await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
+
+            expect(deliveredResult).toEqual({
+                kind: 'committed', disposition: 'queued', channelId: 'channel-1', outboxIds: ['outbox-2'],
+            });
+        });
+
+        test('does not summarize a redelivery whose conductor outcome was skipped', async () => {
+            const conductor = makeFakeConductor({
+                deliver: mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
+                    await send();
+                    return { outcome: 'skipped' as const };
+                }),
+            });
+            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'skipped', reason: 'missing well-known channel' }));
+            const journal = makeFakeJournal({
+                readSince: mock(async () => [
+                    { type: 'envelope_submitted', at: 0, envelopeId: 'env-skipped', kind: 'catchup' },
+                    { type: 'turn_completed', at: 1, envelopeId: 'env-skipped', responseText: 'not redelivered' },
+                ]),
+            });
+
+            await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
+
+            expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
+        });
+
+        test('logs a failed redelivery and continues with the next undelivered reply', async () => {
+            const deliveryError = new Error('delivery guard unavailable');
+            const conductor = makeFakeConductor({
+                deliver: mock(async (envelopeId: string, send: () => Promise<SendOutcome>) => {
+                    if(envelopeId === 'env-fails') {
+                        throw deliveryError;
+                    }
+                    await send();
+                    return { outcome: 'committed' as const, disposition: 'sent' as const };
+                }),
+            });
+            const warnSpy = spyOn(loggerModule.logger, 'warn');
+            warnSpy.mockClear();
+            spies.push(warnSpy, spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
+            const journal = makeFakeJournal({
+                readSince: mock(async () => [
+                    { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-fails', kind: 'discord', channelId: 'chan-1' },
+                    { type: 'turn_completed', at: new Date(1), envelopeId: 'env-fails', responseText: 'first reply' },
+                    { type: 'envelope_submitted', at: new Date(2), envelopeId: 'env-succeeds', kind: 'discord', channelId: 'chan-1' },
+                    { type: 'turn_completed', at: new Date(3), envelopeId: 'env-succeeds', responseText: 'second reply' },
+                ]),
+            });
+
+            await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
+
+            expect(warnSpy).toHaveBeenCalledWith({
+                err: deliveryError, envelopeId: 'env-fails', msg: 'Boot-time undelivered redelivery failed',
+            });
+            expect(conductor.deliver).toHaveBeenCalledTimes(2);
+            expect(conductor.appendWithoutTurn).toHaveBeenCalledWith(expect.objectContaining({
+                text: expect.stringContaining('second reply') as unknown,
+            }));
+        });
+
         test('redelivers an undelivered reply and reports it in the merged envelope\'s "Replies redelivered for you" section', async () => {
             const conductor = makeFakeConductor();
             spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));

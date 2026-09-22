@@ -136,6 +136,14 @@ export type SendEnvelopeResponseResult
       | { status: 'skipped', reason: string };
 
 /**
+ * Extracts outbox IDs for the queued chunks of a partial response, preserving chunk order.
+ * Sent chunks already have a durable Discord message and must not be committed to the outbox.
+ */
+export function queuedOutboxIdsFromPartialResponse(response: Extract<SendEnvelopeResponseResult, { status: 'partial' }>): string[] {
+    return response.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : []));
+}
+
+/**
  * Sends a conductor-mode envelope's response, client-based (P10): no `botStateManager` read (the
  * caller already knows the envelope's `kind`) and no discord.js `Message` to reply to or thread
  * through — every chunk goes directly to the resolved target channel via

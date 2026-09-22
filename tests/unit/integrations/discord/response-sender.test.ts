@@ -19,7 +19,7 @@ import { WellKnownChannelNotFoundError } from '@/errors/discord';
 import type { DiscordCapability } from '@/integrations/discord/capability';
 import type { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
-import { sendEnvelopeResponse, type SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
+import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse, type SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
 import type { ChannelId } from '@/integrations/discord/types';
 
 describe('sendEnvelopeResponse', () => {
@@ -97,13 +97,16 @@ describe('sendEnvelopeResponse', () => {
         });
     });
 
-    test('splits long content into multiple chunks, sent in order', async () => {
+    test('returns message IDs from a multi-chunk client send in send order', async () => {
         const longContent = 'x'.repeat(2500);
         mockResolveEnvelopeTarget.mockResolvedValue({
             targetChannelId: 'target-channel-456' as ChannelId,
             shouldSend:      true,
             content:         longContent,
         });
+        mockSendToChannel
+            .mockResolvedValueOnce({ id: 'message-1' })
+            .mockResolvedValueOnce({ id: 'message-2' });
 
         const result = await sendEnvelopeResponse({
             envelopeId:     'env-2',
@@ -115,8 +118,9 @@ describe('sendEnvelopeResponse', () => {
             rateLimiter:    mockRateLimiter,
         });
 
-        expect(result).toEqual({ status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['msg-123', 'msg-123'] });
+        expect(mockClient.channels.fetch).toHaveBeenCalledWith('target-channel-456');
         expect(mockSendToChannel).toHaveBeenCalledTimes(2);
+        expect(result).toEqual({ status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['message-1', 'message-2'] });
     });
 
     test('sends the response router content rather than the source text', async () => {
@@ -458,6 +462,44 @@ describe('sendEnvelopeResponse', () => {
 
         expect(result).toEqual(expected as SendEnvelopeResponseResult);
         expect(mockSendToChannelCapability).toHaveBeenCalledTimes(2);
+    });
+
+    test('returns message IDs from a multi-chunk capability send in send order', async () => {
+        const firstChunk = 'A'.repeat(1200);
+        const secondChunk = 'B'.repeat(1200);
+        mockResolveEnvelopeTarget.mockResolvedValue({
+            targetChannelId: 'target-channel-456' as ChannelId,
+            shouldSend:      true,
+            content:         `${firstChunk} ${secondChunk}`,
+        });
+        const mockSendToChannelCapability = mock()
+            .mockResolvedValueOnce({ status: 'sent' as const, message: { id: 'message-1' } })
+            .mockResolvedValueOnce({ status: 'sent' as const, message: { id: 'message-2' } });
+
+        const result = await sendEnvelopeResponse({
+            envelopeId:        'env-message-id-order',
+            kind:              'catchup',
+            text:              `${firstChunk} ${secondChunk}`,
+            responseRouter:    mockResponseRouter,
+            client:            mockClient,
+            rateLimiter:       mockRateLimiter,
+            discordCapability: { sendToChannel: mockSendToChannelCapability } as unknown as DiscordCapability,
+        });
+
+        expect(result).toEqual({ status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['message-1', 'message-2'] });
+    });
+
+    test('extracts only queued outbox IDs from a partial response, in chunk order', () => {
+        expect(queuedOutboxIdsFromPartialResponse({
+            status:    'partial',
+            channelId: 'target-channel-456' as ChannelId,
+            chunks:    [
+                { status: 'sent' },
+                { status: 'queued', outboxId: 'outbox-2' },
+                { status: 'sent' },
+                { status: 'queued', outboxId: 'outbox-4' },
+            ],
+        })).toEqual(['outbox-2', 'outbox-4']);
     });
 
     test('does not thread replies: always sends to the target channel directly, never message.reply', async () => {

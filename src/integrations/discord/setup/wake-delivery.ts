@@ -3,7 +3,7 @@ import type { Client } from 'discord.js';
 import type { DiscordCapability } from '../capability';
 import { ENVELOPE_KIND_TO_CHANNEL, type ResponseRouter } from '../channel-registry';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import { sendEnvelopeResponse, type SendEnvelopeResponseResult } from '../response-sender';
+import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse, type SendEnvelopeResponseResult } from '../response-sender';
 import { createChannelId } from '../types';
 import type { Conductor, Envelope, TurnResult } from '@/agent';
 import { ResponseUnavailableError } from '@/errors';
@@ -50,17 +50,17 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
     /** Maps every sender result to a durable or intentionally skipped conductor outcome. */
     async function deliverViaConductor(
         envelope: Envelope,
-        sendAndDescribe: () => Promise<{ sendResult: SendEnvelopeResponseResult, channelId: string }>
+        sendAndDescribe: () => Promise<SendEnvelopeResponseResult>
     ): Promise<void> {
         try {
             await conductor.deliver(envelope.id, async () => {
-                const { sendResult } = await sendAndDescribe();
+                const sendResult = await sendAndDescribe();
                 switch(sendResult.status) {
                     case 'sent': { return { kind: 'committed', disposition: 'sent', channelId: sendResult.channelId, messageIds: sendResult.messageIds };
                     }
                     case 'queued': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
                     }
-                    case 'partial': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : [])) };
+                    case 'partial': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: queuedOutboxIdsFromPartialResponse(sendResult) };
                     }
                     case 'skipped': { return { kind: 'skipped', reason: sendResult.reason };
                     }
@@ -75,7 +75,7 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
 
     async function deliverToKnownTarget(envelope: Envelope, text: string): Promise<void> {
         await deliverViaConductor(envelope, async () => {
-            const sendResult = await sendEnvelopeResponse({
+            return sendEnvelopeResponse({
                 envelopeId: envelope.id,
                 kind:       envelope.kind,
                 channelId:  envelope.channelId ? createChannelId(envelope.channelId) : undefined,
@@ -85,7 +85,6 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
                 rateLimiter,
                 discordCapability,
             });
-            return { sendResult, channelId: envelope.channelId ?? '' };
         });
     }
 
@@ -93,7 +92,7 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
         const prefixedText = (fallbackPrefix ?? defaultFallbackPrefix)(envelope) + text;
         await deliverViaConductor(envelope, async () => {
             const routing = await responseRouter.routeToFallback(prefixedText);
-            const sendResult = await sendEnvelopeResponse({
+            return sendEnvelopeResponse({
                 envelopeId: envelope.id,
                 kind:       envelope.kind,
                 channelId:  routing.targetChannelId,
@@ -103,7 +102,6 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
                 rateLimiter,
                 discordCapability,
             });
-            return { sendResult, channelId: routing.targetChannelId };
         });
     }
 
