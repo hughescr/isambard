@@ -62,6 +62,22 @@ describe('StreamTracker', () => {
             expect(progress.thinking).toBe('Let me think about this...');
         });
 
+        test('should omit empty thinking blocks while joining non-empty blocks with newlines', () => {
+            const event: AssistantEvent = {
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'thinking', thinking: 'First thought' },
+                        { type: 'thinking', thinking: '' },
+                        { type: 'thinking', thinking: 'Last thought' },
+                    ],
+                },
+            };
+
+            tracker.update(event);
+            expect(tracker.getProgress().thinking).toBe('First thought\nLast thought');
+        });
+
         test('should extract tool_use blocks from assistant event', () => {
             const event: AssistantEvent = {
                 type:    'assistant',

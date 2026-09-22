@@ -17,7 +17,9 @@ export function extractAssistantText(message: SDKMessage): string {
         return '';
     }
 
+    // Stryker disable MethodExpression: Removing the text type filter makes lodash map yield undefined for non-text blocks, and compact removes those values before joining.
     const textBlocks = (message.message.content).filter((block): block is TextBlock => block.type === 'text');
+    // Stryker restore MethodExpression
     return chain(textBlocks).map('text').compact().join('\n').trim().value();
 }
 
@@ -31,7 +33,9 @@ export function extractThinkingContent(message: SDKMessage): string {
         return '';
     }
 
+    // Stryker disable MethodExpression: Removing the thinking type filter makes lodash map yield undefined for non-thinking blocks, and compact removes those values before joining.
     const thinkingBlocks = (message.message.content).filter((block): block is ThinkingBlock => block.type === 'thinking');
+    // Stryker restore MethodExpression
     return chain(thinkingBlocks).map('thinking').compact().join('\n').trim().value();
 }
 

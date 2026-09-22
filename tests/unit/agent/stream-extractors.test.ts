@@ -226,6 +226,13 @@ describe('extractThinkingContent', () => {
         expect(extractThinkingContent(message)).toBe('Let me think about this...');
     });
 
+    test('keeps a matching thinking block when filtering content', () => {
+        expect(extractThinkingContent({
+            type:    'assistant',
+            message: { content: [{ type: 'thinking', thinking: 'deep thought' }] },
+        })).toBe('deep thought');
+    });
+
     test('should extract and join multiple thinking blocks', () => {
         const message = {
             type:    'assistant',
@@ -268,5 +275,12 @@ describe('extractAssistantText', () => {
             type:    'assistant',
             message: { content: [{ type: 'text', text: ' First' }, { type: 'thinking', thinking: 'ignored' }, { type: 'text', text: 'Second ' }] },
         })).toBe('First\nSecond');
+    });
+
+    test('keeps a matching text block when filtering content', () => {
+        expect(extractAssistantText({
+            type:    'assistant',
+            message: { content: [{ type: 'text', text: 'Hello' }] },
+        })).toBe('Hello');
     });
 });

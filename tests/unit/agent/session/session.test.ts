@@ -67,6 +67,78 @@ describe('openSession', () => {
         expect(sdkFrameToAgentStreamEvent(compactFrame)).toEqual(compactFrame);
     });
 
+    test('adapts mixed assistant content in SDK order without leaking SDK-only fields', () => {
+        const frame = {
+            type:    'assistant',
+            message: {
+                content: [
+                    { type: 'text', text: 'opening answer' },
+                    { type: 'thinking', thinking: 'private reasoning', signature: 'signed-thinking' },
+                    { type: 'tool_use', id: 'tool-123', name: 'Read', input: { path: '/tmp/example' } },
+                    { type: 'text', text: 'visible answer', citations: [{ type: 'char_location', cited_text: 'answer' }] },
+                ],
+            },
+        } as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+
+        expect(sdkFrameToAgentStreamEvent(frame)).toEqual({
+            type:    'assistant',
+            message: {
+                content: [
+                    { type: 'text', text: 'opening answer' },
+                    { type: 'thinking', thinking: 'private reasoning' },
+                    { type: 'tool_use', id: 'tool-123', name: 'Read', input: { path: '/tmp/example' } },
+                    { type: 'text', text: 'visible answer' },
+                ],
+            },
+        });
+    });
+
+    test('adapts result observability fields without preserving unrelated SDK payload', () => {
+        const frame = {
+            type:              'result',
+            subtype:           'success',
+            duration_ms:       325,
+            total_cost_usd:    0.0042,
+            is_error:          false,
+            usage:             { input_tokens: 15, output_tokens: 9 },
+            queued_turn_count: 2,
+            result:            'SDK-only final text',
+        } as unknown as Extract<SDKMessage, { type: 'result' }>;
+
+        expect(sdkFrameToAgentStreamEvent(frame)).toEqual({
+            type:              'result',
+            subtype:           'success',
+            duration_ms:       325,
+            total_cost_usd:    0.0042,
+            is_error:          false,
+            usage:             { input_tokens: 15, output_tokens: 9 },
+            queued_turn_count: 2,
+        });
+    });
+    test('adapts user and tool-progress observability fields', () => {
+        const userFrame = {
+            type:    'user',
+            message: { content: [{ type: 'tool_result', tool_use_id: 'tool-123', content: 'read result' }] },
+        } as unknown as Extract<SDKMessage, { type: 'user' }>;
+        expect(sdkFrameToAgentStreamEvent(userFrame)).toEqual({
+            type:    'user',
+            message: { content: [{ type: 'tool_result', tool_use_id: 'tool-123', content: 'read result' }] },
+        });
+
+        const progressFrame = {
+            type:                 'tool_progress',
+            tool_use_id:          'tool-123',
+            tool_name:            'Read',
+            elapsed_time_seconds: 2.5,
+        } as unknown as Extract<SDKMessage, { type: 'tool_progress' }>;
+        expect(sdkFrameToAgentStreamEvent(progressFrame)).toEqual({
+            type:                 'tool_progress',
+            tool_use_id:          'tool-123',
+            tool_name:            'Read',
+            elapsed_time_seconds: 2.5,
+        });
+    });
+
     test('calls queryFn exactly once with prompt === the queue and options === the given options', () => {
         const { queryFn, instances } = fakeQueryFn();
         const queue = stubQueue();

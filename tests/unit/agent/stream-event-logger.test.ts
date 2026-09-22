@@ -224,6 +224,20 @@ describe('createStreamEventLogger', () => {
         });
     });
 
+    test('empty text blocks log thinking rather than responding', () => {
+        const streamLogger = createStreamEventLogger();
+        streamLogger.logStreamEvent({
+            type:    'assistant',
+            message: { content: [{ type: 'text', text: '' }, { type: 'text', text: '' }] },
+        });
+
+        expect(mockLogger.debug).toHaveBeenCalledWith({
+            eventType: 'assistant',
+            hasText:   false,
+            msg:       'Claude LLM thinking',
+        });
+    });
+
     test('reset() clears pending tool state', () => {
         const streamLogger = createStreamEventLogger();
         streamLogger.logStreamEvent(assistantToolUseEvent);

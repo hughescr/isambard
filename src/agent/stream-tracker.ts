@@ -50,8 +50,11 @@ export class StreamTracker {
             const content = message.message?.content;
 
             // Extract thinking content (replaces previous thinking)
-            const thinkingContent = (content ?? [])
-                .filter(block => block.type === 'thinking')
+            // Stryker disable MethodExpression: Removing the thinking type filter makes map yield undefined for non-thinking blocks, and filter(Boolean) removes those values before joining.
+            const thinkingBlocks = (content ?? [])
+                .filter(block => block.type === 'thinking');
+            // Stryker restore MethodExpression
+            const thinkingContent = thinkingBlocks
                 .map(block => block.thinking)
                 .filter(Boolean)
                 .join('\n')
@@ -64,8 +67,11 @@ export class StreamTracker {
             }
 
             // Extract text content (replaces previous text)
-            const textContent = (content ?? [])
-                .filter(block => block.type === 'text')
+            // Stryker disable MethodExpression: Removing the text type filter makes map yield undefined for non-text blocks, and filter(Boolean) removes those values before joining.
+            const textBlocks = (content ?? [])
+                .filter(block => block.type === 'text');
+            // Stryker restore MethodExpression
+            const textContent = textBlocks
                 .map(block => block.text)
                 .filter(Boolean)
                 .join('\n')
