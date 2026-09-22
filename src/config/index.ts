@@ -33,3 +33,5 @@ export {
 export {
     loadRetryConfig
 } from './retry-config';
+
+export { EmailFolder } from './email-folders';

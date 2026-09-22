@@ -3,7 +3,7 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { BLUE } from '../colors';
-import { createEmailMCPServer, type ActivityLogger, type NotifyFn } from '@/agent';
+import { createEmailMCPServer, generateTextWithSystemPrompt, type ActivityLogger, type NotifyFn } from '@/agent';
 import type { EmailConfig } from '@/config';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
@@ -236,7 +236,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     const retryDeps = options._deps?.sleep ? { deps: { sleep: options._deps.sleep } } : {};
 
     // Create classifier; use the pre-loaded PersonAllowlist passed in by the caller
-    const classifier = new EmailClassifier();
+    const classifier = new EmailClassifier({ generateText: generateTextWithSystemPrompt });
     const allowlist  = options.personAllowlist;
 
     // Use pre-created client if provided; otherwise create and init a new one.

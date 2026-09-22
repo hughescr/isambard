@@ -1,7 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction, EmbedBuilder  } from 'discord.js';
+import { EmailFolder } from '@/config';
 import { EmailProcessingError } from '@/errors';
-import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import type { AllowlistSagaStarter } from '@/services';
 

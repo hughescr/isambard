@@ -1,6 +1,6 @@
 import { logger } from '@hughescr/logger';
+import { EmailFolder } from '@/config';
 import type { EmailProcessor } from '@/integrations/email/email-processor';
-import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { createReconnectionLoop, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 

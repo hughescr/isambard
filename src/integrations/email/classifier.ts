@@ -1,18 +1,25 @@
 import { logger } from '@hughescr/logger';
 import { CLASSIFIER_SYSTEM_PROMPT } from './classifier-prompt';
 import { classifierVerdictSchema, type EmailMetadata, type ClassifierVerdict  } from './types';
-import { generateTextWithSystemPrompt } from '@/agent';
 import { ClassifierError } from '@/errors';
 
+type GenerateText = (
+    systemPrompt: string | string[],
+    userPrompt: string,
+    options?: { model?: string }
+) => Promise<string>;
+
 /**
- * Email safety classifier using Claude Sonnet via the Claude Agent SDK.
- * Uses generateTextWithSystemPrompt for zero-API-key overhead (OAuth/Claude Max).
+ * Email safety classifier using an injected Claude Sonnet text generator.
  */
 export class EmailClassifier {
-    constructor(apiKey?: string) {
-        if(apiKey === '') {
-            throw new ClassifierError('API key must not be empty string');
+    private readonly generateText: GenerateText;
+
+    constructor({ generateText }: { generateText?: GenerateText }) {
+        if(!generateText) {
+            throw new ClassifierError('generateText is required');
         }
+        this.generateText = generateText;
     }
 
     /**
@@ -25,7 +32,7 @@ export class EmailClassifier {
 
         let rawText: string;
         try {
-            rawText = await generateTextWithSystemPrompt(CLASSIFIER_SYSTEM_PROMPT, userMessage, { model: 'sonnet' });
+            rawText = await this.generateText(CLASSIFIER_SYSTEM_PROMPT, userMessage, { model: 'sonnet' });
         } catch (err) {
             throw new ClassifierError(
                 `Classification API call failed: ${err instanceof Error ? err.message : String(err)}`,

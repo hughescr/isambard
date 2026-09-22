@@ -1,5 +1,5 @@
+export { EmailFolder } from '@/config';
 export {
-    EmailFolder,
     ClassifierVerdictType,
     classifierVerdictSchema,
     EmailIdentity

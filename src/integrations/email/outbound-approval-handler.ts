@@ -2,7 +2,7 @@ import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { chain } from 'lodash-es';
 import type { NotifyFn } from '@/agent';
-import { EmailFolder } from '@/integrations/email/types';
+import { EmailFolder } from '@/config';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
 

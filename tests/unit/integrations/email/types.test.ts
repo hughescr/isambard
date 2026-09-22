@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
+import { EmailFolder } from '@/config';
 import {
-    EmailFolder,
     ClassifierVerdictType,
     EmailIdentity,
     classifierVerdictSchema

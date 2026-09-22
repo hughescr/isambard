@@ -1,7 +1,8 @@
 import { logger } from '@hughescr/logger';
 import { convert } from 'html-to-text';
+import { EmailFolder } from '@/config';
 import { WildDuckError, WildDuckAuthError } from '@/errors';
-import { type EmailMetadata, type EmailAddress, type EmailHeaders, type VerificationResults, EmailFolder  } from '@/integrations/email/types';
+import type { EmailMetadata, EmailAddress, EmailHeaders, VerificationResults } from '@/integrations/email/types';
 
 export { WildDuckError, WildDuckAuthError } from '@/errors';
 

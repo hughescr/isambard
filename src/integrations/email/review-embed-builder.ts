@@ -1,6 +1,7 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { truncate } from 'lodash-es';
-import type { EmailMetadata, ClassifierVerdict, EmailFolder } from '@/integrations/email/types';
+import type { EmailFolder } from '@/config';
+import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
 
 interface OutboundApprovalEmbedParams {
     to:       string
