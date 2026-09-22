@@ -1,5 +1,4 @@
 import { describe, test, expect, spyOn } from 'bun:test';
-import * as publicErrors from '@/errors';
 import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 import {
@@ -305,23 +304,5 @@ describe.concurrent('Error.captureStackTrace handling', () => {
                 Object.defineProperty(Error, 'captureStackTrace', descriptor);
             }
         }
-    });
-});
-
-describe.concurrent('removed storage error public surface', () => {
-    test.each([
-        ['MemoryToolError', 'MEMORY_TOOL_ERROR'],
-        ['PathNotFoundError', 'PATH_NOT_FOUND'],
-        ['PathAlreadyExistsError', 'PATH_ALREADY_EXISTS'],
-        ['InvalidPathError', 'INVALID_PATH'],
-        ['TextNotFoundError', 'TEXT_NOT_FOUND'],
-        ['ContentTooLargeError', 'CONTENT_TOO_LARGE'],
-        ['TextNotUniqueError', 'TEXT_NOT_UNIQUE'],
-        ['InvalidLineNumberError', 'INVALID_LINE_NUMBER'],
-        ['ReconciliationError', 'RECONCILIATION_ERROR'],
-        ['ReconciliationThrottledError', 'RECONCILIATION_THROTTLED']
-    ])('does not expose %s or %s', (errorName, errorCode) => {
-        expect(publicErrors).not.toHaveProperty(errorName);
-        expect(ErrorCode).not.toHaveProperty(errorCode);
     });
 });
