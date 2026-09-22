@@ -205,6 +205,8 @@ export {
     createConductor,
     type Conductor,
     type ConductorStatus,
+    type DeliverResult,
+    type SendOutcome,
     type CreateConductorParams,
     type TurnResult,
     type SubmitPriority,

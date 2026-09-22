@@ -59,6 +59,14 @@ export class ChannelNotAccessibleError extends DiscordError {
     }
 }
 
+/** Error thrown when a response could not reach Discord or an outbox. */
+export class ResponseUnavailableError extends DiscordError {
+    constructor() {
+        super('Discord response unavailable', ErrorCode.RESPONSE_UNAVAILABLE);
+        this.name = 'ResponseUnavailableError';
+    }
+}
+
 // ============================================================================
 // Message History Errors
 // ============================================================================

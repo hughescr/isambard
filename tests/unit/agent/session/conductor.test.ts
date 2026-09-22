@@ -17,6 +17,7 @@ import { createTaskLaunchRegistry } from '@/agent/session/task-launch-registry';
 import type { Envelope } from '@/agent/session/types';
 import { DEFAULT_RETRY_CONFIG } from '@/config/retry-config';
 import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
+import { ResponseUnavailableError } from '@/errors';
 import type { ErrorClassification, RetryPolicy } from '@/utils';
 
 /** Flushes enough microtask ticks for the conductor's promise chains (reader loop, guard.onTurnEnd, retry scheduling) to settle. */
@@ -2333,7 +2334,7 @@ describe('createConductor', () => {
         it('throws an InvariantViolationError when called before open() has run its boot recovery', async () => {
             const h = build();
 
-            await expect(h.conductor.deliver('env-1', () => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] })))
+            await expect(h.conductor.deliver('env-1', () => Promise.resolve({ kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-1'] })))
                 .rejects.toThrow('Invariant violated in conductor.deliver: called before open() completed its boot recovery, which initialises the delivery guard');
         });
 
@@ -2343,7 +2344,7 @@ describe('createConductor', () => {
             const order: string[] = [];
             const send = jest.fn(async () => {
                 order.push('send');
-                return { channelId: 'chan-1', messageIds: ['msg-1'] };
+                return { kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-1'] };
             });
             const originalFlush = h.journal.flush.bind(h.journal);
             const flushSpy = jest.spyOn(h.journal, 'flush').mockImplementation(async () => {
@@ -2356,23 +2357,72 @@ describe('createConductor', () => {
 
             expect(send).toHaveBeenCalledTimes(1);
             expect(flushSpy).toHaveBeenCalledTimes(1);
-            expect(result).toEqual({ delivered: true });
+            expect(result).toEqual({ outcome: 'committed', disposition: 'sent' });
             expect(h.journal.byKind('response_delivered')).toEqual([
-                { type: 'response_delivered', at: expect.any(Date), envelopeId: 'env-1', channelId: 'chan-1', messageIds: ['msg-1'] },
+                { type: 'response_delivered', at: expect.any(Date), envelopeId: 'env-1', channelId: 'chan-1', messageIds: ['msg-1'], disposition: 'sent' },
             ]);
             expect(order).toEqual(['send', 'flush', 'resolved']);
+        });
+
+        it('journals queued commitments with queued disposition and no message ids', async () => {
+            const h = build();
+            await openWith(h);
+
+            const result = await h.conductor.deliver('env-queued', () => Promise.resolve({
+                kind: 'committed' as const, disposition: 'queued' as const, channelId: 'chan-1', outboxIds: ['outbox-1'],
+            }));
+
+            expect(result).toEqual({ outcome: 'committed', disposition: 'queued' });
+            expect(h.journal.byKind('response_delivered')).toEqual([
+                { type: 'response_delivered', at: expect.any(Date), envelopeId: 'env-queued', channelId: 'chan-1', messageIds: [], disposition: 'queued' },
+            ]);
+        });
+
+        it('returns skipped without journaling, flushing, or marking the delivery guard', async () => {
+            const h = build();
+            await openWith(h);
+            const send = jest.fn(() => Promise.resolve({ kind: 'skipped' as const, reason: 'no-response' }));
+
+            const result = await h.conductor.deliver('env-skipped', send);
+
+            expect(result).toEqual({ outcome: 'skipped' });
+            expect(h.journal.byKind('response_delivered')).toHaveLength(0);
+            expect(h.journal.flushCount).toBe(0);
+            expect(h.logger.info).toHaveBeenCalledWith(
+                { envelopeId: 'env-skipped', reason: 'no-response' },
+                'Conductor.deliver: response skipped; not committing delivery'
+            );
+
+            const retried = await h.conductor.deliver('env-skipped', send);
+            expect(retried).toEqual({ outcome: 'skipped' });
+            expect(send).toHaveBeenCalledTimes(2);
+        });
+
+        it('a thrown ResponseUnavailableError does not journal, flush, or mark delivery', async () => {
+            const h = build();
+            await openWith(h);
+            const send = jest.fn(() => Promise.reject(new ResponseUnavailableError()));
+
+            await expect(h.conductor.deliver('env-unavailable', send)).rejects.toThrow(ResponseUnavailableError);
+
+            expect(h.journal.byKind('response_delivered')).toHaveLength(0);
+            expect(h.journal.flushCount).toBe(0);
+            const retried = await h.conductor.deliver('env-unavailable', () => Promise.resolve({
+                kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-1'],
+            }));
+            expect(retried).toEqual({ outcome: 'committed', disposition: 'sent' });
         });
 
         it('a second deliver() call for the same envelope id skips the send and does not journal again', async () => {
             const h = build();
             await openWith(h);
-            const send = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] }));
+            const send = jest.fn(() => Promise.resolve({ kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-1'] }));
 
             await h.conductor.deliver('env-1', send);
             const second = await h.conductor.deliver('env-1', send);
 
             expect(send).toHaveBeenCalledTimes(1);
-            expect(second).toEqual({ delivered: false });
+            expect(second).toEqual({ outcome: 'already-committed' });
             expect(h.journal.byKind('response_delivered')).toHaveLength(1);
             expect(h.logger.info).toHaveBeenCalledWith(
                 { envelopeId: 'env-1' },
@@ -2402,9 +2452,9 @@ describe('createConductor', () => {
                 { error: recoveryError },
                 'Conductor boot recovery failed; opening with an empty-seeded delivery guard'
             );
-            const send = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] }));
+            const send = jest.fn(() => Promise.resolve({ kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-1'] }));
             const result = await h.conductor.deliver('Stryker was here', send);
-            expect(result).toEqual({ delivered: true });
+            expect(result).toEqual({ outcome: 'committed', disposition: 'sent' });
         });
 
         it('journals task_lost at boot for a task_started with no resolution in the journal window', async () => {
@@ -2429,11 +2479,11 @@ describe('createConductor', () => {
             ]);
 
             await openWith(h);
-            const send = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-2'] }));
+            const send = jest.fn(() => Promise.resolve({ kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-2'] }));
 
             const result = await h.conductor.deliver('env-1', send);
 
-            expect(result).toEqual({ delivered: false });
+            expect(result).toEqual({ outcome: 'already-committed' });
             expect(send).not.toHaveBeenCalled();
         });
 
@@ -2480,7 +2530,7 @@ describe('createConductor', () => {
             await openWith(a, 'sess-a');
             a.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'started by A' }));
             await flush();
-            const sendFromA = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] }));
+            const sendFromA = jest.fn(() => Promise.resolve({ kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-1'] }));
             await a.conductor.deliver('env-E', sendFromA);
 
             // A crashes here: discarded without ever calling shutdown()/flush(). FakeJournal.append
@@ -2494,10 +2544,10 @@ describe('createConductor', () => {
                 { type: 'task_lost', at: expect.any(Date), taskId: 'task-1', description: 'started by A' },
             ]);
 
-            const sendFromB = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-2'] }));
+            const sendFromB = jest.fn(() => Promise.resolve({ kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-2'] }));
             const result = await b.conductor.deliver('env-E', sendFromB);
 
-            expect(result).toEqual({ delivered: false });
+            expect(result).toEqual({ outcome: 'already-committed' });
             expect(sendFromB).not.toHaveBeenCalled();
         });
     });
@@ -4309,7 +4359,7 @@ describe('createConductor', () => {
             const flushGate = deferred<void>();
             const flushSpy = jest.spyOn(h.journal, 'flush').mockImplementation(() => flushGate.promise);
             let settled = false;
-            const firstSend = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] }));
+            const firstSend = jest.fn(() => Promise.resolve({ kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-1'] }));
             const delivery = h.conductor.deliver('deferred-env', firstSend).finally(() => {
                 settled = true;
             });
@@ -4317,9 +4367,9 @@ describe('createConductor', () => {
             expect(flushSpy).toHaveBeenCalledTimes(1);
             expect(settled).toBe(false);
             flushGate.resolve();
-            await expect(delivery).resolves.toEqual({ delivered: true });
-            const secondSend = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-2'] }));
-            await expect(h.conductor.deliver('deferred-env', secondSend)).resolves.toEqual({ delivered: false });
+            await expect(delivery).resolves.toEqual({ outcome: 'committed', disposition: 'sent' });
+            const secondSend = jest.fn(() => Promise.resolve({ kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-2'] }));
+            await expect(h.conductor.deliver('deferred-env', secondSend)).resolves.toEqual({ outcome: 'already-committed' });
             expect(secondSend).not.toHaveBeenCalled();
         });
 

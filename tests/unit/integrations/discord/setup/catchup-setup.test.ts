@@ -9,6 +9,7 @@ import { describe, test, expect, mock, jest, afterEach, spyOn } from 'bun:test';
 import * as loggerModule from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import * as agentModule from '@/agent';
+import type { SendOutcome } from '@/agent';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
 import {
     setupInboxAndCatchUp,
@@ -58,7 +59,7 @@ function makeFakeConductor(overrides: Record<string, unknown> = {}) {
         })),
         deliver: mock(async (_envelopeId: string, send: () => Promise<unknown>) => {
             await send();
-            return { delivered: true };
+            return { outcome: 'committed' as const, disposition: 'sent' as const };
         }),
         // R1: the merged boot envelope appends via this seam whenever it carries nothing worth
         // opening a turn for (`shouldQuery: false`) — see `submitMergedBootEnvelope`.
@@ -119,10 +120,10 @@ describe('submitAndDeliverConductorEnvelope', () => {
         const conductor = makeFakeConductor({
             deliver: mock(async (_envelopeId: string, send: () => Promise<unknown>) => {
                 deliveredTarget = await send();
-                return { delivered: true };
+                return { outcome: 'committed' as const, disposition: 'sent' as const };
             }),
         });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const warnSpy = spyOn(loggerModule.logger, 'warn');
         spies.push(warnSpy);
         const warnCount = warnSpy.mock.calls.length;
@@ -134,13 +135,13 @@ describe('submitAndDeliverConductorEnvelope', () => {
 
         expect(conductor.deliver).toHaveBeenCalledWith('e1', expect.any(Function));
         expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({ envelopeId: 'e1', kind: 'catchup', text: 'ok' }));
-        expect(deliveredTarget).toEqual({ channelId: '', messageIds: [] });
+        expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] });
         expect(warnSpy).toHaveBeenCalledTimes(warnCount);
     });
 
     test('a queued send does not throw inside the deliver callback (still counts as delivered)', async () => {
         const conductor = makeFakeConductor();
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'queued', channelId: 'channel-1' as never, outboxIds: ['outbox-1'] }));
         const warnSpy = spyOn(loggerModule.logger, 'warn');
         spies.push(warnSpy);
         const warnCount = warnSpy.mock.calls.length;
@@ -154,9 +155,15 @@ describe('submitAndDeliverConductorEnvelope', () => {
         expect(warnSpy).toHaveBeenCalledTimes(warnCount);
     });
 
-    test('a well-known-channel-missing skip is swallowed, never thrown to the caller', async () => {
-        const conductor = makeFakeConductor();
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, skipReason: 'missing' }));
+    test('a well-known-channel-missing skip is returned to the conductor without warning', async () => {
+        let outcome: SendOutcome | undefined;
+        const conductor = makeFakeConductor({
+            deliver: mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
+                outcome = await send();
+                return { outcome: 'skipped' as const };
+            }),
+        });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'skipped', reason: 'missing' }));
         const warnSpy = spyOn(loggerModule.logger, 'warn');
         spies.push(warnSpy);
         warnSpy.mockClear();
@@ -166,17 +173,13 @@ describe('submitAndDeliverConductorEnvelope', () => {
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         )).resolves.toBeUndefined();
 
-        expect(warnSpy).toHaveBeenCalledTimes(1);
-        expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({
-            err:        expect.objectContaining({ message: expect.stringContaining('missing') }) as unknown,
-            envelopeId: 'e1',
-            msg:        'Conductor envelope delivery failed',
-        }));
+        expect(outcome).toEqual({ kind: 'skipped', reason: 'missing' });
+        expect(warnSpy).not.toHaveBeenCalled();
     });
 
-    test('a skip with no skipReason logs "unknown reason" rather than an empty explanation', async () => {
+    test('an unavailable response logs the fixed response-unavailable error', async () => {
         const conductor = makeFakeConductor();
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'unavailable' }));
         const warnSpy = spyOn(loggerModule.logger, 'warn');
         spies.push(warnSpy);
         warnSpy.mockClear();
@@ -188,7 +191,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
 
         expect(warnSpy).toHaveBeenCalledTimes(1);
         expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({
-            err:        expect.objectContaining({ message: expect.stringContaining('unknown reason') }) as unknown,
+            err:        expect.objectContaining({ message: 'Discord response unavailable' }) as unknown,
             envelopeId: 'e1',
             msg:        'Conductor envelope delivery failed',
         }));
@@ -207,7 +210,7 @@ describe('submitAndDeliverConductorEnvelope — discordCapability forwarding', (
 
     test('forwards discordCapability to sendEnvelopeResponse so a boot-time redelivery can queue to the real outbox instead of losing the response', async () => {
         const conductor = makeFakeConductor();
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const discordCapability = { sendToChannel: mock(() => Promise.resolve({ status: 'sent' as const })) };
 
         await submitAndDeliverConductorEnvelope(
@@ -231,7 +234,7 @@ describe('submitConductorCatchUp', () => {
 
     test('builds and submits a catchup-kind envelope from the inbox overview', async () => {
         const conductor = makeFakeConductor();
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }, { channelId: 'c2' }] })) });
 
         await submitConductorCatchUp({
@@ -243,7 +246,7 @@ describe('submitConductorCatchUp', () => {
 
     test('renders the catch-up envelope\'s time header with formatTimeHeader by default', async () => {
         const conductor = makeFakeConductor();
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }] })) });
 
         await submitConductorCatchUp({
@@ -256,7 +259,7 @@ describe('submitConductorCatchUp', () => {
 
     test('takes the catch-up envelope\'s time header from an injected provider, called with no user zone (session-peers block 4)', async () => {
         const conductor = makeFakeConductor();
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }] })) });
         const timeHeader = mock((_userTimezone?: string) => 'AMBIENT-HEADER\n- Perch: idle');
 
@@ -281,7 +284,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('sets the bot user id and loads unread before replaying', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const callOrder: string[] = [];
         const inboxManager = makeFakeInboxManager({
             setBotUserId: mock(() => {
@@ -343,7 +346,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('delivers every undelivered envelope from recovery, via sendEnvelopeResponse', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const conductor = makeFakeConductor();
         const journal = makeFakeJournal({
             readSince: mock(async () => [
@@ -369,13 +372,13 @@ describe('runConductorInboxInit', () => {
      * same `ResponseRouter.routeToFallback`.
      */
     test('a channel-less task envelope is redelivered to the fallback channel rather than raising the routing invariant', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const routeToFallback = mock(async () => ({ targetChannelId: 'fallback-chan', shouldSend: true, content: 'a stale reply', isFallback: true }));
         let deliveredTarget: unknown;
         const conductor = makeFakeConductor({
             deliver: mock(async (_envelopeId: string, send: () => Promise<unknown>) => {
                 deliveredTarget = await send();
-                return { delivered: true };
+                return { outcome: 'committed' as const, disposition: 'sent' as const };
             }),
         });
         const journal = makeFakeJournal({
@@ -396,11 +399,11 @@ describe('runConductorInboxInit', () => {
             envelopeId: 'env-task', kind: 'task', channelId: 'fallback-chan', text: 'a stale reply',
         }));
         // The delivery guard records the channel actually written to, not an empty string
-        expect(deliveredTarget).toEqual({ channelId: 'fallback-chan', messageIds: [] });
+        expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] });
     });
 
     test('a task envelope that kept its own channel is redelivered there, never consulting the fallback', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const routeToFallback = mock(async () => ({ targetChannelId: 'fallback-chan', shouldSend: true, content: '', isFallback: true }));
         const journal = makeFakeJournal({
             readSince: mock(async () => [
@@ -418,7 +421,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('a channel-less catchup envelope still resolves through its well-known channel, never the fallback', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const routeToFallback = mock(async () => ({ targetChannelId: 'fallback-chan', shouldSend: true, content: '', isFallback: true }));
         const journal = makeFakeJournal({
             readSince: mock(async () => [
@@ -451,56 +454,28 @@ describe('runConductorInboxInit', () => {
         expect(sendEnvelopeResponseSpy).not.toHaveBeenCalled();
     });
 
-    test('boot-time undelivered redelivery logs the exact skip reason, including the unknown-reason fallback', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse')
-            .mockResolvedValueOnce({ sent: false, skipReason: 'missing well-known channel' })
-            .mockResolvedValueOnce({ sent: false }));
+    test('boot-time skipped redelivery is not summarized or warned', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'skipped', reason: 'missing well-known channel' }));
         const warnSpy = spyOn(loggerModule.logger, 'warn');
         spies.push(warnSpy);
-        const missingConductor = makeFakeConductor();
-        const missingJournal = makeFakeJournal({
+        warnSpy.mockClear();
+        const conductor = makeFakeConductor({
+            deliver: mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
+                const outcome = await send();
+                return outcome.kind === 'skipped' ? { outcome: 'skipped' as const } : { outcome: 'committed' as const, disposition: outcome.disposition };
+            }),
+        });
+        const journal = makeFakeJournal({
             readSince: mock(async () => [
                 { type: 'envelope_submitted', at: 0, envelopeId: 'env-missing-channel', kind: 'catchup' },
                 { type: 'turn_completed', at: 1, envelopeId: 'env-missing-channel', responseText: 'a stale reply' },
             ]),
         });
 
-        await expect(runConductorInboxInit(conductorParams({
-            conversationConductor: missingConductor as never, journal: missingJournal,
-        }))).resolves.toBeUndefined();
+        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
 
-        const unknownConductor = makeFakeConductor();
-        const unknownJournal = makeFakeJournal({
-            readSince: mock(async () => [
-                { type: 'envelope_submitted', at: 0, envelopeId: 'env-unknown-reason', kind: 'catchup' },
-                { type: 'turn_completed', at: 1, envelopeId: 'env-unknown-reason', responseText: 'a stale reply' },
-            ]),
-        });
-
-        await runConductorInboxInit(conductorParams({
-            conversationConductor: unknownConductor as never, journal: unknownJournal,
-        }));
-
-        expect(missingConductor.deliver).toHaveBeenCalledWith('env-missing-channel', expect.any(Function));
-        expect(unknownConductor.deliver).toHaveBeenCalledWith('env-unknown-reason', expect.any(Function));
-        const missingWarning = warnSpy.mock.calls.find(([details]) => (
-            details as { envelopeId?: string }
-        ).envelopeId === 'env-missing-channel');
-        const unknownWarning = warnSpy.mock.calls.find(([details]) => (
-            details as { envelopeId?: string }
-        ).envelopeId === 'env-unknown-reason');
-        expect(missingWarning?.[0]).toEqual(expect.objectContaining({
-            envelopeId: 'env-missing-channel', msg: 'Boot-time undelivered redelivery failed',
-        }));
-        expect(unknownWarning?.[0]).toEqual(expect.objectContaining({
-            envelopeId: 'env-unknown-reason', msg: 'Boot-time undelivered redelivery failed',
-        }));
-        expect((missingWarning?.[0] as { err: Error }).err.message).toBe(
-            'Boot-time undelivered redelivery skipped: missing well-known channel'
-        );
-        expect((unknownWarning?.[0] as { err: Error }).err.message).toBe(
-            'Boot-time undelivered redelivery skipped: unknown reason'
-        );
+        expect(conductor.deliver).toHaveBeenCalledWith('env-missing-channel', expect.any(Function));
+        expect(warnSpy).not.toHaveBeenCalled();
     });
 
     test('an undelivered turn that completed with no response text (interrupted, nothing to say) is skipped, never calling deliver', async () => {
@@ -521,12 +496,12 @@ describe('runConductorInboxInit', () => {
     });
 
     test('a redelivered catch-up envelope (no channelId on the recovered item) reports an empty channelId to the conductor, not undefined', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
-        let deliveredResult: { channelId: string, messageIds: string[] } | undefined;
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
+        let deliveredResult: SendOutcome | undefined;
         const conductor = makeFakeConductor({
-            deliver: mock(async (_envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+            deliver: mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
                 deliveredResult = await send();
-                return { delivered: true };
+                return { outcome: 'committed' as const, disposition: 'sent' as const };
             }),
         });
         const journal = makeFakeJournal({
@@ -538,11 +513,11 @@ describe('runConductorInboxInit', () => {
 
         await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
 
-        expect(deliveredResult).toEqual({ channelId: '', messageIds: [] });
+        expect(deliveredResult).toEqual({ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] });
     });
 
     test('replays received-but-unhandled messages as one discord-kind envelope submission per channel', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const conductor = makeFakeConductor();
         const inboxManager = makeFakeInboxManager({
             replayUnhandled: mock(async () => [
@@ -563,7 +538,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('renders both boot envelopes\' time headers through an injected provider (session-peers block 4)', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const conductor = makeFakeConductor();
         const inboxManager = makeFakeInboxManager({
             getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'chan-1' }] })),
@@ -584,7 +559,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('the replay envelope\'s authorId is the real Discord user id (a snowflake), not the display name', async () => {
-        const sendEnvelopeResponseSpy = spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        const sendEnvelopeResponseSpy = spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
         spies.push(sendEnvelopeResponseSpy);
         const conductor = makeFakeConductor();
         const inboxManager = makeFakeInboxManager({
@@ -600,7 +575,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('the replay envelope carries a caveat that these messages may already have been seen or answered', async () => {
-        const sendEnvelopeResponseSpy = spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        const sendEnvelopeResponseSpy = spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
         spies.push(sendEnvelopeResponseSpy);
         const conductor = makeFakeConductor();
         const inboxManager = makeFakeInboxManager({
@@ -616,7 +591,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('advances the per-channel HANDLED watermark after a successful replay submission', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const conductor = makeFakeConductor();
         const recordHandled = mock(async () => undefined);
         const inboxManager = makeFakeInboxManager({
@@ -650,7 +625,7 @@ describe('runConductorInboxInit', () => {
                 return { envelopeId: envelope.id, response: 'ok', wasInterrupted: false, sessionId: 'sess-1', isError: false, contextUsagePercent: 0 };
             }),
         });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const warnSpy = spyOn(loggerModule.logger, 'warn');
         spies.push(warnSpy);
         const recordHandled = mock(async () => undefined);
@@ -672,7 +647,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('includes each replayed message exactly once in its channel\'s envelope, even when the channel has multiple messages', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const conductor = makeFakeConductor();
         const inboxManager = makeFakeInboxManager({
             replayUnhandled: mock(async () => [
@@ -690,7 +665,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('forces runBootSequence\'s unreadCount callback to 0 when perch testMode skips catch-up, regardless of actual unread mail', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const runBootSequenceSpy = spyOn(agentModule, 'runBootSequence');
         spies.push(runBootSequenceSpy);
         const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 7, channels: [{ channelId: 'c1' }] })) });
@@ -706,7 +681,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('feeds runBootSequence\'s unreadCount callback the real unread total when catch-up is not skipped', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const runBootSequenceSpy = spyOn(agentModule, 'runBootSequence');
         spies.push(runBootSequenceSpy);
         const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 7, channels: [{ channelId: 'c1' }] })) });
@@ -719,7 +694,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('opens the ingress gate with exactly the replayed message ids', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const ingressGate = makeFakeIngressGate();
         const inboxManager = makeFakeInboxManager({
             replayUnhandled: mock(async () => [
@@ -733,7 +708,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('submits a catch-up envelope when unread mail remains after replay', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const conductor = makeFakeConductor();
         const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 2, channels: [{ channelId: 'c1' }] })) });
 
@@ -771,7 +746,7 @@ describe('runConductorInboxInit', () => {
     });
 
     test('forwards discordCapability from params through to sendEnvelopeResponse for a boot-time undelivered redelivery', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const conductor = makeFakeConductor();
         const discordCapability = { sendToChannel: mock(() => Promise.resolve({ status: 'sent' as const })) };
         const journal = makeFakeJournal({
@@ -835,7 +810,7 @@ describe('runConductorInboxInit', () => {
         test('unread mail: submits with a turn (priority \'other\'), not appendWithoutTurn', async () => {
             const conductor = makeFakeConductor();
             const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }] })) });
-            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
 
             await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));
 
@@ -845,7 +820,7 @@ describe('runConductorInboxInit', () => {
 
         test('lost tasks: a lost background task from recovery escalates the merged envelope to a turn, and its description is rendered', async () => {
             const conductor = makeFakeConductor();
-            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
             const journal = makeFakeJournal({
                 readSince: mock(async () => [
                     { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'Summarize last week' },
@@ -861,7 +836,7 @@ describe('runConductorInboxInit', () => {
 
         test('redelivers an undelivered reply and reports it in the merged envelope\'s "Replies redelivered for you" section', async () => {
             const conductor = makeFakeConductor();
-            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
             const journal = makeFakeJournal({
                 readSince: mock(async () => [
                     { type: 'envelope_submitted', at: 0, envelopeId: 'env-undelivered', kind: 'discord', channelId: 'chan-1' },
@@ -966,7 +941,7 @@ describe('runConductorInboxInit', () => {
         test('without a contextPolicy, the merged envelope carries no events section and no mark calls are attempted', async () => {
             const conductor = makeFakeConductor();
             const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 2, channels: [{ channelId: 'c1' }] })) });
-            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
 
             await expect(runConductorInboxInit(conductorParams({
                 conversationConductor: conductor as never, inboxManager: inboxManager as never,
@@ -1025,7 +1000,7 @@ describe('setupInboxAndCatchUp', () => {
     }
 
     test('resolves immediately (Discord already available / no health registry given)', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const infoSpy = spyOn(loggerModule.logger, 'info');
         spies.push(infoSpy);
         const result = setupInboxAndCatchUp(conductorInboxParams() as never);
@@ -1077,7 +1052,7 @@ describe('setupInboxAndCatchUp', () => {
     });
 
     test('loadUnread happens before replayUnhandled (runBootSequence)', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const callOrder: string[] = [];
         const inboxManager = makeFakeInboxManager({
             loadUnread: mock(async () => {
@@ -1095,7 +1070,7 @@ describe('setupInboxAndCatchUp', () => {
     });
 
     test('the boot sequence (and hence the ingress gate) runs exactly once', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const ingressGate = makeFakeIngressGate();
 
         await setupInboxAndCatchUp(conductorInboxParams({ ingressGate }) as never);
@@ -1205,7 +1180,7 @@ describe('catchup setup mutation witnesses', () => {
 
     test('keeps the redelivery summary ordered and caps each preview at 200 characters', async () => {
         const conductor = makeFakeConductor();
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const firstReply = 'x'.repeat(201);
         const expectedPreview = `${'x'.repeat(199)}…`;
         const journal = makeFakeJournal({
@@ -1229,7 +1204,7 @@ describe('catchup setup mutation witnesses', () => {
             throw watermarkError;
         });
         const warnSpy = spyOn(loggerModule.logger, 'warn');
-        spies.push(warnSpy, spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(warnSpy, spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const inboxManager = makeFakeInboxManager({
             recordHandled,
             replayUnhandled: mock(async () => [
@@ -1254,7 +1229,7 @@ describe('catchup setup mutation witnesses', () => {
 
     test('reports the actual number of unread channels in the merged boot envelope', async () => {
         const conductor = makeFakeConductor();
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }, { channelId: 'c2' }] })) });
 
         await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));
@@ -1267,7 +1242,7 @@ describe('catchup setup mutation witnesses', () => {
         const now = new Date('2026-09-16T12:00:00.000Z');
         jest.useFakeTimers({ now });
         const conductor = makeFakeConductor();
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 1, channels: [{ channelId: 'c1' }] })) });
 
         await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));

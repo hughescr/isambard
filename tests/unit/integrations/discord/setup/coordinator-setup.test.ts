@@ -8,7 +8,7 @@
 import { describe, test, expect, mock, jest, afterEach, spyOn } from 'bun:test';
 import type { Client, Message } from 'discord.js';
 import { mockGenerateText, mockLogger } from '../../../../setup';
-import type { StreamTracker } from '@/agent';
+import { type StreamTracker, type SendOutcome  } from '@/agent';
 import * as attachmentsModule from '@/integrations/discord/attachments';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
@@ -75,9 +75,9 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
                     envelopeId: 'env-1', response: 'ok', wasInterrupted: false, partialWork: { thinking: '', text: '', pendingToolUse: null }, sessionId: 'sess-1', isError: false, contextUsagePercent: 0,
                 })),
                 subscribeTurn: mock(() => mock(() => undefined)),
-                deliver:       mock(async (_envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+                deliver:       mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
                     await send();
-                    return { delivered: true };
+                    return { outcome: 'committed' as const, disposition: 'sent' as const };
                 }),
             },
             contextPolicy: {
@@ -189,14 +189,14 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
     test('onResponse delivers through conversationConductor.deliver keyed on the CONDUCTOR'
       + "'s envelope id (not the triggering Discord message id), sending via sendEnvelopeResponse to the origin channel", async () => {
         const addRecentChannel = mock(() => undefined);
-        const deliveredPayloads: { channelId: string, messageIds: string[] }[] = [];
-        const deliver = mock(async (_envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+        const deliveredPayloads: SendOutcome[] = [];
+        const deliver = mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
             const payload = await send();
             deliveredPayloads.push(payload);
-            return { delivered: true };
+            return { outcome: 'committed' as const, disposition: 'sent' as const };
         });
         const params = makeConductorParams({ addRecentChannel, conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver } });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const config = captureConfig(params);
 
         const discordMessage = {
@@ -212,14 +212,14 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
             envelopeId: 'env-999', kind: 'discord', channelId: '123', text: 'hello',
         }));
         expect(deliver).toHaveBeenCalledWith('env-999', expect.any(Function));
-        expect(deliveredPayloads).toEqual([{ channelId: '123', messageIds: [] }]);
+        expect(deliveredPayloads).toEqual([{ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] }]);
         expect(addRecentChannel).toHaveBeenCalledWith('123');
     });
 
     test('onResponse forwards params.discordCapability to sendEnvelopeResponse so a Discord outage queues to the real outbox instead of losing the response', async () => {
         const discordCapability = { sendToChannel: mock(() => Promise.resolve({ status: 'sent' as const })) };
         const params = makeConductorParams({ discordCapability });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const config = captureConfig(params);
 
         const discordMessage = {
@@ -235,11 +235,11 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
     });
 
     test('onResponse refuses a duplicate delivery for an already-delivered envelope id (conversationConductor.deliver\'s own idempotency)', async () => {
-        const deliver = mock(async () => ({ delivered: false }));
+        const deliver = mock(async () => ({ outcome: 'already-committed' as const }));
         const params = makeConductorParams({
             conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver },
         });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const config = captureConfig(params);
 
         const discordMessage = {
@@ -293,7 +293,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         const addRecentChannel = mock(() => undefined);
         const params = makeConductorParams({
             addRecentChannel,
-            conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver: mock(async () => ({ delivered: false })) },
+            conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver: mock(async () => ({ outcome: 'already-committed' as const })) },
         });
         const config = captureConfig(params);
         const discordMessage = { id: 'msg-1', content: 'hi', channelId: '123' } as unknown as Message;
@@ -309,7 +309,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         const addRecentMessage = mock(() => undefined);
         const activityLogger = { log: mock(() => Promise.resolve()) };
         const params = makeConductorParams({ addRecentMessage, activityLogger });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         mockGenerateText.mockResolvedValueOnce('Craig asked about the weather; Izzy answered.');
         const config = captureConfig(params);
 
@@ -332,7 +332,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
     test('falls back to the stable exchange summary and warns if asynchronous activity logging fails', async () => {
         const activityLogger = { log: mock(() => Promise.reject(new Error('activity store unavailable'))) };
         const params = makeConductorParams({ activityLogger });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         mockGenerateText.mockResolvedValueOnce('');
         const config = captureConfig(params);
         const discordMessage = { id: 'msg-1', content: 'hello', channelId: '123' } as unknown as Message;
@@ -351,7 +351,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
     test('limits exchange summarization input to 500 characters per side', async () => {
         const activityLogger = { log: mock(() => Promise.resolve()) };
         const params = makeConductorParams({ activityLogger });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const config = captureConfig(params);
         const userContent = 'u'.repeat(501);
         const response = 'r'.repeat(501);
@@ -372,7 +372,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
     test('onResponse records the HANDLED watermark on a sent response', async () => {
         const recordHandled = mock(() => Promise.resolve());
         const params = makeConductorParams({ inboxManager: { recordHandled } });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const config = captureConfig(params);
 
         const discordMessage = {
@@ -390,7 +390,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
     test('onResponse records the HANDLED watermark on a no-response (@@NO_RESPONSE@@) skip', async () => {
         const recordHandled = mock(() => Promise.resolve());
         const params = makeConductorParams({ inboxManager: { recordHandled } });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, skipReason: 'no-response' }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'skipped', reason: 'no-response' }));
         const config = captureConfig(params);
 
         const discordMessage = {
@@ -408,7 +408,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
     test('onResponse records the HANDLED watermark on an outbox-queued send', async () => {
         const recordHandled = mock(() => Promise.resolve());
         const params = makeConductorParams({ inboxManager: { recordHandled } });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'queued', channelId: 'channel-1' as never, outboxIds: ['outbox-1'] }));
         const config = captureConfig(params);
 
         const discordMessage = {
@@ -426,7 +426,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
     test('onResponse records one HANDLED watermark per channel for a multi-channel batch, keyed to each channel\'s newest message', async () => {
         const recordHandled = mock(() => Promise.resolve());
         const params = makeConductorParams({ inboxManager: { recordHandled } });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const config = captureConfig(params);
 
         const discordMessage = {
@@ -461,7 +461,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
             return writes.get(channelId)!.promise;
         });
         const params = makeConductorParams({ inboxManager: { recordHandled } });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         mockLogger.warn.mockClear();
         const config = captureConfig(params);
         const discordMessage = { id: '100', content: 'hi', channelId: '123' } as unknown as Message;
@@ -501,7 +501,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
             return callCount === 1 ? firstWrite.promise : Promise.resolve();
         });
         const params = makeConductorParams({ inboxManager: { recordHandled } });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const config = captureConfig(params);
         const discordMessage = { id: '100', content: 'hi', channelId: '123' } as unknown as Message;
         const result = { response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1' };
@@ -525,7 +525,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         let calls = 0;
         const recordHandled = mock(() => (++calls === 1 ? firstWrite.promise : secondWrite.promise));
         const params = makeConductorParams({ inboxManager: { recordHandled } });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const deleteSpy = spyOn(Map.prototype, 'delete');
         spies.push(deleteSpy);
         const config = captureConfig(params);
@@ -547,17 +547,14 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         expect(deleteSpy).toHaveBeenCalledWith('123');
     });
 
-    test('onResponse does not journal (deliver\'s send callback throws) on a no-response skip, but does journal on sent/queued', async () => {
-        const deliverCalls: { threw: boolean }[] = [];
-        const deliver = mock(async (_envelopeId: string, send: () => Promise<unknown>) => {
-            try {
-                await send();
-                deliverCalls.push({ threw: false });
-                return { delivered: true };
-            } catch{
-                deliverCalls.push({ threw: true });
-                return { delivered: false };
-            }
+    test('onResponse returns tagged sent, queued, and skipped outcomes to conductor.deliver', async () => {
+        const deliverCalls: SendOutcome[] = [];
+        const deliver = mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
+            const outcome = await send();
+            deliverCalls.push(outcome);
+            return outcome.kind === 'skipped'
+                ? { outcome: 'skipped' as const }
+                : { outcome: 'committed' as const, disposition: outcome.disposition };
         });
         const params = makeConductorParams({
             conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver },
@@ -571,25 +568,29 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         spies.push(sendEnvelopeResponseSpy);
 
         // Sent: the send callback resolves normally — deliver's real implementation would journal.
-        sendEnvelopeResponseSpy.mockResolvedValueOnce({ sent: true });
+        sendEnvelopeResponseSpy.mockResolvedValueOnce({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
         const config = captureConfig(params);
         await config.onResponse?.({
             response: 'a', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-a',
         }, discordMessage, batch);
 
         // Queued: also resolves normally — the outbox owns the retry, so this still journals.
-        sendEnvelopeResponseSpy.mockResolvedValueOnce({ sent: false, queued: true });
+        sendEnvelopeResponseSpy.mockResolvedValueOnce({ status: 'queued', channelId: 'channel-1' as never, outboxIds: ['outbox-1'] });
         await config.onResponse?.({
             response: 'b', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-b',
         }, discordMessage, batch);
 
-        // No-response: the send callback throws — deliver's real implementation would NOT journal.
-        sendEnvelopeResponseSpy.mockResolvedValueOnce({ sent: false, skipReason: 'no-response' });
+        // No-response is returned as skipped, so the real conductor does not journal it.
+        sendEnvelopeResponseSpy.mockResolvedValueOnce({ status: 'skipped', reason: 'no-response' });
         await config.onResponse?.({
             response: '@@NO_RESPONSE@@', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-c',
         }, discordMessage, batch);
 
-        expect(deliverCalls).toEqual([{ threw: false }, { threw: false }, { threw: true }]);
+        expect(deliverCalls).toEqual([
+            { kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] },
+            { kind: 'committed', disposition: 'queued', channelId: 'channel-1', outboxIds: ['outbox-1'] },
+            { kind: 'skipped', reason: 'no-response' },
+        ]);
     });
 
     test('suppresses the expected no-response delivery sentinel without treating it as a conductor failure', async () => {
@@ -597,7 +598,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         const params = makeConductorParams({
             conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver },
         });
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, skipReason: 'no-response' }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'skipped', reason: 'no-response' }));
         const config = captureConfig(params);
         const discordMessage = { id: 'msg-1', content: 'hi', channelId: '123' } as unknown as Message;
         mockLogger.error.mockClear();

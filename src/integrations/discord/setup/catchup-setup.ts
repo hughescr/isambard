@@ -12,17 +12,9 @@ import {
     type TimeHeaderProvider,
     computeRecovery, lastKnownAt, buildDiscordEnvelope, buildCatchupEnvelope, runBootSequence
 } from '@/agent';
+import { ResponseUnavailableError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services';
 import { resolveTimezone, formatTimeHeader, truncateToWordBoundary } from '@/utils';
-
-/**
- * Sentinel thrown from inside the `send` callback passed to `conversationConductor.deliver`
- * (both {@link submitAndDeliverConductorEnvelope} and `runConductorInboxInit`'s own
- * `deliverUndelivered`) when {@link sendEnvelopeResponse} reports neither `sent` nor `queued` —
- * genuinely nothing to journal (the `@@NO_RESPONSE@@` sentinel or a missing well-known channel).
- * Always caught and logged by its own caller; never a programming error.
- */
-class ConductorEnvelopeSkippedError extends Error {}
 
 /**
  * Local shape covering exactly what boot-time envelope composition ({@link runConductorInboxInit})
@@ -132,10 +124,23 @@ export async function submitAndDeliverConductorEnvelope(envelope: Envelope, deps
                 rateLimiter,
                 discordCapability,
             });
-            if(!sendResult.sent && !sendResult.queued) {
-                throw new ConductorEnvelopeSkippedError(`Conductor envelope response not delivered: ${sendResult.skipReason ?? 'unknown reason'}`);
+            switch(sendResult.status) {
+                case 'sent': {
+                    return { kind: 'committed', disposition: 'sent', channelId: sendResult.channelId, messageIds: sendResult.messageIds };
+                }
+                case 'queued': {
+                    return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
+                }
+                case 'partial': {
+                    return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : [])) };
+                }
+                case 'skipped': {
+                    return { kind: 'skipped', reason: sendResult.reason };
+                }
+                case 'unavailable': {
+                    throw new ResponseUnavailableError();
+                }
             }
-            return { channelId: envelope.channelId ?? '', messageIds: [] };
         });
     } catch (err) {
         logger.warn({ err, envelopeId: envelope.id, msg: 'Conductor envelope delivery failed' });
@@ -310,7 +315,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
             return;
         }
         try {
-            await conversationConductor.deliver(item.envelopeId, async () => {
+            const deliverResult = await conversationConductor.deliver(item.envelopeId, async () => {
                 const channelId = await resolveRedeliveryChannel(item, item.responseText!);
                 const sendResult = await sendEnvelopeResponse({
                     envelopeId: item.envelopeId,
@@ -322,12 +327,22 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
                     rateLimiter,
                     discordCapability,
                 });
-                if(!sendResult.sent && !sendResult.queued) {
-                    throw new ConductorEnvelopeSkippedError(`Boot-time undelivered redelivery skipped: ${sendResult.skipReason ?? 'unknown reason'}`);
+                switch(sendResult.status) {
+                    case 'sent': { return { kind: 'committed', disposition: 'sent', channelId: sendResult.channelId, messageIds: sendResult.messageIds };
+                    }
+                    case 'queued': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
+                    }
+                    case 'partial': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : [])) };
+                    }
+                    case 'skipped': { return { kind: 'skipped', reason: sendResult.reason };
+                    }
+                    case 'unavailable': { throw new ResponseUnavailableError();
+                    }
                 }
-                return { channelId: channelId ?? '', messageIds: [] };
             });
-            redeliveredTexts.push(truncateToWordBoundary(item.responseText, REDELIVERED_TEXT_PREVIEW_LENGTH));
+            if(deliverResult.outcome === 'committed') {
+                redeliveredTexts.push(truncateToWordBoundary(item.responseText, REDELIVERED_TEXT_PREVIEW_LENGTH));
+            }
         } catch (err) {
             logger.warn({ err, envelopeId: item.envelopeId, msg: 'Boot-time undelivered redelivery failed' });
         }

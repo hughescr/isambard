@@ -26,6 +26,7 @@ export {
     DiscordError,
     ChannelNotFoundByIdError,
     ChannelNotAccessibleError,
+    ResponseUnavailableError,
     ChannelRegistryError,
     ChannelNotFoundByNameError,
     AmbiguousChannelError,

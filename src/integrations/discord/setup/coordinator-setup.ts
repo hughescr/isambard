@@ -19,6 +19,7 @@ import { createConductorProcessor, type DiscordEnvelopeProvider } from './conduc
 import {
     type PlatformImage, type ActivityLogger, type Conductor, type ContextPolicy, type ContextBuilder, type TimeHeaderProvider, generateText
 } from '@/agent';
+import { ResponseUnavailableError } from '@/errors';
 import { resolveTimezone } from '@/utils';
 
 /**
@@ -114,15 +115,6 @@ export async function processAttachments(contexts: DiscordMessageContext[]): Pro
 
     return { images, contentAdditions };
 }
-/**
- * Sentinel thrown from inside the `send` callback passed to `conversationConductor.deliver`
- * (`onResponse`, below) when `sendEnvelopeResponse` reports neither `sent` nor `queued` — an
- * expected outcome (the `@@NO_RESPONSE@@` sentinel or a missing well-known channel), not a
- * failure. Distinguishes that case from a genuine delivery error so `deliver`'s caller logs only
- * the latter.
- */
-class ResponseNotSentError extends Error {}
-
 /**
  * Parameters for setting up coordinator integration.
  */
@@ -269,18 +261,29 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                     rateLimiter,
                     discordCapability: params.discordCapability,
                 });
-                if(!sendResult.sent && !sendResult.queued) {
-                    throw new ResponseNotSentError();
+                switch(sendResult.status) {
+                    case 'sent': {
+                        return { kind: 'committed', disposition: 'sent', channelId: sendResult.channelId, messageIds: sendResult.messageIds };
+                    }
+                    case 'queued': {
+                        return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
+                    }
+                    case 'partial': {
+                        return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : [])) };
+                    }
+                    case 'skipped': {
+                        return { kind: 'skipped', reason: sendResult.reason };
+                    }
+                    case 'unavailable': {
+                        throw new ResponseUnavailableError();
+                    }
                 }
-                return { channelId: discordMessage.channelId, messageIds: [] };
             });
-            if(deliverResult.delivered) {
+            if(deliverResult.outcome === 'committed') {
                 params.addRecentChannel?.(createChannelId(discordMessage.channelId));
             }
         } catch (err) {
-            if(!(err instanceof ResponseNotSentError)) {
-                logger.error({ err, envelopeId, msg: 'Conductor response delivery failed' });
-            }
+            logger.error({ err, envelopeId, msg: 'Conductor response delivery failed' });
         }
 
         // A settled response advances each channel's watermark even when delivery queued or skipped.

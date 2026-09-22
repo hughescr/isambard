@@ -1,6 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { TextChannel, Client } from 'discord.js';
-import type { DiscordCapability } from './capability';
+import type { DiscordCapability, SendResult } from './capability';
 import { type ResponseRouter, WellKnownChannelNotFoundError  } from './channel-registry';
 import { splitMessage } from './messages';
 import type { DiscordRateLimiter } from './rate-limiter';
@@ -38,29 +38,35 @@ async function sendChunksViaCapability(
     envelopeId:        string,
     kind:              EnvelopeKind
 ): Promise<SendEnvelopeResponseResult> {
-    let anyQueued = false;
+    const results: SendResult[] = [];
     for(const [i, chunk] of chunks.entries()) {
         // Stryker disable llm: targetChannelId is a ChannelId (string), so `targetChannelId || ''` is the identity.
         // eslint-disable-next-line no-await-in-loop -- sequential: Discord message ordering, outbox writes must preserve order
         const result = await discordCapability.sendToChannel(targetChannelId, chunk, {
-            priority: 'high',
-            type:     outboxTypeForEnvelopeKind(kind),
+            priority: 'high', type: outboxTypeForEnvelopeKind(kind),
         });
         // Stryker restore llm
-        if(result.status === 'queued' || result.status === 'unavailable') {
-            anyQueued = true;
-        }
+        results.push(result);
         logger.info({ envelopeId, kind, chunkIndex: i, totalChunks: chunks.length, msg: 'Envelope response chunk sent via capability facade' });
     }
-    return { sent: !anyQueued, queued: anyQueued || undefined };
+    if(results.some(result => result.status === 'unavailable')) {
+        return { status: 'unavailable' };
+    }
+    if(results.every(result => result.status === 'sent')) {
+        return { status: 'sent', channelId: targetChannelId, messageIds: results.flatMap(result => (result.message === undefined ? [] : [result.message.id])) };
+    }
+    if(results.every(result => result.status === 'queued')) {
+        return { status: 'queued', channelId: targetChannelId, outboxIds: results.map(result => result.outboxId) };
+    }
+    return { status: 'partial', channelId: targetChannelId, chunks: results };
 }
 
 /**
  * Chunk-sending branch of {@link sendEnvelopeResponse} when no {@link DiscordCapability} is
- * available: sends directly via the rate limiter, with no outbox to fall back to on failure (see
- * {@link sendEnvelopeResponse}'s own doc for why that resolves to a genuine `{ sent: false }`
- * rather than a fabricated `queued: true`). Split out purely to keep `sendEnvelopeResponse` under
- * the project's complexity threshold — no behavioural difference from being inlined.
+ * available: sends directly via the rate limiter, with no outbox to fall back to on failure, so a
+ * failed send resolves to the tagged `unavailable` result. Split out purely to keep
+ * `sendEnvelopeResponse` under the project's complexity threshold — no behavioural difference
+ * from being inlined.
  */
 async function sendChunksViaClient(
     client:          Client,
@@ -75,18 +81,18 @@ async function sendChunksViaClient(
         if(!targetChannel?.isTextBased()) {
             throw new ChannelNotAccessibleError(targetChannelId);
         }
-
+        const messageIds: string[] = [];
         for(const [i, chunk] of chunks.entries()) {
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API, message ordering
-            await withDiscordRetry(() => rateLimiter.sendToChannel(targetChannel as TextChannel, chunk));
+            const message = await withDiscordRetry(() => rateLimiter.sendToChannel(targetChannel as TextChannel, chunk));
+            messageIds.push(message.id);
             logger.info({ envelopeId, kind, chunkIndex: i, totalChunks: chunks.length, msg: 'Envelope response chunk sent successfully' });
         }
-
-        return { sent: true };
+        return { status: 'sent', channelId: targetChannelId, messageIds };
     } catch (sendError) {
         const err = sendError instanceof Error ? sendError : new Error(String(sendError));
         logger.warn({ error: err, envelopeId, kind, msg: `Envelope response send failed, no outbox to queue to: ${err.message}` });
-        return { sent: false };
+        return { status: 'unavailable' };
     }
 }
 
@@ -109,25 +115,25 @@ interface SendEnvelopeResponseConfig {
     /** Rate limiter for Discord API calls. */
     rateLimiter:        DiscordRateLimiter
     /**
-     * Optional Discord capability facade. When provided, every chunk routes through it — with
+     * Optional Discord capability facade. When provided, every chunk routes through it with an
      * outbox fallback when Discord is offline. Every production call site wires this; omitting it
-     * is a test-only convenience, and a send failure with no facade is reported honestly as
-     * `{ sent: false }` rather than a fabricated `queued: true` (see the module-level history: P10
-     * originally faked `queued: true` on any failure here, which journaled a lost response as
-     * delivered).
+     * is a test-only convenience, and a send failure with no facade is reported honestly as the
+     * tagged `unavailable` result rather than as an outbox commitment.
      */
     discordCapability?: DiscordCapability
 }
 
-/** Result of {@link sendEnvelopeResponse}. */
-interface SendEnvelopeResponseResult {
-    /** Whether the response was sent. */
-    sent:        boolean
-    /** Set when the channel couldn't be reached or the send failed after retries — the response should be treated as pending, not lost. */
-    queued?:     boolean
-    /** Reason for not sending (when `sent` is `false` and not queued). */
-    skipReason?: string
-}
+/**
+ * Tagged result of {@link sendEnvelopeResponse}. Multi-chunk capability sends use this precedence:
+ * any unavailable chunk wins; otherwise all sent is sent, all queued is queued, and a sent/queued
+ * mix is partial. Unavailable is not committed because boot recovery may safely redeliver it.
+ */
+export type SendEnvelopeResponseResult
+    = | { status: 'sent', channelId: ChannelId, messageIds: string[] }
+      | { status: 'queued', channelId: ChannelId, outboxIds: string[] }
+      | { status: 'partial', channelId: ChannelId, chunks: SendResult[] }
+      | { status: 'unavailable' }
+      | { status: 'skipped', reason: string };
 
 /**
  * Sends a conductor-mode envelope's response, client-based (P10): no `botStateManager` read (the
@@ -139,14 +145,12 @@ interface SendEnvelopeResponseResult {
  * A `discord`/`notification` kind with no `channelId` is a programming error (there is no origin
  * to route to) and throws {@link InvariantViolationError} rather than silently dropping the
  * response. A missing well-known channel for `catchup`/`perch` has no channel to fall back to, so
- * it resolves to `{ sent: false, skipReason }` instead. The `@@NO_RESPONSE@@` sentinel resolves to
- * `{ sent: false, skipReason: 'no-response' }`. When `config.discordCapability` is provided (every
- * production call site wires one), a chunk queued or unavailable through it resolves to
- * `{ sent: false, queued: true }`, and the caller (the boot sequence, via `Conductor.deliver`)
- * treats that the same as never having sent at all, safe to retry on a later boot — the outbox
- * itself owns the retry. Without a `discordCapability`, there is no outbox to fall back to, so a
- * channel that can't be fetched or a chunk send that still fails after retries resolves to a
- * genuine `{ sent: false }` rather than a fabricated `queued: true`.
+ * it resolves to `skipped`; `@@NO_RESPONSE@@` also resolves to `skipped` with reason `no-response`.
+ * With `config.discordCapability` (wired at every production call site), all queued chunks resolve
+ * to `queued`, a sent/queued mix resolves to `partial`, and any unavailable chunk resolves to
+ * `unavailable`. The conductor commits only sent/queued/partial outcomes; skipped and unavailable
+ * outcomes are deliberately left for a later boot replay. Without a `discordCapability`, a channel
+ * that cannot be fetched or a chunk send that fails after retries is likewise `unavailable`.
  *
  * @param config - See {@link SendEnvelopeResponseConfig}.
  * @returns See {@link SendEnvelopeResponseResult}.
@@ -170,10 +174,7 @@ export async function sendEnvelopeResponse(config: SendEnvelopeResponseConfig): 
                 channelType: routeError.context.channelType,
                 msg:         `Cannot route envelope response: well-known channel #${routeError.context.channelType} not configured. Response skipped.`,
             });
-            return {
-                sent:       false,
-                skipReason: `Well-known channel #${routeError.context.channelType} not configured`,
-            };
+            return { status: 'skipped', reason: `Well-known channel #${routeError.context.channelType} not configured` };
         }
         throw routeError;
     }
@@ -185,10 +186,7 @@ export async function sendEnvelopeResponse(config: SendEnvelopeResponseConfig): 
             fullResponse: text,
             msg:          'Agent chose not to respond (@@NO_RESPONSE@@ sentinel detected)',
         });
-        return {
-            sent:       false,
-            skipReason: 'no-response',
-        };
+        return { status: 'skipped', reason: 'no-response' };
     }
 
     const chunks = splitMessage(resolved.content);

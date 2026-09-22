@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn, jest } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
 import { mockLogger, mockWithDiscordRetry } from '../../../setup';
+import type { SendOutcome } from '@/agent';
 import type { AnswerClassifier } from '@/agent/answer-classifier/classifier';
 import type { ClassificationResult, MessageToClassify } from '@/agent/answer-classifier/types';
 import type { QuestionRegistry } from '@/agent/question-registry/registry';
@@ -1749,17 +1750,17 @@ describe('Discord Event Handlers', () => {
             }
 
             function createFakePerchConductor(turnResult: { response: string | null }) {
-                const deliveredPayloads: { channelId: string, messageIds: string[] }[] = [];
+                const deliveredPayloads: SendOutcome[] = [];
                 const deliveryErrors: Error[] = [];
                 return {
                     submit: mock(async (_envelope: { kind: string, authorId?: string }, _options: { priority: string, requestingChannelId?: string }) => ({
                         envelopeId: 'env-perch-1', response: turnResult.response, wasInterrupted: false, partialWork: { thinking: '', text: '', pendingToolUse: null, sessionId: undefined }, sessionId: 'perch-sess-1', isError: false, contextUsagePercent: 0,
                     })),
-                    deliver: mock(async (_envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+                    deliver: mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
                         try {
                             const payload = await send();
                             deliveredPayloads.push(payload);
-                            return { delivered: true };
+                            return { outcome: 'committed' as const, disposition: 'sent' as const };
                         } catch (error) {
                             deliveryErrors.push(error as Error);
                             throw error;
@@ -1776,7 +1777,7 @@ describe('Discord Event Handlers', () => {
                 const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
                 const perchConductor = createFakePerchConductor({ response: 'Nothing much to report.' });
                 const ingressGate = createMockIngressGate(() => 'pass');
-                const sendEnvelopeResponseSpy = spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+                const sendEnvelopeResponseSpy = spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
 
                 const handler = createMessageHandler({
                     channelRegistry,
@@ -1811,7 +1812,7 @@ describe('Discord Event Handlers', () => {
                 expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
                     kind: 'discord', channelId: PERCH_CHANNEL_ID, text: 'Nothing much to report.',
                 }));
-                expect(perchConductor.deliveredPayloads).toEqual([{ channelId: PERCH_CHANNEL_ID, messageIds: [] }]);
+                expect(perchConductor.deliveredPayloads).toEqual([{ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] }]);
                 expect(perchConductor.deliveryErrors).toEqual([]);
                 expect(mockInboxManager.recordHandled).toHaveBeenCalledWith(PERCH_CHANNEL_ID, mockMessage.id, mockMessage.createdAt.toISOString());
             });
@@ -2166,7 +2167,7 @@ describe('Discord Event Handlers', () => {
                 const ingressGate = createMockIngressGate(() => 'pass');
                 const perchConductor = {
                     submit:  mock(() => Promise.reject(new Error('perch conductor is shutting down'))),
-                    deliver: mock(async () => ({ delivered: true })),
+                    deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })),
                 };
 
                 const handler = createMessageHandler({
@@ -2193,13 +2194,13 @@ describe('Discord Event Handlers', () => {
                 expect(mockInboxManager.recordHandled).toHaveBeenCalledWith(PERCH_CHANNEL_ID, mockMessage.id, mockMessage.createdAt.toISOString());
             });
 
-            it('the not-sent sentinel (sent:false, queued:false) is suppressed — no error log, watermark still advances', async () => {
+            it('a skipped perch response produces no delivery error and still advances the watermark', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const mockInboxManager = createMockInboxManager();
                 const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
                 const perchConductor = createFakePerchConductor({ response: 'Nothing much to report.' });
                 const ingressGate = createMockIngressGate(() => 'pass');
-                spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: false });
+                spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'skipped', reason: 'no-response' });
 
                 const handler = createMessageHandler({
                     channelRegistry,
@@ -2218,15 +2219,14 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 expect(mockInboxManager.recordHandled).toHaveBeenCalledTimes(1);
-                expect(perchConductor.deliveryErrors).toHaveLength(1);
-                expect(perchConductor.deliveryErrors[0]?.constructor.name).toBe('PerchResponseNotSentError');
+                expect(perchConductor.deliveryErrors).toEqual([]);
                 expect(mockLogger.error).not.toHaveBeenCalled();
             });
 
             it('accepts a queued perch response as delivered without raising the not-sent sentinel', async () => {
                 const mockInboxManager = createMockInboxManager();
                 const perchConductor = createFakePerchConductor({ response: 'Queued response' });
-                spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: true });
+                spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'queued', channelId: 'channel-1' as never, outboxIds: ['outbox-1'] });
                 const handler = createMessageHandler({
                     channelRegistry: createMockChannelRegistry(PERCH_CHANNEL_ID),
                     botUserId:       '999999999999999999' as UserId,
@@ -2242,7 +2242,7 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 expect(perchConductor.deliveryErrors).toEqual([]);
-                expect(perchConductor.deliveredPayloads).toEqual([{ channelId: PERCH_CHANNEL_ID, messageIds: [] }]);
+                expect(perchConductor.deliveredPayloads).toEqual([{ kind: 'committed', disposition: 'queued', channelId: 'channel-1', outboxIds: ['outbox-1'] }]);
             });
 
             it('a real delivery failure (not the not-sent sentinel) is logged but the watermark still advances', async () => {

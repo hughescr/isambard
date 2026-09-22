@@ -145,7 +145,7 @@ export type JournalEntry
     /** channelId identifies the requesting Discord channel, when the envelope came from one — carried so P8 crash recovery can attribute an undelivered response to its destination channel. */
     = | { type: 'envelope_submitted', at: Date, envelopeId: string, kind: EnvelopeKind, channelId?: string }
       /** channelId/messageIds identify where the response landed, for the P8 delivery guard's crash-recovery replay. */
-      | { type: 'response_delivered', at: Date, envelopeId: string, channelId: string, messageIds: string[] }
+      | { type: 'response_delivered', at: Date, envelopeId: string, channelId: string, messageIds: string[], disposition?: 'sent' | 'queued' }
       /** responseText (present when the host observed one) seeds P8 recovery's undelivered-envelope replay; `truncated` marks a text capped before storage. */
       | { type: 'turn_completed', at: Date, envelopeId: string, kind: EnvelopeKind, responseText?: string, truncated?: boolean }
       | { type: 'turn_failed', at: Date, envelopeId: string, kind: EnvelopeKind, error: string }

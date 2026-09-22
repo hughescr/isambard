@@ -95,7 +95,7 @@ describe('computeRecovery', () => {
         ]);
     });
 
-    test('a delivered envelope is not undelivered, and is present in deliveredEnvelopeIds', () => {
+    test('a pre-change response_delivered row without disposition seeds the delivery guard', () => {
         const entries: JournalEntry[] = [
             { type: 'envelope_submitted', at: AT, envelopeId: 'env-1', kind: 'discord' },
             { type: 'turn_completed', at: AT, envelopeId: 'env-1', kind: 'discord', responseText: 'hello there' },

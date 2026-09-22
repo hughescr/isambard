@@ -34,7 +34,7 @@ export const journalEntrySchema = z.discriminatedUnion('type', [
         ...journalEntryBase, type: z.literal('envelope_submitted'), envelopeId: z.string(), kind: envelopeKindSchema, channelId: z.string().optional(),
     }),
     z.object({
-        ...journalEntryBase, type: z.literal('response_delivered'), envelopeId: z.string(), channelId: z.string(), messageIds: z.array(z.string()),
+        ...journalEntryBase, type: z.literal('response_delivered'), envelopeId: z.string(), channelId: z.string(), messageIds: z.array(z.string()), disposition: z.enum(['sent', 'queued']).optional(),
     }),
     z.object({
         ...journalEntryBase, type: z.literal('turn_completed'), envelopeId: z.string(), kind: envelopeKindSchema, responseText: z.string().optional(), truncated: z.boolean().optional(),

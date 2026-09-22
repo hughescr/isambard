@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import { mockLogger } from '../../../../setup';
 import * as agentModule from '@/agent';
-import type { PerchConfig, TurnResult } from '@/agent';
+import { type SendOutcome, type PerchConfig, type TurnResult  } from '@/agent';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
 import { setupPerchDriverAndScheduler } from '@/integrations/discord/setup/perch-setup';
 
@@ -79,7 +79,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         const createPerchSchedulerSpy = jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
 
         const result = setupPerchDriverAndScheduler({
@@ -109,7 +109,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
         const timeHeader = (): string => 'AMBIENT-HEADER';
 
@@ -125,7 +125,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
         const slotHooks = { onSlotStart: mock(), onSlotEnd: mock() };
 
@@ -141,7 +141,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
 
         setupPerchDriverAndScheduler({
@@ -156,7 +156,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
 
         setupPerchDriverAndScheduler({
@@ -171,7 +171,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         const createPerchSchedulerSpy = jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
         const isCostPaused = (): boolean => true;
 
@@ -193,7 +193,7 @@ describe('setupPerchDriverAndScheduler', () => {
         });
 
         setupPerchDriverAndScheduler({
-            conductor:   { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) },
+            conductor:   { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) },
             perchConfig: PERCH_CONFIG,
             clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
             ...deliveryDeps(),
@@ -211,7 +211,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const activityLogger = { log: mock(async () => undefined) };
 
         setupPerchDriverAndScheduler({
-            conductor:   { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) },
+            conductor:   { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) },
             perchConfig: PERCH_CONFIG,
             clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
             contextBuilder,
@@ -237,12 +237,12 @@ describe('setupPerchDriverAndScheduler', () => {
 
         it('delivers a settled \'perch\'-kind turn\'s response to the well-known perch-time channel via conductor.deliver', async () => {
             const { getConductor } = captureDriverConductor();
-            const sendEnvelopeResponseSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+            const sendEnvelopeResponseSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
             const innerSubmit = mock(async () => makeTurnResult({ envelopeId: 'env-perch-1', response: 'Perch summary text' }));
-            let deliveredTarget: { channelId: string, messageIds: string[] } | undefined;
-            const innerDeliver = mock(async (_id: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+            let deliveredTarget: SendOutcome | undefined;
+            const innerDeliver = mock(async (_id: string, send: () => Promise<SendOutcome>) => {
                 deliveredTarget = await send();
-                return { delivered: true };
+                return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
             const channelRegistry = fakeChannelRegistry();
 
@@ -258,7 +258,7 @@ describe('setupPerchDriverAndScheduler', () => {
 
             expect(innerDeliver).toHaveBeenCalledTimes(1);
             expect(channelRegistry.getWellKnownChannel).not.toHaveBeenCalled();
-            expect(deliveredTarget).toEqual({ channelId: '', messageIds: [] });
+            expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] });
             expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
                 envelopeId: 'env-perch-1', kind: 'perch', text: 'Perch summary text',
             }));
@@ -266,12 +266,12 @@ describe('setupPerchDriverAndScheduler', () => {
 
         it('delivers a settled \'wrapup\'-kind turn\'s response, resolving the perch-time channel id explicitly', async () => {
             const { getConductor } = captureDriverConductor();
-            const sendEnvelopeResponseSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+            const sendEnvelopeResponseSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
             const innerSubmit = mock(async () => makeTurnResult({ envelopeId: 'env-wrapup-1', response: 'Wrapping up soon' }));
-            let deliveredTarget: { channelId: string, messageIds: string[] } | undefined;
-            const innerDeliver = mock(async (_id: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+            let deliveredTarget: SendOutcome | undefined;
+            const innerDeliver = mock(async (_id: string, send: () => Promise<SendOutcome>) => {
                 deliveredTarget = await send();
-                return { delivered: true };
+                return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
             const channelRegistry = fakeChannelRegistry('perch-time-channel-id');
 
@@ -286,9 +286,8 @@ describe('setupPerchDriverAndScheduler', () => {
             await wrapped?.submit({ id: 'env-wrapup-1', kind: 'wrapup' }, { priority: 'other' });
 
             expect(channelRegistry.getWellKnownChannel).toHaveBeenCalledWith('perch-time');
-            // `deliver` journals this return value as the `response_delivered` row, so the
-            // resolved perch-time id — not a blank fallback — is what the receipt records.
-            expect(deliveredTarget).toEqual({ channelId: 'perch-time-channel-id', messageIds: [] });
+            // `deliver` journals the target reported by the sender's tagged result.
+            expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] });
             expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
                 envelopeId: 'env-wrapup-1', kind: 'wrapup', channelId: 'perch-time-channel-id', text: 'Wrapping up soon',
             }));
@@ -296,8 +295,8 @@ describe('setupPerchDriverAndScheduler', () => {
 
         it('never delivers a \'discord\'-kind turn (handlers.ts already delivers that one itself)', async () => {
             const { getConductor } = captureDriverConductor();
-            const sendEnvelopeResponseSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
-            const innerDeliver = mock(async () => ({ delivered: true }));
+            const sendEnvelopeResponseSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
+            const innerDeliver = mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const }));
 
             setupPerchDriverAndScheduler({
                 conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-discord-1', response: 'hi' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
@@ -315,7 +314,7 @@ describe('setupPerchDriverAndScheduler', () => {
 
         it('does not deliver when the turn produced no response (null)', async () => {
             const { getConductor } = captureDriverConductor();
-            const innerDeliver = mock(async () => ({ delivered: true }));
+            const innerDeliver = mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const }));
 
             setupPerchDriverAndScheduler({
                 conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-perch-2', response: null, wasInterrupted: true })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
@@ -334,9 +333,9 @@ describe('setupPerchDriverAndScheduler', () => {
             const { getConductor } = captureDriverConductor();
             const error = new Error('Discord API down');
             jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockRejectedValue(error);
-            const innerDeliver = mock(async (_id: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+            const innerDeliver = mock(async (_id: string, send: () => Promise<SendOutcome>) => {
                 await send();
-                return { delivered: true };
+                return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
 
             setupPerchDriverAndScheduler({
@@ -355,12 +354,12 @@ describe('setupPerchDriverAndScheduler', () => {
 
         it('the not-sent sentinel (sent:false, queued:false) is suppressed — no error log, no rejection of the wrapped submit() call', async () => {
             const { getConductor } = captureDriverConductor();
-            jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: false });
+            jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'skipped', reason: 'no-response' });
             let sendCompleted = false;
-            const innerDeliver = mock(async (_id: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+            const innerDeliver = mock(async (_id: string, send: () => Promise<SendOutcome>) => {
                 await send();
                 sendCompleted = true;
-                return { delivered: true };
+                return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
 
             setupPerchDriverAndScheduler({
@@ -372,17 +371,17 @@ describe('setupPerchDriverAndScheduler', () => {
 
             const wrapped = getConductor();
             await expect(wrapped?.submit({ id: 'env-perch-4', kind: 'perch' }, { priority: 'other' })).resolves.toEqual(expect.objectContaining({ envelopeId: 'env-perch-4' }));
-            expect(sendCompleted).toBe(false);
+            expect(sendCompleted).toBe(true);
             expect(mockLogger.error).not.toHaveBeenCalled();
         });
 
         it('a queued perch response completes delivery and returns the empty-channel receipt', async () => {
             const { getConductor } = captureDriverConductor();
-            jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: true });
-            let deliveredTarget: { channelId: string, messageIds: string[] } | undefined;
-            const innerDeliver = mock(async (_id: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+            jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'queued', channelId: 'channel-1' as never, outboxIds: ['outbox-1'] });
+            let deliveredTarget: SendOutcome | undefined;
+            const innerDeliver = mock(async (_id: string, send: () => Promise<SendOutcome>) => {
                 deliveredTarget = await send();
-                return { delivered: true };
+                return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
             setupPerchDriverAndScheduler({
                 conductor:   { submit: mock(async () => makeTurnResult({ response: 'queued' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
@@ -393,7 +392,7 @@ describe('setupPerchDriverAndScheduler', () => {
 
             await getConductor()?.submit({ id: 'env-1', kind: 'perch' }, { priority: 'other' });
 
-            expect(deliveredTarget).toEqual({ channelId: '', messageIds: [] });
+            expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'queued', channelId: 'channel-1', outboxIds: ['outbox-1'] });
             expect(mockLogger.error).not.toHaveBeenCalled();
         });
     });

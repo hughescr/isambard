@@ -10,9 +10,7 @@ import {
     type Clock, type Conductor, type Envelope, type SubmitOptions, type TimeHeaderProvider, type TurnResult,
     createPerchScheduler, createPerchDriver
 } from '@/agent';
-
-/** Sentinel thrown inside the delivery wrapper's `conductor.deliver` callback (below) to skip the journal write when nothing was actually sent — mirrors `coordinator-setup.ts`/`handlers.ts`'s identical `ResponseNotSentError`. */
-class PerchTurnNotSentError extends Error {}
+import { ResponseUnavailableError } from '@/errors';
 
 /** Parameters for {@link setupPerchDriverAndScheduler}. */
 interface SetupPerchDriverParams {
@@ -74,15 +72,26 @@ function wrapConductorWithDelivery(
                     rateLimiter,
                     discordCapability,
                 });
-                if(!sendResult.sent && !sendResult.queued) {
-                    throw new PerchTurnNotSentError();
+                switch(sendResult.status) {
+                    case 'sent': {
+                        return { kind: 'committed', disposition: 'sent', channelId: sendResult.channelId, messageIds: sendResult.messageIds };
+                    }
+                    case 'queued': {
+                        return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
+                    }
+                    case 'partial': {
+                        return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : [])) };
+                    }
+                    case 'skipped': {
+                        return { kind: 'skipped', reason: sendResult.reason };
+                    }
+                    case 'unavailable': {
+                        throw new ResponseUnavailableError();
+                    }
                 }
-                return { channelId: channelId ?? '', messageIds: [] };
             });
         } catch (err) {
-            if(!(err instanceof PerchTurnNotSentError)) {
-                logger.error({ err, envelopeId: envelope.id, kind: envelope.kind, msg: 'Perch turn response delivery failed' });
-            }
+            logger.error({ err, envelopeId: envelope.id, kind: envelope.kind, msg: 'Perch turn response delivery failed' });
         }
     }
 

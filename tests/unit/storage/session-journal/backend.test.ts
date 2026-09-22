@@ -203,6 +203,20 @@ describe('SessionJournalBackend', () => {
             expect(entries).toHaveLength(ALL_ENTRY_ROWS.length);
         });
 
+        test('a pre-change response_delivered row without disposition still parses', async () => {
+            const legacyRow = ALL_ENTRY_ROWS.find(row => row.type === 'response_delivered')!;
+            ddbMock.on(QueryCommand).resolves({ Items: [legacyRow] });
+
+            const entries = await backend.readSince('conversation', '2026-09-01T00:00:00.000Z');
+
+            expect(entries).toHaveLength(1);
+            expect(entries[0]).toMatchObject({
+                type: 'response_delivered', envelopeId: 'e1', channelId: 'chan-1', messageIds: ['m1'],
+            });
+            expect('disposition' in entries[0]).toBe(false);
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
         test.each(ALL_ENTRY_ROWS.map(row => [row.type as string, row] as const))('%s parses to its own type with fields intact', async (type, row) => {
             ddbMock.on(QueryCommand).resolves({ Items: [row] });
             const { PK: _pk, SK: _sk, TTL: _ttl, ...expectedFields } = row;

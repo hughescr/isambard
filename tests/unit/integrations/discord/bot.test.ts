@@ -3,7 +3,7 @@ import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
 import { MessageFlags, type Client } from 'discord.js';
 import * as agentModule from '@/agent';
-import type { Conductor, LedgerStore } from '@/agent';
+import { type Conductor, type LedgerStore  } from '@/agent';
 import { DEFAULT_TASK_BOARD_CONFIG, type DiscordConfig } from '@/config/schemas';
 import type { AllowlistCommandHandler } from '@/integrations/discord/allowlist-commands';
 import { createDiscordBot, type DiscordBotOptions } from '@/integrations/discord/bot';
@@ -131,7 +131,7 @@ describe('createDiscordBot', () => {
         return {
             open:             mock(async () => ({ sessionId: 'sess-1', resumed: false })),
             submit:           mock(async () => ({})),
-            deliver:          mock(async () => ({ delivered: true })),
+            deliver:          mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })),
             interruptCurrent: mock(async () => undefined),
             subscribeTurn:    mock(() => mock(() => undefined)),
             status:           mock(() => ({})),

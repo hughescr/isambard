@@ -7,8 +7,9 @@
  * otherwise.
  */
 import { afterEach, describe, expect, it, jest } from 'bun:test';
-import type { Envelope, TurnResult } from '@/agent';
+import { type Envelope, type TurnResult, type SendOutcome  } from '@/agent';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
+import type { SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
 import { createWakeTurnDelivery, type CreateWakeTurnDeliveryParams } from '@/integrations/discord/setup/wake-delivery';
 
 /** Minimal-but-complete `TurnResult` fixture. */
@@ -43,9 +44,9 @@ function fakeLogger(): { warn: ReturnType<typeof jest.fn>, error: ReturnType<typ
 }
 
 function build(overrides: Partial<CreateWakeTurnDeliveryParams> = {}) {
-    const conductor = { deliver: jest.fn(async (_id: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+    const conductor = { deliver: jest.fn(async (_id: string, send: () => Promise<SendOutcome>) => {
         const result = await send();
-        return { delivered: true, ...result };
+        return result.kind === 'skipped' ? { outcome: 'skipped' as const } : { outcome: 'committed' as const, disposition: result.disposition };
     }) };
     const responseRouter = {
         routeToFallback: jest.fn(async (content: string) => ({
@@ -108,7 +109,7 @@ describe('createWakeTurnDelivery', () => {
 
     it('delivers to the envelope\'s own channel via conductor.deliver when channelId is set, and the guarded send resolves the delivery as sent (rather than being swallowed as not-sent)', async () => {
         const h = build();
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
 
         await h.deliver(makeEnvelope({ id: 'env-9', kind: 'task', channelId: 'chan-1' }), makeTurnResult({ response: 'done!' }));
 
@@ -122,27 +123,27 @@ describe('createWakeTurnDelivery', () => {
         // && !queued)`): if that guard were mutated to always throw, the send callback passed to
         // conductor.deliver would reject even on a genuine success, and this resolved value would
         // never be observed.
-        await expect(h.conductor.deliver.mock.results[0]?.value).resolves.toEqual({ delivered: true, channelId: 'chan-1', messageIds: [] });
+        await expect(h.conductor.deliver.mock.results[0]?.value).resolves.toEqual({ outcome: 'committed', disposition: 'sent' });
     });
 
-    it('a not-sent-but-queued send is treated as delivered, not thrown as not-sent — the guard requires BOTH sent and queued to be falsy', async () => {
+    it('a queued send is committed with queued disposition', async () => {
         const h = build();
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: true });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'queued', channelId: 'channel-1' as never, outboxIds: ['outbox-1'] });
 
         await h.deliver(makeEnvelope({ channelId: 'chan-1' }), makeTurnResult());
 
         expect(h.conductor.deliver).toHaveBeenCalled();
         // If the guard collapsed to checking `sent` twice (ignoring `queued`), this send callback
-        // would throw WakeTurnNotSentError despite having been queued, and conductor.deliver's
-        // returned promise would reject instead of resolving.
-        await expect(h.conductor.deliver.mock.results[0]?.value).resolves.toEqual({ delivered: true, channelId: 'chan-1', messageIds: [] });
+        // would reject despite the durable outbox commitment, and conductor.deliver's returned
+        // promise would reject instead of resolving.
+        await expect(h.conductor.deliver.mock.results[0]?.value).resolves.toEqual({ outcome: 'committed', disposition: 'queued' });
         expect(h.logger.error).not.toHaveBeenCalled();
     });
 
     it('threads discordCapability through to sendEnvelopeResponse when provided', async () => {
         const discordCapability = { sendToChannel: jest.fn() };
         const h = build({ discordCapability: discordCapability as unknown as CreateWakeTurnDeliveryParams['discordCapability'] });
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
 
         await h.deliver(makeEnvelope({ channelId: 'chan-1' }), makeTurnResult());
 
@@ -151,7 +152,7 @@ describe('createWakeTurnDelivery', () => {
 
     it('a well-known-mapped kind (perch) with no channelId still delivers via conductor.deliver, without touching the fallback route', async () => {
         const h = build();
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
 
         await h.deliver(makeEnvelope({ id: 'env-perch-1', kind: 'perch', channelId: undefined }), makeTurnResult({ response: 'perch summary' }));
 
@@ -163,12 +164,12 @@ describe('createWakeTurnDelivery', () => {
         // With no envelope.channelId, the send callback's own reported channelId falls back to
         // '' (not left undefined) — this is what conductor.deliver's send() resolves with, and
         // what would back a response_delivered journal row's channelId field.
-        await expect(h.conductor.deliver.mock.results[0]?.value).resolves.toEqual({ delivered: true, channelId: '', messageIds: [] });
+        await expect(h.conductor.deliver.mock.results[0]?.value).resolves.toEqual({ outcome: 'committed', disposition: 'sent' });
     });
 
     it('a \'task\' envelope with no channelId routes to the fallback channel with the default task prefix (summary first line), via conductor.deliver — so a repeat delivery gets journaled/deduped exactly like the known-target routes', async () => {
         const h = build();
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
 
         await h.deliver(
             makeEnvelope({ id: 'env-task-1', kind: 'task', channelId: undefined, text: 'Fixed the flaky test\nmore detail here' }),
@@ -185,7 +186,7 @@ describe('createWakeTurnDelivery', () => {
 
     it('keeps the task fallback summary empty when the settled task has no text', async () => {
         const h = build();
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
 
         await h.deliver(makeEnvelope({ kind: 'task', channelId: undefined, text: '' }), makeTurnResult({ response: 'All done.' }));
 
@@ -194,7 +195,7 @@ describe('createWakeTurnDelivery', () => {
 
     it('a \'notification\' envelope with no channelId routes to the fallback channel with the default notification prefix, via conductor.deliver', async () => {
         const h = build();
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
 
         await h.deliver(
             makeEnvelope({ id: 'env-notif-1', kind: 'notification', channelId: undefined }),
@@ -211,7 +212,7 @@ describe('createWakeTurnDelivery', () => {
     it('honours a custom fallbackPrefix override', async () => {
         const fallbackPrefix = jest.fn(() => 'CUSTOM PREFIX:\n');
         const h = build({ fallbackPrefix });
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
 
         const envelope = makeEnvelope({ kind: 'task', channelId: undefined });
         await h.deliver(envelope, makeTurnResult({ response: 'text' }));
@@ -220,19 +221,13 @@ describe('createWakeTurnDelivery', () => {
         expect(h.responseRouter.routeToFallback).toHaveBeenCalledWith('CUSTOM PREFIX:\ntext');
     });
 
-    it('a not-sent-not-queued send throws WakeTurnNotSentError, which propagates out of conductor.deliver (matching the real conductor\'s bare `await send()`, no internal catch) and is swallowed by deliverToKnownTarget itself — not rethrown, not logged', async () => {
+    it('forwards a skipped send to conductor.deliver without logging a delivery failure', async () => {
         const h = build();
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: false });
-
-        // Uses the DEFAULT fake conductor.deliver (see build()) — it does a bare `await send()`
-        // with no internal try/catch, exactly like the real conductor.deliver (conductor.ts's
-        // `await send()` at the top of its own function body), so a throw from the send callback
-        // genuinely propagates out of `conductor.deliver(...)` here, into deliverToKnownTarget's
-        // own catch — the only thing under test.
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'skipped', reason: 'no-response' });
         await expect(h.deliver(makeEnvelope({ channelId: 'chan-1' }), makeTurnResult())).resolves.toBeUndefined();
 
         expect(h.conductor.deliver).toHaveBeenCalled();
-        await expect(h.conductor.deliver.mock.results[0]?.value).rejects.toThrow();
+        await expect(h.conductor.deliver.mock.results[0]?.value).resolves.toEqual({ outcome: 'skipped' });
         expect(h.logger.error).not.toHaveBeenCalled();
     });
 
@@ -248,14 +243,14 @@ describe('createWakeTurnDelivery', () => {
         );
     });
 
-    it('a not-sent-not-queued fallback delivery is swallowed silently via conductor.deliver, exactly like a not-sent-not-queued known-target delivery — no warning, no error', async () => {
+    it('a skipped fallback delivery is forwarded silently to conductor.deliver', async () => {
         const h = build();
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: false });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'skipped', reason: 'no-response' });
 
         await expect(h.deliver(makeEnvelope({ kind: 'task', channelId: undefined }), makeTurnResult())).resolves.toBeUndefined();
 
         expect(h.conductor.deliver).toHaveBeenCalled();
-        await expect(h.conductor.deliver.mock.results[0]?.value).rejects.toThrow();
+        await expect(h.conductor.deliver.mock.results[0]?.value).resolves.toEqual({ outcome: 'skipped' });
         expect(h.logger.warn).not.toHaveBeenCalled();
         expect(h.logger.error).not.toHaveBeenCalled();
     });
@@ -271,8 +266,8 @@ describe('createWakeTurnDelivery', () => {
 
     it('a known-target delivery does not resolve until the send settles — proves deliverWakeTurn genuinely awaits deliverToKnownTarget\'s conductor.deliver chain rather than firing it and returning early', async () => {
         const h = build();
-        let resolveSend!: (v: { sent: boolean }) => void;
-        const pending = new Promise<{ sent: boolean }>((resolve) => {
+        let resolveSend!: (v: SendEnvelopeResponseResult) => void;
+        const pending = new Promise<SendEnvelopeResponseResult>((resolve) => {
             resolveSend = resolve;
         });
         jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockReturnValue(pending);
@@ -292,7 +287,7 @@ describe('createWakeTurnDelivery', () => {
         await Promise.resolve();
         expect(settled).toBe(false);
 
-        resolveSend({ sent: true });
+        resolveSend({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
         await operation;
         await observer;
         expect(settled).toBe(true);
@@ -300,7 +295,7 @@ describe('createWakeTurnDelivery', () => {
 
     it('a fallback delivery does not resolve until the routing (and then the send) settles — proves deliverToFallback\'s conductor.deliver chain is genuinely awaited, not fired and forgotten', async () => {
         const h = build();
-        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+        jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
         let resolveRouting!: (v: { targetChannelId: string, shouldSend: boolean, content: string, isFallback: boolean }) => void;
         const pending = new Promise<{ targetChannelId: string, shouldSend: boolean, content: string, isFallback: boolean }>((resolve) => {
             resolveRouting = resolve;

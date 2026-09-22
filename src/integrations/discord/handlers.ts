@@ -12,6 +12,7 @@ import { sendEnvelopeResponse } from './response-sender';
 import { withDiscordRetry } from './retry';
 import { type DiscordMessageContext, type UserId, type ChannelId, createGuildId, createChannelId, createUserId  } from './types';
 import { buildDiscordEnvelope, type QuestionRegistry, type AnswerClassifier, type Conductor, type ContextBuilder, type TimeHeaderProvider } from '@/agent';
+import { ResponseUnavailableError } from '@/errors';
 import { formatTimeHeader, resolveTimezone } from '@/utils';
 
 /** Type guard: check if a channel supports typing indicators (has sendTyping). */
@@ -191,9 +192,6 @@ export interface PerchRoutingDeps {
      */
     timeHeader?:        TimeHeaderProvider
 }
-
-/** Sentinel thrown inside {@link PerchRoutingDeps.conductor}'s `deliver` callback to skip the journal write when nothing was actually sent (the `@@NO_RESPONSE@@` sentinel or a missing well-known channel) — mirrors `coordinator-setup.ts`'s identical `ResponseNotSentError`. */
-class PerchResponseNotSentError extends Error {}
 
 /**
  * Creates a handler for the Discord 'messageCreate' event.
@@ -541,15 +539,26 @@ async function submitPerchChannelMessage(
                     rateLimiter:       perch.rateLimiter,
                     discordCapability: perch.discordCapability,
                 });
-                if(!sendResult.sent && !sendResult.queued) {
-                    throw new PerchResponseNotSentError();
+                switch(sendResult.status) {
+                    case 'sent': {
+                        return { kind: 'committed', disposition: 'sent', channelId: sendResult.channelId, messageIds: sendResult.messageIds };
+                    }
+                    case 'queued': {
+                        return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
+                    }
+                    case 'partial': {
+                        return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : [])) };
+                    }
+                    case 'skipped': {
+                        return { kind: 'skipped', reason: sendResult.reason };
+                    }
+                    case 'unavailable': {
+                        throw new ResponseUnavailableError();
+                    }
                 }
-                return { channelId: message.channel.id, messageIds: [] };
             });
         } catch (err) {
-            if(!(err instanceof PerchResponseNotSentError)) {
-                logger.error({ err, channelId: message.channel.id, msg: 'Perch-channel response delivery failed' });
-            }
+            logger.error({ err, channelId: message.channel.id, msg: 'Perch-channel response delivery failed' });
         }
     }
 

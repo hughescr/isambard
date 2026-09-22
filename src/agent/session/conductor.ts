@@ -272,10 +272,16 @@ export interface CreateConductorParams {
     onWakeTurnSettled?: (envelope: Envelope, result: TurnResult) => void | Promise<void>
 }
 
+/** A caller's delivery result, distinguishing durable delivery from intentional non-delivery. */
+export type SendOutcome
+    = | { kind: 'committed', disposition: 'sent', channelId: string, messageIds: string[] }
+      | { kind: 'committed', disposition: 'queued', channelId: string, outboxIds: string[] }
+      | { kind: 'skipped', reason: string };
+
 /** The outcome of a {@link Conductor.deliver} call. */
 export interface DeliverResult {
-    /** `false` when the envelope was already delivered (seeded at boot or marked earlier this process) and `send` was never called. */
-    delivered: boolean
+    outcome:      'committed' | 'skipped' | 'already-committed'
+    disposition?: 'sent' | 'queued'
 }
 
 /** The long-lived session conductor returned by {@link createConductor}. */
@@ -358,15 +364,11 @@ export interface Conductor {
     adoptPeerTurn:                 (envelope: Envelope) => void
     /**
      * Delivers `envelopeId`'s response exactly once (P8): if the delivery guard already knows
-     * this id, `send` is skipped entirely; otherwise `send` runs, `response_delivered` is
-     * journaled and the journal is flushed (awaiting the write's durability, not just its
-     * issuance) before the id is marked delivered and this call resolves — so a crash between
-     * `send` resolving and the flush settling is the sole re-send window, and even that window is
-     * closed by the journal itself: {@link import('./recovery').computeRecovery} at the next boot
-     * replays `response_delivered` rows into a fresh guard, so a `response_delivered` row that
-     * did land is never re-sent even if this call never got to return.
+     * this id, `send` is skipped entirely. A committed outcome is journaled and flushed before
+     * the delivery guard is marked; a skipped outcome is logged at info and intentionally leaves
+     * no durable delivery record so a later response can still be delivered.
      */
-    deliver:                       (envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => Promise<DeliverResult>
+    deliver:                       (envelopeId: string, send: () => Promise<SendOutcome>) => Promise<DeliverResult>
     interruptCurrent:              (options?: InterruptCurrentOptions) => Promise<void>
     subscribeTurn:                 (handler: (turnId: string, frame: SDKMessage) => void) => () => void
     status:                        () => ConductorStatus
@@ -1562,24 +1564,26 @@ export function createConductor(params: CreateConductorParams): Conductor {
         });
     }
 
-    async function deliver(envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>): Promise<DeliverResult> {
+    async function deliver(envelopeId: string, send: () => Promise<SendOutcome>): Promise<DeliverResult> {
         if(deliveryGuard === undefined) {
             throw new InvariantViolationError('conductor.deliver', 'called before open() completed its boot recovery, which initialises the delivery guard');
         }
         if(deliveryGuard.alreadyDelivered(envelopeId)) {
             logger.info({ envelopeId }, 'Conductor.deliver: envelope already delivered; skipping send');
-            return { delivered: false };
+            return { outcome: 'already-committed' };
         }
-        const { channelId, messageIds } = await send();
+        const outcome = await send();
+        if(outcome.kind === 'skipped') {
+            logger.info({ envelopeId, reason: outcome.reason }, 'Conductor.deliver: response skipped; not committing delivery');
+            return { outcome: 'skipped' };
+        }
         journal.append({
-            type: 'response_delivered', at: now(), envelopeId, channelId, messageIds,
+            type:        'response_delivered', at:          now(), envelopeId, channelId:   outcome.channelId,
+            messageIds:  outcome.disposition === 'sent' ? outcome.messageIds : [], disposition: outcome.disposition,
         });
-        // Awaited so the response_delivered row is durable (not merely issued) before this call
-        // reports the envelope done — closing the crash window between an unawaited fire-and-forget
-        // append and its DynamoDB write actually landing.
         await journal.flush();
         deliveryGuard.markDelivered(envelopeId);
-        return { delivered: true };
+        return { outcome: 'committed', disposition: outcome.disposition };
     }
 
     async function interruptCurrent(options: InterruptCurrentOptions = {}): Promise<void> {

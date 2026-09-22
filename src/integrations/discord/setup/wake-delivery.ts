@@ -1,58 +1,12 @@
-/**
- * Delivers a settled background-work wake turn (R2, `docs/plans/long-lived-session-phase2-4.md`
- * — `Conductor.adoptWakeTurn`'s synthesized `task`-kind envelope, wired via
- * `Conductor.setWakeTurnDelivery`) or a settled host-notification reply (`notification`-kind, via
- * `NotificationBridge.attachReplyDelivery`) to Discord.
- *
- * Three routes, in priority order — all three go through `Conductor.deliver` (keyed on
- * `envelope.id`, not on a channel), so every route journals `response_delivered` and is
- * deduplicated against a restart the same way:
- *  1. `envelope.channelId` is set (the launch record — or, for a `notification` bridge envelope,
- *     the envelope itself in some future kind — carries an origin channel): deliver there.
- *  2. `envelope.channelId` is unset but `envelope.kind` maps to a well-known channel (`perch`,
- *     `catchup`) — this is how a perch-launched background task's wake reaches perch-time:
- *     `sessions.ts`'s perch `onWakeTurnSettled` rewrites the envelope's `kind` to `'perch'` before
- *     calling this function, and `sendEnvelopeResponse`'s own `ResponseRouter.resolveEnvelopeTarget`
- *     resolves the well-known channel regardless of `channelId`. Routing this case through the
- *     fallback-channel branch instead (as a literal reading of "no channelId" might suggest) would
- *     make a perfectly-deliverable perch reply depend on the unrelated `fallback` well-known
- *     channel being configured, and would prefix it with a "no origin channel was recorded"
- *     message that is not true — the origin (perch) resolved just fine.
- *  3. Neither applies (a `task` envelope whose launch record was never found or was evicted, or a
- *     `notification`-kind bridge envelope, which never carries a channel by design): route to the
- *     `fallback` well-known channel via `ResponseRouter.routeToFallback`, with an explanatory
- *     prefix. This route is ALSO wrapped in `Conductor.deliver` (an earlier version of this module
- *     left it unwrapped, reasoning there was "no stable per-envelope channel to protect against a
- *     double-send" — that reasoning does not hold: `deliver` keys on `envelope.id`, which every
- *     route already has, not on a channel; leaving it unwrapped meant a fallback-delivered `task`
- *     reply never journaled `response_delivered`, so crash recovery kept re-reporting the same
- *     already-delivered summary on every restart within the recovery window once `'task'` became
- *     replayable).
- *
- * Every route swallows its own delivery failure (logged) rather than rejecting — this function is
- * always invoked from a fire-and-forget context (`Conductor`'s `onWakeTurnSettled`,
- * `NotificationBridge`'s `attachReplyDelivery`) that already treats a thrown error as "log and
- * move on"; matches `perch-setup.ts`'s `wrapConductorWithDelivery` precedent for the same reason.
- *
- * @module integrations/discord/setup/wake-delivery
- */
 import type { Logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import type { DiscordCapability } from '../capability';
 import { ENVELOPE_KIND_TO_CHANNEL, type ResponseRouter } from '../channel-registry';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import { sendEnvelopeResponse } from '../response-sender';
+import { sendEnvelopeResponse, type SendEnvelopeResponseResult } from '../response-sender';
 import { createChannelId } from '../types';
 import type { Conductor, Envelope, TurnResult } from '@/agent';
-
-/**
- * Sentinel thrown inside the `conductor.deliver` callback (route 1/2 above) to skip its journal
- * write when the send neither succeeded nor queued — mirrors `perch-setup.ts`'s identical
- * `PerchTurnNotSentError`: caught one frame up and suppressed (not logged as an error), since
- * "neither sent nor queued, no outbox to fall back to" is an already-logged, expected outcome of
- * `sendEnvelopeResponse` itself, not a new failure this module needs to report again.
- */
-class WakeTurnNotSentError extends Error {}
+import { ResponseUnavailableError } from '@/errors';
 
 /** A settled turn's delivery callback — see `Conductor.setWakeTurnDelivery`/`NotificationBridge.attachReplyDelivery`. */
 export type WakeTurnDelivery = (envelope: Envelope, result: TurnResult) => Promise<void>;
@@ -93,30 +47,29 @@ export interface CreateWakeTurnDeliveryParams {
 export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): WakeTurnDelivery {
     const { conductor, responseRouter, client, rateLimiter, discordCapability, logger, fallbackPrefix } = params;
 
-    /**
-     * Shared `Conductor.deliver` wrapper for both routes below: runs `sendAndDescribe` (which
-     * performs the actual `sendEnvelopeResponse` call and reports its `{ sent, queued }` result
-     * alongside the channel it targeted) inside `conductor.deliver`'s send callback, throwing
-     * {@link WakeTurnNotSentError} to skip the `response_delivered` journal write when the send
-     * neither succeeded nor queued. Swallows its own failure (logged, except the not-sent
-     * sentinel) rather than rejecting — see the module doc.
-     */
+    /** Maps every sender result to a durable or intentionally skipped conductor outcome. */
     async function deliverViaConductor(
         envelope: Envelope,
-        sendAndDescribe: () => Promise<{ sendResult: { sent: boolean, queued?: boolean }, channelId: string }>
+        sendAndDescribe: () => Promise<{ sendResult: SendEnvelopeResponseResult, channelId: string }>
     ): Promise<void> {
         try {
             await conductor.deliver(envelope.id, async () => {
-                const { sendResult, channelId } = await sendAndDescribe();
-                if(!sendResult.sent && !sendResult.queued) {
-                    throw new WakeTurnNotSentError();
+                const { sendResult } = await sendAndDescribe();
+                switch(sendResult.status) {
+                    case 'sent': { return { kind: 'committed', disposition: 'sent', channelId: sendResult.channelId, messageIds: sendResult.messageIds };
+                    }
+                    case 'queued': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
+                    }
+                    case 'partial': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : [])) };
+                    }
+                    case 'skipped': { return { kind: 'skipped', reason: sendResult.reason };
+                    }
+                    case 'unavailable': { throw new ResponseUnavailableError();
+                    }
                 }
-                return { channelId, messageIds: [] };
             });
         } catch (err) {
-            if(!(err instanceof WakeTurnNotSentError)) {
-                logger.error({ err, envelopeId: envelope.id, kind: envelope.kind }, 'Wake turn response delivery failed');
-            }
+            logger.error({ err, envelopeId: envelope.id, kind: envelope.kind }, 'Wake turn response delivery failed');
         }
     }
 

@@ -464,7 +464,7 @@ export class ContactCommandHandler {
         } catch (err: unknown) {
             logger.error({ err, personRaw, msg: 'Failed to unlink identifier' });
             const errMsg = err instanceof Error ? err.message : String(err);
-            // Stryker disable next-line llm: ContactNotFoundError extends StorageError extends IsambardError extends Error, so a preceding `instanceof Error` conjunct is redundant.
+            // Stryker disable next-line llm: ContactNotFoundError is already in the Isambard error hierarchy, so a preceding `instanceof Error` conjunct is redundant.
             const replyContent = err instanceof ContactNotFoundError ? `Contact \`${personRaw}\` not found.` : `Failed to remove identifier: ${errMsg}`;
             await interaction.editReply({ content: replyContent });
         }

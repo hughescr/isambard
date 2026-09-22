@@ -19,7 +19,7 @@ import { WellKnownChannelNotFoundError } from '@/errors/discord';
 import type { DiscordCapability } from '@/integrations/discord/capability';
 import type { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
-import { sendEnvelopeResponse } from '@/integrations/discord/response-sender';
+import { sendEnvelopeResponse, type SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
 import type { ChannelId } from '@/integrations/discord/types';
 
 describe('sendEnvelopeResponse', () => {
@@ -89,7 +89,7 @@ describe('sendEnvelopeResponse', () => {
         expect(mockResolveEnvelopeTarget).toHaveBeenCalledWith('catchup', 'Digest text', undefined);
         expect(mockClient.channels.fetch).toHaveBeenCalledWith('target-channel-456');
         expect(mockSendToChannel).toHaveBeenCalledWith(mockTargetChannel, 'Digest text');
-        expect(result).toEqual({ sent: true });
+        expect(result).toEqual({ status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['msg-123'] });
         expect(mockLogger.info).toHaveBeenCalledTimes(1);
         expect(mockLogger.info).toHaveBeenCalledWith({
             envelopeId:  'env-1', kind:        'catchup', chunkIndex:  0, totalChunks: 1,
@@ -115,7 +115,7 @@ describe('sendEnvelopeResponse', () => {
             rateLimiter:    mockRateLimiter,
         });
 
-        expect(result).toEqual({ sent: true });
+        expect(result).toEqual({ status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['msg-123', 'msg-123'] });
         expect(mockSendToChannel).toHaveBeenCalledTimes(2);
     });
 
@@ -198,8 +198,7 @@ describe('sendEnvelopeResponse', () => {
             rateLimiter:    mockRateLimiter,
         });
 
-        expect(result.sent).toBe(false);
-        expect(result.skipReason).toContain('catch-up');
+        expect(result).toEqual({ status: 'skipped', reason: expect.stringContaining('catch-up') });
         expect(mockSendToChannel).not.toHaveBeenCalled();
         expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
             envelopeId:  'env-5', kind:        'catchup', channelType: 'catch-up',
@@ -219,8 +218,7 @@ describe('sendEnvelopeResponse', () => {
             rateLimiter:    mockRateLimiter,
         });
 
-        expect(result.sent).toBe(false);
-        expect(result.skipReason).toContain('perch-time');
+        expect(result).toEqual({ status: 'skipped', reason: expect.stringContaining('perch-time') });
     });
 
     test('the @@NO_RESPONSE@@ sentinel resolves to sent:false skipReason no-response', async () => {
@@ -239,7 +237,7 @@ describe('sendEnvelopeResponse', () => {
             rateLimiter:    mockRateLimiter,
         });
 
-        expect(result).toEqual({ sent: false, skipReason: 'no-response' });
+        expect(result).toEqual({ status: 'skipped', reason: 'no-response' });
         expect(mockClient.channels.fetch).not.toHaveBeenCalled();
         expect(mockLogger.info).toHaveBeenCalledWith({
             envelopeId:   'env-7', kind:         'catchup', fullResponse: 'Nothing new. @@NO_RESPONSE@@',
@@ -264,7 +262,7 @@ describe('sendEnvelopeResponse', () => {
             rateLimiter:    mockRateLimiter,
         });
 
-        expect(result).toEqual({ sent: false });
+        expect(result).toEqual({ status: 'unavailable' });
         expect(mockLogger.warn).toHaveBeenCalledTimes(1);
         expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
             envelopeId: 'env-8', kind:       'catchup',
@@ -289,7 +287,7 @@ describe('sendEnvelopeResponse', () => {
             rateLimiter:    mockRateLimiter,
         });
 
-        expect(result).toEqual({ sent: false });
+        expect(result).toEqual({ status: 'unavailable' });
         expect(mockLogger.warn).toHaveBeenCalledTimes(1);
     });
 
@@ -310,7 +308,7 @@ describe('sendEnvelopeResponse', () => {
             rateLimiter:    mockRateLimiter,
         });
 
-        expect(result).toEqual({ sent: false });
+        expect(result).toEqual({ status: 'unavailable' });
         expect(mockLogger.warn).toHaveBeenCalledWith({
             error:      new Error('network down'),
             envelopeId: 'env-non-error',
@@ -340,7 +338,7 @@ describe('sendEnvelopeResponse', () => {
             discordCapability: mockDiscordCapability,
         });
 
-        expect(result).toEqual({ sent: false, queued: true });
+        expect(result).toEqual({ status: 'queued', channelId: 'target-channel-456' as ChannelId, outboxIds: ['outbox-1'] });
         expect(mockSendToChannelCapability).toHaveBeenCalledWith('target-channel-456', 'Digest text', { priority: 'high', type: 'catch_up_output' });
         expect(mockClient.channels.fetch).not.toHaveBeenCalled();
         expect(mockLogger.info).toHaveBeenCalledTimes(1);
@@ -372,7 +370,7 @@ describe('sendEnvelopeResponse', () => {
             discordCapability: mockDiscordCapability,
         });
 
-        expect(result).toEqual({ sent: true });
+        expect(result).toEqual({ status: 'sent', channelId: 'origin-channel-123' as ChannelId, messageIds: [] });
         expect(mockSendToChannelCapability).toHaveBeenCalledWith('origin-channel-123', 'reply text', { priority: 'high', type: 'agent_response' });
     });
 
@@ -397,7 +395,7 @@ describe('sendEnvelopeResponse', () => {
             discordCapability: mockDiscordCapability,
         });
 
-        expect(result).toEqual({ sent: false, queued: true });
+        expect(result).toEqual({ status: 'unavailable' });
         expect(mockSendToChannelCapability).toHaveBeenCalledWith('perch-channel-1', 'Perch report', { priority: 'high', type: 'perch_output' });
     });
 
@@ -430,6 +428,36 @@ describe('sendEnvelopeResponse', () => {
         expect(mockSendToChannelCapability).toHaveBeenCalledTimes(2);
         expect((mockSendToChannelCapability.mock.calls[0] as unknown[])[1]).toBe(firstChunkWord);
         expect((mockSendToChannelCapability.mock.calls[1] as unknown[])[1]).toBe(secondChunkWord);
+    });
+
+    test.each([
+        ['all sent', [{ status: 'sent', message: { id: 'message-1' } }, { status: 'sent', message: { id: 'message-2' } }], { status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['message-1', 'message-2'] }],
+        ['all queued', [{ status: 'queued', outboxId: 'outbox-1' }, { status: 'queued', outboxId: 'outbox-2' }], { status: 'queued', channelId: 'target-channel-456' as ChannelId, outboxIds: ['outbox-1', 'outbox-2'] }],
+        ['mixed sent and queued', [{ status: 'sent', message: { id: 'message-1' } }, { status: 'queued', outboxId: 'outbox-2' }], { status: 'partial', channelId: 'target-channel-456' as ChannelId, chunks: [{ status: 'sent', message: { id: 'message-1' } }, { status: 'queued', outboxId: 'outbox-2' }] }],
+        ['an unavailable chunk', [{ status: 'sent', message: { id: 'message-1' } }, { status: 'unavailable' }], { status: 'unavailable' }],
+    ])('with a discordCapability, multi-chunk %s outcomes use the documented aggregate precedence', async (_description, statuses, expected) => {
+        const firstChunk = 'A'.repeat(1200);
+        const secondChunk = 'B'.repeat(1200);
+        mockResolveEnvelopeTarget.mockResolvedValue({
+            targetChannelId: 'target-channel-456' as ChannelId,
+            shouldSend:      true,
+            content:         `${firstChunk} ${secondChunk}`,
+        });
+        const mockSendToChannelCapability = mock(async () => statuses.shift());
+        const mockDiscordCapability = { sendToChannel: mockSendToChannelCapability } as unknown as DiscordCapability;
+
+        const result = await sendEnvelopeResponse({
+            envelopeId:        'env-aggregation',
+            kind:              'catchup',
+            text:              `${firstChunk} ${secondChunk}`,
+            responseRouter:    mockResponseRouter,
+            client:            mockClient,
+            rateLimiter:       mockRateLimiter,
+            discordCapability: mockDiscordCapability,
+        });
+
+        expect(result).toEqual(expected as SendEnvelopeResponseResult);
+        expect(mockSendToChannelCapability).toHaveBeenCalledTimes(2);
     });
 
     test('does not thread replies: always sends to the target channel directly, never message.reply', async () => {
