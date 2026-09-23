@@ -7,6 +7,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
+import { mockLogger } from '../../../setup';
 import { SessionResumeBackend } from '@/storage/session-resume/backend';
 import { createSessionId } from '@/storage/session-resume/types';
 
@@ -15,6 +16,12 @@ describe('SessionResumeBackend', () => {
     let backend: SessionResumeBackend;
 
     beforeEach(() => {
+        // `logger` is tests/setup.ts's one shared mockLogger, and spyOn() on an already-mocked
+        // method hands back that same mock with every call any earlier test made to it (in this
+        // file or another). Start each test with no recorded warn calls so the warn assertions
+        // below — both the `not.toHaveBeenCalled()` and the `toHaveBeenCalledWith(...)` ones —
+        // see only calls made by the test itself.
+        mockLogger.warn.mockClear();
         ddbMock = mockClient(DynamoDBDocumentClient);
         backend = new SessionResumeBackend(
             ddbMock as unknown as DynamoDBDocumentClient,
@@ -131,7 +138,8 @@ describe('SessionResumeBackend', () => {
             warnSpy.mockRestore();
         });
 
-        test('getSessionIdForRole returns undefined when the stored row is missing sessionId', async () => {
+        test('getSessionIdForRole returns undefined and logs when the stored row is missing sessionId', async () => {
+            const warnSpy = spyOn(logger, 'warn');
             ddbMock.on(GetCommand).resolves({
                 Item: {
                     PK:        'TASK_SESSION#conversation',
@@ -141,6 +149,12 @@ describe('SessionResumeBackend', () => {
             });
 
             await expect(backend.getSessionIdForRole('conversation')).resolves.toBeUndefined();
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ role: 'conversation' }),
+                'SessionResumeBackend.getSessionIdForRole: stored row failed validation'
+            );
+
+            warnSpy.mockRestore();
         });
 
         test('getSessionIdForRole returns undefined and logs when updatedAt is not a valid ISO 8601 timestamp', async () => {
