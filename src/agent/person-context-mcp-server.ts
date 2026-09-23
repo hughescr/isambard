@@ -5,9 +5,9 @@ import type { PersonHistoryCoordinator } from './history-providers';
 import { mcpJsonResult, mcpTextResult, withToolErrorHandling } from './mcp-helpers';
 
 /**
- * Options for creating the User Context MCP server.
+ * Options for creating the Person Context MCP server.
  */
-interface UserContextMCPServerOptions {
+interface PersonContextMCPServerOptions {
     coordinator: PersonHistoryCoordinator
 }
 
@@ -19,10 +19,12 @@ interface UserContextMCPServerOptions {
  *
  * The tool returns a JSON object with the matched contact and formatted history string.
  */
-export function createUserContextMCPServer(options: UserContextMCPServerOptions) {
+export function createPersonContextMCPServer(options: PersonContextMCPServerOptions) {
     const { coordinator } = options;
 
     return createSdkMcpServer({
+        // Wire name kept as user-context: it is the model-visible mcp__user-context__* segment and a
+        // session-open option; renaming it needs a real-SDK check (issue #82).
         name:    'user-context',
         version: '1.0.0',
         tools:   [

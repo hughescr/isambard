@@ -3,7 +3,7 @@ import { MessageFlags, type EmbedBuilder, type ChatInputCommandInteraction } fro
 import { mockLogger } from '../../../setup';
 import { AllowlistCommandHandler, buildAllowlistCommand } from '@/integrations/discord/allowlist-commands';
 import { GREEN } from '@/integrations/discord/colors';
-import { type Contact, type ContactBackend, type ContactId, type PersonAllowlist, createContactId  } from '@/storage';
+import { type Contact, type ContactBackend, type PersonId, type PersonAllowlist, createPersonId  } from '@/storage';
 
 const ADMIN_USER_ID = '423276934781468692';
 
@@ -93,7 +93,7 @@ function getFirstEmbed(editReply: Mock<(...args: unknown[]) => Promise<void>>): 
 
 function makeContact(overrides: Partial<Contact> = {}): Contact {
     return {
-        personId:    createContactId('alice'),
+        personId:    createPersonId('alice'),
         displayName: 'Alice Doe',
         identifiers: [{ platform: 'email', value: 'alice@example.com' }],
         ...overrides,
@@ -262,7 +262,7 @@ describe('AllowlistCommandHandler - permission check', () => {
 describe('AllowlistCommandHandler - list', () => {
     test('limits contact reads to five concurrent requests while preserving every entry', async () => {
         const entries = Array.from({ length: 6 }, (_, index) => ({
-            personId: createContactId(`person-${index}`),
+            personId: createPersonId(`person-${index}`),
             addedAt:  '2024-01-01T00:00:00Z',
             addedBy:  'discord-command',
         }));
@@ -270,7 +270,7 @@ describe('AllowlistCommandHandler - list', () => {
         const release = Promise.withResolvers<void>();
         const firstStarted = Promise.withResolvers<void>();
         let started = 0;
-        const getContact = mock(async (personId: ContactId) => {
+        const getContact = mock(async (personId: PersonId) => {
             started += 1;
             if(started === 1) {
                 firstStarted.resolve();
@@ -395,7 +395,7 @@ describe('AllowlistCommandHandler - list', () => {
 
     test('creates a separate embed field per entry', async () => {
         const aliceContact = makeContact({ displayName: 'Alice Doe', identifiers: [{ platform: 'email' as const, value: 'alice@example.com' }] });
-        const bobContact   = makeContact({ personId: createContactId('bob'), displayName: 'Bob Smith', identifiers: [{ platform: 'email' as const, value: 'bob@example.com' }] });
+        const bobContact   = makeContact({ personId: createPersonId('bob'), displayName: 'Bob Smith', identifiers: [{ platform: 'email' as const, value: 'bob@example.com' }] });
 
         const aliceId = aliceContact.personId;
         const bobId   = bobContact.personId;
@@ -428,7 +428,7 @@ describe('AllowlistCommandHandler - list', () => {
     });
 
     test('shows "(contact not found)" for orphaned personId', async () => {
-        const personId  = createContactId('orphan');
+        const personId  = createPersonId('orphan');
         const allowlist = createMockPersonAllowlist({
             list: mock(async () => [{ personId, addedAt: '2024-01-01T00:00:00Z', addedBy: 'discord-command' }]),
         });
@@ -683,14 +683,14 @@ describe('AllowlistCommandHandler - list', () => {
 
     test('produces exactly 1 embed when there are exactly 25 entries', async () => {
         const entries = Array.from({ length: 25 }, (_, i) => ({
-            personId: createContactId(`person-${String(i).padStart(2, '0')}`),
+            personId: createPersonId(`person-${String(i).padStart(2, '0')}`),
             addedAt:  '2024-01-01T00:00:00Z',
             addedBy:  'discord-command' as const,
         }));
         const allowlist = createMockPersonAllowlist({ list: mock(async () => entries) });
 
         const getContact = mock(async (id: string): Promise<Contact> =>
-            makeContact({ personId: id as ReturnType<typeof createContactId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
+            makeContact({ personId: id as ReturnType<typeof createPersonId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
         );
         const backend = { getContact } as unknown as ContactBackend;
 
@@ -706,14 +706,14 @@ describe('AllowlistCommandHandler - list', () => {
 
     test('paginates into multiple embeds when more than 25 entries', async () => {
         const entries = Array.from({ length: 26 }, (_, i) => ({
-            personId: createContactId(`person-${String(i).padStart(2, '0')}`),
+            personId: createPersonId(`person-${String(i).padStart(2, '0')}`),
             addedAt:  '2024-01-01T00:00:00Z',
             addedBy:  'discord-command' as const,
         }));
         const allowlist = createMockPersonAllowlist({ list: mock(async () => entries) });
 
         const getContact = mock(async (id: string): Promise<Contact> =>
-            makeContact({ personId: id as ReturnType<typeof createContactId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
+            makeContact({ personId: id as ReturnType<typeof createPersonId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
         );
         const backend = { getContact } as unknown as ContactBackend;
 
@@ -730,14 +730,14 @@ describe('AllowlistCommandHandler - list', () => {
 
     test('first embed has title and description, subsequent embeds do not', async () => {
         const entries = Array.from({ length: 26 }, (_, i) => ({
-            personId: createContactId(`person-${String(i).padStart(2, '0')}`),
+            personId: createPersonId(`person-${String(i).padStart(2, '0')}`),
             addedAt:  '2024-01-01T00:00:00Z',
             addedBy:  'discord-command' as const,
         }));
         const allowlist = createMockPersonAllowlist({ list: mock(async () => entries) });
 
         const getContact = mock(async (id: string): Promise<Contact> =>
-            makeContact({ personId: id as ReturnType<typeof createContactId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
+            makeContact({ personId: id as ReturnType<typeof createPersonId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
         );
         const backend = { getContact } as unknown as ContactBackend;
 
@@ -787,8 +787,8 @@ describe('AllowlistCommandHandler - list', () => {
 
     test('description uses plural form for multiple entries', async () => {
         const aliceContact = makeContact({ displayName: 'Alice Doe', identifiers: [{ platform: 'email' as const, value: 'alice@example.com' }] });
-        const bobContact   = makeContact({ personId: createContactId('bob'), displayName: 'Bob Smith', identifiers: [{ platform: 'email' as const, value: 'bob@example.com' }] });
-        const carolContact = makeContact({ personId: createContactId('carol'), displayName: 'Carol Lane', identifiers: [{ platform: 'email' as const, value: 'carol@example.com' }] });
+        const bobContact   = makeContact({ personId: createPersonId('bob'), displayName: 'Bob Smith', identifiers: [{ platform: 'email' as const, value: 'bob@example.com' }] });
+        const carolContact = makeContact({ personId: createPersonId('carol'), displayName: 'Carol Lane', identifiers: [{ platform: 'email' as const, value: 'carol@example.com' }] });
 
         const allowlist = createMockPersonAllowlist({
             list: mock(async () => [
@@ -813,14 +813,14 @@ describe('AllowlistCommandHandler - list', () => {
 
     test('does not cap or add footer when exactly 250 entries (10 embeds)', async () => {
         const entries = Array.from({ length: 250 }, (_, i) => ({
-            personId: createContactId(`person-${String(i).padStart(3, '0')}`),
+            personId: createPersonId(`person-${String(i).padStart(3, '0')}`),
             addedAt:  '2024-01-01T00:00:00Z',
             addedBy:  'discord-command' as const,
         }));
         const allowlist = createMockPersonAllowlist({ list: mock(async () => entries) });
 
         const getContact = mock(async (id: string): Promise<Contact> =>
-            makeContact({ personId: id as ReturnType<typeof createContactId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
+            makeContact({ personId: id as ReturnType<typeof createPersonId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
         );
         const backend = { getContact } as unknown as ContactBackend;
 
@@ -836,14 +836,14 @@ describe('AllowlistCommandHandler - list', () => {
 
     test('caps at 10 embeds and adds overflow footer when 251 entries', async () => {
         const entries = Array.from({ length: 251 }, (_, i) => ({
-            personId: createContactId(`person-${String(i).padStart(3, '0')}`),
+            personId: createPersonId(`person-${String(i).padStart(3, '0')}`),
             addedAt:  '2024-01-01T00:00:00Z',
             addedBy:  'discord-command' as const,
         }));
         const allowlist = createMockPersonAllowlist({ list: mock(async () => entries) });
 
         const getContact = mock(async (id: string): Promise<Contact> =>
-            makeContact({ personId: id as ReturnType<typeof createContactId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
+            makeContact({ personId: id as ReturnType<typeof createPersonId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
         );
         const backend = { getContact } as unknown as ContactBackend;
 
@@ -859,14 +859,14 @@ describe('AllowlistCommandHandler - list', () => {
 
     test('footer shows correct omitted count when 300 entries', async () => {
         const entries = Array.from({ length: 300 }, (_, i) => ({
-            personId: createContactId(`person-${String(i).padStart(3, '0')}`),
+            personId: createPersonId(`person-${String(i).padStart(3, '0')}`),
             addedAt:  '2024-01-01T00:00:00Z',
             addedBy:  'discord-command' as const,
         }));
         const allowlist = createMockPersonAllowlist({ list: mock(async () => entries) });
 
         const getContact = mock(async (id: string): Promise<Contact> =>
-            makeContact({ personId: id as ReturnType<typeof createContactId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
+            makeContact({ personId: id as ReturnType<typeof createPersonId>, displayName: id, identifiers: [{ platform: 'email' as const, value: `${id}@example.com` }] })
         );
         const backend = { getContact } as unknown as ContactBackend;
 
@@ -1063,7 +1063,7 @@ describe('AllowlistCommandHandler - remove', () => {
         expect(arg.content).toContain('Removed');
     });
 
-    test('calls removePerson with the contactId derived from personIdStr', async () => {
+    test('calls removePerson with the personId derived from personIdStr', async () => {
         const allowlist = createMockPersonAllowlist({ isPersonAllowed: true });
         const { backend } = createMockContactBackend();
         const handler = new AllowlistCommandHandler(allowlist, backend, ADMIN_USER_ID);
@@ -1071,8 +1071,8 @@ describe('AllowlistCommandHandler - remove', () => {
 
         await handler.handle(asChatInput);
 
-        const removePersonCall = (allowlist.removePerson as ReturnType<typeof mock>).mock.calls[0] as [ContactId];
-        expect(removePersonCall[0]).toBe(createContactId('alice'));
+        const removePersonCall = (allowlist.removePerson as ReturnType<typeof mock>).mock.calls[0] as [PersonId];
+        expect(removePersonCall[0]).toBe(createPersonId('alice'));
     });
 
     test('replies with error message when removePerson throws', async () => {
@@ -1101,7 +1101,7 @@ describe('AllowlistCommandHandler - completion boundaries', () => {
         }[] = [
             { name: 'empty list', subcommand: 'list', arrange: () => {} },
             { name:       'populated list', subcommand: 'list', arrange:    (allowlist, getContact) => {
-                const personId = createContactId('alice');
+                const personId = createPersonId('alice');
                 (allowlist.list as ReturnType<typeof mock>).mockResolvedValue([{ personId, addedAt: '2024-01-01T00:00:00Z', addedBy: 'discord-command' }]);
                 getContact.mockResolvedValue(makeContact());
             } },

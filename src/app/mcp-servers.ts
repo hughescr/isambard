@@ -1,7 +1,7 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createPersonContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator } from '@/agent';
 import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend, type BskyReplyInput } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
@@ -176,7 +176,7 @@ export interface MCPServersOptions {
      * Optional person allowlist for validating the Discord MCP server's
      * askUserQuestion requestingUserId argument.
      */
-    discordAllowlist?: PersonAllowlist
+    personAllowlist?: PersonAllowlist
 
 }
 
@@ -220,9 +220,9 @@ interface MCPServers {
     contactsMcpServer?: McpServerConfig
 
     /**
-     * User context MCP server for cross-platform person history.
+     * Person context MCP server for cross-platform person history (wire name `user-context`).
      */
-    userContextMcpServer?: McpServerConfig
+    personContextMcpServer?: McpServerConfig
 
     /**
      * Media MCP server for video and audio processing tools.
@@ -371,7 +371,7 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
         timezone:         options.timezone,
         healthRegistry:   options.healthRegistry,
         reconnectionLoop: options.discordReconnectionLoop,
-        personAllowlist:  options.discordAllowlist,
+        personAllowlist:  options.personAllowlist,
     });
 
     const inboxMcpServer = createInboxMCPServer(
@@ -419,8 +419,8 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
         })
         : undefined;
 
-    const userContextMcpServer = options.historyCoordinator
-        ? createUserContextMCPServer({ coordinator: options.historyCoordinator })
+    const personContextMcpServer = options.historyCoordinator
+        ? createPersonContextMCPServer({ coordinator: options.historyCoordinator })
         : undefined;
 
     const mediaMcpServer = createMediaMCPServer();
@@ -458,7 +458,7 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
         caldavMcpServer,
         wikipediaMcpServer,
         contactsMcpServer,
-        userContextMcpServer,
+        personContextMcpServer,
         mediaMcpServer,
         browserMcpServer,
         emailMcpServer,

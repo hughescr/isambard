@@ -2,7 +2,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult, mcpTextResult, withToolErrorHandling } from './mcp-helpers';
-import { contactIdentifierSchema, createContactId, platformTypeSchema, type Contact, type ContactBackend, type ContactChangeRequest } from '@/storage';
+import { contactIdentifierSchema, createPersonId, platformTypeSchema, type Contact, type ContactBackend, type ContactChangeRequest } from '@/storage';
 
 /**
  * Options for creating the Contacts MCP server.
@@ -118,7 +118,7 @@ export function createContactsMCPServer(options: ContactsMCPServerOptions) {
                     notes: z.string().optional().describe('New notes for the contact (replaces existing notes)'),
                 },
                 withToolErrorHandling('requestContactUpdate', async (args): Promise<CallToolResult> => {
-                    const personId = createContactId(args.personId);
+                    const personId = createPersonId(args.personId);
                     // Verify the contact exists first
                     const contact = await backend.getContact(personId);
                     if(!contact) {

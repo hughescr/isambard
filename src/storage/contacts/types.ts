@@ -20,24 +20,56 @@ export const contactIdentifierSchema = z.object({
 export type ContactIdentifier = z.infer<typeof contactIdentifierSchema>;
 
 /**
- * ContactId is a branded string representing a kebab-case person identifier.
- * E.g., "craig-hughes" or "alice-wonderland"
+ * THE identifier equivalence rule: two identifier values on the same platform denote the
+ * same handle when their normalized forms are equal. Shared by the persisted lookup keys
+ * (ContactKeyGenerator), in-memory identifier comparison and the person allowlist, so a
+ * change to the rule (e.g. Unicode folding) is made here once.
+ *
+ * Today the rule is lowercase + trim, with no Unicode compatibility folding.
  */
-const CONTACT_ID_REGEX = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/;
+export function normalizeIdentifierValue(value: string): string {
+    return value.toLowerCase().trim();
+}
 
-export const contactIdSchema = z
+declare const contactIdentifierKeyBrand: unique symbol;
+
+/**
+ * The serialized `{platform}#{normalizedValue}` form of a contact identifier, used as a
+ * map key and as the tail of the DynamoDB lookup partition key. Only
+ * {@link contactIdentifierKey} produces one.
+ */
+export type ContactIdentifierKey = string & { readonly [contactIdentifierKeyBrand]: 'ContactIdentifierKey' };
+
+/**
+ * Derives the {@link ContactIdentifierKey} for a platform+value pair.
+ *
+ * No {@link PlatformType} value contains `#`, so two keys are equal exactly when the
+ * platforms are equal and the {@link normalizeIdentifierValue normalized} values are equal.
+ */
+export function contactIdentifierKey(platform: PlatformType, value: string): ContactIdentifierKey {
+    return `${platform}#${normalizeIdentifierValue(value)}` as ContactIdentifierKey;
+}
+
+/**
+ * PersonId is the canonical identity key for a person in the address book: a branded
+ * kebab-case string (e.g. "craig-hughes" or "alice-wonderland"). A {@link Contact} is the
+ * record stored under that key.
+ */
+const PERSON_ID_REGEX = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/;
+
+export const personIdSchema = z
     .string()
     .min(1)
     .max(100)
     .refine(
-        id => CONTACT_ID_REGEX.test(id),
+        id => PERSON_ID_REGEX.test(id),
         {
-            message: 'ContactId must be lowercase alphanumeric with hyphens (kebab-case)',
+            message: 'personId must be lowercase alphanumeric with hyphens (kebab-case)',
         }
     )
-    .brand<'ContactId'>();
+    .brand<'PersonId'>();
 
-export type ContactId = z.infer<typeof contactIdSchema>;
+export type PersonId = z.infer<typeof personIdSchema>;
 
 /**
  * A pending contact change that requires administrator approval.
@@ -48,12 +80,12 @@ interface ContactCreateRequest {
     displayName:    string
     addIdentifiers: ContactIdentifier[]
     notes?:         string
-    personId?:      ContactId
+    personId?:      PersonId
 };
 
 interface ContactUpdateRequest {
     action:             'update'
-    personId:           ContactId
+    personId:           PersonId
     addIdentifiers?:    ContactIdentifier[]
     removeIdentifiers?: ContactIdentifier[]
     notes?:             string
@@ -62,18 +94,18 @@ interface ContactUpdateRequest {
 export type ContactChangeRequest = ContactCreateRequest | ContactUpdateRequest;
 
 /**
- * Creates a validated ContactId from a string.
- * @throws {z.ZodError} If the id is not a valid ContactId
+ * Creates a validated PersonId from a string.
+ * @throws {z.ZodError} If the id is not a valid PersonId
  */
-export function createContactId(id: string): ContactId {
-    return contactIdSchema.parse(id);
+export function createPersonId(id: string): PersonId {
+    return personIdSchema.parse(id);
 }
 
 /**
- * Type guard to check if a value is a valid ContactId.
+ * Type guard to check if a value is a valid PersonId.
  */
-export function isContactId(value: unknown): value is ContactId {
-    const result = contactIdSchema.safeParse(value);
+export function isPersonId(value: unknown): value is PersonId {
+    const result = personIdSchema.safeParse(value);
     return result.success;
 }
 
@@ -90,7 +122,7 @@ const contactInternalSchema = z.object({
  * Full contact record schema.
  */
 export const contactSchema = z.object({
-    personId:    contactIdSchema,
+    personId:    personIdSchema,
     displayName: z.string().min(1).max(200),
     identifiers: z.array(contactIdentifierSchema).min(1),
     notes:       z.string().optional(),

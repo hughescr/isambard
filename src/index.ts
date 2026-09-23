@@ -867,7 +867,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             browserMaxTextBytes:       config.browser?.maxTextBytes,
             vectorIndex:               storage.vectorIndex,
             embedder,
-            discordAllowlist:          personAllowlist,
+            personAllowlist,
         });
     }
     const mcpSharedDeps = buildMcpSharedDeps();

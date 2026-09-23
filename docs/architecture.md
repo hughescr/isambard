@@ -65,11 +65,11 @@ All persistent state lives in a **single DynamoDB table** with PK/SK primary key
 - `/identity/` — Long-lived self-knowledge, no TTL, auto-loaded every session.
 - `/state/` — Working state, no TTL, selectively auto-loaded via sigmoid scoring.
 - `/events/` — Time-stamped event log, TTL-based expiry, not auto-loaded.
-- `/users/{userId}/` — Per-user memory, keyed by person ID.
+- `/users/{userId}/` — Per-user memory, keyed by the platform user id (today the Discord author id), not by the address-book personId.
 
 Auto-loading of `/state/` items uses `sigmoidScore()`, which combines access frequency (sigmoid activation) and recency (exponential decay) to prioritize what gets injected into context. The tag index uses per-tag atomic counters (`META_COUNT`) and fat-pointer items that carry content preview data, avoiding a centralized registry and the race conditions that come with it. A three-phase background reconciler keeps the tag index consistent.
 
-**Contacts** (`src/storage/contacts/`) provide a cross-platform address book. Each contact record holds a set of platform identifiers (Discord user ID, email address, Bluesky handle, etc.). The CONTACT_LOOKUP GSI enables identifier-to-contact resolution without a full scan. A two-phase reconciler handles orphan cleanup and missing-lookup repair.
+**Contacts** (`src/storage/contacts/`) provide a cross-platform address book. Each contact record holds a set of platform identifiers (Discord user ID, email address, Bluesky handle, etc.). The CONTACT_LOOKUP GSI enables identifier-to-contact resolution without a full scan. A two-phase reconciler handles orphan cleanup and missing-lookup repair. A contact's key is its `PersonId` (branded kebab-case); identifier equivalence (`normalizeIdentifierValue` / `contactIdentifierKey` in `src/storage/contacts/types.ts`) is shared by the lookup keys, the backend and the person allowlist.
 
 **Person allowlist** (`src/storage/person-allowlist.ts`) gates outbound writes (email sends, Bluesky posts/DMs) by person ID rather than per-platform raw addresses. A reverse-map resolves any known identifier to its person ID for allowlist checks.
 

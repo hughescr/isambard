@@ -204,7 +204,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         );
     });
 
-    test('should pass discordAllowlist to createDiscordMCPServer as personAllowlist when provided', () => {
+    test('should pass personAllowlist through to createDiscordMCPServer', () => {
         const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
 
         spies.push(
@@ -215,7 +215,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
 
         const mockPersonAllowlist = {} as unknown as PersonAllowlist;
 
-        buildConversationServers({ ...mockOptions, discordAllowlist: mockPersonAllowlist });
+        buildConversationServers({ ...mockOptions, personAllowlist: mockPersonAllowlist });
 
         expect(createDiscordMcpServerSpy).toHaveBeenCalledWith(
             expect.objectContaining({ personAllowlist: mockPersonAllowlist })

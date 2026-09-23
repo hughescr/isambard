@@ -4,7 +4,7 @@ import { createContactsMCPServer } from '../../../src/agent/contacts-mcp-server'
 import { createInboxMCPServer } from '../../../src/agent/inbox-mcp-server';
 import { createMediaMCPServer } from '../../../src/agent/media-mcp-server';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
-import { createUserContextMCPServer } from '../../../src/agent/user-context-mcp-server';
+import { createPersonContextMCPServer } from '../../../src/agent/person-context-mcp-server';
 import { createWikipediaMCPServer } from '../../../src/agent/wikipedia-mcp-server';
 import expectedCatalog from './fixtures/mcp-repair-metadata.json';
 
@@ -73,8 +73,8 @@ test('MCP tool catalog exposes stable descriptions, input help, and annotations'
             vectorIndex: unusedBackend as unknown as NonNullable<Parameters<typeof createMemoryMCPServer>[1]>['vectorIndex'],
             embedder:    unusedBackend as unknown as NonNullable<Parameters<typeof createMemoryMCPServer>[1]>['embedder'],
         })) as { tools: Record<string, unknown> }).tools.semantic_search,
-        userContext: serverMetadata(createUserContextMCPServer({ coordinator: unusedBackend as unknown as Parameters<typeof createUserContextMCPServer>[0]['coordinator'] })),
-        wikipedia:   serverMetadata(createWikipediaMCPServer()),
+        personContext: serverMetadata(createPersonContextMCPServer({ coordinator: unusedBackend as unknown as Parameters<typeof createPersonContextMCPServer>[0]['coordinator'] })),
+        wikipedia:     serverMetadata(createWikipediaMCPServer()),
     };
     expect(servers).toEqual(expectedCatalog);
 });
@@ -94,7 +94,7 @@ test('MCP input schemas enforce the documented nonempty and bounded inputs', () 
     expect(identifiers.safeParse([]).success).toBe(false);
     expect(identifiers.safeParse([{ platform: 'email', value: 'alice@example.com' }]).success).toBe(true);
 
-    const context = tools(createUserContextMCPServer({ coordinator: unusedBackend as unknown as Parameters<typeof createUserContextMCPServer>[0]['coordinator'] }));
+    const context = tools(createPersonContextMCPServer({ coordinator: unusedBackend as unknown as Parameters<typeof createPersonContextMCPServer>[0]['coordinator'] }));
     expect(context.getPersonContext.inputSchema.shape.identifier.safeParse('').success).toBe(false);
     expect(context.getPersonContext.inputSchema.shape.identifier.safeParse('alice@example.com').success).toBe(true);
     expect(context.getPersonContext.inputSchema.shape.timeRange.safeParse({ startTime: '2026-01-01T00:00:00Z' }).success).toBe(true);

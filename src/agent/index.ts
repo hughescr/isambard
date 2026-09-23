@@ -68,8 +68,8 @@ export { createHealthMCPServer } from './health-mcp-server';
 // Contacts MCP Server
 export { createContactsMCPServer } from './contacts-mcp-server';
 
-// User Context MCP Server
-export { createUserContextMCPServer } from './user-context-mcp-server';
+// Person Context MCP Server
+export { createPersonContextMCPServer } from './person-context-mcp-server';
 
 // Browser MCP Server
 export { createBrowserMCPServer } from './browser-mcp-server';

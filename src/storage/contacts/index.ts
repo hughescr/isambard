@@ -2,10 +2,13 @@
 export {
     platformTypeSchema,
     contactIdentifierSchema,
-    contactIdSchema,
-    createContactId,
+    personIdSchema,
+    createPersonId,
+    normalizeIdentifierValue,
+    contactIdentifierKey,
     type ContactIdentifier,
-    type ContactId,
+    type ContactIdentifierKey,
+    type PersonId,
     type ContactChangeRequest,
     type Contact,
     type PlatformType

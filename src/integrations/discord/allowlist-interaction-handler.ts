@@ -11,7 +11,7 @@ import {
 } from 'discord.js';
 import { BRIGHT_GREEN, BLUE, RED } from './colors';
 import type { AllowlistSagaExecutor, AllowlistSagaStarter, SagaInteractionResult } from '@/services';
-import type { ContactBackend, Contact, ContactId } from '@/storage';
+import type { ContactBackend, Contact, PersonId } from '@/storage';
 import { encodeCustomId, parseCustomId } from '@/utils';
 
 export interface AllowlistInteractionHandlerDeps {
@@ -208,7 +208,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
         await interaction.editReply({ embeds: [embed], components: [] });
     }
 
-    private buildContactReviewEmbed(contact: Contact | undefined, personId: ContactId): EmbedBuilder {
+    private buildContactReviewEmbed(contact: Contact | undefined, personId: PersonId): EmbedBuilder {
         const embed = new EmbedBuilder()
             .setTitle('Is this the same person?')
             .setColor(BLUE);

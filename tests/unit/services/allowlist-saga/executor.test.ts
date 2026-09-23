@@ -8,13 +8,13 @@ import {
     type PendingReviewAllowlistSaga
 } from '@/services/allowlist-saga/types';
 import type { ContactBackend } from '@/storage/contacts/backend';
-import type { Contact, ContactId } from '@/storage/contacts/types';
+import type { Contact, PersonId } from '@/storage/contacts/types';
 import type { PersonAllowlist } from '@/storage/person-allowlist';
 
 const SAGA_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
-const ALICE_ID  = 'alice-smith' as ContactId;
+const ALICE_ID  = 'alice-smith' as PersonId;
 
-function makeContact(personId: ContactId, displayName: string): Contact {
+function makeContact(personId: PersonId, displayName: string): Contact {
     return {
         personId,
         displayName,
@@ -37,7 +37,7 @@ function makePendingName(overrides: { displayNameHint?: string } = {}): PendingN
     return { ...SAGA_BASE, state: 'pending_name', ...overrides };
 }
 
-/** Built through the schema so fuzzyMatches carry the ContactId brand, as get() returns them. */
+/** Built through the schema so fuzzyMatches carry the PersonId brand, as get() returns them. */
 function makeReview(fields: {
     fuzzyMatches:      string[]
     matchIndex?:       number
@@ -213,12 +213,12 @@ describe('AllowlistSagaExecutor', () => {
 
         test.each(allSteps)('%s reports a completed saga as already_completed with the contact display name', async (step) => {
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(makeCompleted('bob-jones')));
-            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as PersonId, 'Bob Jones'));
 
             expect(await steps[step](executor)).toEqual({
                 action:      'unavailable',
                 reason:      'already_completed',
-                personId:    'bob-jones' as ContactId,
+                personId:    'bob-jones' as PersonId,
                 displayName: 'Bob Jones',
             });
             expect(contactBackend.getContact).toHaveBeenCalledWith('bob-jones');
@@ -232,7 +232,7 @@ describe('AllowlistSagaExecutor', () => {
             expect(await steps[step](executor)).toEqual({
                 action:      'unavailable',
                 reason:      'already_completed',
-                personId:    'bob-jones' as ContactId,
+                personId:    'bob-jones' as PersonId,
                 displayName: 'bob-jones',
             });
         });
@@ -278,8 +278,8 @@ describe('AllowlistSagaExecutor', () => {
 
         test('enters pending_review with every fuzzy match when fuzzy matches found', async () => {
             const saga = makePendingName();
-            const bob = makeContact('bob-jones' as ContactId, 'Bob Jones');
-            const bobby = makeContact('bobby-jones' as ContactId, 'Bobby Jones');
+            const bob = makeContact('bob-jones' as PersonId, 'Bob Jones');
+            const bobby = makeContact('bobby-jones' as PersonId, 'Bobby Jones');
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
             jest.spyOn(contactBackend, 'fuzzyLookup').mockResolvedValue([bob, bobby]);
 
@@ -293,7 +293,7 @@ describe('AllowlistSagaExecutor', () => {
         });
 
         test('returns review_match with first match when fuzzy matches found', async () => {
-            const bob = makeContact('bob-jones' as ContactId, 'Bob Jones');
+            const bob = makeContact('bob-jones' as PersonId, 'Bob Jones');
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(makePendingName()));
             jest.spyOn(contactBackend, 'fuzzyLookup').mockResolvedValue([bob]);
 
@@ -302,7 +302,7 @@ describe('AllowlistSagaExecutor', () => {
             expect(result).toEqual({
                 action:        'review_match',
                 sagaId:        SAGA_UUID,
-                matchPersonId: 'bob-jones' as ContactId,
+                matchPersonId: 'bob-jones' as PersonId,
             });
         });
 
@@ -327,7 +327,7 @@ describe('AllowlistSagaExecutor', () => {
 
         test('adds identifier to matched contact', async () => {
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(reviewSaga));
-            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as PersonId, 'Bob Jones'));
 
             await executor.confirmMatch(SAGA_UUID);
 
@@ -339,7 +339,7 @@ describe('AllowlistSagaExecutor', () => {
 
         test('adds person to allowlist', async () => {
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(reviewSaga));
-            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as PersonId, 'Bob Jones'));
 
             await executor.confirmMatch(SAGA_UUID);
 
@@ -350,23 +350,23 @@ describe('AllowlistSagaExecutor', () => {
         test('confirms the candidate under the persisted review cursor', async () => {
             const saga = makeReview({ fuzzyMatches: ['bob-jones', 'bobby-jones'], matchIndex: 1 });
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
-            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bobby-jones' as ContactId, 'Bobby Jones'));
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bobby-jones' as PersonId, 'Bobby Jones'));
 
             const result = await executor.confirmMatch(SAGA_UUID);
 
-            expect(result).toEqual({ action: 'completed', personId: 'bobby-jones' as ContactId, displayName: 'Bobby Jones' });
+            expect(result).toEqual({ action: 'completed', personId: 'bobby-jones' as PersonId, displayName: 'Bobby Jones' });
             expect(allowlistSagaBackend.complete).toHaveBeenCalledWith(saga, 'bobby-jones');
         });
 
         test('returns completed with correct personId and displayName', async () => {
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(reviewSaga));
-            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as PersonId, 'Bob Jones'));
 
             const result = await executor.confirmMatch(SAGA_UUID);
 
             expect(result).toEqual({
                 action:      'completed',
-                personId:    'bob-jones' as ContactId,
+                personId:    'bob-jones' as PersonId,
                 displayName: 'Bob Jones',
             });
         });
@@ -374,7 +374,7 @@ describe('AllowlistSagaExecutor', () => {
         test('falls back to personId when the matched contact has no display name', async () => {
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(reviewSaga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue({
-                ...makeContact('bob-jones' as ContactId, 'Bob Jones'),
+                ...makeContact('bob-jones' as PersonId, 'Bob Jones'),
                 // A legacy/partial contact record can carry an absent display name.
                 displayName: undefined as unknown as string,
             });
@@ -383,7 +383,7 @@ describe('AllowlistSagaExecutor', () => {
 
             expect(result).toEqual({
                 action:      'completed',
-                personId:    'bob-jones' as ContactId,
+                personId:    'bob-jones' as PersonId,
                 displayName: 'bob-jones',
             });
         });
@@ -403,7 +403,7 @@ describe('AllowlistSagaExecutor', () => {
 
         test('persists resultPersonId through the complete transition', async () => {
             jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(reviewSaga));
-            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as PersonId, 'Bob Jones'));
 
             await executor.confirmMatch(SAGA_UUID);
 
@@ -422,7 +422,7 @@ describe('AllowlistSagaExecutor', () => {
             expect(result).toEqual({
                 action:        'review_match',
                 sagaId:        SAGA_UUID,
-                matchPersonId: 'alice-b' as ContactId,
+                matchPersonId: 'alice-b' as PersonId,
             });
         });
 
@@ -601,7 +601,7 @@ describe('AllowlistSagaExecutor', () => {
                 return gate.promise;
             });
 
-            const bob = makeContact('bob-jones' as ContactId, 'Bob Jones');
+            const bob = makeContact('bob-jones' as PersonId, 'Bob Jones');
             let completion: Promise<unknown>;
             switch(method) {
                 case 'start-existing': {

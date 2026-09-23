@@ -233,6 +233,7 @@ src/
 │   ├── media-mcp-server.ts             # MCP server: video/audio media processing
 │   ├── memory-mcp-server.ts            # MCP server: memory tools (view, store, search, list)
 │   ├── multimodal-message-builder.ts   # Builds multimodal messages with image support
+│   ├── person-context-mcp-server.ts    # MCP server: getPersonContext cross-platform person history (wire name user-context)
 │   ├── plugin-loader.ts                # Plugin loading for Agent SDK
 │   ├── resume-prompt-builder.ts        # Resume prompts for background task auto-resume
 │   ├── session-cleanup.ts              # Extracts session IDs from SDK stream events
@@ -240,7 +241,6 @@ src/
 │   ├── stream-tracker.ts               # StreamTracker: streaming progress capture
 │   ├── task-list-reader.ts             # TaskListReader: reads Claude task list state
 │   ├── text-generator.ts               # Lightweight LLM text generation (Haiku)
-│   ├── user-context-mcp-server.ts      # MCP server: user context for cross-platform awareness
 │   ├── wikipedia-mcp-server.ts         # MCP server: Wikipedia article retrieval
 │   ├── prompts/                        # Agent system prompts
 │   │   ├── system-prompt.ts         # Main system prompt

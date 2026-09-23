@@ -7,7 +7,7 @@ import {
 import { logger } from '@hughescr/logger';
 import pLimit from 'p-limit';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from './client-holder';
-import { type Contact, type ContactBackend, type ContactId, type PlatformType, createContactId } from '@/storage/contacts';
+import { type Contact, type ContactBackend, type ContactIdentifierKey, type PersonId, type PlatformType, contactIdentifierKey, createPersonId } from '@/storage/contacts';
 
 const PK = 'PERSON#ALLOWLIST';
 const SK_INDEX  = 'INDEX';
@@ -15,7 +15,7 @@ const SK_PREFIX = 'PERSON#';
 const ALLOWLIST_READ_CONCURRENCY = 8;
 
 export interface PersonAllowlistEntry {
-    personId: ContactId
+    personId: PersonId
     notes?:   string
     addedAt:  string   // ISO timestamp
     addedBy:  string   // 'outbound-approval' | 'discord-command' | 'migration'
@@ -29,23 +29,13 @@ export class PersonAllowlist {
     /** Set of allowed personIds */
     private personIds = new Set<string>();
 
-    /** Reverse map: "{platform}#{normalizedValue}" → ContactId */
-    private reverseMap = new Map<string, ContactId>();
+    /** Reverse map: contactIdentifierKey(platform, value) → PersonId */
+    private reverseMap = new Map<ContactIdentifierKey, PersonId>();
 
     constructor(docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder, tableName: string, contactBackend: ContactBackend) {
         this.getDocClient   = resolveDocClientGetter(docClientOrHolder);
         this.tableName      = tableName;
         this.contactBackend = contactBackend;
-    }
-
-    /** Normalize an identifier value for consistent lookup */
-    private normalizeValue(value: string): string {
-        return value.toLowerCase().trim();
-    }
-
-    /** Build the reverse map key for a platform+value pair */
-    private reverseKey(platform: PlatformType, value: string): string {
-        return `${platform}#${this.normalizeValue(value)}`;
     }
 
     /**
@@ -54,15 +44,15 @@ export class PersonAllowlist {
      * indexed under the 'discord' platform alongside the username-keyed identifier.
      * This lets `isAllowed('discord', <id-or-username>)` match either space.
      */
-    private indexContact(contact: Contact, personId: ContactId): void {
+    private indexContact(contact: Contact, personId: PersonId): void {
         // Stryker disable next-line llm: contact.identifiers is z.array(...).min(1) — never null/undefined by schema, so `|| []` is a type-guaranteed no-op
         for(const identifier of contact.identifiers) {
-            // Stryker disable next-line llm: identifier.value is a non-empty z.string() and reverseKey() already normalizes via .trim() internally, so a pre-trim here is idempotent and unobservable
-            this.reverseMap.set(this.reverseKey(identifier.platform, identifier.value), personId);
+            // Stryker disable next-line llm: identifier.value is a non-empty z.string() and contactIdentifierKey() already normalizes via .trim() internally, so a pre-trim here is idempotent and unobservable
+            this.reverseMap.set(contactIdentifierKey(identifier.platform, identifier.value), personId);
         }
         if(contact._internal?.discordUserId) {
             // Stryker disable next-line llm: reached only when the enclosing `contact._internal?.discordUserId` guard is truthy, which already guarantees contact._internal is non-null — the optional chain here is equivalent
-            this.reverseMap.set(this.reverseKey('discord', contact._internal.discordUserId), personId);
+            this.reverseMap.set(contactIdentifierKey('discord', contact._internal.discordUserId), personId);
         }
     }
 
@@ -82,14 +72,14 @@ export class PersonAllowlist {
 
         this.personIds  = new Set<string>(rawSet);
         // Stryker disable next-line llm: generic type arguments are erased, so both forms construct the same empty Map.
-        this.reverseMap = new Map<string, ContactId>();
+        this.reverseMap = new Map<ContactIdentifierKey, PersonId>();
 
         const limit = pLimit(ALLOWLIST_READ_CONCURRENCY);
         const outstanding: Promise<unknown>[] = [];
         const reads = [...this.personIds].map((personIdStr) => {
-            let personId: ContactId;
+            let personId: PersonId;
             try {
-                personId = createContactId(personIdStr);
+                personId = createPersonId(personIdStr);
             } catch (error) {
                 return { kind: 'invalid', personIdStr, error } as const;
             }
@@ -138,7 +128,7 @@ export class PersonAllowlist {
      */
     isAllowed(platform: PlatformType, value: string): boolean {
         // Stryker disable next-line llm: personId is only tested for falsiness, so a missing map value is indistinguishable from an empty string.
-        const personId = this.reverseMap.get(this.reverseKey(platform, value));
+        const personId = this.reverseMap.get(contactIdentifierKey(platform, value));
         if(!personId) {
             return false;
         }
@@ -148,7 +138,7 @@ export class PersonAllowlist {
     /**
      * Check if a personId is directly allowed.
      */
-    isPersonAllowed(personId: ContactId): boolean {
+    isPersonAllowed(personId: PersonId): boolean {
         return this.personIds.has(personId);
     }
 
@@ -157,7 +147,7 @@ export class PersonAllowlist {
      * Writes metadata + updates INDEX StringSet, then updates in-memory state.
      * If the contact is not found, still adds to personIds (reverseMap will be empty for them).
      */
-    async addPerson(personId: ContactId, opts: { notes?: string, addedBy: string }): Promise<void> {
+    async addPerson(personId: PersonId, opts: { notes?: string, addedBy: string }): Promise<void> {
         const item: Record<string, unknown> = {
             PK,
             SK:      `${SK_PREFIX}${personId}`,
@@ -205,7 +195,7 @@ export class PersonAllowlist {
      * Remove a person from the allowlist.
      * Deletes metadata + updates INDEX StringSet, then purges in-memory state.
      */
-    async removePerson(personId: ContactId): Promise<void> {
+    async removePerson(personId: PersonId): Promise<void> {
         await this.getDocClient().send(new TransactWriteCommand({
             TransactItems: [
                 {
@@ -237,7 +227,7 @@ export class PersonAllowlist {
      * Rebuild reverse map entries for a person (e.g., after their identifiers changed).
      * If not in personIds, just purges existing entries (no-op if already absent).
      */
-    async refreshPerson(personId: ContactId): Promise<void> {
+    async refreshPerson(personId: PersonId): Promise<void> {
         // Always purge stale entries first
         this.purgeReverseMapEntries(personId);
 
@@ -278,9 +268,9 @@ export class PersonAllowlist {
 
         const entries: PersonAllowlistEntry[] = [];
         for(const item of items) {
-            let personId: ContactId;
+            let personId: PersonId;
             try {
-                personId = createContactId(item.personId as string);
+                personId = createPersonId(item.personId as string);
             } catch (error) {
                 logger.warn({ personIdStr: item.personId, tableName: this.tableName, error, msg: 'PersonAllowlist.list(): invalid personId format in row — skipping' });
                 continue;
@@ -299,7 +289,7 @@ export class PersonAllowlist {
     }
 
     /** Remove all reverseMap entries that point to the given personId */
-    private purgeReverseMapEntries(personId: ContactId): void {
+    private purgeReverseMapEntries(personId: PersonId): void {
         for(const [key, id] of this.reverseMap) {
             if(id === personId) {
                 this.reverseMap.delete(key);

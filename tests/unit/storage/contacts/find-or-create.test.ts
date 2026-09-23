@@ -2,10 +2,10 @@ import { describe, test, expect, mock } from 'bun:test';
 import type { InvariantViolationError } from '@/errors';
 import { type ContactBackend } from '@/storage/contacts/backend';
 import { findOrCreateContact } from '@/storage/contacts/find-or-create';
-import { createContactId, type Contact } from '@/storage/contacts/types';
+import { createPersonId, type Contact } from '@/storage/contacts/types';
 
 const ALICE: Contact = {
-    personId:    createContactId('alice'),
+    personId:    createPersonId('alice'),
     displayName: 'Alice',
     identifiers: [{ platform: 'email', value: 'alice@example.com' }],
     createdAt:   '2026-01-01T00:00:00.000Z',
@@ -13,7 +13,7 @@ const ALICE: Contact = {
 };
 
 const BOB: Contact = {
-    personId:    createContactId('bob'),
+    personId:    createPersonId('bob'),
     displayName: 'Bob',
     identifiers: [{ platform: 'email', value: 'bob@example.com' }],
     createdAt:   '2026-01-02T00:00:00.000Z',
@@ -83,11 +83,11 @@ describe('findOrCreateContact', () => {
 
         const result = await findOrCreateContact(backend, 'email', 'alice@example.com', 'Alice');
 
-        expect(result).toBe(createContactId('alice'));
+        expect(result).toBe(createPersonId('alice'));
         const putCalls = (backend.putContact as ReturnType<typeof mock>).mock.calls;
         expect(putCalls).toHaveLength(1);
         const [contact] = putCalls[0] as [Contact];
-        expect(contact.personId).toBe(createContactId('alice'));
+        expect(contact.personId).toBe(createPersonId('alice'));
         expect(contact.displayName).toBe('Alice');
         expect(contact.identifiers).toEqual([{ platform: 'email', value: 'alice@example.com' }]);
         expect(contact.createdAt).toBeDefined();
@@ -141,9 +141,9 @@ describe('findOrCreateContact', () => {
 
         const result = await findOrCreateContact(backend, 'email', 'alice2@example.com', 'Alice');
 
-        expect(result).toBe(createContactId('alice-2'));
+        expect(result).toBe(createPersonId('alice-2'));
         const putCalls = (backend.putContact as ReturnType<typeof mock>).mock.calls;
         const [contact] = putCalls[0] as [Contact];
-        expect(contact.personId).toBe(createContactId('alice-2'));
+        expect(contact.personId).toBe(createPersonId('alice-2'));
     });
 });

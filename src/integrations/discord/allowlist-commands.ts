@@ -2,7 +2,7 @@ import { logger } from '@hughescr/logger';
 import { EmbedBuilder, MessageFlags, SlashCommandBuilder, InteractionContextType, ApplicationIntegrationType, type ChatInputCommandInteraction  } from 'discord.js';
 import { GREEN } from './colors';
 import { mapBounded } from './map-bounded';
-import { type ContactBackend, type ContactId, type PersonAllowlist, createContactId  } from '@/storage';
+import { type ContactBackend, type PersonId, type PersonAllowlist, createPersonId  } from '@/storage';
 
 const PLATFORM_EMOJI: Record<string, string> = { discord: '🤖', bsky: '🦋', email: '📩' };
 const EXCLUDED_PLATFORMS = new Set(['name', 'nickname']);
@@ -96,10 +96,10 @@ export class AllowlistCommandHandler {
 
     private buildContactField(
         contact: Awaited<ReturnType<typeof this.contactBackend.getContact>>,
-        entry: { personId: ContactId, notes?: string }
+        entry: { personId: PersonId, notes?: string }
     ): { name: string, value: string } {
         if(!contact) {
-            // Stryker disable next-line llm: PersonAllowlist.list validates personId with createContactId and skips corrupt rows, so this ContactId cannot be nullish.
+            // Stryker disable next-line llm: PersonAllowlist.list validates personId with createPersonId and skips corrupt rows, so this PersonId cannot be nullish.
             return { name: entry.personId, value: '_(contact not found)_' };
         }
         const personIdLine = `Person: \`${contact.personId}\``;
@@ -132,7 +132,7 @@ export class AllowlistCommandHandler {
     }
 
     private async buildEntryFields(
-        entries: { personId: ContactId, notes?: string }[]
+        entries: { personId: PersonId, notes?: string }[]
     ): Promise<{ name: string, value: string }[]> {
         return mapBounded(entries, 5, async (entry) => {
             const contact = await this.contactBackend.getContact(entry.personId);
@@ -189,9 +189,9 @@ export class AllowlistCommandHandler {
 
     private async handleAdd(interaction: ChatInputCommandInteraction): Promise<void> {
         const personIdStr = interaction.options.getString('person') ?? '';
-        let contactId;
+        let personId;
         try {
-            contactId = createContactId(personIdStr);
+            personId = createPersonId(personIdStr);
         } catch (err: unknown) {
             logger.debug({ err, personIdStr, msg: 'Invalid personId format in /allowlist add' });
             await interaction.editReply({ content: 'Invalid person ID format. Person IDs are lowercase with hyphens (e.g., alice-smith).' });
@@ -199,19 +199,19 @@ export class AllowlistCommandHandler {
         }
 
         try {
-            const contact = await this.contactBackend.getContact(contactId);
+            const contact = await this.contactBackend.getContact(personId);
             if(!contact) {
-                // Stryker disable next-line llm: createContactId only validates (contactIdSchema has no transform), so contactId and personIdStr are the same string here
+                // Stryker disable next-line llm: createPersonId only validates (personIdSchema has no transform), so personId and personIdStr are the same string here
                 await interaction.editReply({ content: `Contact "${personIdStr}" not found. Create it first with /contact add.` });
                 return;
             }
 
-            if(this.personAllowlist.isPersonAllowed(contactId)) {
+            if(this.personAllowlist.isPersonAllowed(personId)) {
                 await interaction.editReply({ content: `${contact.displayName} is already on the allowlist.` });
                 return;
             }
 
-            await this.personAllowlist.addPerson(contactId, { addedBy: 'discord-command' });
+            await this.personAllowlist.addPerson(personId, { addedBy: 'discord-command' });
             await interaction.editReply({ content: `Added ${contact.displayName} to the allowlist (${contact.identifiers.length} identifiers).` });
         } catch (err: unknown) {
             logger.error({ err, personIdStr, msg: 'Failed to add to allowlist' });
@@ -221,9 +221,9 @@ export class AllowlistCommandHandler {
 
     private async handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
         const personIdStr = interaction.options.getString('person') ?? '';
-        let contactId;
+        let personId;
         try {
-            contactId = createContactId(personIdStr);
+            personId = createPersonId(personIdStr);
         } catch (err: unknown) {
             logger.debug({ err, personIdStr, msg: 'Invalid personId format in /allowlist remove' });
             await interaction.editReply({ content: 'Invalid person ID format. Person IDs are lowercase with hyphens (e.g., alice-smith).' });
@@ -231,12 +231,12 @@ export class AllowlistCommandHandler {
         }
 
         try {
-            if(!this.personAllowlist.isPersonAllowed(contactId)) {
+            if(!this.personAllowlist.isPersonAllowed(personId)) {
                 await interaction.editReply({ content: `"${personIdStr}" is not on the allowlist.` });
                 return;
             }
 
-            await this.personAllowlist.removePerson(contactId);
+            await this.personAllowlist.removePerson(personId);
             await interaction.editReply({ content: `Removed "${personIdStr}" from the allowlist.` });
         } catch (err: unknown) {
             logger.error({ err, personIdStr, msg: 'Failed to remove from allowlist' });

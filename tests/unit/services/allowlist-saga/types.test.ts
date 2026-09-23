@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { allowlistSagaSchema, type AllowlistSaga, type PendingReviewAllowlistSaga } from '@/services/allowlist-saga/types';
-import type { ContactId } from '@/storage';
+import type { PersonId } from '@/storage';
 
 const SAGA_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 
@@ -116,7 +116,7 @@ describe('allowlistSagaSchema', () => {
                 state:            'pending_review',
                 displayNameHint:  'Alice Hint',
                 adminDisplayName: 'Alice',
-                fuzzyMatches:     ['alice-a' as ContactId, 'alice-b' as ContactId],
+                fuzzyMatches:     ['alice-a' as PersonId, 'alice-b' as PersonId],
                 matchIndex:       1,
             });
         });
@@ -131,7 +131,7 @@ describe('allowlistSagaSchema', () => {
                 resultPersonId:   'alice-a',
             };
 
-            expect(allowlistSagaSchema.parse(legacyRow)).toEqual({ ...BASE, state: 'completed', resultPersonId: 'alice-a' as ContactId });
+            expect(allowlistSagaSchema.parse(legacyRow)).toEqual({ ...BASE, state: 'completed', resultPersonId: 'alice-a' as PersonId });
         });
     });
 
@@ -141,7 +141,7 @@ describe('allowlistSagaSchema', () => {
             const missingReviewData: PendingReviewAllowlistSaga = { ...BASE, state: 'pending_review' };
             // @ts-expect-error -- a completed saga must carry resultPersonId
             const missingResult: AllowlistSaga = { ...BASE, state: 'completed' };
-            // @ts-expect-error -- fuzzyMatches holds ContactIds, not bare strings
+            // @ts-expect-error -- fuzzyMatches holds PersonIds, not bare strings
             const bareStrings: AllowlistSaga = { ...BASE, state: 'pending_review', fuzzyMatches: ['alice-a'], matchIndex: 0 };
 
             expect([missingReviewData.state, missingResult.state, bareStrings.state]).toEqual(['pending_review', 'completed', 'pending_review']);

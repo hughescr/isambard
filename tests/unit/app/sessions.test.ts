@@ -96,18 +96,18 @@ type FakeMcpServerConfig = MCPServers['memoryMcpServer'];
 
 /** All twelve server slots populated, each with a distinguishable value, for asserting the exact key mapping onto `SessionMcpServers`. */
 const FULL_MCP_SERVERS: Required<MCPServers> = {
-    memoryMcpServer:      { name: 'memory' } as unknown as FakeMcpServerConfig,
-    discordMcpServer:     { name: 'discord' } as unknown as FakeMcpServerConfig,
-    inboxMcpServer:       { name: 'inbox' } as unknown as FakeMcpServerConfig,
-    bskyMcpServer:        { name: 'bsky' } as unknown as FakeMcpServerConfig,
-    caldavMcpServer:      { name: 'caldav' } as unknown as FakeMcpServerConfig,
-    wikipediaMcpServer:   { name: 'wikipedia' } as unknown as FakeMcpServerConfig,
-    contactsMcpServer:    { name: 'contacts' } as unknown as FakeMcpServerConfig,
-    userContextMcpServer: { name: 'user-context' } as unknown as FakeMcpServerConfig,
-    mediaMcpServer:       { name: 'media' } as unknown as FakeMcpServerConfig,
-    browserMcpServer:     { name: 'browser' } as unknown as FakeMcpServerConfig,
-    emailMcpServer:       { name: 'email' } as unknown as FakeMcpServerConfig,
-    healthMcpServer:      { name: 'health' } as unknown as FakeMcpServerConfig,
+    memoryMcpServer:        { name: 'memory' } as unknown as FakeMcpServerConfig,
+    discordMcpServer:       { name: 'discord' } as unknown as FakeMcpServerConfig,
+    inboxMcpServer:         { name: 'inbox' } as unknown as FakeMcpServerConfig,
+    bskyMcpServer:          { name: 'bsky' } as unknown as FakeMcpServerConfig,
+    caldavMcpServer:        { name: 'caldav' } as unknown as FakeMcpServerConfig,
+    wikipediaMcpServer:     { name: 'wikipedia' } as unknown as FakeMcpServerConfig,
+    contactsMcpServer:      { name: 'contacts' } as unknown as FakeMcpServerConfig,
+    personContextMcpServer: { name: 'user-context' } as unknown as FakeMcpServerConfig,
+    mediaMcpServer:         { name: 'media' } as unknown as FakeMcpServerConfig,
+    browserMcpServer:       { name: 'browser' } as unknown as FakeMcpServerConfig,
+    emailMcpServer:         { name: 'email' } as unknown as FakeMcpServerConfig,
+    healthMcpServer:        { name: 'health' } as unknown as FakeMcpServerConfig,
 };
 
 const DEFAULT_CONFIG: SessionConfig = sessionConfigSchema.parse({});
@@ -962,7 +962,7 @@ describe('createConversationConductor', () => {
             caldav:         FULL_MCP_SERVERS.caldavMcpServer,
             wikipedia:      FULL_MCP_SERVERS.wikipediaMcpServer,
             contacts:       FULL_MCP_SERVERS.contactsMcpServer,
-            'user-context': FULL_MCP_SERVERS.userContextMcpServer,
+            'user-context': FULL_MCP_SERVERS.personContextMcpServer,
             media:          FULL_MCP_SERVERS.mediaMcpServer,
             browser:        FULL_MCP_SERVERS.browserMcpServer,
             email:          FULL_MCP_SERVERS.emailMcpServer,

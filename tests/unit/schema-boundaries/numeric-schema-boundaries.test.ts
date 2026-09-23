@@ -4,7 +4,7 @@ import { calendarEntrySchema, calendarRegistryRecordSchema, calendarServerEntryS
 import { channelMetadataSchema } from '@/integrations/discord/channel-registry/types';
 import { DM_SCOPE, discordMessageContextSchema } from '@/integrations/discord/types';
 import { outboxItemSchema } from '@/services/outbox/types';
-import { contactIdSchema, contactIdentifierSchema, contactSchema } from '@/storage/contacts/types';
+import { personIdSchema, contactIdentifierSchema, contactSchema } from '@/storage/contacts/types';
 import { memoryToolItemSchema } from '@/storage/memory-tool/types';
 
 const uuid = '00000000-0000-4000-8000-000000000001';
@@ -37,7 +37,7 @@ describe('public numeric schema boundaries', () => {
         ['discordMessageContext.messageId', discordMessageContextSchema, { guildId: DM_SCOPE, channelId: 'x', userId: 'x', messageId: 'x', content: '', timestamp, botUserId: 'x' }],
         ['contactIdentifier.value', contactIdentifierSchema, { ...contactIdentifier, value: 'x' }],
         ['contactIdentifier.value max', contactIdentifierSchema, { ...contactIdentifier, value: 'x'.repeat(500) }],
-        ['contactId max', contactIdSchema, 'x'.repeat(100)],
+        ['personId max', personIdSchema, 'x'.repeat(100)],
         ['contact.displayName', contactSchema, { ...contact, displayName: 'x' }],
         ['contact.displayName max', contactSchema, { ...contact, displayName: 'x'.repeat(200) }],
         ['memory.content', memoryToolItemSchema, { ...memory, content: 'x' }],

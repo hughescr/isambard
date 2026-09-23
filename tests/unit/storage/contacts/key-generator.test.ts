@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { ContactKeyGenerator } from '@/storage/contacts/key-generator';
-import type { ContactId } from '@/storage/contacts/types';
+import { contactIdentifierKey, type PersonId } from '@/storage/contacts/types';
+import { createPrefixedKey } from '@/storage/utils/key-builder';
 
-const PERSON_ID = 'craig-hughes' as ContactId;
+const PERSON_ID = 'craig-hughes' as PersonId;
 
 describe.concurrent('ContactKeyGenerator', () => {
     test.each([
@@ -23,7 +24,7 @@ describe.concurrent('ContactKeyGenerator', () => {
         });
 
         test('uses personId verbatim in PK', () => {
-            const id = 'alice-wonderland' as ContactId;
+            const id = 'alice-wonderland' as PersonId;
             const keys = ContactKeyGenerator.createProfileKeys(id);
             expect(keys.PK).toBe('CONTACT#alice-wonderland');
         });
@@ -74,15 +75,28 @@ describe.concurrent('ContactKeyGenerator', () => {
         );
     });
 
+    describe('createLookupPK', () => {
+        test('builds the normalized CONTACT_LOOKUP partition key', () => {
+            expect(ContactKeyGenerator.createLookupPK('email', ' Alice@Example.COM ')).toBe('CONTACT_LOOKUP#email#alice@example.com');
+        });
+
+        test('agrees with createLookupKeys and the shared contactIdentifierKey for a padded mixed-case value', () => {
+            const expected = 'CONTACT_LOOKUP#bsky#alice.bsky.social';
+            expect(ContactKeyGenerator.createLookupKeys('bsky', '  Alice.bsky.social  ', PERSON_ID).PK).toBe(expected);
+            expect(ContactKeyGenerator.createLookupPK('bsky', '  Alice.bsky.social  ')).toBe(expected);
+            expect(createPrefixedKey('CONTACT_LOOKUP', contactIdentifierKey('bsky', '  Alice.bsky.social  '))).toBe(expected);
+        });
+    });
+
     describe('parsePersonIdFromPK', () => {
         test('parses personId from valid PK', () => {
             const personId = ContactKeyGenerator.parsePersonIdFromPK('CONTACT#craig-hughes');
-            expect(personId).toBe('craig-hughes' as ContactId);
+            expect(personId).toBe('craig-hughes' as PersonId);
         });
 
         test('parses single-word personId', () => {
             const personId = ContactKeyGenerator.parsePersonIdFromPK('CONTACT#alice');
-            expect(personId).toBe('alice' as ContactId);
+            expect(personId).toBe('alice' as PersonId);
         });
 
         test('throws on invalid PK format', () => {
@@ -151,13 +165,13 @@ describe.concurrent('ContactKeyGenerator', () => {
         });
 
         test('always has GSI2PK = CONTACTS', () => {
-            const id = 'alice-wonderland' as ContactId;
+            const id = 'alice-wonderland' as PersonId;
             const keys = ContactKeyGenerator.createCollectionKeys(id);
             expect(keys.GSI2PK).toBe('CONTACTS');
         });
 
         test('uses personId in GSI2SK', () => {
-            const id = 'bob-smith' as ContactId;
+            const id = 'bob-smith' as PersonId;
             const keys = ContactKeyGenerator.createCollectionKeys(id);
             expect(keys.GSI2SK).toBe('CONTACT#bob-smith');
         });
@@ -173,7 +187,7 @@ describe.concurrent('ContactKeyGenerator', () => {
     describe('parsePersonIdFromLookupSK', () => {
         test('parses personId from lookup SK', () => {
             const personId = ContactKeyGenerator.parsePersonIdFromLookupSK('CONTACT#craig-hughes');
-            expect(personId).toBe('craig-hughes' as ContactId);
+            expect(personId).toBe('craig-hughes' as PersonId);
         });
 
         test('throws on invalid SK format', () => {

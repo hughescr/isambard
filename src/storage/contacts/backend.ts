@@ -2,11 +2,13 @@ import { type BatchWriteCommandInput, type BatchWriteCommandOutput, BatchWriteCo
 import pLimit from 'p-limit';
 import { ContactKeyGenerator } from './key-generator';
 import {
+    contactIdentifierKey,
     contactSchema,
     type Contact,
-    type ContactId,
     type ContactIdentifier,
+    type ContactIdentifierKey,
     type ContactProfileItem,
+    type PersonId,
     type PlatformType
 } from './types';
 import { BatchWriteExhaustedError, ContactLastIdentifierError, ContactNoIdentifiersError, ContactNotFoundError } from '@/errors';
@@ -46,14 +48,6 @@ const DEFAULT_SLEEP = (ms: number): Promise<void> =>
     new Promise((resolve) => { setTimeout(resolve, ms); });
 
 /**
- * Produce a normalized comparison key for a ContactIdentifier.
- * Matches the normalization applied in ContactKeyGenerator.createLookupKeys().
- */
-function identifierKey(id: ContactIdentifier): string {
-    return `${id.platform}#${id.value.toLowerCase().trim()}`;
-}
-
-/**
  * Splits an array into chunks of the given size.
  */
 function splitIntoBatches<T>(items: T[], size: number): T[][] {
@@ -66,7 +60,7 @@ function splitIntoBatches<T>(items: T[], size: number): T[][] {
  *
  * Key structure:
  *   Profile:  PK=CONTACT#{personId}          SK=PROFILE
- *   Lookup:   PK=CONTACT_LOOKUP#{platform}#{value}  SK=CONTACT#{personId}
+ *   Lookup:   PK and SK from ContactKeyGenerator.createLookupKeys (identifier → personId)
  */
 export class ContactBackend extends BaseRepository<Contact> {
     /**
@@ -123,7 +117,7 @@ export class ContactBackend extends BaseRepository<Contact> {
      * Get a contact by personId.
      * Returns undefined if not found.
      */
-    async getContact(personId: ContactId): Promise<Contact | undefined> {
+    async getContact(personId: PersonId): Promise<Contact | undefined> {
         const keys = ContactKeyGenerator.createProfileKeys(personId);
         const item = await this.getItem<Record<string, unknown>>(keys);
         if(!item) {
@@ -151,11 +145,11 @@ export class ContactBackend extends BaseRepository<Contact> {
     /**
      * Builds put requests for new lookup rows (identifiers not in oldSet).
      */
-    private buildNewLookupRequests(contact: Contact, oldSet: Set<string>): BatchWriteRequest[] {
+    private buildNewLookupRequests(contact: Contact, oldSet: Set<ContactIdentifierKey>): BatchWriteRequest[] {
         const requests: BatchWriteRequest[] = [];
         // Stryker disable next-line llm: Contact.identifiers is a required array (putContact already read its length), so the nullish fallback is unreachable.
         for(const identifier of contact.identifiers) {
-            if(!oldSet.has(identifierKey(identifier))) {
+            if(!oldSet.has(contactIdentifierKey(identifier.platform, identifier.value))) {
                 const lookupKeys = ContactKeyGenerator.createLookupKeys(
                     // Stryker disable next-line llm: ContactIdentifier.platform is a required enum value.
                     identifier.platform,
@@ -173,11 +167,11 @@ export class ContactBackend extends BaseRepository<Contact> {
     /**
      * Builds delete requests for lookup rows that were removed (exist in existing but not in newSet).
      */
-    private buildDeleteRequests(existing: Contact, newSet: Set<string>): BatchWriteRequest[] {
+    private buildDeleteRequests(existing: Contact, newSet: Set<ContactIdentifierKey>): BatchWriteRequest[] {
         const requests: BatchWriteRequest[] = [];
         // Stryker disable next-line llm: existing comes from getContact's contactSchema.parse, so every identifier has a required platform.
         for(const identifier of existing.identifiers) {
-            if(!newSet.has(identifierKey(identifier))) {
+            if(!newSet.has(contactIdentifierKey(identifier.platform, identifier.value))) {
                 const { PK, SK } = ContactKeyGenerator.createLookupKeys(
                     identifier.platform,
                     identifier.value,
@@ -226,11 +220,11 @@ export class ContactBackend extends BaseRepository<Contact> {
         // being removed.
         const existing = await this.getContact(contact.personId);
 
-        // Compute normalized key sets to detect unchanged identifiers.
-        // This matches the normalization applied in ContactKeyGenerator.createLookupKeys().
+        // Compute normalized key sets to detect unchanged identifiers; contactIdentifierKey is the
+        // same equivalence ContactKeyGenerator.createLookupKeys() persists.
         // Stryker disable next-line llm: Set treats undefined as empty, and map does not mutate its source, making both rewrites inert.
-        const oldSet = new Set(existing?.identifiers.map(id => identifierKey(id)));
-        const newSet = new Set(contact.identifiers.map(id => identifierKey(id)));
+        const oldSet = new Set(existing?.identifiers.map(id => contactIdentifierKey(id.platform, id.value)));
+        const newSet = new Set(contact.identifiers.map(id => contactIdentifierKey(id.platform, id.value)));
 
         // ── Step 1: Write new lookup rows ──────────────────────────────────────────
         // Write only new lookup items (exist in new but not in old).
@@ -274,7 +268,7 @@ export class ContactBackend extends BaseRepository<Contact> {
      * @throws {ContactNotFoundError} if the contact does not exist
      * @throws if DynamoDB returns unprocessed items after all retries
      */
-    async deleteContact(personId: ContactId, deps?: ContactBackendDeps): Promise<void> {
+    async deleteContact(personId: PersonId, deps?: ContactBackendDeps): Promise<void> {
         const existing = await this.getContact(personId);
         if(!existing) {
             throw new ContactNotFoundError(personId);
@@ -305,12 +299,11 @@ export class ContactBackend extends BaseRepository<Contact> {
      * Returns an array (may be multiple for common names).
      */
     async resolveIdentifier(platform: PlatformType, value: string): Promise<Contact[]> {
-        const normalizedValue = value.toLowerCase().trim();
         const lookupItems = await this.query<{ SK: string }>({
             KeyConditionExpression:    '#pk = :pk',
             ExpressionAttributeNames:  { '#pk': 'PK' },
             ExpressionAttributeValues: {
-                ':pk': `CONTACT_LOOKUP#${platform}#${normalizedValue}`,
+                ':pk': ContactKeyGenerator.createLookupPK(platform, value),
             },
         });
 
@@ -327,14 +320,14 @@ export class ContactBackend extends BaseRepository<Contact> {
      * Silently skips if the identifier already exists (case-insensitive).
      * @throws {ContactNotFoundError} if the contact does not exist
      */
-    async addIdentifier(personId: ContactId, identifier: ContactIdentifier, deps?: ContactBackendDeps): Promise<void> {
+    async addIdentifier(personId: PersonId, identifier: ContactIdentifier, deps?: ContactBackendDeps): Promise<void> {
         const existing = await this.getContact(personId);
         if(!existing) {
             throw new ContactNotFoundError(personId);
         }
         // Skip if this identifier already exists (case-insensitive, trimmed)
-        const newKey = identifierKey(identifier);
-        if(existing.identifiers.some(id => identifierKey(id) === newKey)) {
+        const newKey = contactIdentifierKey(identifier.platform, identifier.value);
+        if(existing.identifiers.some(id => contactIdentifierKey(id.platform, id.value) === newKey)) {
             return;
         }
         const updated: Contact = {
@@ -350,14 +343,15 @@ export class ContactBackend extends BaseRepository<Contact> {
      * @throws {ContactNotFoundError} if the contact does not exist
      * @throws {ContactLastIdentifierError} if removing would leave no identifiers
      */
-    async removeIdentifier(personId: ContactId, platform: PlatformType, value: string, deps?: ContactBackendDeps): Promise<void> {
+    async removeIdentifier(personId: PersonId, platform: PlatformType, value: string, deps?: ContactBackendDeps): Promise<void> {
         const existing = await this.getContact(personId);
         if(!existing) {
             throw new ContactNotFoundError(personId);
         }
-        const normalizedValue = value.toLowerCase().trim();
+        // Same platform and same normalized value, as one key: no PlatformType contains '#'.
+        const target = contactIdentifierKey(platform, value);
         const remaining = existing.identifiers.filter(
-            id => !(id.platform === platform && id.value.toLowerCase().trim() === normalizedValue)
+            id => contactIdentifierKey(id.platform, id.value) !== target
         );
         if(remaining.length === 0) {
             throw new ContactLastIdentifierError(personId);

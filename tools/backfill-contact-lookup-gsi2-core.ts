@@ -12,7 +12,7 @@ import { logger } from '@hughescr/logger';
 import pLimit from 'p-limit';
 import type { createDynamoDBClient } from '@/storage';
 import { ContactKeyGenerator } from '@/storage/contacts/key-generator';
-import { contactSchema, type ContactId, type ContactIdentifier } from '@/storage/contacts/types';
+import { contactSchema, type ContactIdentifier, type PersonId } from '@/storage/contacts/types';
 import { retryAsync } from '@/utils/retry/retry-async';
 
 export interface BackfillOptions {
@@ -165,7 +165,7 @@ export async function processContacts(
         }
 
         for(const identifier of identifiers) {
-            const keys = ContactKeyGenerator.createLookupKeys(identifier.platform, identifier.value, personId as ContactId);
+            const keys = ContactKeyGenerator.createLookupKeys(identifier.platform, identifier.value, personId as PersonId);
 
             if(dryRun) {
                 process.stdout.write(`[dry-run] Would update: PK=${keys.PK} SK=${keys.SK} → GSI2PK=${keys.GSI2PK} GSI2SK=${keys.GSI2SK}\n`);

@@ -7,7 +7,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../setup';
-import { type ContactBackend, createContactId, type Contact } from '@/storage/contacts';
+import { type ContactBackend, createPersonId, type Contact } from '@/storage/contacts';
 import { PersonAllowlist } from '@/storage/person-allowlist';
 
 const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -16,7 +16,7 @@ const TABLE_NAME = 'test-table';
 
 function makeContact(personId: string, identifiers: { platform: string, value: string }[], internal?: Contact['_internal']): Contact {
     return {
-        personId:    createContactId(personId),
+        personId:    createPersonId(personId),
         displayName: personId,
         identifiers: identifiers as Contact['identifiers'],
         _internal:   internal,
@@ -25,9 +25,9 @@ function makeContact(personId: string, identifiers: { platform: string, value: s
     };
 }
 
-const ALICE_ID   = createContactId('alice-smith');
-const BOB_ID     = createContactId('bob-jones');
-const CHARLIE_ID = createContactId('charlie-brown');
+const ALICE_ID   = createPersonId('alice-smith');
+const BOB_ID     = createPersonId('bob-jones');
+const CHARLIE_ID = createPersonId('charlie-brown');
 
 const ALICE_CONTACT = makeContact('alice-smith', [
     { platform: 'email', value: 'alice@example.com' },
@@ -93,7 +93,7 @@ describe('PersonAllowlist.load()', () => {
     });
 
     test('bounds contact reads while allowing queued reads to start as slots free', async () => {
-        const ids = Array.from({ length: 10 }, (_, index) => createContactId(`person-${index}`));
+        const ids = Array.from({ length: 10 }, (_, index) => createPersonId(`person-${index}`));
         const gates = new Map(ids.map(id => [id, deferred<Contact | undefined>()]));
         const started: string[] = [];
         let active = 0;
@@ -103,7 +103,7 @@ describe('PersonAllowlist.load()', () => {
             started.push(id);
             active++;
             maximumActive = Math.max(maximumActive, active);
-            const gate = gates.get(createContactId(id));
+            const gate = gates.get(createPersonId(id));
             if(!gate) {
                 throw new Error(`Missing gate for ${id}`);
             }
@@ -188,7 +188,7 @@ describe('PersonAllowlist.load()', () => {
         const bob = deferred<Contact | undefined>();
         const charlie = deferred<Contact | undefined>();
         const dave = deferred<Contact | undefined>();
-        const daveId = createContactId('dave-person');
+        const daveId = createPersonId('dave-person');
         ddbMock.on(GetCommand).resolves({ Item: { personIds: new Set([ALICE_ID, BOB_ID, CHARLIE_ID, daveId, 'INVALID ID!!!']) } });
         (mockBackend.getContact as ReturnType<typeof mock>).mockImplementation((id: string) => {
             if(id === ALICE_ID) {
@@ -336,7 +336,7 @@ describe('PersonAllowlist.load()', () => {
         expect(allowlist.isPersonAllowed(ALICE_ID)).toBe(true);
         expect(allowlist.isAllowed('email', 'alice@example.com')).toBe(true);
         expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-            personId: createContactId('orphaned-person'),
+            personId: createPersonId('orphaned-person'),
         }));
     });
 });
@@ -378,6 +378,32 @@ describe('PersonAllowlist.isAllowed()', () => {
 
         expect(allowlist.isAllowed('email', 'ALICE@EXAMPLE.COM')).toBe(true);
         expect(allowlist.isAllowed('email', '  alice@example.com  ')).toBe(true);
+    });
+
+    test('matches a padded mixed-case identifier against the lookup-key normalization', async () => {
+        ddbMock.on(GetCommand).resolves({
+            Item: { personIds: new Set([ALICE_ID]) },
+        });
+        (mockBackend.getContact as ReturnType<typeof mock>)
+            .mockResolvedValue(ALICE_CONTACT);
+
+        const allowlist = makeAllowlist();
+        await allowlist.load();
+
+        expect(allowlist.isAllowed('email', '  ALICE@Example.com ')).toBe(true);
+    });
+
+    test('matches a padded Discord snowflake against a padded _internal.discordUserId', async () => {
+        ddbMock.on(GetCommand).resolves({
+            Item: { personIds: new Set([ALICE_ID]) },
+        });
+        (mockBackend.getContact as ReturnType<typeof mock>)
+            .mockResolvedValue(makeContact(ALICE_ID, [{ platform: 'email', value: 'alice@example.com' }], { discordUserId: ' 481231231231231234 ' }));
+
+        const allowlist = makeAllowlist();
+        await allowlist.load();
+
+        expect(allowlist.isAllowed('discord', '481231231231231234 ')).toBe(true);
     });
 
     test('works for different platforms (email and bsky)', async () => {
@@ -546,7 +572,7 @@ describe('PersonAllowlist.addPerson()', () => {
             .mockResolvedValue(daveContact);
 
         const allowlist = makeAllowlist();
-        await allowlist.addPerson(createContactId('dave-jones'), { addedBy: 'outbound-approval' });
+        await allowlist.addPerson(createPersonId('dave-jones'), { addedBy: 'outbound-approval' });
 
         expect(allowlist.isAllowed('discord', '481231231231231234')).toBe(true);
     });

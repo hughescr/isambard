@@ -1,5 +1,5 @@
 import { type ContactBackend } from './backend';
-import { type ContactId, type PlatformType } from './types';
+import { type PersonId, type PlatformType } from './types';
 import { generatePersonId, findAvailablePersonId } from './utils';
 import { InvariantViolationError } from '@/errors';
 
@@ -20,7 +20,7 @@ export async function findOrCreateContact(
     value: string,
     displayName: string,
     opts?: { notes?: string }
-): Promise<ContactId> {
+): Promise<PersonId> {
     const matches = await backend.resolveIdentifier(platform, value);
     if(matches.length > 0) {
         const firstMatch = matches[0];

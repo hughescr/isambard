@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createContactsMCPServer } from '../../../src/agent/contacts-mcp-server';
-import type { Contact, ContactChangeRequest, ContactId, ContactIdentifier } from '../../../src/storage/contacts';
+import type { Contact, ContactChangeRequest, ContactIdentifier, PersonId } from '../../../src/storage/contacts';
 import { textContent } from '../../setup';
 
 interface RegisteredTool {
@@ -14,7 +14,7 @@ interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTo
 
 // Helper to build test contacts
 const makeContact = (overrides: Partial<Contact> = {}): Contact => ({
-    personId:    'alice-wonderland' as ContactId,
+    personId:    'alice-wonderland' as PersonId,
     displayName: 'Alice Wonderland',
     identifiers: [
         { platform: 'email', value: 'alice@example.com' },
@@ -224,7 +224,7 @@ describe.concurrent('createContactsMCPServer', () => {
         });
 
         test('should return the backend contact personId, not the raw requested id', async () => {
-            mockBackend.getContact.mockImplementation(async () => makeContact({ personId: 'alice-w' as ContactId }));
+            mockBackend.getContact.mockImplementation(async () => makeContact({ personId: 'alice-w' as PersonId }));
             const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
             const handler = getToolHandler(server, 'lookupContactId');
 
@@ -330,7 +330,7 @@ describe.concurrent('createContactsMCPServer', () => {
             expect(approvalCallback).toHaveBeenCalledTimes(1);
             const callArgs = approvalCallback.mock.calls[0] as unknown as [ContactChangeRequest];
             expect(callArgs[0].action).toBe('update');
-            expect(callArgs[0].personId).toBe('alice-wonderland' as ContactId);
+            expect(callArgs[0].personId).toBe('alice-wonderland' as PersonId);
             expect(callArgs[0].addIdentifiers).toEqual([{ platform: 'discord', value: 'Alice#1234' }]);
             expect(('removeIdentifiers' in callArgs[0] ? callArgs[0].removeIdentifiers : undefined)).toBeUndefined();
         });
@@ -423,7 +423,7 @@ describe.concurrent('createContactsMCPServer', () => {
             const result = await handler({ personId: 'Alice Wonderland', notes: 'test' });
 
             expect(result.isError).toBe(true);
-            expect(textContent(result.content[0])).toContain('ContactId must be lowercase alphanumeric with hyphens (kebab-case)');
+            expect(textContent(result.content[0])).toContain('personId must be lowercase alphanumeric with hyphens (kebab-case)');
             expect(mockBackend.getContact).not.toHaveBeenCalled();
             expect(approvalCallback).not.toHaveBeenCalled();
         });
@@ -517,7 +517,7 @@ describe.concurrent('createContactsMCPServer', () => {
 
         test('should return multiple contacts with _internal stripped from all', async () => {
             const contact2 = makeContact({
-                personId:    'bob-builder' as ContactId,
+                personId:    'bob-builder' as PersonId,
                 displayName: 'Bob Builder',
                 identifiers: [{ platform: 'email', value: 'bob@example.com' }],
                 _internal:   { discordUserId: '987654321' },

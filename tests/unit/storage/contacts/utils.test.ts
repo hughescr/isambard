@@ -1,5 +1,5 @@
 import { describe, test, expect, mock, type Mock } from 'bun:test';
-import { createContactId } from '../../../../src/storage/contacts/types';
+import { createPersonId } from '../../../../src/storage/contacts/types';
 import { generatePersonId, findAvailablePersonId } from '../../../../src/storage/contacts/utils';
 import type { Contact, ContactBackend } from '@/storage';
 
@@ -76,10 +76,10 @@ describe('generatePersonId()', () => {
 // ---------------------------------------------------------------------------
 
 describe('findAvailablePersonId()', () => {
-    test('returns baseId as ContactId when no collision exists', async () => {
+    test('returns baseId as PersonId when no collision exists', async () => {
         const backend = createMockBackend() as unknown as ContactBackend;
         const result  = await findAvailablePersonId(backend, 'alice-wonderland');
-        expect(result).toBe(createContactId('alice-wonderland'));
+        expect(result).toBe(createPersonId('alice-wonderland'));
     });
 
     test('appends -2 when the baseId already exists', async () => {
@@ -89,7 +89,7 @@ describe('findAvailablePersonId()', () => {
             return id === 'alice-wonderland' ? SAMPLE_CONTACT : undefined;
         });
         const result = await findAvailablePersonId(backend, 'alice-wonderland');
-        expect(result).toBe(createContactId('alice-wonderland-2'));
+        expect(result).toBe(createPersonId('alice-wonderland-2'));
     });
 
     test('appends -3 when both baseId and baseId-2 exist', async () => {
@@ -98,7 +98,7 @@ describe('findAvailablePersonId()', () => {
             return id === 'alice-wonderland' || id === 'alice-wonderland-2' ? SAMPLE_CONTACT : undefined;
         });
         const result = await findAvailablePersonId(backend, 'alice-wonderland');
-        expect(result).toBe(createContactId('alice-wonderland-3'));
+        expect(result).toBe(createPersonId('alice-wonderland-3'));
     });
 
     test('continues incrementing suffix until a free slot is found', async () => {
@@ -108,6 +108,6 @@ describe('findAvailablePersonId()', () => {
             return occupied.has(id as string) ? SAMPLE_CONTACT : undefined;
         });
         const result = await findAvailablePersonId(backend, 'bob');
-        expect(result).toBe(createContactId('bob-5'));
+        expect(result).toBe(createPersonId('bob-5'));
     });
 });

@@ -16,7 +16,7 @@ import { type BatchWriteCommandInput, type BatchWriteCommandOutput, type DynamoD
 import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../../client-holder';
 import { ContactKeyGenerator } from '../key-generator';
-import { contactSchema, type ContactId, type PlatformType } from '../types';
+import { contactSchema, normalizeIdentifierValue, type PersonId, type PlatformType } from '../types';
 import { BatchWriteExhaustedError } from '@/errors';
 
 // ============================================================================
@@ -265,9 +265,9 @@ function isLookupOrphanOrStray(
     if(!Array.isArray(rawIdentifiers)) {
         return false; // No identifiers array — treat as valid (conservative)
     }
-    const normalizedValue = value.toLowerCase().trim(); // normalize for comparison
+    const normalizedValue = normalizeIdentifierValue(value); // the PK-derived value may be a legacy, un-normalized row
     const profileClaims = (rawIdentifiers as { platform: unknown, value: unknown }[])
-        .some(id => id.platform === platform && typeof id.value === 'string' && id.value.toLowerCase().trim() === normalizedValue);
+        .some(id => id.platform === platform && typeof id.value === 'string' && normalizeIdentifierValue(id.value) === normalizedValue);
     if(profileClaims) {
         return false; // Valid lookup — profile still claims it
     }
@@ -451,7 +451,7 @@ async function runPhaseA(
 async function repairIdentifierLookup(
     deps:    ResolvedContactReconcilerDeps,
     options: ContactReconcilerOptions,
-    personId: ContactId,
+    personId: PersonId,
     platform: PlatformType,
     value:   string
 ): Promise<boolean> {

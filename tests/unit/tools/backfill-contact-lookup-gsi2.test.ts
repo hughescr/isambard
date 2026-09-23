@@ -951,11 +951,11 @@ describe('processContacts', () => {
     });
 
     test('contact with invalid personId (not kebab-case) → parse error → errors++, no send', async () => {
-        // Inject an item with a personId that won't pass contactIdSchema validation
+        // Inject an item with a personId that won't pass personIdSchema validation
         const item: ContactProfileItem = {
             PK:          'CONTACT#INVALID_ID',
             SK:          'PROFILE',
-            personId:    'INVALID_ID', // uppercase fails contactIdSchema
+            personId:    'INVALID_ID', // uppercase fails personIdSchema
             identifiers: [{ platform: 'email', value: 'bad@example.com' }],
         };
 

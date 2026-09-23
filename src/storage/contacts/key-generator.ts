@@ -1,5 +1,5 @@
 import { createPrefixedKey, parsePrefixedKey } from '../utils/key-builder.js';
-import { createContactId, platformTypeSchema, type ContactId, type PlatformType } from './types';
+import { contactIdentifierKey, createPersonId, platformTypeSchema, type PersonId, type PlatformType } from './types';
 import { InvariantViolationError } from '@/errors';
 
 /**
@@ -49,7 +49,7 @@ export const ContactKeyGenerator = {
      * // { PK: 'CONTACT#craig-hughes', SK: 'PROFILE' }
      * ```
      */
-    createProfileKeys(personId: ContactId): ContactProfileKeys {
+    createProfileKeys(personId: PersonId): ContactProfileKeys {
         return {
             PK: createPrefixedKey(PREFIX_CONTACT, personId),
             SK: SK_PROFILE,
@@ -57,8 +57,27 @@ export const ContactKeyGenerator = {
     },
 
     /**
+     * Creates the lookup partition key for a platform+value identifier, the single place
+     * the persisted `CONTACT_LOOKUP#{platform}#{normalizedValue}` form is spelled. The
+     * value is normalized with {@link normalizeIdentifierValue} via {@link contactIdentifierKey}.
+     *
+     * @param platform - The platform type
+     * @param value    - The identifier value (will be normalized)
+     * @returns The lookup item's PK
+     *
+     * @example
+     * ```ts
+     * ContactKeyGenerator.createLookupPK('email', ' Alice@Example.com ')
+     * // 'CONTACT_LOOKUP#email#alice@example.com'
+     * ```
+     */
+    createLookupPK(platform: PlatformType, value: string): string {
+        return createPrefixedKey(PREFIX_CONTACT_LOOKUP, contactIdentifierKey(platform, value));
+    },
+
+    /**
      * Creates a DynamoDB lookup key for resolving an identifier to a contact.
-     * The value is normalized to lowercase+trimmed for case-insensitive lookup.
+     * The value is normalized with {@link normalizeIdentifierValue} for case-insensitive lookup.
      *
      * Also sets GSI2PK='CONTACT_LOOKUPS' so that Phase A reconciliation can
      * query all lookup rows efficiently via the GSI2 index.
@@ -72,17 +91,17 @@ export const ContactKeyGenerator = {
      *
      * @example
      * ```ts
-     * ContactKeyGenerator.createLookupKeys('email', 'Alice@Example.com', 'alice-smith' as ContactId)
+     * ContactKeyGenerator.createLookupKeys('email', 'Alice@Example.com', 'alice-smith' as PersonId)
      * // { PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#alice-smith', GSI2PK: 'CONTACT_LOOKUPS', GSI2SK: 'CONTACT#alice-smith#email#alice@example.com' }
      * ```
      */
-    createLookupKeys(platform: PlatformType, value: string, personId: ContactId): ContactLookupKeys {
-        const normalizedValue = value.toLowerCase().trim();
+    createLookupKeys(platform: PlatformType, value: string, personId: PersonId): ContactLookupKeys {
+        const key = contactIdentifierKey(platform, value);
         return {
-            PK:     createPrefixedKey(PREFIX_CONTACT_LOOKUP, platform, normalizedValue),
+            PK:     createPrefixedKey(PREFIX_CONTACT_LOOKUP, key),
             SK:     createPrefixedKey(PREFIX_CONTACT, personId),
             GSI2PK: GSI2PK_CONTACT_LOOKUPS,
-            GSI2SK: createPrefixedKey(PREFIX_CONTACT, personId, platform, normalizedValue),
+            GSI2SK: createPrefixedKey(PREFIX_CONTACT, personId, key),
         };
     },
 
@@ -99,7 +118,7 @@ export const ContactKeyGenerator = {
      * // { GSI2PK: 'CONTACTS', GSI2SK: 'CONTACT#craig-hughes' }
      * ```
      */
-    createCollectionKeys(personId: ContactId): { GSI2PK: string, GSI2SK: string } {
+    createCollectionKeys(personId: PersonId): { GSI2PK: string, GSI2SK: string } {
         return {
             GSI2PK: GSI2PK_CONTACTS,
             GSI2SK: createPrefixedKey(PREFIX_CONTACT, personId),
@@ -119,15 +138,20 @@ export const ContactKeyGenerator = {
      * // 'craig-hughes'
      * ```
      */
-    parsePersonIdFromPK(pk: string): ContactId {
+    parsePersonIdFromPK(pk: string): PersonId {
         if(!pk.startsWith('CONTACT#')) {
             throw new InvariantViolationError('ContactKeyGenerator.parsePersonIdFromPK', `Invalid PK format: expected CONTACT#..., got ${pk}`);
         }
-        return createContactId(parsePrefixedKey(PREFIX_CONTACT, pk));
+        return createPersonId(parsePrefixedKey(PREFIX_CONTACT, pk));
     },
 
     /**
-     * Parses a lookup PK back to platform and normalized value.
+     * Parses a lookup PK back to platform and value.
+     *
+     * The value is returned exactly as stored — normally already in
+     * {@link normalizeIdentifierValue normalized} form, since {@link createLookupPK} and
+     * {@link createLookupKeys} write it that way. Callers comparing it to other identifiers
+     * normalize both sides rather than trusting a legacy row.
      *
      * @param pk - Primary Key (CONTACT_LOOKUP#{platform}#{value})
      * @returns Object containing platform and value
@@ -171,10 +195,10 @@ export const ContactKeyGenerator = {
      * // 'craig-hughes'
      * ```
      */
-    parsePersonIdFromLookupSK(sk: string): ContactId {
+    parsePersonIdFromLookupSK(sk: string): PersonId {
         if(!sk.startsWith('CONTACT#')) {
             throw new InvariantViolationError('ContactKeyGenerator.parsePersonIdFromLookupSK', `Invalid lookup SK format: expected CONTACT#..., got ${sk}`);
         }
-        return createContactId(parsePrefixedKey(PREFIX_CONTACT, sk));
+        return createPersonId(parsePrefixedKey(PREFIX_CONTACT, sk));
     },
 };

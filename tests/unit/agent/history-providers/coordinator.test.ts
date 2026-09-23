@@ -1,13 +1,13 @@
 import { describe, test, expect, afterEach, jest, mock } from 'bun:test';
 import { PersonHistoryCoordinator, type PersonHistoryCoordinatorOptions } from '../../../../src/agent/history-providers/coordinator';
 import type { HistoryEntry, HistoryFetchParams, KnownPlatform, PlatformHistoryProvider } from '../../../../src/agent/history-providers/types';
-import type { Contact, ContactId } from '../../../../src/storage/contacts';
+import type { Contact, PersonId } from '../../../../src/storage/contacts';
 import { mockLogger } from '../../../setup';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 const makeContact = (overrides: Partial<Contact> = {}): Contact => ({
-    personId:    'craig-hughes' as ContactId,
+    personId:    'craig-hughes' as PersonId,
     displayName: 'Craig Hughes',
     identifiers: [
         { platform: 'email',   value: 'craig@example.com' },
@@ -103,8 +103,8 @@ describe.concurrent('PersonHistoryCoordinator', () => {
         });
 
         test('returns first fuzzy match as person', async () => {
-            const contact1 = makeContact({ personId: 'craig-hughes' as ContactId, displayName: 'Craig Hughes' });
-            const contact2 = makeContact({ personId: 'craig-other'  as ContactId, displayName: 'Craig Other' });
+            const contact1 = makeContact({ personId: 'craig-hughes' as PersonId, displayName: 'Craig Hughes' });
+            const contact2 = makeContact({ personId: 'craig-other'  as PersonId, displayName: 'Craig Other' });
             const backend  = makeMockBackend();
             backend.fuzzyLookup.mockImplementation(async (): Promise<Contact[]> => [contact1, contact2]);
 

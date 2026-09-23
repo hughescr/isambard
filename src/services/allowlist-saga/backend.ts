@@ -7,7 +7,7 @@ import {
     type PendingNameAllowlistSaga,
     type PendingReviewAllowlistSaga
 } from './types';
-import { BaseRepository, createPrefixedKey, type ContactId } from '@/storage';
+import { BaseRepository, createPrefixedKey, type PersonId } from '@/storage';
 
 const SAGA_PK        = 'ALLOWLIST#SAGA';
 const SAGA_SK_PREFIX = 'SAGA';
@@ -90,7 +90,7 @@ export class AllowlistSagaBackend extends BaseRepository<AllowlistSaga> {
      * pending_name | pending_review → completed.
      * The completed arm's parse strips the review-only fields carried over from the prior row.
      */
-    async complete(saga: OpenAllowlistSaga, resultPersonId: ContactId): Promise<void> {
+    async complete(saga: OpenAllowlistSaga, resultPersonId: PersonId): Promise<void> {
         await this.transition(saga, { ...saga, state: 'completed', resultPersonId });
     }
 

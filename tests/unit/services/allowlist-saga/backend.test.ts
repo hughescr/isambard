@@ -13,7 +13,7 @@ import {
     type PendingNameAllowlistSaga,
     type PendingReviewAllowlistSaga
 } from '@/services/allowlist-saga/types';
-import type { ContactId } from '@/storage';
+import type { PersonId } from '@/storage';
 
 const SAGA_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 
@@ -174,7 +174,7 @@ describe('AllowlistSagaBackend', () => {
         test('enterReview writes a whole pending_review row conditioned on pending_name without re-reading', async () => {
             await backend.enterReview({ ...BASE_SAGA, displayNameHint: 'Alice Hint' }, {
                 adminDisplayName: 'Alice',
-                fuzzyMatches:     ['alice-a' as ContactId],
+                fuzzyMatches:     ['alice-a' as PersonId],
             });
 
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
@@ -224,7 +224,7 @@ describe('AllowlistSagaBackend', () => {
         });
 
         test('complete from pending_review writes the result and drops the review fields', async () => {
-            await backend.complete(REVIEW_SAGA, 'alice-b' as ContactId);
+            await backend.complete(REVIEW_SAGA, 'alice-b' as PersonId);
 
             const putCalls = ddbMock.commandCalls(PutCommand);
             expect(putCalls).toHaveLength(1);
@@ -244,7 +244,7 @@ describe('AllowlistSagaBackend', () => {
         });
 
         test('complete from pending_name conditions on pending_name', async () => {
-            await backend.complete(BASE_SAGA, 'alice-a' as ContactId);
+            await backend.complete(BASE_SAGA, 'alice-a' as PersonId);
 
             const input = ddbMock.commandCalls(PutCommand)[0].args[0].input;
             expect(input.Item).toEqual({
@@ -259,9 +259,9 @@ describe('AllowlistSagaBackend', () => {
         });
 
         test.each([
-            ['enterReview', (b: AllowlistSagaBackend) => b.enterReview(BASE_SAGA, { adminDisplayName: 'Alice', fuzzyMatches: ['alice-a' as ContactId] })],
+            ['enterReview', (b: AllowlistSagaBackend) => b.enterReview(BASE_SAGA, { adminDisplayName: 'Alice', fuzzyMatches: ['alice-a' as PersonId] })],
             ['advanceCursor', (b: AllowlistSagaBackend) => b.advanceCursor(REVIEW_SAGA, 1)],
-            ['complete', (b: AllowlistSagaBackend) => b.complete(REVIEW_SAGA, 'alice-a' as ContactId)],
+            ['complete', (b: AllowlistSagaBackend) => b.complete(REVIEW_SAGA, 'alice-a' as PersonId)],
         ] as const)('%s propagates a conditional-put failure to the caller', async (_name, transition) => {
             ddbMock.on(PutCommand).rejects(new Error('ConditionalCheckFailedException'));
 

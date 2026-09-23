@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { contactIdSchema } from '@/storage';
+import { personIdSchema } from '@/storage';
 
 const allowlistSagaPlatformSchema = z.enum(['email', 'bsky']);
 export type AllowlistSagaPlatform = z.infer<typeof allowlistSagaPlatformSchema>;
@@ -25,7 +25,7 @@ const pendingNameAllowlistSagaSchema = allowlistSagaBaseSchema.extend({
 const pendingReviewAllowlistSagaSchema = allowlistSagaBaseSchema.extend({
     state:            z.literal('pending_review'),
     adminDisplayName: z.string().optional(),  // what admin typed in the modal
-    fuzzyMatches:     z.array(contactIdSchema).nonempty(),
+    fuzzyMatches:     z.array(personIdSchema).nonempty(),
     matchIndex:       z.number().int().nonnegative(),
 }).refine(saga => saga.matchIndex < saga.fuzzyMatches.length, {
     message: 'matchIndex must address a fuzzy match',
@@ -35,7 +35,7 @@ const pendingReviewAllowlistSagaSchema = allowlistSagaBaseSchema.extend({
 /** Person added to the allowlist (terminal). */
 const completedAllowlistSagaSchema = allowlistSagaBaseSchema.extend({
     state:          z.literal('completed'),
-    resultPersonId: contactIdSchema,
+    resultPersonId: personIdSchema,
 });
 
 /** Flow abandoned (terminal). No code path writes this today; legacy rows still parse. */

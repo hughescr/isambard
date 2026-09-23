@@ -10,12 +10,12 @@ import { ErrorCode, ContactNoIdentifiersError, type BatchWriteExhaustedError } f
 import { ContactBackend } from '@/storage/contacts/backend';
 import {
     type Contact,
-    type ContactId,
-    type ContactIdentifier
+    type ContactIdentifier,
+    type PersonId
 } from '@/storage/contacts/types';
 
-const PERSON_ID   = 'alice-smith' as ContactId;
-const PERSON_ID_2 = 'bob-jones' as ContactId;
+const PERSON_ID   = 'alice-smith' as PersonId;
+const PERSON_ID_2 = 'bob-jones' as PersonId;
 
 const ALICE: Contact = {
     personId:    PERSON_ID,
@@ -1063,7 +1063,7 @@ describe('ContactBackend', () => {
                 ],
             });
             // Return different contacts for different GetCommand calls
-            const aliceJones: Contact = { ...BOB, personId: 'alice-jones' as ContactId, displayName: 'Alice Jones' };
+            const aliceJones: Contact = { ...BOB, personId: 'alice-jones' as PersonId, displayName: 'Alice Jones' };
             ddbMock.on(GetCommand)
                 .resolvesOnce(contactGetResponse(ALICE))
                 .resolvesOnce(contactGetResponse(aliceJones));
@@ -1496,7 +1496,7 @@ describe('ContactBackend', () => {
 
             expect(result).toHaveLength(2);
             // Exact match must come first
-            expect(result[0]?.personId).toBe('alice-smith' as ContactId);
+            expect(result[0]?.personId).toBe('alice-smith' as PersonId);
         });
 
         test('ranks prefix matches above substring matches', async () => {
@@ -1511,8 +1511,8 @@ describe('ContactBackend', () => {
 
             expect(result).toHaveLength(2);
             // Prefix match must come first (bob has display name starting with 'alice')
-            expect(result[0]?.personId).toBe('bob-jones' as ContactId);
-            expect(result[1]?.personId).toBe('alice-smith' as ContactId);
+            expect(result[0]?.personId).toBe('bob-jones' as PersonId);
+            expect(result[1]?.personId).toBe('alice-smith' as PersonId);
         });
     });
 

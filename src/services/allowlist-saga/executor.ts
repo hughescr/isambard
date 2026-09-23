@@ -8,7 +8,7 @@ import type {
 import { InvariantViolationError } from '@/errors';
 import {
     type ContactBackend,
-    type ContactId,
+    type PersonId,
     findOrCreateContact,
     type PersonAllowlist
 } from '@/storage';
@@ -26,13 +26,13 @@ interface AllowlistSagaExecutorDeps {
  */
 export type SagaUnavailableResult
     = | { action: 'unavailable', reason: 'not_found' | 'wrong_state' | 'invalid_step_data' }
-      | { action: 'unavailable', reason: 'already_completed', personId: ContactId, displayName: string };
+      | { action: 'unavailable', reason: 'already_completed', personId: PersonId, displayName: string };
 
 /** Result of a saga step — tells the caller what UI action to take */
 export type SagaStepResult
-    = | { action: 'completed', personId: ContactId, displayName: string }
+    = | { action: 'completed', personId: PersonId, displayName: string }
       | { action: 'need_name', sagaId: string, hint?: string }
-      | { action: 'review_match', sagaId: string, matchPersonId: ContactId }
+      | { action: 'review_match', sagaId: string, matchPersonId: PersonId }
       | SagaUnavailableResult;
 
 /** Results returned after the initial saga start, suitable for rendering in an existing interaction. */

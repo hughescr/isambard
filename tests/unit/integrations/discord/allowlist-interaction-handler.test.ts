@@ -4,14 +4,14 @@ import { mockLogger } from '../../../setup';
 import { AllowlistInteractionHandler, type AllowlistInteractionHandlerDeps } from '@/integrations/discord/allowlist-interaction-handler';
 import { BLUE, BRIGHT_GREEN } from '@/integrations/discord/colors';
 import type { AllowlistSagaExecutor, SagaStepResult, SagaInteractionResult } from '@/services';
-import type { ContactBackend, Contact, ContactId } from '@/storage';
+import type { ContactBackend, Contact, PersonId } from '@/storage';
 
 // ---------------------------------------------------------------------------
 // Test constants
 // ---------------------------------------------------------------------------
 
 const SAGA_ID           = 'saga-abc-123';
-const PERSON_ID         = 'person-xyz' as ContactId;
+const PERSON_ID         = 'person-xyz' as PersonId;
 const DISPLAY_NAME      = 'Alice Example';
 
 // ---------------------------------------------------------------------------

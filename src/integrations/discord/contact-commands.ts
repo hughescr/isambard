@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { GREEN, RED, AMBER } from './colors';
 import { CONTACT_PREFIXES } from '@/config';
 import { ContactNotFoundError } from '@/errors';
-import { contactIdentifierSchema, createContactId, type Contact, type ContactBackend, type ContactChangeRequest, type ContactIdentifier, type PersonAllowlist, generatePersonId, findAvailablePersonId } from '@/storage';
+import { contactIdentifierSchema, createPersonId, type Contact, type ContactBackend, type ContactChangeRequest, type ContactIdentifier, type PersonAllowlist, generatePersonId, findAvailablePersonId } from '@/storage';
 import { encodeCustomId, parseCustomId } from '@/utils';
 
 /**
@@ -417,7 +417,7 @@ export class ContactCommandHandler {
         const { personRaw, platformRaw, idValue } = this.extractLinkOptions(interaction);
 
         try {
-            const personId   = createContactId(personRaw);
+            const personId   = createPersonId(personRaw);
             const identifier: ContactIdentifier = contactIdentifierSchema.parse({ platform: platformRaw, value: idValue });
             await this.backend.addIdentifier(personId, identifier);
             // Best-effort allowlist cache refresh
@@ -439,7 +439,7 @@ export class ContactCommandHandler {
         const { personRaw, platformRaw, idValue } = this.extractLinkOptions(interaction);
 
         try {
-            const personId = createContactId(personRaw);
+            const personId = createPersonId(personRaw);
             await this.backend.removeIdentifier(personId, platformRaw as Parameters<ContactBackend['removeIdentifier']>[1], idValue);
             // Best-effort allowlist cache refresh
             try {
@@ -483,14 +483,14 @@ export class ContactCommandHandler {
         // Invalid IDs are names or fuzzy queries, so they fall through below.
         let contact: Contact | undefined;
         try {
-            const parsedId = createContactId(personRaw);
+            const parsedId = createPersonId(personRaw);
             contact = await this.backend.getContact(parsedId);
         } catch (error: unknown) {
             // If it was a real backend error (not just invalid format), re-throw
             if(!(error instanceof z.ZodError)) {
                 throw error;
             }
-            // Not a valid ContactId format — fall through to fuzzy lookup
+            // Not a valid PersonId format — fall through to fuzzy lookup
         }
 
         if(!contact) {
