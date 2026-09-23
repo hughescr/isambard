@@ -507,10 +507,13 @@ export interface Conductor {
      */
     adoptPeerTurn:                 (envelope: AdoptedPeerEnvelope) => void
     /**
-     * Delivers `envelopeId`'s response exactly once (P8): if the delivery guard already knows
-     * this id, `send` is skipped entirely. A committed outcome is journaled and flushed before
-     * the delivery guard is marked; a skipped outcome is logged at info and intentionally leaves
-     * no durable delivery record so a later response can still be delivered.
+     * Delivers `envelopeId`'s response, deduplicated against confirmed prior deliveries (P8): if
+     * the delivery guard already knows this id, `send` is skipped entirely. A committed outcome
+     * is journaled and flushed before the delivery guard is marked; a skipped outcome is logged
+     * at info and intentionally leaves no durable delivery record so a later response can still
+     * be delivered. This is at-least-once, not exactly-once: `send` runs before the journal
+     * append/flush that marks delivery, so a crash in that window can still cause a redelivery on
+     * the next restart (see "Session journal" in `docs/architecture.md`).
      */
     deliver:                       (envelopeId: string, send: () => Promise<SendOutcome>) => Promise<DeliverResult>
     interruptCurrent:              (options?: InterruptCurrentOptions) => Promise<void>

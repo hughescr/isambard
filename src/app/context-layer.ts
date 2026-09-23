@@ -13,8 +13,9 @@ interface ContextLayer {
 /**
  * Creates the context layer with a context builder.
  *
- * P13b: no longer constructs a shared EventDeltaTracker here — that was the one-shot
- * path's own delta-tracking seam; the conductor's ledger owns event deltas now.
+ * P13b: no longer constructs a shared event-delta tracker here — that was the one-shot
+ * path's own delta-tracking seam; `ContextPolicy` (`src/agent/session/context-policy.ts`)
+ * owns event deltas now.
  *
  * @param memoryBackend        - Memory tool backend for context loading
  * @param emailService         - Optional email service for perch inbox section

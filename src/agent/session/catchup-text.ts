@@ -1,13 +1,13 @@
 /**
  * Pure catch-up envelope body text.
  *
- * Written fresh for the long-lived session rather than reusing
- * `src/integrations/discord/catchup/prompts.ts` (agent -> discord imports are forbidden by
- * eslint-plugin-boundaries; that file's `buildCatchUpPrompt` may later be retired in favour of
- * importing this from '@/agent' instead — discord -> agent is allowed). Unlike that prompt,
- * this text carries no time header (the envelope's caller-supplied `timeHeader` covers that)
- * and no "Sessions are ephemeral" / "inbox tools will not be available" language, since the
- * long-lived session's inbox tools stay attached for every turn.
+ * The platform-neutral catch-up body builder for the long-lived session core: it carries no
+ * time header (the envelope's caller-supplied `timeHeader` covers that) and no "Sessions are
+ * ephemeral" / "inbox tools will not be available" language, since the long-lived session's
+ * inbox tools stay attached for every turn. `src/integrations/discord/setup/catchup-setup.ts`
+ * (`runConductorInboxInit`, agent -> discord imports being forbidden by eslint-plugin-boundaries
+ * means the dependency runs the other way) is the consumer that builds `envelope.ts`'s merged
+ * boot/catch-up envelope around this module's text.
  *
  * @module agent/session/catchup-text
  */

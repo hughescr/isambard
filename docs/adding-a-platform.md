@@ -69,12 +69,12 @@ Create the core API wrapper under `src/integrations/{platform}/`:
 
 **`types.ts`** — domain types for the platform (posts, messages, users, etc.)
 
-**`errors.ts`** — platform error hierarchy extending `IsambardError`. See `src/integrations/bsky/errors.ts` for a complete example with `BskyError`, `BskyAuthError`, and `BskyRateLimitError`.
+**`src/errors/<platform>.ts`** — every existing platform's error hierarchy lives here (not inside `src/integrations/<platform>/`), re-exported from the `@/errors` barrel. See `src/errors/bsky.ts` for a complete example with `BskyError`, `BskyAuthError`, and `BskyRateLimitError`. Add your new platform's error subtree there, extending `IsambardError` (`src/errors/base.ts`), rather than creating an integration-local `errors.ts`.
 
 **`client.ts`** — wraps the platform SDK or HTTP API. Design principles:
 - Accept credentials via constructor (injected from config)
 - Return typed domain objects from `types.ts`
-- Throw errors from `errors.ts`
+- Throw errors from `src/errors/<platform>.ts`
 - Expose methods that mirror what the MCP tools need
 
 See `src/integrations/bsky/client.ts` for a complete example wrapping `@atproto/api`.
@@ -145,6 +145,7 @@ export const platformTypeSchema = z.enum(['name', 'nickname', 'discord', 'email'
   }).optional();
   ```
 - The `PersonHistoryCoordinator` and MCP tools call `stripInternal()` before returning contacts to the agent.
+- This rule is about contact identifiers specifically, not every internal ID in the system: Discord's branded `ChannelId`/`UserId` (`src/config/discord-ids.ts`) are part of the routing API the session bridge and Discord send port use directly, not something MCP tools hide. Bluesky's DID-hiding is per-tool rather than a blanket rule — `listConversations`/`getDirectMessages` resolve DIDs to handles before returning, while `getProfile`/`getPost`/`getAuthorFeed`/`searchPosts`/`getFeed` return the DID unprojected (see `docs/architecture.md`'s Platform Integrations section); follow whichever shape fits your platform's own tools rather than assuming every read must hide its native ID.
 
 **Identifier format guidance:** The value stored in `ContactIdentifier.value` is what the history provider receives as `params.identifier`. It should be the natural identifier that uniquely addresses a person on the platform (e.g., `@handle`, `user@example.com`).
 
@@ -160,7 +161,7 @@ Follow the patterns in `src/agent/bsky-mcp-server.ts` or `src/agent/email-mcp-se
 
 - Use `createSdkMcpServer` and `tool` from `@anthropic-ai/claude-agent-sdk`
 - Return results via `mcpTextResult`, `mcpJsonResult`, `mcpErrorResult` from `src/agent/mcp-helpers.ts`
-- Accept human-readable identifiers (names, handles) — resolve to internal IDs internally, never expose them to the agent
+- Accept human-readable identifiers (names, handles) where you can; hiding a native ID is about `Contact._internal` specifically, not a blanket rule for every MCP tool — expose a platform's own native ID when its routing API needs one back (see "What the agent sees vs internal IDs" above)
 - For outbound actions that need admin approval, build a Discord embed and route through `BaseOutboundApprovalHandler` (see `EmailOutboundApprovalHandler` in `src/integrations/email/outbound-approval-handler.ts` or `BskyOutboundApprovalHandler` in `src/integrations/bsky/outbound-approval-handler.ts`)
 
 ### 5. Activity Logger Hooks
@@ -198,17 +199,20 @@ The logger stores entries at `/events/activity/{type}/{timestamp}` with an `[aut
 
 Wire everything together in the composition root.
 
-**`src/app/mcp-servers.ts`** — add your MCP server to the server list returned by `createMCPServers`. Follow the existing pattern:
+**`src/app/mcp-servers.ts`** — add your MCP server to the instance set `createMcpServerInstances` returns (it builds a fresh set of server instances per session role from the shared dependencies `createMcpSharedDeps` builds once). Add an optional `yourPlatformClient` field to `MCPServersOptions` (mirroring `bskyClient`), then follow the existing pattern inside `createMcpServerInstances(shared, params)`, which destructures `shared` into `options` (plus the other shared singletons) at the top of the function body:
 
 ```typescript
 import { createYourPlatformMCPServer } from '@/agent';
 
-// In createMCPServers():
-const yourPlatformMCP = createYourPlatformMCPServer({
-    client:         yourPlatformClient,
-    activityLogger: deps.activityLogger,
-});
+// In createMcpServerInstances(shared, params), after `const { options, ... } = shared;`:
+const yourPlatformMcpServer = options.yourPlatformClient
+    ? createYourPlatformMCPServer({
+        client: options.yourPlatformClient,
+    })
+    : undefined;
 ```
+
+Fire-and-forget activity logging is called inline in the MCP tool handler itself (see "5. Activity Logger Hooks" above), not injected as a dependency here.
 
 **`src/index.ts`** (or the relevant `src/app/*.ts` factory) — instantiate your client and history provider, then register the provider with `PersonHistoryCoordinator`:
 
@@ -244,7 +248,7 @@ Export only what other modules need. Run `bun dead-code` (knip) to verify no unu
 ## Checklist
 
 - [ ] `src/integrations/{platform}/types.ts` — domain types
-- [ ] `src/integrations/{platform}/errors.ts` — error hierarchy extending `IsambardError`
+- [ ] `src/errors/{platform}.ts` — error hierarchy extending `IsambardError`, re-exported from `@/errors`
 - [ ] `src/integrations/{platform}/client.ts` — API/SDK wrapper
 - [ ] `src/integrations/{platform}/history-provider.ts` — implements `PlatformHistoryProvider`
 - [ ] `src/integrations/{platform}/index.ts` — barrel exports (public API only)

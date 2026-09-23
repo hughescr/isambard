@@ -30,7 +30,7 @@ describe('createContextLayer', () => {
         spies.length = 0;
     });
 
-    test('should return ContextLayer with contextBuilder only (P13b: no shared EventDeltaTracker)', () => {
+    test('should return ContextLayer with contextBuilder only (P13b: no shared event-delta tracker)', () => {
         // Mock createContextBuilder
         const mockContextBuilder = {} as unknown as ContextBuilder;
         const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue(mockContextBuilder);

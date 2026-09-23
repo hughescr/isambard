@@ -2,9 +2,11 @@
  * Task Tracking Hooks
  *
  * Creates SDK hook callbacks that log task lifecycle events (TaskCreated, TaskCompleted).
- * Task state tracking is fully stream-driven: the StreamTracker.update() method parses
- * Task tool_use blocks (run_in_background:true → add) and TaskOutput tool_use blocks
- * (→ remove) directly from the agent stream. Hooks here are observational logging only.
+ * These hooks are observational logging only — they do not maintain any task state
+ * themselves. The session ledger (`src/agent/session/ledger.ts`) is what tracks tasks: its
+ * `reduceLedger` reducer adds a task on a `task_started` system frame and removes/updates one
+ * on a `background_tasks_changed` system frame, reading the raw SDK stream directly rather than
+ * this module's hook input.
  */
 import type { HookCallbackMatcher, HookEvent, TaskCompletedHookInput, TaskCreatedHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
@@ -13,8 +15,9 @@ import { logger } from '@hughescr/logger';
  * Creates hook matchers for task lifecycle logging.
  *
  * Returns a partial hook map with TaskCreated and TaskCompleted entries that log
- * task events. These hooks do NOT mutate the StreamTracker — task state is tracked
- * entirely via stream-parsing in StreamTracker.update().
+ * task events. These hooks do NOT mutate the session ledger — task state is tracked
+ * entirely by `reduceLedger`'s `task_started`/`background_tasks_changed` handling
+ * (`src/agent/session/ledger.ts`).
  *
  * @returns A partial hook map for merging into query options
  */

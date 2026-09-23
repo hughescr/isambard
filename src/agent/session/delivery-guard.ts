@@ -1,12 +1,13 @@
 /**
  * Guards Discord delivery by envelope id (P8) so a crash-and-restart replay of an undelivered
- * envelope (see ./recovery.ts) can never double-send: the conductor checks
- * {@link DeliveryGuard.alreadyDelivered} before sending and calls
+ * envelope (see ./recovery.ts) is deduplicated within a process, and across most restarts: the
+ * conductor checks {@link DeliveryGuard.alreadyDelivered} before sending and calls
  * {@link DeliveryGuard.markDelivered} only after the `response_delivered` journal entry has been
- * appended AND the journal flushed (see ./conductor.ts's `deliver` helper), so a crash between
- * send and mark is a narrow window bounded by the flush, not by the send-vs-mark gap alone — and
- * even a re-send inside that window still lands correctly, because the journal (not this
- * in-memory guard) is what recovery reseeds on the next boot.
+ * appended AND the journal flushed (see ./conductor.ts's `deliver` helper). This is not an
+ * exactly-once guarantee: a crash in the narrow window between the send and that flush leaves no
+ * `response_delivered` row for recovery to find, so the next boot's guard is seeded without it
+ * and legitimately redelivers — the in-memory guard only prevents a second send within the same
+ * process once a delivery is journaled, not a resend after a crash that beat the flush.
  *
  * @module agent/session/delivery-guard
  */

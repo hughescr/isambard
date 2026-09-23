@@ -3,7 +3,8 @@
  * returned by {@link import('./ports').SessionJournal.readSince} and derives, with no I/O of its
  * own: which background tasks never reached a terminal state (lost), which discord/catchup
  * turns finished but were never confirmed delivered (undelivered, carrying the response text so
- * the conductor can send it exactly once on restart), the full set of envelope ids already
+ * the conductor can redeliver it on restart, deduplicated against the delivery guard rather than
+ * guaranteed exactly-once — see ./delivery-guard.ts), the full set of envelope ids already
  * confirmed delivered (to seed the P8 delivery guard), and the most recently opened session id.
  *
  * @module agent/session/recovery

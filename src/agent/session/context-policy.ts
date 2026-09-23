@@ -18,11 +18,10 @@
  *   epoch ms) so a caller building its own windowed query (the boot bundle, after a
  *   compaction) can render "events since the mark" without going through `eventsDelta`'s own
  *   memory-preview formatting, and {@link ContextPolicy.markEventsSeenAt} seeds the mark
- *   directly from a journal-derived boundary (e.g. after a restart) rather than "now".
- *   Deliberately does NOT construct or wrap `EventDeltaTracker` (event-delta-tracker.ts) —
- *   that class reads `Date.now()` directly and cannot be driven by an injected clock, which
- *   this policy needs for deterministic tests and for the compaction-time reset.
- *   `event-delta-tracker.ts` is untouched by this module.
+ *   directly from a journal-derived boundary (e.g. after a restart) rather than "now". This
+ *   policy owns the events mark itself (an injected `now: () => number`, not `Date.now()`
+ *   directly), which is what lets it be driven deterministically in tests and reset at
+ *   compaction time.
  * - State top-set delta: {@link ContextPolicy.stateTopSetDelta} diffs the CURRENT state top set
  *   (`loadStateTopSet(now)` — the same top-8-full-plus-30-preview set `loadHotState` renders)
  *   against the set captured at the last {@link ContextPolicy.markStateTopSetSeen} call,
