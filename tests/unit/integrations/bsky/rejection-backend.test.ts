@@ -301,6 +301,26 @@ describe('BskyRejectionBackend', () => {
             expect(results.map(item => item.uuid)).toEqual([REPLY_UUID, DM_UUID]);
         });
 
+        test('preserves query order for two reply rows sharing a rejectedAt timestamp', async () => {
+            const REPLY_UUID_A     = 'cccccccc-1111-4222-8333-444444444444';
+            const REPLY_UUID_B     = 'dddddddd-1111-4222-8333-444444444444';
+            const matchingTimestamp = '2026-03-22T17:00:00.000Z';
+            const storedReplyA = { ...STORED_REPLY_ITEM, uuid: REPLY_UUID_A, rejectedAt: matchingTimestamp };
+            const storedReplyB = { ...STORED_REPLY_ITEM, uuid: REPLY_UUID_B, rejectedAt: matchingTimestamp };
+            const replyA: BskyRejectedReply = { ...REPLY_ITEM, uuid: REPLY_UUID_A, rejectedAt: matchingTimestamp };
+            const replyB: BskyRejectedReply = { ...REPLY_ITEM, uuid: REPLY_UUID_B, rejectedAt: matchingTimestamp };
+            ddbMock.on(QueryCommand).resolves({
+                Items: [
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${REPLY_UUID_A}`, ...storedReplyA },
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${REPLY_UUID_B}`, ...storedReplyB },
+                ],
+            });
+
+            const results = await backend.listRejections();
+
+            expect(results).toEqual([replyA, replyB]);
+        });
+
         test('does not pass ScanIndexForward to query (client-side sort)', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
