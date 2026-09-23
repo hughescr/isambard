@@ -2,8 +2,8 @@ import { logger } from '@hughescr/logger';
 import { ActionRowBuilder, ApplicationIntegrationType, ButtonBuilder, ButtonStyle, EmbedBuilder, InteractionContextType, MessageFlags, SlashCommandBuilder, type ButtonInteraction, type ChatInputCommandInteraction } from 'discord.js';
 import { z } from 'zod';
 import { GREEN, RED, AMBER } from './colors';
-import { ContactNotFoundError, InvariantViolationError } from '@/errors';
-import { contactIdentifierSchema, type Contact, type ContactBackend, type ContactIdentifier, type PersonAllowlist, createContactId, generatePersonId, findAvailablePersonId } from '@/storage';
+import { ContactNotFoundError } from '@/errors';
+import { contactIdentifierSchema, createContactId, type Contact, type ContactBackend, type ContactChangeRequest, type ContactIdentifier, type PersonAllowlist, generatePersonId, findAvailablePersonId } from '@/storage';
 
 /**
  * Format a list of contact identifiers into a human-readable string.
@@ -34,24 +34,15 @@ function buildContactEmbed(contact: Contact): EmbedBuilder {
     return embed;
 }
 
-/**
- * Details for a pending contact approval request.
- */
-export interface ContactApprovalRequest {
-    action:             'create' | 'update'
-    personId?:          string
-    displayName?:       string
-    addIdentifiers?:    ContactIdentifier[]
-    removeIdentifiers?: ContactIdentifier[]
-    notes?:             string
-}
+type ContactCreateRequest = Extract<ContactChangeRequest, { action: 'create' }>;
+type ContactUpdateRequest = Extract<ContactChangeRequest, { action: 'update' }>;
 
 /**
  * Build a Discord embed for a pending contact change request.
  * @param request The contact change request details
  * @param uuid Optional UUID for the approval buttons. Generated via crypto.randomUUID() if not provided.
  */
-export function buildContactApprovalEmbed(request: ContactApprovalRequest, uuid: string = crypto.randomUUID()): {
+export function buildContactApprovalEmbed(request: ContactChangeRequest, uuid: string = crypto.randomUUID()): {
     embed:     EmbedBuilder
     actionRow: ActionRowBuilder<ButtonBuilder>
 } {
@@ -60,28 +51,22 @@ export function buildContactApprovalEmbed(request: ContactApprovalRequest, uuid:
         .setTitle(title)
         .setColor(AMBER);
 
-    if(request.displayName) {
-        embed.addFields(
-            { name: 'Display Name', value: request.displayName, inline: true }
-        );
-    }
-
-    if(request.personId) {
-        embed.addFields(
-            { name: 'Person ID', value: request.personId, inline: true }
-        );
-    }
-
-    if(request.addIdentifiers && request.addIdentifiers.length > 0) {
-        embed.addFields(
-            { name: 'Add Identifiers', value: formatIdentifiers(request.addIdentifiers), inline: false }
-        );
-    }
-
-    if(request.removeIdentifiers && request.removeIdentifiers.length > 0) {
-        embed.addFields(
-            { name: 'Remove Identifiers', value: formatIdentifiers(request.removeIdentifiers), inline: false }
-        );
+    if(request.action === 'create') {
+        embed.addFields({ name: 'Display Name', value: request.displayName, inline: true });
+        if(request.personId) {
+            embed.addFields({ name: 'Person ID', value: request.personId, inline: true });
+        }
+        if(request.addIdentifiers.length > 0) {
+            embed.addFields({ name: 'Add Identifiers', value: formatIdentifiers(request.addIdentifiers), inline: false });
+        }
+    } else {
+        embed.addFields({ name: 'Person ID', value: request.personId, inline: true });
+        if(request.addIdentifiers && request.addIdentifiers.length > 0) {
+            embed.addFields({ name: 'Add Identifiers', value: formatIdentifiers(request.addIdentifiers), inline: false });
+        }
+        if(request.removeIdentifiers && request.removeIdentifiers.length > 0) {
+            embed.addFields({ name: 'Remove Identifiers', value: formatIdentifiers(request.removeIdentifiers), inline: false });
+        }
     }
 
     if(request.notes) {
@@ -618,7 +603,7 @@ export class ContactCommandHandler {
  */
 export class ContactApprovalHandler {
     private readonly backend:          ContactBackend;
-    private readonly pendingRequests:  Map<string, ContactApprovalRequest>;
+    private readonly pendingRequests:  Map<string, ContactChangeRequest>;
     private readonly pendingDeletions: Map<string, Contact['personId']>;
     private readonly personAllowlist?: PersonAllowlist;
 
@@ -633,7 +618,7 @@ export class ContactApprovalHandler {
      * Store a pending request before sending the approval embed.
      * Returns the UUID that was embedded in the button customId.
      */
-    storePendingRequest(uuid: string, request: ContactApprovalRequest): void {
+    storePendingRequest(uuid: string, request: ContactChangeRequest): void {
         this.pendingRequests.set(uuid, request);
     }
 
@@ -705,30 +690,24 @@ export class ContactApprovalHandler {
         await interaction.editReply({ embeds: [approvedEmbed], components: [] });
     }
 
-    private async applyContactCreate(request: ContactApprovalRequest, now: string): Promise<void> {
-        const displayName = request.displayName ?? 'Unknown';
-        const identifiers = request.addIdentifiers ?? [{ platform: 'name' as const, value: displayName }];
-
+    private async applyContactCreate(request: ContactCreateRequest, now: string): Promise<void> {
         // Deduplicate personId: if the base ID is already taken, append -2, -3, etc.
-        const baseId   = request.personId ?? generatePersonId(displayName);
+        const baseId   = request.personId ?? generatePersonId(request.displayName);
         const personId = await findAvailablePersonId(this.backend, baseId);
         const contact     = {
             personId,
-            displayName,
-            identifiers,
-            notes:     request.notes,
-            createdAt: now,
-            updatedAt: now,
+            displayName: request.displayName,
+            identifiers: request.addIdentifiers,
+            notes:       request.notes,
+            createdAt:   now,
+            updatedAt:   now,
         };
         await this.backend.putContact(contact);
-        logger.info({ personId, displayName, msg: 'Contact created via admin approval' });
+        logger.info({ personId, displayName: request.displayName, msg: 'Contact created via admin approval' });
     }
 
-    private async applyContactUpdate(request: ContactApprovalRequest, now: string): Promise<void> {
-        if(!request.personId) {
-            throw new InvariantViolationError('applyContactUpdate', 'Contact update request is missing personId');
-        }
-        const personId = createContactId(request.personId);
+    private async applyContactUpdate(request: ContactUpdateRequest, now: string): Promise<void> {
+        const { personId } = request;
         // Stryker disable next-line llm: addIdentifiers is undefined or a (truthy) array, so ?? and || iterate the same input
         for(const identifier of request.addIdentifiers ?? []) {
             // eslint-disable-next-line no-await-in-loop -- sequential: each add depends on prior state
@@ -765,10 +744,9 @@ export class ContactApprovalHandler {
         this.pendingRequests.delete(uuid);
 
         logger.info({
-            action:      request.action,
-            personId:    request.personId,
-            displayName: request.displayName,
-            msg:         'Contact change request rejected by admin',
+            action:   request.action,
+            personId: request.personId,
+            msg:      'Contact change request rejected by admin',
         });
 
         const rejectedEmbed = new EmbedBuilder()

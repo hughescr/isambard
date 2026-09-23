@@ -2,26 +2,14 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult, mcpTextResult, withToolErrorHandling } from './mcp-helpers';
-import { contactIdentifierSchema, platformTypeSchema, type Contact, type ContactIdentifier, type ContactBackend } from '@/storage';
-
-/**
- * Details for a contact change approval request.
- */
-export interface ContactChangeRequest {
-    action:             'create' | 'update'
-    personId?:          string
-    displayName?:       string
-    addIdentifiers?:    ContactIdentifier[]
-    removeIdentifiers?: ContactIdentifier[]
-    notes?:             string
-}
+import { contactIdentifierSchema, createContactId, platformTypeSchema, type Contact, type ContactBackend, type ContactChangeRequest } from '@/storage';
 
 /**
  * Options for creating the Contacts MCP server.
  */
 interface ContactsMCPServerOptions {
     backend:                     ContactBackend
-    sendContactApprovalRequest?: (action: 'create' | 'update', details: ContactChangeRequest) => Promise<void>
+    sendContactApprovalRequest?: (details: ContactChangeRequest) => Promise<void>
 }
 
 /**
@@ -111,7 +99,7 @@ export function createContactsMCPServer(options: ContactsMCPServerOptions) {
                         addIdentifiers: args.identifiers,
                         notes:          args.notes,
                     };
-                    await sendContactApprovalRequest('create', request);
+                    await sendContactApprovalRequest(request);
                     return mcpTextResult('Contact creation request sent to admin for approval.');
                 }),
                 { annotations: { title: 'Request Contact Create', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
@@ -130,8 +118,9 @@ export function createContactsMCPServer(options: ContactsMCPServerOptions) {
                     notes: z.string().optional().describe('New notes for the contact (replaces existing notes)'),
                 },
                 withToolErrorHandling('requestContactUpdate', async (args): Promise<CallToolResult> => {
+                    const personId = createContactId(args.personId);
                     // Verify the contact exists first
-                    const contact = await backend.getContact(args.personId as Parameters<typeof backend.getContact>[0]);
+                    const contact = await backend.getContact(personId);
                     if(!contact) {
                         return mcpTextResult(`Contact '${args.personId}' not found.`);
                     }
@@ -142,12 +131,12 @@ export function createContactsMCPServer(options: ContactsMCPServerOptions) {
 
                     const request: ContactChangeRequest = {
                         action:            'update',
-                        personId:          args.personId,
+                        personId,
                         addIdentifiers:    args.addIdentifiers && args.addIdentifiers.length > 0 ? args.addIdentifiers : undefined,
                         removeIdentifiers: args.removeIdentifiers && args.removeIdentifiers.length > 0 ? args.removeIdentifiers : undefined,
                         notes:             args.notes,
                     };
-                    await sendContactApprovalRequest('update', request);
+                    await sendContactApprovalRequest(request);
                     return mcpTextResult(`Contact update request for '${args.personId}' sent to admin for approval.`);
                 }),
                 { annotations: { title: 'Request Contact Update', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }

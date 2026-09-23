@@ -40,6 +40,28 @@ export const contactIdSchema = z
 export type ContactId = z.infer<typeof contactIdSchema>;
 
 /**
+ * A pending contact change that requires administrator approval.
+ * Create requests define the new contact; update requests target an existing contact.
+ */
+interface ContactCreateRequest {
+    action:         'create'
+    displayName:    string
+    addIdentifiers: ContactIdentifier[]
+    notes?:         string
+    personId?:      ContactId
+};
+
+interface ContactUpdateRequest {
+    action:             'update'
+    personId:           ContactId
+    addIdentifiers?:    ContactIdentifier[]
+    removeIdentifiers?: ContactIdentifier[]
+    notes?:             string
+};
+
+export type ContactChangeRequest = ContactCreateRequest | ContactUpdateRequest;
+
+/**
  * Creates a validated ContactId from a string.
  * @throws {z.ZodError} If the id is not a valid ContactId
  */

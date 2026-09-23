@@ -66,7 +66,7 @@ export { createWikipediaMCPServer } from './wikipedia-mcp-server';
 export { createHealthMCPServer } from './health-mcp-server';
 
 // Contacts MCP Server
-export { createContactsMCPServer, type ContactChangeRequest } from './contacts-mcp-server';
+export { createContactsMCPServer } from './contacts-mcp-server';
 
 // User Context MCP Server
 export { createUserContextMCPServer } from './user-context-mcp-server';

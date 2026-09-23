@@ -1,12 +1,12 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type ContactChangeRequest, type PersonHistoryCoordinator } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator } from '@/agent';
 import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
-import type { MemoryToolBackend, MemoryPath, ContactBackend, PersonAllowlist, EmbedderLike, VectorIndex } from '@/storage';
+import type { MemoryToolBackend, MemoryPath, ContactBackend, ContactChangeRequest, PersonAllowlist, EmbedderLike, VectorIndex } from '@/storage';
 
 /**
  * Options for creating MCP servers.
@@ -110,7 +110,7 @@ export interface MCPServersOptions {
     /**
      * Optional callback to send contact change approval requests to admin.
      */
-    contactApprovalRequest?: (action: 'create' | 'update', details: ContactChangeRequest) => Promise<void>
+    contactApprovalRequest?: (details: ContactChangeRequest) => Promise<void>
 
     /**
      * Optional PersonHistoryCoordinator for the user context MCP server.

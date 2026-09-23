@@ -5,6 +5,7 @@ export {
     createContactId,
     type ContactIdentifier,
     type ContactId,
+    type ContactChangeRequest,
     type Contact,
     type PlatformType
 } from './types';

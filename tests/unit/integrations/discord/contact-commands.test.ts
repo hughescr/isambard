@@ -6,12 +6,11 @@ import {
     buildContactApprovalEmbed,
     buildDeleteConfirmationEmbed,
     ContactCommandHandler,
-    ContactApprovalHandler,
-    type ContactApprovalRequest
+    ContactApprovalHandler
 } from '../../../../src/integrations/discord/contact-commands';
 import { mockLogger } from '../../../setup';
 import { ContactNotFoundError, ContactLastIdentifierError } from '@/errors';
-import type { Contact, ContactBackend, PersonAllowlist } from '@/storage';
+import { createContactId, type Contact, type ContactBackend, type ContactChangeRequest, type PersonAllowlist } from '@/storage';
 
 // ---------------------------------------------------------------------------
 // Test constants
@@ -20,7 +19,7 @@ import type { Contact, ContactBackend, PersonAllowlist } from '@/storage';
 const ADMIN_USER_ID = '423276934781468692';
 
 const SAMPLE_CONTACT: Contact = {
-    personId:    'alice-wonderland' as Contact['personId'],
+    personId:    createContactId('alice-wonderland'),
     displayName: 'Alice Wonderland',
     identifiers: [
         { platform: 'name',  value: 'Alice Wonderland' },
@@ -258,7 +257,7 @@ describe('buildContactCommand()', () => {
 
 describe('buildContactApprovalEmbed()', () => {
     test('returns embed and actionRow', () => {
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:         'create',
             displayName:    'Bob Smith',
             addIdentifiers: [{ platform: 'email', value: 'bob@example.com' }],
@@ -269,21 +268,21 @@ describe('buildContactApprovalEmbed()', () => {
     });
 
     test('create request has "Contact Create Request" title', () => {
-        const request: ContactApprovalRequest = { action: 'create', displayName: 'Bob' };
+        const request: ContactChangeRequest = { action: 'create', displayName: 'Bob', addIdentifiers: [] };
         const { embed }                        = buildContactApprovalEmbed(request);
         const json                             = embed.toJSON();
         expect(json.title).toBe('Contact Create Request');
     });
 
     test('update request has "Contact Update Request" title', () => {
-        const request: ContactApprovalRequest = { action: 'update', personId: 'bob-smith' };
+        const request: ContactChangeRequest = { action: 'update', personId: createContactId('bob-smith') };
         const { embed }                        = buildContactApprovalEmbed(request);
         const json                             = embed.toJSON();
         expect(json.title).toBe('Contact Update Request');
     });
 
     test('includes displayName field when present', () => {
-        const request: ContactApprovalRequest = { action: 'create', displayName: 'Charlie' };
+        const request: ContactChangeRequest = { action: 'create', displayName: 'Charlie', addIdentifiers: [] };
         const { embed }                        = buildContactApprovalEmbed(request);
         const json                             = embed.toJSON();
         const field = json.fields?.find((f: { name: string }) => f.name === 'Display Name');
@@ -292,7 +291,7 @@ describe('buildContactApprovalEmbed()', () => {
     });
 
     test('includes personId field when present', () => {
-        const request: ContactApprovalRequest = { action: 'update', personId: 'alice-wonderland' };
+        const request: ContactChangeRequest = { action: 'update', personId: createContactId('alice-wonderland') };
         const { embed }                        = buildContactApprovalEmbed(request);
         const json                             = embed.toJSON();
         const field = json.fields?.find((f: { name: string }) => f.name === 'Person ID');
@@ -301,7 +300,7 @@ describe('buildContactApprovalEmbed()', () => {
     });
 
     test('includes Add Identifiers field when addIdentifiers present', () => {
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:         'create',
             displayName:    'Dave',
             addIdentifiers: [{ platform: 'email', value: 'dave@example.com' }],
@@ -314,9 +313,9 @@ describe('buildContactApprovalEmbed()', () => {
     });
 
     test('includes Remove Identifiers field when removeIdentifiers present', () => {
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:            'update',
-            personId:          'dave-smith',
+            personId:          createContactId('dave-smith'),
             removeIdentifiers: [{ platform: 'email', value: 'dave@example.com' }],
         };
         const { embed } = buildContactApprovalEmbed(request);
@@ -327,9 +326,9 @@ describe('buildContactApprovalEmbed()', () => {
     });
 
     test('shows both Add Identifiers and Remove Identifiers when both present', () => {
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:            'update',
-            personId:          'dave-smith',
+            personId:          createContactId('dave-smith'),
             addIdentifiers:    [{ platform: 'discord', value: 'dave#5678' }],
             removeIdentifiers: [{ platform: 'email', value: 'dave@old.com' }],
         };
@@ -344,7 +343,7 @@ describe('buildContactApprovalEmbed()', () => {
     });
 
     test('includes notes field when present', () => {
-        const request: ContactApprovalRequest = { action: 'create', displayName: 'Eve', notes: 'Test note' };
+        const request: ContactChangeRequest = { action: 'create', displayName: 'Eve', addIdentifiers: [], notes: 'Test note' };
         const { embed }                        = buildContactApprovalEmbed(request);
         const json                             = embed.toJSON();
         const field = json.fields?.find((f: { name: string }) => f.name === 'Notes');
@@ -354,36 +353,22 @@ describe('buildContactApprovalEmbed()', () => {
 
     test('uses compact fields only for the identity metadata', () => {
         const { embed } = buildContactApprovalEmbed({
-            action:            'update',
-            displayName:       'Eve',
-            personId:          'eve-example',
-            addIdentifiers:    [{ platform: 'email', value: 'eve@example.com' }],
-            removeIdentifiers: [{ platform: 'bsky', value: 'eve.bsky.social' }],
-            notes:             'A note',
+            action:         'create',
+            displayName:    'Eve',
+            personId:       createContactId('eve-example'),
+            addIdentifiers: [{ platform: 'email', value: 'eve@example.com' }],
+            notes:          'A note',
         });
         const fields = Object.fromEntries((embed.toJSON().fields ?? []).map(field => [field.name, field]));
 
         expect(fields['Display Name'].inline).toBe(true);
         expect(fields['Person ID'].inline).toBe(true);
         expect(fields['Add Identifiers'].inline).toBe(false);
-        expect(fields['Remove Identifiers'].inline).toBe(false);
         expect(fields.Notes.inline).toBe(false);
     });
 
-    test('omits optional fields when not present', () => {
-        const request: ContactApprovalRequest = { action: 'create' };
-        const { embed }                        = buildContactApprovalEmbed(request);
-        const json                             = embed.toJSON();
-        const fieldNames = (json.fields ?? []).map((f: { name: string }) => f.name);
-        expect(fieldNames).not.toContain('Display Name');
-        expect(fieldNames).not.toContain('Person ID');
-        expect(fieldNames).not.toContain('Add Identifiers');
-        expect(fieldNames).not.toContain('Remove Identifiers');
-        expect(fieldNames).not.toContain('Notes');
-    });
-
     test('actionRow has approve and reject buttons', () => {
-        const request: ContactApprovalRequest = { action: 'create', displayName: 'Frank' };
+        const request: ContactChangeRequest = { action: 'create', displayName: 'Frank', addIdentifiers: [] };
         const { actionRow }                    = buildContactApprovalEmbed(request);
         const json                             = actionRow.toJSON();
         // ActionRow has components (buttons)
@@ -394,7 +379,7 @@ describe('buildContactApprovalEmbed()', () => {
     });
 
     test('omits Add Identifiers field when addIdentifiers is empty array', () => {
-        const request: ContactApprovalRequest = { action: 'create', displayName: 'Henry', addIdentifiers: [] };
+        const request: ContactChangeRequest = { action: 'create', displayName: 'Henry', addIdentifiers: [] };
         const { embed }                        = buildContactApprovalEmbed(request);
         const json                             = embed.toJSON();
         const fieldNames = (json.fields ?? []).map((f: { name: string }) => f.name);
@@ -402,7 +387,7 @@ describe('buildContactApprovalEmbed()', () => {
     });
 
     test('omits Remove Identifiers field when removeIdentifiers is empty array', () => {
-        const request: ContactApprovalRequest = { action: 'update', personId: 'henry-smith', removeIdentifiers: [] };
+        const request: ContactChangeRequest = { action: 'update', personId: createContactId('henry-smith'), removeIdentifiers: [] };
         const { embed }                        = buildContactApprovalEmbed(request);
         const json                             = embed.toJSON();
         const fieldNames = (json.fields ?? []).map((f: { name: string }) => f.name);
@@ -410,7 +395,7 @@ describe('buildContactApprovalEmbed()', () => {
     });
 
     test('Add Identifiers field uses newline separator for multiple identifiers', () => {
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:         'create',
             displayName:    'Ivy',
             addIdentifiers: [
@@ -427,7 +412,7 @@ describe('buildContactApprovalEmbed()', () => {
     });
 
     test('each call generates unique UUIDs in button customIds', () => {
-        const request: ContactApprovalRequest = { action: 'create', displayName: 'Grace' };
+        const request: ContactChangeRequest = { action: 'create', displayName: 'Grace', addIdentifiers: [] };
         const result1 = buildContactApprovalEmbed(request);
         const result2 = buildContactApprovalEmbed(request);
         const getId   = (ar: ReturnType<typeof buildContactApprovalEmbed>['actionRow']) =>
@@ -976,7 +961,7 @@ describe('ContactCommandHandler - list subcommand', () => {
     test('replies with formatted contact list', async () => {
         backend.listContacts.mockImplementation(async () => [
             SAMPLE_CONTACT,
-            { ...SAMPLE_CONTACT, personId: 'bob-smith' as Contact['personId'], displayName: 'Bob Smith', identifiers: [{ platform: 'discord', value: 'bob' }] },
+            { ...SAMPLE_CONTACT, personId: createContactId('bob-smith'), displayName: 'Bob Smith', identifiers: [{ platform: 'discord', value: 'bob' }] },
         ]);
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'list');
 
@@ -1102,7 +1087,7 @@ describe('ContactCommandHandler - show subcommand', () => {
 
     test('embed omits Notes field for contact without notes', async () => {
         const contactWithoutNotes: Contact = {
-            personId:    'alice-wonderland' as Contact['personId'],
+            personId:    createContactId('alice-wonderland'),
             displayName: 'Alice Wonderland',
             identifiers: [{ platform: 'name', value: 'Alice Wonderland' }],
             createdAt:   '2025-01-01T00:00:00.000Z',
@@ -1254,9 +1239,9 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
     test('approve — calls putContact and shows Approved embed', async () => {
         const uuid    = 'test-uuid-approve';
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:         'create',
-            personId:       'bob-smith',
+            personId:       createContactId('bob-smith'),
             displayName:    'Bob Smith',
             addIdentifiers: [{ platform: 'email', value: 'bob@example.com' }],
         };
@@ -1274,7 +1259,7 @@ describe('ContactApprovalHandler - handleButton()', () => {
             expect.objectContaining({ embeds: expect.arrayContaining([expect.anything()]) as unknown as unknown[] })
         );
         expect(mockLogger.info).toHaveBeenCalledWith({
-            personId:    'bob-smith',
+            personId:    createContactId('bob-smith'),
             displayName: 'Bob Smith',
             msg:         'Contact created via admin approval',
         });
@@ -1282,7 +1267,7 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
     test('approve — titles the embed Approved rather than Denied', async () => {
         const uuid = 'test-uuid-approve-title';
-        handler.storePendingRequest(uuid, { action: 'create', personId: 'bob-smith', displayName: 'Bob Smith' });
+        handler.storePendingRequest(uuid, { action: 'create', personId: createContactId('bob-smith'), displayName: 'Bob Smith', addIdentifiers: [] });
 
         const { interaction, editReply } = makeButtonInteraction(`contact-approve:${uuid}`);
 
@@ -1290,36 +1275,6 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
         const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
         expect(callArgs.embeds[0].toJSON().title).toBe('Approved \u2713');
-    });
-
-    test('approve — creates a contact with Unknown and a name identifier when both optional fields are absent', async () => {
-        const uuid = 'test-uuid-missing-name-and-identifiers';
-        const request: ContactApprovalRequest = { action: 'create' };
-        handler.storePendingRequest(uuid, request);
-
-        const { interaction } = makeButtonInteraction(`contact-approve:${uuid}`);
-        await handler.handleButton(interaction);
-
-        expect(backend.putContact).toHaveBeenCalledTimes(1);
-        expect(backend.putContact).toHaveBeenCalledWith(expect.objectContaining({
-            displayName: 'Unknown',
-            identifiers: [{ platform: 'name', value: 'Unknown' }],
-        }));
-    });
-
-    test('approve — creates a name identifier from the supplied display name when identifiers are absent', async () => {
-        const uuid = 'test-uuid-missing-identifiers';
-        const request: ContactApprovalRequest = { action: 'create', displayName: 'Alice Example' };
-        handler.storePendingRequest(uuid, request);
-
-        const { interaction } = makeButtonInteraction(`contact-approve:${uuid}`);
-        await handler.handleButton(interaction);
-
-        expect(backend.putContact).toHaveBeenCalledTimes(1);
-        expect(backend.putContact).toHaveBeenCalledWith(expect.objectContaining({
-            displayName: 'Alice Example',
-            identifiers: [{ platform: 'name', value: 'Alice Example' }],
-        }));
     });
 
     test('approve — shows not-found embed when uuid not in pending requests', async () => {
@@ -1339,9 +1294,9 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
     test('approve — update action calls addIdentifier for each addIdentifier', async () => {
         const uuid    = 'test-uuid-update';
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:         'update',
-            personId:       'alice-wonderland',
+            personId:       createContactId('alice-wonderland'),
             addIdentifiers: [
                 { platform: 'email', value: 'alice@new.com' },
                 { platform: 'bsky',  value: 'alice.bsky.social' },
@@ -1356,29 +1311,11 @@ describe('ContactApprovalHandler - handleButton()', () => {
         expect(backend.addIdentifier).toHaveBeenCalledTimes(2);
     });
 
-    test('approve — update request without personId reports the invariant error', async () => {
-        const uuid = 'test-uuid-missing-person';
-        handler.storePendingRequest(uuid, { action: 'update' });
-        const { interaction, editReply } = makeButtonInteraction(`contact-approve:${uuid}`);
-
-        await handler.handleButton(interaction);
-
-        expect(editReply).toHaveBeenCalledWith(expect.objectContaining({
-            content: 'An error occurred processing your request. Please try again.',
-        }));
-        expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
-            prefix: 'contact-approve',
-            err:    expect.objectContaining({
-                message: 'Invariant violated in applyContactUpdate: Contact update request is missing personId',
-            }) as unknown,
-        }));
-    });
-
     test('approve — update action calls removeIdentifier for each removeIdentifier', async () => {
         const uuid    = 'test-uuid-remove-ids';
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:            'update',
-            personId:          'alice-wonderland',
+            personId:          createContactId('alice-wonderland'),
             removeIdentifiers: [
                 { platform: 'email', value: 'alice@old.com' },
             ],
@@ -1395,9 +1332,9 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
     test('approve — update action handles both addIdentifiers and removeIdentifiers', async () => {
         const uuid    = 'test-uuid-mixed';
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:            'update',
-            personId:          'alice-wonderland',
+            personId:          createContactId('alice-wonderland'),
             addIdentifiers:    [{ platform: 'discord', value: 'alice#9999' }],
             removeIdentifiers: [{ platform: 'email', value: 'alice@old.com' }],
         };
@@ -1413,9 +1350,9 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
     test('approve — update action with notes fetches existing and calls putContact', async () => {
         const uuid    = 'test-uuid-notes';
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:   'update',
-            personId: 'alice-wonderland',
+            personId: createContactId('alice-wonderland'),
             notes:    'Updated notes',
         };
         handler.storePendingRequest(uuid, request);
@@ -1433,7 +1370,7 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
     test('approve — update action without notes does not overwrite the contact', async () => {
         const uuid = 'test-uuid-no-notes';
-        handler.storePendingRequest(uuid, { action: 'update', personId: 'alice-wonderland' });
+        handler.storePendingRequest(uuid, { action: 'update', personId: createContactId('alice-wonderland') });
         const { interaction } = makeButtonInteraction(`contact-approve:${uuid}`);
 
         await handler.handleButton(interaction);
@@ -1450,13 +1387,13 @@ describe('ContactApprovalHandler - handleButton()', () => {
         const allowlistedHandler = new ContactApprovalHandler(backend as unknown as ContactBackend, allowlist);
         const uuid = 'test-uuid-update-allowlist';
         allowlistedHandler.storePendingRequest(uuid, {
-            action: 'update', personId: 'alice-wonderland', addIdentifiers: [{ platform: 'email', value: 'new@example.com' }],
+            action: 'update', personId: createContactId('alice-wonderland'), addIdentifiers: [{ platform: 'email', value: 'new@example.com' }],
         });
 
         await allowlistedHandler.handleButton(makeButtonInteraction(`contact-approve:${uuid}`).interaction);
 
         expect((allowlist.refreshPerson as Mock<(...args: unknown[]) => Promise<void>>)).toHaveBeenCalledWith('alice-wonderland');
-        expect(mockLogger.info).toHaveBeenCalledWith({ personId: 'alice-wonderland', msg: 'Contact updated via admin approval' });
+        expect(mockLogger.info).toHaveBeenCalledWith({ personId: createContactId('alice-wonderland'), msg: 'Contact updated via admin approval' });
     });
 
     test('approve — update logs but succeeds when allowlist refresh fails', async () => {
@@ -1466,19 +1403,19 @@ describe('ContactApprovalHandler - handleButton()', () => {
         } as unknown as PersonAllowlist;
         const allowlistedHandler = new ContactApprovalHandler(backend as unknown as ContactBackend, allowlist);
         const uuid = 'test-uuid-update-allowlist-failure';
-        allowlistedHandler.storePendingRequest(uuid, { action: 'update', personId: 'alice-wonderland' });
+        allowlistedHandler.storePendingRequest(uuid, { action: 'update', personId: createContactId('alice-wonderland') });
 
         await allowlistedHandler.handleButton(makeButtonInteraction(`contact-approve:${uuid}`).interaction);
 
         expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-            personId: 'alice-wonderland',
+            personId: createContactId('alice-wonderland'),
             msg:      'Failed to refresh allowlist cache after contact update',
         }));
     });
 
     test('approve — removes pending request after approval', async () => {
         const uuid    = 'test-uuid-remove';
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:         'create',
             displayName:    'Charlie',
             addIdentifiers: [{ platform: 'name', value: 'Charlie' }],
@@ -1500,7 +1437,7 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
     test('reject — shows Rejected embed and removes pending request', async () => {
         const uuid    = 'test-uuid-reject';
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:         'create',
             displayName:    'Dave',
             addIdentifiers: [{ platform: 'name', value: 'Dave' }],
@@ -1517,10 +1454,9 @@ describe('ContactApprovalHandler - handleButton()', () => {
             expect.objectContaining({ embeds: expect.arrayContaining([expect.anything()]) as unknown as unknown[] })
         );
         expect(mockLogger.info).toHaveBeenCalledWith({
-            action:      'create',
-            personId:    undefined,
-            displayName: 'Dave',
-            msg:         'Contact change request rejected by admin',
+            action:   'create',
+            personId: undefined,
+            msg:      'Contact change request rejected by admin',
         });
 
         const { interaction: secondPress } = makeButtonInteraction(`contact-reject:${uuid}`);
@@ -1547,7 +1483,7 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
     test('shows error embed when approve throws', async () => {
         const uuid    = 'test-uuid-error';
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:         'create',
             displayName:    'Error Case',
             addIdentifiers: [{ platform: 'name', value: 'Error Case' }],
@@ -1573,7 +1509,7 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
     test('logs the secondary error when the failure reply cannot be sent', async () => {
         const uuid = 'test-uuid-error-reply';
-        handler.storePendingRequest(uuid, { action: 'create', displayName: 'Error Case' });
+        handler.storePendingRequest(uuid, { action: 'create', displayName: 'Error Case', addIdentifiers: [] });
         backend.putContact.mockImplementation(async () => {
             throw new Error('DynamoDB failure');
         });
@@ -1592,9 +1528,9 @@ describe('ContactApprovalHandler - handleButton()', () => {
 
     test('approve create — appends -2 suffix when personId from request is already taken', async () => {
         const uuid    = 'test-uuid-suffix';
-        const request: ContactApprovalRequest = {
+        const request: ContactChangeRequest = {
             action:         'create',
-            personId:       'bob-smith',
+            personId:       createContactId('bob-smith'),
             displayName:    'Bob Smith',
             addIdentifiers: [{ platform: 'name', value: 'Bob Smith' }],
         };
@@ -2137,7 +2073,7 @@ describe('ContactCommandHandler - edit subcommand', () => {
 
 describe('Contact command public response contracts', () => {
     test('uses distinct, correctly styled approve and reject buttons', () => {
-        const { embed, actionRow } = buildContactApprovalEmbed({ action: 'create' }, 'approval-contract');
+        const { embed, actionRow } = buildContactApprovalEmbed({ action: 'create', displayName: 'Approval Contract', addIdentifiers: [] }, 'approval-contract');
         const buttons = actionRow.toJSON().components as unknown as { type: number, custom_id: string, label: string, style: number }[];
 
         expect(embed.toJSON().color).toBe(0xFF_AA_00);
@@ -2179,7 +2115,7 @@ describe('Contact command public response contracts', () => {
             ...SAMPLE_CONTACT,
             identifiers: [{ platform: 'email' as const, value: 'alice@example.com' }],
         };
-        const second = { ...SAMPLE_CONTACT, personId: 'alice-second' as Contact['personId'], displayName: 'Alice Second' };
+        const second = { ...SAMPLE_CONTACT, personId: createContactId('alice-second'), displayName: 'Alice Second' };
         backend.fuzzyLookup.mockResolvedValue([first, second]);
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'show', { person: 'Alice' });
 
@@ -2433,11 +2369,11 @@ describe('Contact command public response contracts', () => {
         const cases: { name: string, customId: string, arrange: (handler: ContactApprovalHandler) => void }[] = [
             { name: 'approve missing request', customId: 'contact-approve:missing', arrange: () => {} },
             { name:     'approve success', customId: 'contact-approve:approve', arrange:  (handler) => {
-                handler.storePendingRequest('approve', { action: 'create', displayName: 'Alice' });
+                handler.storePendingRequest('approve', { action: 'create', displayName: 'Alice', addIdentifiers: [] });
             } },
             { name: 'reject missing request', customId: 'contact-reject:missing', arrange: () => {} },
             { name:     'reject success', customId: 'contact-reject:reject', arrange:  (handler) => {
-                handler.storePendingRequest('reject', { action: 'create', displayName: 'Alice' });
+                handler.storePendingRequest('reject', { action: 'create', displayName: 'Alice', addIdentifiers: [] });
             } },
             { name: 'delete confirm missing request', customId: 'contact-delete-confirm:missing', arrange: () => {} },
             { name:     'delete confirm success', customId: 'contact-delete-confirm:confirm', arrange:  (handler) => {
@@ -2477,24 +2413,24 @@ describe('Contact command public response contracts', () => {
     test('waits for each approval update write and reports a rejected write through the public error response', async () => {
         const cases: {
             name:      string
-            request:   ContactApprovalRequest
+            request:   ContactChangeRequest
             operation: 'addIdentifier' | 'removeIdentifier' | 'putContact'
             arrange?:  (backend: ReturnType<typeof createMockBackend>) => void
         }[] = [
             {
                 name:      'add identifier',
                 operation: 'addIdentifier',
-                request:   { action: 'update', personId: 'alice', addIdentifiers: [{ platform: 'email', value: 'a@example.com' }] },
+                request:   { action: 'update', personId: createContactId('alice'), addIdentifiers: [{ platform: 'email', value: 'a@example.com' }] },
             },
             {
                 name:      'remove identifier',
                 operation: 'removeIdentifier',
-                request:   { action: 'update', personId: 'alice', removeIdentifiers: [{ platform: 'email', value: 'a@example.com' }] },
+                request:   { action: 'update', personId: createContactId('alice'), removeIdentifiers: [{ platform: 'email', value: 'a@example.com' }] },
             },
             {
                 name:      'put updated notes',
                 operation: 'putContact',
-                request:   { action: 'update', personId: 'alice', notes: 'updated' },
+                request:   { action: 'update', personId: createContactId('alice'), notes: 'updated' },
                 arrange:   backend => backend.getContact.mockResolvedValue(SAMPLE_CONTACT),
             },
         ];
@@ -2607,7 +2543,7 @@ describe('Contact command mutation regression contracts', () => {
         const backend = createMockBackend();
         const approvals = new ContactApprovalHandler(backend as unknown as ContactBackend);
         backend.getContact.mockResolvedValue(SAMPLE_CONTACT);
-        approvals.storePendingRequest('notes-update', { action: 'update', personId: 'alice-wonderland', notes: 'Updated notes' });
+        approvals.storePendingRequest('notes-update', { action: 'update', personId: createContactId('alice-wonderland'), notes: 'Updated notes' });
         const { interaction } = makeButtonInteraction('contact-approve:notes-update');
 
         await approvals.handleButton(interaction);

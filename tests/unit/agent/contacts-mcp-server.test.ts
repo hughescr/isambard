@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { createContactsMCPServer, type ContactChangeRequest } from '../../../src/agent/contacts-mcp-server';
-import type { Contact, ContactId, ContactIdentifier } from '../../../src/storage/contacts';
+import { createContactsMCPServer } from '../../../src/agent/contacts-mcp-server';
+import type { Contact, ContactChangeRequest, ContactId, ContactIdentifier } from '../../../src/storage/contacts';
 import { textContent } from '../../setup';
 
 interface RegisteredTool {
@@ -263,11 +263,10 @@ describe.concurrent('createContactsMCPServer', () => {
             expect(result.isError).toBeUndefined();
             expect(textContent(result.content[0])).toBe('Contact creation request sent to admin for approval.');
             expect(approvalCallback).toHaveBeenCalledTimes(1);
-            const callArgs = approvalCallback.mock.calls[0] as unknown as [string, ContactChangeRequest];
-            expect(callArgs[0]).toBe('create');
-            expect(callArgs[1].action).toBe('create');
-            expect(callArgs[1].displayName).toBe('Bob Builder');
-            expect(callArgs[1].addIdentifiers).toEqual([{ platform: 'email', value: 'bob@example.com' }]);
+            const callArgs = approvalCallback.mock.calls[0] as unknown as [ContactChangeRequest];
+            expect(callArgs[0].action).toBe('create');
+            expect(('displayName' in callArgs[0] ? callArgs[0].displayName : undefined)).toBe('Bob Builder');
+            expect(callArgs[0].addIdentifiers).toEqual([{ platform: 'email', value: 'bob@example.com' }]);
         });
 
         test('should include notes in approval request when provided', async () => {
@@ -281,8 +280,8 @@ describe.concurrent('createContactsMCPServer', () => {
                 notes:       'Met at conference',
             });
 
-            const callArgs = approvalCallback.mock.calls[0] as unknown as [string, ContactChangeRequest];
-            expect(callArgs[1].notes).toBe('Met at conference');
+            const callArgs = approvalCallback.mock.calls[0] as unknown as [ContactChangeRequest];
+            expect(callArgs[0].notes).toBe('Met at conference');
         });
 
         test('should return error when no approval callback configured', async () => {
@@ -329,12 +328,11 @@ describe.concurrent('createContactsMCPServer', () => {
             expect(result.isError).toBeUndefined();
             expect(textContent(result.content[0])).toBe("Contact update request for 'alice-wonderland' sent to admin for approval.");
             expect(approvalCallback).toHaveBeenCalledTimes(1);
-            const callArgs = approvalCallback.mock.calls[0] as unknown as [string, ContactChangeRequest];
-            expect(callArgs[0]).toBe('update');
-            expect(callArgs[1].action).toBe('update');
-            expect(callArgs[1].personId).toBe('alice-wonderland');
-            expect(callArgs[1].addIdentifiers).toEqual([{ platform: 'discord', value: 'Alice#1234' }]);
-            expect(callArgs[1].removeIdentifiers).toBeUndefined();
+            const callArgs = approvalCallback.mock.calls[0] as unknown as [ContactChangeRequest];
+            expect(callArgs[0].action).toBe('update');
+            expect(callArgs[0].personId).toBe('alice-wonderland' as ContactId);
+            expect(callArgs[0].addIdentifiers).toEqual([{ platform: 'discord', value: 'Alice#1234' }]);
+            expect(('removeIdentifiers' in callArgs[0] ? callArgs[0].removeIdentifiers : undefined)).toBeUndefined();
         });
 
         test('should leave notes undefined when not provided, rather than defaulting to an empty string', async () => {
@@ -347,8 +345,8 @@ describe.concurrent('createContactsMCPServer', () => {
                 addIdentifiers: [{ platform: 'discord', value: 'Alice#1234' }],
             });
 
-            const callArgs = approvalCallback.mock.calls[0] as unknown as [string, ContactChangeRequest];
-            expect(callArgs[1].notes).toBeUndefined();
+            const callArgs = approvalCallback.mock.calls[0] as unknown as [ContactChangeRequest];
+            expect(callArgs[0].notes).toBeUndefined();
         });
 
         test('should include removeIdentifiers in approval request separately', async () => {
@@ -361,9 +359,9 @@ describe.concurrent('createContactsMCPServer', () => {
                 removeIdentifiers: [{ platform: 'email', value: 'alice@example.com' }],
             });
 
-            const callArgs = approvalCallback.mock.calls[0] as unknown as [string, ContactChangeRequest];
-            expect(callArgs[1].addIdentifiers).toBeUndefined();
-            expect(callArgs[1].removeIdentifiers).toEqual([{ platform: 'email', value: 'alice@example.com' }]);
+            const callArgs = approvalCallback.mock.calls[0] as unknown as [ContactChangeRequest];
+            expect(callArgs[0].addIdentifiers).toBeUndefined();
+            expect(('removeIdentifiers' in callArgs[0] ? callArgs[0].removeIdentifiers : undefined)).toEqual([{ platform: 'email', value: 'alice@example.com' }]);
         });
 
         test('should pass both addIdentifiers and removeIdentifiers separately', async () => {
@@ -377,9 +375,9 @@ describe.concurrent('createContactsMCPServer', () => {
                 removeIdentifiers: [{ platform: 'email', value: 'alice@example.com' }],
             });
 
-            const callArgs = approvalCallback.mock.calls[0] as unknown as [string, ContactChangeRequest];
-            expect(callArgs[1].addIdentifiers).toEqual([{ platform: 'discord', value: 'Alice#1234' }]);
-            expect(callArgs[1].removeIdentifiers).toEqual([{ platform: 'email', value: 'alice@example.com' }]);
+            const callArgs = approvalCallback.mock.calls[0] as unknown as [ContactChangeRequest];
+            expect(callArgs[0].addIdentifiers).toEqual([{ platform: 'discord', value: 'Alice#1234' }]);
+            expect(('removeIdentifiers' in callArgs[0] ? callArgs[0].removeIdentifiers : undefined)).toEqual([{ platform: 'email', value: 'alice@example.com' }]);
         });
 
         test('should send no identifiers when neither add nor remove provided', async () => {
@@ -392,10 +390,10 @@ describe.concurrent('createContactsMCPServer', () => {
                 notes:    'Updated notes only',
             });
 
-            const callArgs = approvalCallback.mock.calls[0] as unknown as [string, ContactChangeRequest];
-            expect(callArgs[1].addIdentifiers).toBeUndefined();
-            expect(callArgs[1].removeIdentifiers).toBeUndefined();
-            expect(callArgs[1].notes).toBe('Updated notes only');
+            const callArgs = approvalCallback.mock.calls[0] as unknown as [ContactChangeRequest];
+            expect(callArgs[0].addIdentifiers).toBeUndefined();
+            expect(('removeIdentifiers' in callArgs[0] ? callArgs[0].removeIdentifiers : undefined)).toBeUndefined();
+            expect(callArgs[0].notes).toBe('Updated notes only');
         });
 
         test('should omit empty identifier change lists from approval request', async () => {
@@ -411,10 +409,23 @@ describe.concurrent('createContactsMCPServer', () => {
             });
 
             expect(approvalCallback).toHaveBeenCalledTimes(1);
-            const callArgs = approvalCallback.mock.calls[0] as unknown as [string, ContactChangeRequest];
-            expect(callArgs[1].addIdentifiers).toBeUndefined();
-            expect(callArgs[1].removeIdentifiers).toBeUndefined();
-            expect(callArgs[1].notes).toBe('Updated notes only');
+            const callArgs = approvalCallback.mock.calls[0] as unknown as [ContactChangeRequest];
+            expect(callArgs[0].addIdentifiers).toBeUndefined();
+            expect(('removeIdentifiers' in callArgs[0] ? callArgs[0].removeIdentifiers : undefined)).toBeUndefined();
+            expect(callArgs[0].notes).toBe('Updated notes only');
+        });
+
+        test('should reject an invalid personId before backend or approval work', async () => {
+            const approvalCallback = mock(async (): Promise<void> => { /* intentionally empty */ });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: approvalCallback });
+            const handler = getToolHandler(server, 'requestContactUpdate');
+
+            const result = await handler({ personId: 'Alice Wonderland', notes: 'test' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('ContactId must be lowercase alphanumeric with hyphens (kebab-case)');
+            expect(mockBackend.getContact).not.toHaveBeenCalled();
+            expect(approvalCallback).not.toHaveBeenCalled();
         });
 
         test('should return text message when contact not found', async () => {

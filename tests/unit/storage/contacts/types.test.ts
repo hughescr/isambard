@@ -7,6 +7,7 @@ import {
     isContactId,
     platformTypeSchema,
     type Contact,
+    type ContactChangeRequest,
     type ContactId
 } from '@/storage/contacts/types';
 
@@ -56,6 +57,20 @@ describe.concurrent('contactIdentifierSchema', () => {
     test('accepts value at the 500-char maximum', () => {
         const result = contactIdentifierSchema.safeParse({ platform: 'name', value: 'a'.repeat(500) });
         expect(result.success).toBe(true);
+    });
+});
+
+describe.concurrent('ContactChangeRequest', () => {
+    test('requires a personId for update requests', () => {
+        const update: ContactChangeRequest = {
+            action:   'update',
+            personId: createContactId('alice-smith'),
+        };
+        expect(update.personId).toBe('alice-smith' as ContactId);
+
+        // @ts-expect-error update requests require a branded personId
+        const invalidUpdate: ContactChangeRequest = { action: 'update' };
+        expect(invalidUpdate.action).toBe('update');
     });
 });
 
