@@ -104,8 +104,10 @@ describe.concurrent('resolveToInstant', () => {
 });
 
 describe.concurrent('displayDay', () => {
-    test('displayDay keeps an all-day date on its own date west of UTC', () => {
+    test('displayDay keeps an all-day date on its own date either side of UTC', () => {
         expect(displayDay(allDay, LA)).toBe('2026-03-01');
+        expect(displayDay(allDay, 'Asia/Tokyo')).toBe('2026-03-01');
+        expect(displayDay(allDay, 'UTC')).toBe('2026-03-01');
     });
 
     test('displayDay uses a floating range its own local date in any zone', () => {

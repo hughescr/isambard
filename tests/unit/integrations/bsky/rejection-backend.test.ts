@@ -8,6 +8,8 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import * as loggerModule from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
+import { z } from 'zod';
+import { mockLogger } from '../../../setup';
 import { BskyRejectionBackend, type BskyRejectedReply, type BskyRejectedDM } from '@/integrations/bsky/rejection-backend';
 import { createAtUri, createCid } from '@/integrations/bsky/types';
 
@@ -232,6 +234,25 @@ describe('BskyRejectionBackend', () => {
                 uuid: malformedRow.uuid,
                 msg:  'Skipping Bluesky rejection row with an invalid strong ref',
             });
+        });
+
+        test('skips a row failing the stored schema and logs its parse error without hiding the valid DM', async () => {
+            const { convoId: _omitted, ...malformedDm } = { ...DM_ITEM, uuid: '66666666-1111-4222-8333-444444444444' };
+            ddbMock.on(QueryCommand).resolves({
+                Items: [
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${malformedDm.uuid}`, ...malformedDm },
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${DM_UUID}`, ...DM_ITEM },
+                ],
+            });
+            mockLogger.warn.mockClear();
+
+            const results = await backend.listRejections();
+
+            expect(results).toEqual([DM_ITEM]);
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith({ error: expect.any(z.ZodError), msg: 'Skipping malformed Bluesky rejection row' });
+            const [[logged]] = mockLogger.warn.mock.calls as [[{ error: z.ZodError }]];
+            expect(logged.error.issues.map(issue => issue.path)).toEqual([['convoId']]);
         });
 
         test('returns parsed DM items from query', async () => {
