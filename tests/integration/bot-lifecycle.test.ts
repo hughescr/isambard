@@ -565,7 +565,7 @@ describe('Bot Lifecycle Integration', () => {
 
             botOptions.notify!({ source: 'test', text: 'hello', wake: true, dedupeKey: 'bot-lifecycle-key' });
             expect(conductor.submit).toHaveBeenCalledTimes(1);
-            expect(conductor.submit.mock.calls[0]?.[1]).toEqual({ priority: 'other' });
+            expect(conductor.submit.mock.calls[0]?.[1]).toEqual({ priority: 'normal' });
         });
 
         it('config.perch.enabled: false — opens no perch conductor', async () => {

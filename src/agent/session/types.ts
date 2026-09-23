@@ -56,10 +56,10 @@ export type SessionQueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>, o
  * The full set of envelope kinds the ledger and conductor key off of. `queued.human` in the
  * ledger keys on `kind === 'discord'`; every other kind increments `queued.other`.
  */
-export type EnvelopeKind = 'discord' | 'perch' | 'notification' | 'catchup' | 'wrapup' | 'resume' | 'compact' | 'boot' | 'task' | 'peer';
+export type EnvelopeKind = 'discord' | 'perch' | 'notification' | 'catchup' | 'wrapup' | 'continuation' | 'compact' | 'boot' | 'task' | 'peer';
 
 /** Every {@link EnvelopeKind} member, for table-driven tests that must stay exhaustive as the union grows. */
-export const ENVELOPE_KINDS: readonly EnvelopeKind[] = ['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task', 'peer'];
+export const ENVELOPE_KINDS: readonly EnvelopeKind[] = ['discord', 'perch', 'notification', 'catchup', 'wrapup', 'continuation', 'compact', 'boot', 'task', 'peer'];
 
 /**
  * The minimal envelope shape the ledger keys `turn_submitted` events on — distinct from
@@ -95,17 +95,6 @@ interface EnvelopeBase {
      * string array would force a lossy re-encoding step for no benefit.
      */
     images?:       PlatformImage[]
-    /**
-     * How the host queues/escalates this envelope: `'human'` interrupts promptly (a direct
-     * message), `'wake'` escalates after a wait (perch, catch-up, resume, a waking
-     * notification), `'accumulate'` queues silently with no escalation (boot, compact, a
-     * non-waking notification). Renamed from the prior 2-way `priority` field (plan amendment
-     * A1 extension) — confirmed unread by any consumer before the rename.
-     *
-     * Independent of `mode`: `compact` opens a turn (`mode: 'query'`) yet queues as
-     * `'accumulate'`, so neither field is derivable from the other.
-     */
-    hostPriority:  'human' | 'wake' | 'accumulate'
     createdAt:     Date
     /**
      * Header-free, capped (see `SYNOPSIS_SEED_CAP` in ./envelope.ts) content for the Discord
@@ -160,7 +149,7 @@ export interface TaskQueryEnvelope extends EnvelopeBase {
 /** A host-originated envelope that opens a turn and carries no source metadata. */
 export interface HostQueryEnvelope extends EnvelopeBase, NoSource {
     mode: 'query'
-    kind: 'perch' | 'notification' | 'catchup' | 'wrapup' | 'resume' | 'compact'
+    kind: 'perch' | 'notification' | 'catchup' | 'wrapup' | 'continuation' | 'compact'
 }
 
 /**

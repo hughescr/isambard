@@ -64,7 +64,7 @@ Each session should produce at least one tangible artifact. Time-specific hints 
 ### Deferral Logic
 
 There is one perch conductor session, and a slot turn is just a turn submitted to it
-(`priority: 'other'`). Deferral is the driver's job (`perch-driver.ts`), not a bot-wide mode
+(`priority: 'normal'`). Deferral is the driver's job (`perch-driver.ts`), not a bot-wide mode
 machine:
 
 1. `runSlot(slot)` checks its own `slotRunning` flag — set the moment a slot turn is submitted,
@@ -91,7 +91,7 @@ graph TD
     B -->|Already running| D[Set pending flag]
     C --> E[Perch Conductor Runs Turn]
     E --> F{Perch-channel message arrives?}
-    F -->|Yes| G[Queued behind, submitted at priority 'other']
+    F -->|Yes| G[Queued behind, submitted at priority 'normal']
     G --> E
     F -->|No| H[Turn settles]
     H --> I{pending?}
@@ -104,7 +104,7 @@ graph TD
 
 A message in the perch-time channel while a slot turn is running is **not** a suspend/resume of
 a separate session — `handlers.ts` submits it straight to the same perch conductor
-(`submitPerchChannelMessage`) as a `discord`-kind envelope at `priority: 'other'`. It queues
+(`submitPerchChannelMessage`) as a `discord`-kind envelope at `priority: 'normal'`. It queues
 behind the running slot turn and the conductor answers it once that turn (or whatever is ahead of
 it) settles. There is no bot-wide mode transition, no separate conversation session, and no state
 to save and restore — it is the same mechanism a Discord message uses against the conversation
@@ -118,7 +118,7 @@ trigger, not from any per-message activity. `perch-driver.ts` arms two timers of
 
 1. **Wrap-up timer** (`endsAt - wrapUpLeadMinutes`, default 5 minutes before the end): submits
    a `[WRAP-UP · perch slot ends in N min]` envelope (`buildPerchWrapUpEnvelope`) at
-   `priority: 'human'` — the highest priority, so it is the very next turn the conductor runs once
+   `priority: 'urgent'` — the highest priority, so it is the very next turn the conductor runs once
    the current slot turn ends, ahead of any queued perch-channel message or the next slot's own
    envelope. There is no forcible interruption here: the agent decides for itself how to wrap up,
    the same as any other turn.

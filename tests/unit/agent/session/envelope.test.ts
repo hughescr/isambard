@@ -7,7 +7,7 @@ import {
     buildPeerEnvelope,
     buildCatchupEnvelope,
     buildWrapUpEnvelope,
-    buildResumeEnvelope,
+    buildContinuationEnvelope,
     buildBootEnvelope,
     buildCompactEnvelope,
     toSdkUserMessage
@@ -369,26 +369,26 @@ describe('buildDiscordEnvelope', () => {
         expect(envelope.text).toContain('[Channels]\n#general, #random');
     });
 
-    test('renders a resumeNote verbatim, between [Channels] and the message texts', () => {
+    test('renders a continuationNote verbatim, between [Channels] and the message texts', () => {
         const envelope = buildDiscordEnvelope({
-            messages:    [makeMessage({ content: 'second message' })],
-            authorId:    'a',
-            authorName:  'craig',
-            channelId:   'c',
-            channelName: 'general',
-            isDM:        false,
+            messages:         [makeMessage({ content: 'second message' })],
+            authorId:         'a',
+            authorName:       'craig',
+            channelId:        'c',
+            channelName:      'general',
+            isDM:             false,
             now,
             timezone,
             timeHeader,
-            channelList: '#general, #random',
-            resumeNote:  '[RESUME NOTE]\n\n[You were composing this response:]\npartial reply',
+            channelList:      '#general, #random',
+            continuationNote: '[RESUME NOTE]\n\n[You were composing this response:]\npartial reply',
         });
 
         expect(envelope.text).toContain('[Channels]\n#general, #random\n\n[RESUME NOTE]');
         expect(envelope.text.indexOf('[RESUME NOTE]')).toBeLessThan(envelope.text.indexOf('second message'));
     });
 
-    test('omits any resume-note section when resumeNote is not given', () => {
+    test('omits any continuation-note section when continuationNote is not given', () => {
         const envelope = buildDiscordEnvelope({
             messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
@@ -434,7 +434,7 @@ describe('buildDiscordEnvelope', () => {
         );
     });
 
-    test('sets origin, channelId, authorId, hostPriority human, mode query, kind discord, createdAt now', () => {
+    test('sets origin, channelId, authorId, mode query, kind discord, createdAt now', () => {
         const envelope = buildDiscordEnvelope({
             messages: [makeMessage()], authorId: 'author-9', authorName: 'craig', channelId: 'chan-9', channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
@@ -443,7 +443,6 @@ describe('buildDiscordEnvelope', () => {
         expect(envelope.origin).toEqual({ kind: 'human' });
         expect(envelope.channelId).toBe('chan-9');
         expect(envelope.authorId).toBe('author-9');
-        expect(envelope.hostPriority).toBe('human');
         expect(envelope.mode).toBe('query');
         expect(envelope.createdAt).toBe(now);
     });
@@ -474,7 +473,6 @@ describe('buildPerchEnvelope', () => {
         const header = '[PERCH · evening slot · 2026-09-04 14:07 PT · ends 18:45]';
         expect(envelope.text.startsWith(`${header}\n\n${timeHeader}`)).toBe(true);
         expect(envelope.kind).toBe('perch');
-        expect(envelope.hostPriority).toBe('wake');
         expect(envelope.mode).toBe('query');
     });
 
@@ -508,14 +506,12 @@ describe('buildNotificationEnvelope', () => {
         expect(envelope.kind).toBe('notification');
     });
 
-    test('the contract follows wake (query when waking, append otherwise); hostPriority is wake when waking, accumulate otherwise', () => {
+    test('the contract follows wake (query when waking, append otherwise)', () => {
         const waking = buildNotificationEnvelope({ source: 'email', text: 't', now, timezone, timeHeader, wake: true });
         const quiet = buildNotificationEnvelope({ source: 'email', text: 't', now, timezone, timeHeader, wake: false });
 
         expect(waking.mode).toBe('query');
-        expect(waking.hostPriority).toBe('wake');
         expect(quiet.mode).toBe('append');
-        expect(quiet.hostPriority).toBe('accumulate');
     });
 });
 
@@ -529,7 +525,6 @@ describe('buildPeerEnvelope', () => {
         expect(envelope.text).toBe(`${header}\n\n${timeHeader}\n\nMIDTURN-PING-CHARLIE-3\n\nReply with SendMessage to Izzy-main.`);
         expect(envelope.kind).toBe('peer');
         expect(envelope.peer).toEqual({ from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' });
-        expect(envelope.hostPriority).toBe('wake');
         expect(envelope.mode).toBe('adopted');
         expect(envelope.createdAt).toBe(now);
         expect(envelope.id).not.toBe(buildPeerEnvelope({
@@ -567,7 +562,6 @@ describe('buildCatchupEnvelope', () => {
         expect(envelope.text).toContain('3 unread messages across 2 channels');
         expect(envelope.text).toContain('getUnreadOverview');
         expect(envelope.kind).toBe('catchup');
-        expect(envelope.hostPriority).toBe('wake');
         expect(envelope.mode).toBe('query');
     });
 
@@ -578,12 +572,11 @@ describe('buildCatchupEnvelope', () => {
         expect(envelope.text).not.toContain('getUnreadOverview');
     });
 
-    test('omits the unread summary when unreadCount is undefined; mode/hostPriority follow the accumulate rule', () => {
+    test('omits the unread summary when unreadCount is undefined; mode follows the accumulate rule', () => {
         const envelope = buildCatchupEnvelope({ channelCount: 0, now, timezone, timeHeader });
 
         expect(envelope.text).not.toContain('unread');
         expect(envelope.mode).toBe('append');
-        expect(envelope.hostPriority).toBe('accumulate');
     });
 
     test('renders "## Events while you were away" only when eventsDelta is non-empty, in order after the unread summary', () => {
@@ -626,14 +619,12 @@ describe('buildCatchupEnvelope', () => {
         const envelope = buildCatchupEnvelope({ unreadCount: 1, channelCount: 1, now, timezone, timeHeader });
 
         expect(envelope.mode).toBe('query');
-        expect(envelope.hostPriority).toBe('wake');
     });
 
     test('is a query envelope when lostTasks is non-empty, even with unreadCount 0', () => {
         const envelope = buildCatchupEnvelope({ unreadCount: 0, channelCount: 0, now, timezone, timeHeader, lostTasks: ['lost-1'] });
 
         expect(envelope.mode).toBe('query');
-        expect(envelope.hostPriority).toBe('wake');
     });
 
     test('is an accumulation envelope (appendWithoutTurn) when only events/redelivered are present', () => {
@@ -642,7 +633,6 @@ describe('buildCatchupEnvelope', () => {
         });
 
         expect(envelope.mode).toBe('append');
-        expect(envelope.hostPriority).toBe('accumulate');
     });
 });
 
@@ -652,41 +642,37 @@ describe('buildWrapUpEnvelope', () => {
 
         expect(envelope.text.startsWith('[WRAP-UP · perch slot ends in 5 min]')).toBe(true);
         expect(envelope.kind).toBe('wrapup');
-        expect(envelope.hostPriority).toBe('wake');
         expect(envelope.mode).toBe('query');
     });
 });
 
-describe('buildResumeEnvelope', () => {
-    test('carries the note as text, kind resume, hostPriority wake', () => {
-        const envelope = buildResumeEnvelope('[RESUME NOTE]\nsomething', now);
+describe('buildContinuationEnvelope', () => {
+    test('carries the note as text, kind continuation', () => {
+        const envelope = buildContinuationEnvelope('[RESUME NOTE]\nsomething', now);
 
         expect(envelope.text).toBe('[RESUME NOTE]\nsomething');
-        expect(envelope.kind).toBe('resume');
-        expect(envelope.hostPriority).toBe('wake');
+        expect(envelope.kind).toBe('continuation');
         expect(envelope.mode).toBe('query');
     });
 });
 
 describe('buildBootEnvelope', () => {
-    test('carries the text verbatim, mode append, hostPriority accumulate', () => {
+    test('carries the text verbatim, mode append', () => {
         const envelope = buildBootEnvelope('[BOOT BUNDLE · conversation]\n...', now);
 
         expect(envelope.text).toBe('[BOOT BUNDLE · conversation]\n...');
         expect(envelope.kind).toBe('boot');
         expect(envelope.mode).toBe('append');
-        expect(envelope.hostPriority).toBe('accumulate');
     });
 });
 
 describe('buildCompactEnvelope', () => {
-    test('text is exactly /compact, mode query, hostPriority accumulate, kind compact', () => {
+    test('text is exactly /compact, mode query, kind compact', () => {
         const envelope = buildCompactEnvelope(now);
 
         expect(envelope.text).toBe('/compact');
         expect(envelope.kind).toBe('compact');
         expect(envelope.mode).toBe('query');
-        expect(envelope.hostPriority).toBe('accumulate');
     });
 });
 
@@ -721,7 +707,7 @@ describe('toSdkUserMessage', () => {
         ['waking catch-up', () => buildCatchupEnvelope({ unreadCount: 1, channelCount: 1, now, timezone, timeHeader }), true],
         ['non-waking catch-up', () => buildCatchupEnvelope({ channelCount: 0, now, timezone, timeHeader, eventsDelta: ['e'] }), false],
         ['wrap-up', () => buildWrapUpEnvelope({ minutesLeft: 5, now }), true],
-        ['resume', () => buildResumeEnvelope('note', now), true],
+        ['continuation', () => buildContinuationEnvelope('note', now), true],
         ['boot', () => buildBootEnvelope('boot', now), false],
         ['compact', () => buildCompactEnvelope(now), true],
     ];
@@ -840,10 +826,10 @@ describe('synopsisSeed', () => {
         expect(envelope.synopsisSeed).toBe('Wrap up your current work now; the perch slot is ending.');
     });
 
-    test('buildResumeEnvelope seeds from the note', () => {
-        const envelope = buildResumeEnvelope('resume note body', now);
+    test('buildContinuationEnvelope seeds from the note', () => {
+        const envelope = buildContinuationEnvelope('continuation note body', now);
 
-        expect(envelope.synopsisSeed).toBe('resume note body');
+        expect(envelope.synopsisSeed).toBe('continuation note body');
     });
 
     test('buildBootEnvelope and buildCompactEnvelope carry no seed', () => {
@@ -854,7 +840,7 @@ describe('synopsisSeed', () => {
     test('a source longer than the cap is sliced to exactly 200 characters', () => {
         const long = 'x'.repeat(250);
 
-        const envelope = buildResumeEnvelope(long, now);
+        const envelope = buildContinuationEnvelope(long, now);
 
         expect(envelope.synopsisSeed).toBe('x'.repeat(200));
         expect(envelope.synopsisSeed).toHaveLength(200);
@@ -863,11 +849,11 @@ describe('synopsisSeed', () => {
     test('a source of exactly the cap length is kept whole', () => {
         const exact = 'y'.repeat(200);
 
-        expect(buildResumeEnvelope(exact, now).synopsisSeed).toBe(exact);
+        expect(buildContinuationEnvelope(exact, now).synopsisSeed).toBe(exact);
     });
 
     test('an empty source yields undefined rather than an empty string', () => {
-        expect(buildResumeEnvelope('', now).synopsisSeed).toBeUndefined();
+        expect(buildContinuationEnvelope('', now).synopsisSeed).toBeUndefined();
     });
 });
 

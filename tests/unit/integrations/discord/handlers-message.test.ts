@@ -1805,7 +1805,7 @@ describe('Discord Event Handlers', () => {
                 expect(envelope.text).toContain('messageIds=[555555555555555555]');
                 expect(envelope.text).toContain('authorId=111111111111111111');
                 expect(envelope.text).toContain('testuser: Test message');
-                expect(submitOptions.priority).toBe('other');
+                expect(submitOptions.priority).toBe('normal');
 
                 expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
 
@@ -1952,7 +1952,7 @@ describe('Discord Event Handlers', () => {
                 expect(envelope.text).toContain('#perch-time');
                 expect(envelope.createdAt.getTime()).toBe(new Date('2025-06-01T10:00:00.000Z').getTime());
                 // The requesting channel id is what the conductor's reply routing falls back to.
-                expect(submitOptions).toEqual({ priority: 'other', requestingChannelId: PERCH_CHANNEL_ID });
+                expect(submitOptions).toEqual({ priority: 'normal', requestingChannelId: PERCH_CHANNEL_ID });
 
                 jest.useRealTimers();
             });

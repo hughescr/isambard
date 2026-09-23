@@ -29,7 +29,7 @@
 import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Logger } from '@hughescr/logger';
 import { classifyClaudeError } from '../claude-retry';
-import { buildResumeNote } from '../resume-prompt-builder';
+import { buildContinuationNote } from '../continuation-prompt-builder';
 import { StreamTracker, type StreamProgress  } from '../stream-tracker';
 import type { BootKind } from './boot-bundle';
 import { createCompactionGuard, type CompactionFailureReason, type CompactionGuard } from './compaction-guard';
@@ -37,7 +37,7 @@ import { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';
 import {
     buildBootEnvelope,
     buildCompactEnvelope,
-    buildResumeEnvelope,
+    buildContinuationEnvelope,
     toSdkUserMessage,
     toSynopsisSeed
 } from './envelope';
@@ -200,8 +200,8 @@ interface PendingPeerAdoption {
 
 type PendingAdoption = PendingWakeAdoption | PendingPeerAdoption;
 
-/** Priority the host queues an envelope at: `'human'` before `'other'` (design section 6). */
-export type SubmitPriority = 'human' | 'other';
+/** Priority the host queues an envelope at: `'urgent'` before `'normal'` (design section 6). */
+export type SubmitPriority = 'urgent' | 'normal';
 
 /** Options accepted by {@link Conductor.submit}. */
 export interface SubmitOptions {
@@ -497,7 +497,7 @@ interface Deferred {
 /** One envelope waiting in the host-side priority queue, or already promoted to the active turn. */
 interface QueuedItem {
     /**
-     * A submitted, compaction or resume envelope, or the synthesized/adopted envelope of a turn
+     * A submitted, compaction or continuation envelope, or the synthesized/adopted envelope of a turn
      * the SDK started itself (a `task` wake, an adopted peer). An adopted item is seeded at
      * `retryPolicy.maxAttempts`, so it never retries through {@link beginTurn}; only a crash
      * reopen re-queues it (as the turn then in flight).
@@ -553,7 +553,7 @@ interface ActiveTurn {
     wireUuid?:          string
 }
 
-/** A no-op {@link Deferred} for envelopes the conductor submits to itself (`/compact`, a resume note). */
+/** A no-op {@link Deferred} for envelopes the conductor submits to itself (`/compact`, a continuation note). */
 function internalDeferred(): Deferred {
     return { resolve: () => undefined, reject: () => undefined };
 }
@@ -580,8 +580,8 @@ function computeBackoffDelayMs(policy: RetryPolicy, attemptNumber: number): numb
  * SDK-initiated turn nobody submitted (`'notification'`), an adopted background-work wake turn
  * (`'task'`, R2), or an adopted peer-message turn (`'peer'`, session-peers block 2 — the peer
  * waiting on the reply is Izzy's other session, not Craig). Human pre-emption and escalation
- * (`routeIncoming`) and interrupted-turn resume-note injection
- * (`injectResumeNoteIfInterruptedBackgroundTurn`) treat all three identically — enqueue behind
+ * (`routeIncoming`) and interrupted-turn continuation-note injection
+ * (`injectContinuationNoteIfInterruptedBackgroundTurn`) treat all three identically — enqueue behind
  * them and arm the human-wait escalation, rather than interrupting immediately the way a
  * same-channel `discord` turn is.
  */
@@ -876,7 +876,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         try {
             const at = now();
             journal.append({ type: 'compaction_started', at });
-            beginTurn({ envelope: buildCompactEnvelope(at), priority: 'other', attempts: 1, deferred: internalDeferred() });
+            beginTurn({ envelope: buildCompactEnvelope(at), priority: 'normal', attempts: 1, deferred: internalDeferred() });
             return Promise.resolve();
         } catch (error) {
             return Promise.reject(toError(error, 'submitCompact failed'));
@@ -915,8 +915,8 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     function enqueue(item: QueuedItem): void {
-        if(item.priority === 'human') {
-            const firstOtherIndex = pendingQueue.findIndex(existing => existing.priority !== 'human');
+        if(item.priority === 'urgent') {
+            const firstOtherIndex = pendingQueue.findIndex(existing => existing.priority !== 'urgent');
             if(firstOtherIndex === -1) {
                 pendingQueue.push(item);
             } else {
@@ -1033,14 +1033,14 @@ export function createConductor(params: CreateConductorParams): Conductor {
             return;
         }
         // Stryker disable llm: `!== undefined` and the truthy test differ only for an empty-string channel id, which no discord caller can produce (both sides are non-empty snowflakes)
-        if(item.priority === 'human' && currentTurn.kind === 'discord'
+        if(item.priority === 'urgent' && currentTurn.kind === 'discord'
           && item.requestingChannelId !== undefined && item.requestingChannelId === currentTurn.channelId) {
             enqueue(item);
             void interruptCurrentTurnInternal('human envelope for the running channel');
             return;
         }
         // Stryker restore llm
-        if(item.priority === 'human' && isBackgroundKind(currentTurn.kind)) {
+        if(item.priority === 'urgent' && isBackgroundKind(currentTurn.kind)) {
             enqueue(item);
             armHumanWaitEscalation();
             return;
@@ -1048,14 +1048,14 @@ export function createConductor(params: CreateConductorParams): Conductor {
         enqueue(item);
     }
 
-    /** Injects a `resume`-kind envelope ahead of everything else queued when an interrupted background turn (a spontaneous notification, or an adopted R2 task wake) left meaningful partial work behind. */
-    function injectResumeNoteIfInterruptedBackgroundTurn(turn: ActiveTurn, progress: StreamProgress): void {
+    /** Injects a `continuation`-kind envelope ahead of everything else queued when an interrupted background turn (a spontaneous notification, or an adopted R2 task wake) left meaningful partial work behind. */
+    function injectContinuationNoteIfInterruptedBackgroundTurn(turn: ActiveTurn, progress: StreamProgress): void {
         if(!isBackgroundKind(turn.kind) || !turn.interruptRequested) {
             return;
         }
-        const note = buildResumeNote(progress);
+        const note = buildContinuationNote(progress);
         if(note !== undefined) {
-            pendingQueue.unshift({ envelope: buildResumeEnvelope(note, now()), priority: 'human', attempts: 1, deferred: internalDeferred() });
+            pendingQueue.unshift({ envelope: buildContinuationEnvelope(note, now()), priority: 'urgent', attempts: 1, deferred: internalDeferred() });
         }
     }
 
@@ -1101,7 +1101,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         const wasInterrupted = turn.interruptRequested;
         const progress = turn.tracker.getProgress();
 
-        injectResumeNoteIfInterruptedBackgroundTurn(turn, progress);
+        injectContinuationNoteIfInterruptedBackgroundTurn(turn, progress);
 
         if(turn.item === undefined) {
             return;
@@ -1217,12 +1217,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
             text:         wake.summary,
             channelId:    launch?.channelId,
             authorId:     launch?.authorId,
-            hostPriority: 'wake',
             createdAt:    at,
             synopsisSeed: toSynopsisSeed(wake.summary),
         };
         const item: QueuedItem = {
-            envelope, priority: 'other', attempts: retryPolicy.maxAttempts, deferred: buildWakeSettledDeferred(envelope),
+            envelope, priority: 'normal', attempts: retryPolicy.maxAttempts, deferred: buildWakeSettledDeferred(envelope),
         };
         currentTurn = {
             id: envelope.id, item, kind: 'task', channelId: envelope.channelId, authorId: envelope.authorId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
@@ -1265,7 +1264,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     function beginAdoptedPeerTurn(envelope: AdoptedPeerEnvelope): void {
         const at = now();
         const item: QueuedItem = {
-            envelope, priority: 'other', attempts: retryPolicy.maxAttempts, deferred: internalDeferred(),
+            envelope, priority: 'normal', attempts: retryPolicy.maxAttempts, deferred: internalDeferred(),
         };
         currentTurn = {
             id: envelope.id, item, kind: 'peer', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
@@ -2136,7 +2135,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
         return new Promise<TurnResult>((resolve, reject) => {
             const item: QueuedItem = {
-                // Stryker disable next-line llm: priority is a required SubmitPriority and is only ever compared with 'human', which 0 (like undefined) never matches
+                // Stryker disable next-line llm: priority is a required SubmitPriority and is only ever compared with 'urgent', which 0 (like undefined) never matches
                 envelope, priority: options.priority, requestingChannelId: options.requestingChannelId, attempts: 1, deferred: { resolve, reject },
             };
             const { signal } = options;

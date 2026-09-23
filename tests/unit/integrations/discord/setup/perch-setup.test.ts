@@ -254,7 +254,7 @@ describe('setupPerchDriverAndScheduler', () => {
             });
 
             const wrapped = getConductor();
-            await wrapped?.submit({ id: 'env-perch-1', kind: 'perch' }, { priority: 'other' });
+            await wrapped?.submit({ id: 'env-perch-1', kind: 'perch' }, { priority: 'normal' });
 
             expect(innerDeliver).toHaveBeenCalledTimes(1);
             expect(channelRegistry.getWellKnownChannel).not.toHaveBeenCalled();
@@ -283,7 +283,7 @@ describe('setupPerchDriverAndScheduler', () => {
             });
 
             const wrapped = getConductor();
-            await wrapped?.submit({ id: 'env-wrapup-1', kind: 'wrapup' }, { priority: 'other' });
+            await wrapped?.submit({ id: 'env-wrapup-1', kind: 'wrapup' }, { priority: 'normal' });
 
             expect(channelRegistry.getWellKnownChannel).toHaveBeenCalledWith('perch-time');
             // `deliver` journals the target reported by the sender's tagged result.
@@ -306,7 +306,7 @@ describe('setupPerchDriverAndScheduler', () => {
             });
 
             const wrapped = getConductor();
-            await wrapped?.submit({ id: 'env-discord-1', kind: 'discord' }, { priority: 'other' });
+            await wrapped?.submit({ id: 'env-discord-1', kind: 'discord' }, { priority: 'normal' });
 
             expect(innerDeliver).not.toHaveBeenCalled();
             expect(sendEnvelopeResponseSpy).not.toHaveBeenCalled();
@@ -324,7 +324,7 @@ describe('setupPerchDriverAndScheduler', () => {
             });
 
             const wrapped = getConductor();
-            await wrapped?.submit({ id: 'env-perch-2', kind: 'perch' }, { priority: 'other' });
+            await wrapped?.submit({ id: 'env-perch-2', kind: 'perch' }, { priority: 'normal' });
 
             expect(innerDeliver).not.toHaveBeenCalled();
         });
@@ -346,7 +346,7 @@ describe('setupPerchDriverAndScheduler', () => {
             });
 
             const wrapped = getConductor();
-            await expect(wrapped?.submit({ id: 'env-perch-3', kind: 'perch' }, { priority: 'other' })).resolves.toEqual(expect.objectContaining({ envelopeId: 'env-perch-3' }));
+            await expect(wrapped?.submit({ id: 'env-perch-3', kind: 'perch' }, { priority: 'normal' })).resolves.toEqual(expect.objectContaining({ envelopeId: 'env-perch-3' }));
             expect(mockLogger.error).toHaveBeenCalledWith({
                 err: error, envelopeId: 'env-perch-3', kind: 'perch', msg: 'Perch turn response delivery failed',
             });
@@ -370,7 +370,7 @@ describe('setupPerchDriverAndScheduler', () => {
             });
 
             const wrapped = getConductor();
-            await expect(wrapped?.submit({ id: 'env-perch-4', kind: 'perch' }, { priority: 'other' })).resolves.toEqual(expect.objectContaining({ envelopeId: 'env-perch-4' }));
+            await expect(wrapped?.submit({ id: 'env-perch-4', kind: 'perch' }, { priority: 'normal' })).resolves.toEqual(expect.objectContaining({ envelopeId: 'env-perch-4' }));
             expect(sendCompleted).toBe(true);
             expect(mockLogger.error).not.toHaveBeenCalled();
         });
@@ -390,7 +390,7 @@ describe('setupPerchDriverAndScheduler', () => {
                 ...deliveryDeps(),
             });
 
-            await getConductor()?.submit({ id: 'env-1', kind: 'perch' }, { priority: 'other' });
+            await getConductor()?.submit({ id: 'env-1', kind: 'perch' }, { priority: 'normal' });
 
             expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'queued', channelId: 'channel-1', outboxIds: ['outbox-1'] });
             expect(mockLogger.error).not.toHaveBeenCalled();

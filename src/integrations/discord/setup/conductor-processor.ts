@@ -9,10 +9,10 @@
  * interrupted turn's partial work is captured. It wires NO presence synopsis handler: that moved
  * to `presence/turn-synopsis.ts`, attached once per (ledger, conductor) pair inside
  * `setupConductorPresence`, so every turn kind gets one — not only a human Discord envelope.
- * The coordinator's own resume-context handling
- * (message-coordinator.ts) turns that captured progress into a `ResumeContext` on the NEXT
+ * The coordinator's own continuation-context handling
+ * (message-coordinator.ts) turns that captured progress into a `ContinuationContext` on the NEXT
  * processor call; this module renders its `partialWork` into a `[RESUME NOTE]` block (via
- * `buildResumeNote`) on the resubmitted envelope, so the interruption's progress still reaches
+ * `buildContinuationNote`) on the resubmitted envelope, so the interruption's progress still reaches
  * Claude even though the interrupting messages arrive as a fresh envelope.
  *
  * Deliberately does none of the legacy processor's other work: no channel list folded into a
@@ -31,7 +31,7 @@ import type { DiscordMessageContext } from '../types';
 import { processAttachments, toPlatformImages } from './coordinator-setup';
 import type { ResolvedDiscordNames } from './discord-envelope-provider';
 import {
-    buildDiscordEnvelope, buildResumeNote, formatTimeHeader, StreamTracker,
+    buildContinuationNote, buildDiscordEnvelope, formatTimeHeader, StreamTracker,
     type AgendaEntry, type BuildDiscordEnvelopeParams, type CalendarDelta, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type PlatformImage, type StateTopSetDelta, type TimeHeaderProvider
 } from '@/agent';
 import { formatCalendarContext, resolveToInstant } from '@/integrations/caldav';
@@ -135,7 +135,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         timeHeader = formatTimeHeader,
     } = params;
 
-    return async (contexts, resumeContext, abortSignal): Promise<ProcessResult> => {
+    return async (contexts, continuationContext, abortSignal): Promise<ProcessResult> => {
         const first = contexts[0];
         // Stryker disable next-line llm: DiscordMessageContext[] cannot contain null, so loose null and strict undefined checks accept the same reachable values (covers 30161).
         if(first === undefined) {
@@ -177,10 +177,10 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         // been shown to this user, or differs from what was last shown (see context-policy.ts).
         const shouldInjectMemory = contextPolicy.shouldInjectUserMemory(input.authorId, memoryBlock);
         const userMemoryBlock = shouldInjectMemory ? memoryBlock : undefined;
-        // An interrupted turn's captured partial work (message-coordinator.ts's own resume-context
+        // An interrupted turn's captured partial work (message-coordinator.ts's own continuation-context
         // handling), rendered as a `[RESUME NOTE]` block so it still reaches Claude even though the
         // interrupting messages arrive as a fresh envelope rather than a continuation of the old one.
-        const resumeNote = resumeContext ? buildResumeNote(resumeContext.partialWork) : undefined;
+        const continuationNote = continuationContext ? buildContinuationNote(continuationContext.partialWork) : undefined;
         const now = new Date();
         // Stryker disable next-line llm: CalendarDelta.events is required and every producer returns an array, so a nullish empty-array fallback is unreachable (covers 30176).
         const calendarAgendaText = formatCalendarContext(calendarDelta.events, now, timezone);
@@ -204,12 +204,12 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
             userMemoryBlock: userMemoryBlock || undefined,
             channelList:     input.channelList.length > 0 ? input.channelList.join('\n') : undefined,
             images:          input.images,
-            resumeNote,
+            continuationNote,
         });
 
         // A REAL StreamTracker, subscribed to just this turn's frames (message-coordinator.ts
         // requires one on every ProcessResult, and reads it to capture partial work on an
-        // interrupted turn for the next submit's resume context).
+        // interrupted turn for the next submit's continuation context).
         const streamTracker = new StreamTracker();
         const unsubscribe = conductor.subscribeTurn((turnId, frame) => {
             // Stryker disable next-line llm: subscribeTurn's turnId and envelope.id are both strings, for which loose and strict equality coincide (covers 30206).
@@ -221,7 +221,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         let result;
         try {
             result = await conductor.submit(envelope, {
-                priority: 'human', requestingChannelId: input.channelId, signal: abortSignal,
+                priority: 'urgent', requestingChannelId: input.channelId, signal: abortSignal,
             });
         } finally {
             unsubscribe();

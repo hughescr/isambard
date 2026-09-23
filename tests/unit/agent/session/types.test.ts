@@ -46,20 +46,19 @@ describe('SessionQuery', () => {
 
 describe('ENVELOPE_KINDS', () => {
     it('lists exactly the 10 envelope kinds, including \'task\' (R2) and \'peer\' (session-peers block 2) — an \'each\' table-driven test over an emptied array would silently run zero cases rather than fail, so this pins the full contents directly', () => {
-        expect(ENVELOPE_KINDS).toEqual(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task', 'peer']);
+        expect(ENVELOPE_KINDS).toEqual(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'continuation', 'compact', 'boot', 'task', 'peer']);
     });
 });
 
 describe('Envelope.peer', () => {
     it('carries the peer\'s reply address and, when the cross-session tag named one, its peer-registry name', () => {
         const envelope: Envelope = {
-            id:           'p1',
-            mode:         'adopted',
-            kind:         'peer',
-            text:         '[PEER · Izzy-main · 2026-09-09 14:02 PDT]',
-            peer:         { from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' },
-            hostPriority: 'wake',
-            createdAt:    new Date('2026-09-09T21:02:00Z'),
+            id:        'p1',
+            mode:      'adopted',
+            kind:      'peer',
+            text:      '[PEER · Izzy-main · 2026-09-09 14:02 PDT]',
+            peer:      { from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' },
+            createdAt: new Date('2026-09-09T21:02:00Z'),
         };
 
         expect(envelope.peer).toEqual({ from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' });
@@ -108,7 +107,7 @@ describe('envelope contracts (#60)', () => {
     it('rejects a discord envelope carrying peer metadata', () => {
         // @ts-expect-error -- peer metadata belongs only to the adopted peer contract
         const discordWithPeer: Envelope = {
-            id: 'd1', mode: 'query', kind: 'discord', text: 't', channelId: 'c', authorId: 'a', origin: { kind: 'human' }, hostPriority: 'human', createdAt, peer: { from: 'uds:/tmp/cc-socks/1.sock' },
+            id: 'd1', mode: 'query', kind: 'discord', text: 't', channelId: 'c', authorId: 'a', origin: { kind: 'human' }, createdAt, peer: { from: 'uds:/tmp/cc-socks/1.sock' },
         };
 
         expect<unknown>(discordWithPeer).toHaveProperty('peer');
@@ -117,7 +116,7 @@ describe('envelope contracts (#60)', () => {
     it('rejects a boot envelope that opens a turn', () => {
         // @ts-expect-error -- a boot envelope is accumulation-only
         const queryingBoot: Envelope = {
-            id: 'b1', mode: 'query', kind: 'boot', text: 't', hostPriority: 'accumulate', createdAt,
+            id: 'b1', mode: 'query', kind: 'boot', text: 't', createdAt,
         };
 
         expect<unknown>(queryingBoot).toHaveProperty('mode', 'query');
@@ -126,7 +125,7 @@ describe('envelope contracts (#60)', () => {
     it('rejects a discord envelope without its channel, author and human origin', () => {
         // @ts-expect-error -- a discord envelope always carries its channel, author and human origin
         const sourcelessDiscord: Envelope = {
-            id: 'd2', mode: 'query', kind: 'discord', text: 't', hostPriority: 'human', createdAt,
+            id: 'd2', mode: 'query', kind: 'discord', text: 't', createdAt,
         };
 
         expect<unknown>(sourcelessDiscord).not.toHaveProperty('channelId');
@@ -135,7 +134,7 @@ describe('envelope contracts (#60)', () => {
     it('has no shouldQuery field on the domain type — the SDK boolean is derived at toSdkUserMessage', () => {
         const withShouldQuery: Envelope = {
             // @ts-expect-error -- shouldQuery is a wire field, not a domain field
-            id: 'c1', mode: 'query', kind: 'compact', text: '/compact', hostPriority: 'accumulate', createdAt, shouldQuery: true,
+            id: 'c1', mode: 'query', kind: 'compact', text: '/compact', createdAt, shouldQuery: true,
         };
 
         expect<unknown>(withShouldQuery).toHaveProperty('shouldQuery', true);

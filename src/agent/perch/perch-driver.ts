@@ -17,7 +17,7 @@
  *
  * `slotRunning` (this call's own `submit()` promise has not yet settled) is necessary but NOT
  * sufficient to know the slot turn is the conductor's *currently active* one: `submit()` with
- * `priority: 'other'` only ever ENQUEUES behind whatever else is already running (a perch-channel
+ * `priority: 'normal'` only ever ENQUEUES behind whatever else is already running (a perch-channel
  * Discord turn submitted by `handlers.ts`, say), so there is a real window — from the moment
  * `runSlot` flips `slotRunning` true to the moment the conductor actually promotes this envelope
  * off its queue — where `slotRunning` is true but the running turn is someone else's. Interrupting
@@ -33,8 +33,8 @@
  * an ALREADY-RUNNING turn short of `interruptCurrent()` (which aborts it, discarding the very
  * point of a gentle "wrap up" nudge). So `armWrapUpTimer` cannot make its envelope reach the slot
  * turn while that turn is still working — the SDK gives no such path — but submitting it at
- * `priority: 'human'` (rather than `'other'`) at least guarantees it is the very next turn the
- * conductor runs once the slot turn ends (ahead of any 'other'-priority perch-channel message or
+ * `priority: 'urgent'` (rather than `'normal'`) at least guarantees it is the very next turn the
+ * conductor runs once the slot turn ends (ahead of any 'normal'-priority perch-channel message or
  * the next-hour slot envelope this driver itself queues from `onSlotSettled`), so the model still
  * sees the nudge as its immediate next turn rather than however far back in a FIFO queue.
  *
@@ -159,7 +159,7 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
      * Submitted once — `wrapUpTimer` only ever fires a single time (a `setTimer` callback is not
      * recurring) and `onSlotSettled`'s `clearTimers()` always cancels it before the slot turn's own
      * flag flips, so this callback body never runs more than once nor after the slot has ended;
-     * see the module doc for why `priority: 'human'` (not `'other'`) is what makes this the very
+     * see the module doc for why `priority: 'urgent'` (not `'normal'`) is what makes this the very
      * next turn the conductor runs once the slot turn ends.
      */
     function armWrapUpTimer(now: Date, endsAt: Date): void {
@@ -168,7 +168,7 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
         wrapUpTimer = clock.setTimer(() => {
             wrapUpTimer = undefined;
             const envelope = buildPerchWrapUpEnvelope({ now: new Date(clock.now()), leadMinutes: config.wrapUpLeadMinutes });
-            conductor.submit(envelope, { priority: 'human' }).catch((err: unknown) => {
+            conductor.submit(envelope, { priority: 'urgent' }).catch((err: unknown) => {
                 logger.error({ err }, 'Failed to submit perch wrap-up envelope');
             });
         }, delayMs);
@@ -244,7 +244,7 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
         logActivity('perch-start', `Perch slot started (slot: ${slot})`);
 
         try {
-            await conductor.submit(envelope, { priority: 'other' });
+            await conductor.submit(envelope, { priority: 'normal' });
         } catch (err) {
             logger.error({ err, slot }, 'Perch slot turn failed');
         }

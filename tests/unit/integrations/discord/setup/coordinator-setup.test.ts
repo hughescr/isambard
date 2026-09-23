@@ -183,7 +183,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         // setupCoordinatorIntegration takes no BotStateManager at all (see SetupCoordinatorParams'
         // own doc) — proving onProcessingEnd calls nothing observable is really just proving it
         // does not throw, since there is nothing left in scope for it to call.
-        expect(() => config.onProcessingEnd?.({ wasInterrupted: true, willResume: false })).not.toThrow();
+        expect(() => config.onProcessingEnd?.({ wasInterrupted: true, willContinue: false })).not.toThrow();
     });
 
     test('onResponse delivers through conversationConductor.deliver keyed on the CONDUCTOR'

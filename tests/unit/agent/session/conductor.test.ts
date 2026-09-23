@@ -38,15 +38,14 @@ let idCounter = 0;
 function discordEnvelope(overrides: Partial<DiscordQueryEnvelope> = {}): DiscordQueryEnvelope {
     idCounter += 1;
     return {
-        id:           `discord-${idCounter}`,
-        mode:         'query',
-        kind:         'discord',
-        text:         `discord text ${idCounter}`,
-        channelId:    'chan-1',
-        authorId:     'user-1',
-        origin:       { kind: 'human' },
-        hostPriority: 'human',
-        createdAt:    new Date(0),
+        id:        `discord-${idCounter}`,
+        mode:      'query',
+        kind:      'discord',
+        text:      `discord text ${idCounter}`,
+        channelId: 'chan-1',
+        authorId:  'user-1',
+        origin:    { kind: 'human' },
+        createdAt: new Date(0),
         ...overrides,
     };
 }
@@ -66,12 +65,11 @@ function notificationFrame(key: string): SDKNotificationMessage {
 function catchupEnvelope(overrides: Partial<Pick<QueryEnvelope, 'id' | 'text' | 'synopsisSeed'>> = {}): QueryEnvelope {
     idCounter += 1;
     return {
-        id:           `catchup-${idCounter}`,
-        mode:         'query',
-        kind:         'catchup',
-        text:         `catchup text ${idCounter}`,
-        hostPriority: 'wake',
-        createdAt:    new Date(0),
+        id:        `catchup-${idCounter}`,
+        mode:      'query',
+        kind:      'catchup',
+        text:      `catchup text ${idCounter}`,
+        createdAt: new Date(0),
         ...overrides,
     };
 }
@@ -79,13 +77,12 @@ function catchupEnvelope(overrides: Partial<Pick<QueryEnvelope, 'id' | 'text' | 
 function peerEnvelope(overrides: Partial<AdoptedPeerEnvelope> = {}): AdoptedPeerEnvelope {
     idCounter += 1;
     return {
-        id:           `peer-${idCounter}`,
-        mode:         'adopted',
-        kind:         'peer',
-        text:         `[PEER · Izzy-main]\n\npeer text ${idCounter}`,
-        peer:         { from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' },
-        hostPriority: 'wake',
-        createdAt:    new Date(0),
+        id:        `peer-${idCounter}`,
+        mode:      'adopted',
+        kind:      'peer',
+        text:      `[PEER · Izzy-main]\n\npeer text ${idCounter}`,
+        peer:      { from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' },
+        createdAt: new Date(0),
         ...overrides,
     };
 }
@@ -93,12 +90,11 @@ function peerEnvelope(overrides: Partial<AdoptedPeerEnvelope> = {}): AdoptedPeer
 function notificationEnvelope(overrides: Partial<Pick<AccumulationEnvelope, 'id' | 'text'>> = {}): AccumulationEnvelope {
     idCounter += 1;
     return {
-        id:           `notification-${idCounter}`,
-        mode:         'append',
-        kind:         'notification',
-        text:         `notification text ${idCounter}`,
-        hostPriority: 'accumulate',
-        createdAt:    new Date(0),
+        id:        `notification-${idCounter}`,
+        mode:      'append',
+        kind:      'notification',
+        text:      `notification text ${idCounter}`,
+        createdAt: new Date(0),
         ...overrides,
     };
 }
@@ -427,7 +423,7 @@ describe('createConductor', () => {
             const h = build({ buildBootBundle: jest.fn(() => 'welcome back') });
             await openWith(h);
 
-            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             const [handshake, turn] = h.instances[0].consumedPrompts;
             expect(turn.shouldQuery).toBe(true);
@@ -454,7 +450,7 @@ describe('createConductor', () => {
             await openPromise;
             await flush();
 
-            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.assistantText('the real reply'));
             h.instances[0].emit(frames.resultSuccess({ result: 'the real reply' }));
@@ -521,7 +517,7 @@ describe('createConductor', () => {
             // undefined until the fresh fallback settles below.
             expect(h.instances[0].closeCalls).toBe(1);
 
-            await expect(h.conductor.submit(discordEnvelope(), { priority: 'human' })).rejects.toThrow(
+            await expect(h.conductor.submit(discordEnvelope(), { priority: 'urgent' })).rejects.toThrow(
                 new Error('Invariant violated in conductor.beginTurn: called before open() assigned currentQueue — every call site (processQueue, submitCompact) only runs once opened is true')
             );
 
@@ -572,7 +568,7 @@ describe('createConductor', () => {
             await openWith(h);
 
             expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'quiet note' }))).toBe(true);
-            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             const [handshake, append, turn] = h.instances[0].consumedPrompts;
             expect([handshake.shouldQuery, append.shouldQuery, turn.shouldQuery]).toEqual([false, false, true]);
@@ -590,9 +586,9 @@ describe('createConductor', () => {
         it('an append made mid-turn, acknowledged after the next queued turn has begun, settles neither turn early and leaves the ledger turn open', async () => {
             const h = build();
             await openWith(h);
-            const first = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const first = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
-            const second = h.conductor.submit(catchupEnvelope({ text: 'second turn' }), { priority: 'other' });
+            const second = h.conductor.submit(catchupEnvelope({ text: 'second turn' }), { priority: 'normal' });
             await flush();
             expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'mid-turn note' }))).toBe(true);
             await flush();
@@ -619,9 +615,9 @@ describe('createConductor', () => {
         it('a requested reopen that plays a held envelope ignores the replacement handshake\'s and the buffered append\'s acknowledgements', async () => {
             const h = build();
             await openWith(h, 'sess-1');
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
-            const held = h.conductor.submit(catchupEnvelope({ text: 'held behind the reopen' }), { priority: 'other' });
+            const held = h.conductor.submit(catchupEnvelope({ text: 'held behind the reopen' }), { priority: 'normal' });
             await flush();
             h.conductor.requestReopen('an identity change');
             h.instances[0].emit(frames.resultSuccess());
@@ -649,7 +645,7 @@ describe('createConductor', () => {
         it('a crash reopen replays an unread append but not the crashed turn\'s own unread prompt, which the re-queued turn pushes exactly once', async () => {
             const h = build({}, { drainPrompts: index => index > 0 });
             await openWith(h, 'sess-1');
-            const crashed = h.conductor.submit(discordEnvelope({ text: 'the crashed turn' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            const crashed = h.conductor.submit(discordEnvelope({ text: 'the crashed turn' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'unread append' }))).toBe(true);
 
@@ -679,7 +675,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
-            const first = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const first = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.conductor.appendWithoutTurn(notificationEnvelope());
             await flush();
@@ -730,7 +726,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             const envelope = discordEnvelope();
-            const submitted = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const submitted = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             const turn = h.instances[0].consumedPrompts[1];
 
@@ -775,7 +771,7 @@ describe('createConductor', () => {
         it('a result that echoes nothing still settles a host-pushed turn (older producers, delivery-failure results)', async () => {
             const h = build();
             await openWith(h);
-            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess({ result: 'legacy' }));
@@ -787,7 +783,7 @@ describe('createConductor', () => {
         it('a retry pushes the envelope again under a fresh wire uuid, since the CLI drops a uuid it has already seen', async () => {
             const h = build();
             await openWith(h);
-            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             const [firstAttempt] = turnPrompts(h.instances[0]);
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'overloaded', api_error_status: 529, ...frames.echoOf(firstAttempt) }));
@@ -815,7 +811,7 @@ describe('createConductor', () => {
             expect(h.conductor.status().turn).toBeNull();
             expect(h.ledgerStore.get()).toBe(idleLedger);
 
-            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(lifecycle);
             await flush();
@@ -884,7 +880,7 @@ describe('createConductor', () => {
                 await flush();
                 expect(h.ledgerStore.get().cost).toEqual({ cumulativeUsd: 0.030_103, lastTurnUsd: 0 });
 
-                const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
                 await flush();
                 h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 0.032_069_6, ...frames.echoOf(h.instances[0].consumedPrompts[1]) }));
                 await submitted;
@@ -895,7 +891,7 @@ describe('createConductor', () => {
                 const h = build();
                 await h.resumeStore.save('conversation', 'sess-old');
                 await openWith(h, 'sess-old');
-                const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
                 await flush();
                 const [handshake, turn] = h.instances[0].consumedPrompts;
 
@@ -970,7 +966,7 @@ describe('createConductor', () => {
                 h.instances[0].emitAck(h.instances[0].consumedPrompts[0], { total_cost_usd: 0.1 });
                 await flush();
 
-                const first = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                const first = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
                 await flush();
                 h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 0.5, ...frames.echoOf(h.instances[0].consumedPrompts[1]) }));
                 await first;
@@ -981,7 +977,7 @@ describe('createConductor', () => {
                 await flush();
                 expect(h.ledgerStore.get().cost).toEqual({ cumulativeUsd: 1.3, lastTurnUsd: 0.4 });
 
-                const second = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                const second = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
                 await flush();
                 h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 1.4, ...frames.echoOf(h.instances[0].consumedPrompts[3]) }));
                 await second;
@@ -1014,7 +1010,7 @@ describe('createConductor', () => {
         it('rejects when the conductor has not been opened yet', async () => {
             const h = build();
 
-            await expect(h.conductor.submit(discordEnvelope(), { priority: 'human' })).rejects.toThrow('not open');
+            await expect(h.conductor.submit(discordEnvelope(), { priority: 'urgent' })).rejects.toThrow('not open');
         });
 
         it('an idle submit begins the turn immediately: envelope_submitted journaled, turn_submitted on the ledger', async () => {
@@ -1022,7 +1018,7 @@ describe('createConductor', () => {
             await openWith(h);
 
             const envelope = discordEnvelope();
-            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(h.journal.byKind('envelope_submitted')).toEqual([
@@ -1050,7 +1046,7 @@ describe('createConductor', () => {
             await openWith(h);
             const envelope = catchupEnvelope();
 
-            const resultPromise = h.conductor.submit(envelope, { priority: 'other' });
+            const resultPromise = h.conductor.submit(envelope, { priority: 'normal' });
             await flush();
 
             expect(h.journal.byKind('envelope_submitted')).toEqual([
@@ -1067,7 +1063,7 @@ describe('createConductor', () => {
             await openWith(h);
             const exactCapText = 'x'.repeat(200_000);
 
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess({ result: exactCapText }));
             await resultPromise;
@@ -1083,7 +1079,7 @@ describe('createConductor', () => {
             await openWith(h);
             const overCapText = `${'x'.repeat(200_000)}y`;
 
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess({ result: overCapText }));
             await resultPromise;
@@ -1098,7 +1094,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
 
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             const interruptPromise = h.conductor.interruptCurrent({ requestingChannelId: 'chan-1' });
             await flush();
@@ -1115,7 +1111,7 @@ describe('createConductor', () => {
         it('process_tick (readRss) is dispatched on every result', async () => {
             const h = build();
             await openWith(h);
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess());
@@ -1128,13 +1124,13 @@ describe('createConductor', () => {
         it('a human envelope submitted for a different channel while a discord turn runs is queued, not interrupted, and runs after — human still ordered ahead of an already-queued other-priority envelope', async () => {
             const h = build();
             await openWith(h);
-            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-A' }), { priority: 'human', requestingChannelId: 'chan-A' });
+            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-A' }), { priority: 'urgent', requestingChannelId: 'chan-A' });
             await flush();
 
             const otherEnvelope = catchupEnvelope();
-            const otherResult = h.conductor.submit(otherEnvelope, { priority: 'other' });
+            const otherResult = h.conductor.submit(otherEnvelope, { priority: 'normal' });
             const humanEnvelopeB = discordEnvelope({ channelId: 'chan-B' });
-            const humanResultB = h.conductor.submit(humanEnvelopeB, { priority: 'human', requestingChannelId: 'chan-B' });
+            const humanResultB = h.conductor.submit(humanEnvelopeB, { priority: 'urgent', requestingChannelId: 'chan-B' });
             await flush();
 
             expect(h.instances[0].interruptCalls).toBe(0);
@@ -1143,7 +1139,7 @@ describe('createConductor', () => {
             await firstResult;
             await flush();
 
-            // The human envelope for chan-B must be promoted ahead of the earlier-queued 'other' envelope.
+            // The human envelope for chan-B must be promoted ahead of the earlier-queued 'normal' envelope.
             expect(h.ledgerStore.get().turn).toMatchObject({ channelId: 'chan-B' });
 
             h.instances[0].emit(frames.resultSuccess());
@@ -1158,10 +1154,10 @@ describe('createConductor', () => {
         it('a human envelope for a different channel while a discord turn runs never arms the human-wait escalation (isBackgroundKind boundary: discord is not a background kind)', async () => {
             const h = build();
             await openWith(h);
-            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-A' }), { priority: 'human', requestingChannelId: 'chan-A' });
+            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-A' }), { priority: 'urgent', requestingChannelId: 'chan-A' });
             await flush();
 
-            void h.conductor.submit(discordEnvelope({ channelId: 'chan-B' }), { priority: 'human', requestingChannelId: 'chan-B' });
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-B' }), { priority: 'urgent', requestingChannelId: 'chan-B' });
             await flush();
 
             expect(h.clock.pending()).toBe(0);
@@ -1178,13 +1174,13 @@ describe('createConductor', () => {
         it('a human envelope for the SAME channel as the running discord turn interrupts it exactly once', async () => {
             const h = build();
             await openWith(h);
-            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             expect(h.journal.byKind('envelope_submitted')[0]).toEqual({
                 type: 'envelope_submitted', at: expect.any(Date), envelopeId: expect.any(String), kind: 'discord', channelId: 'chan-1',
             });
 
-            const secondPromise = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            const secondPromise = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(h.instances[0].interruptCalls).toBe(1);
@@ -1194,7 +1190,7 @@ describe('createConductor', () => {
             );
 
             // A second same-channel human arrival must not call interrupt() again.
-            const thirdPromise = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            const thirdPromise = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             expect(h.instances[0].interruptCalls).toBe(1);
 
@@ -1213,11 +1209,11 @@ describe('createConductor', () => {
         it('does not pre-empt a discord turn for other priority or for a human without a requesting channel', async () => {
             const h = build();
             await openWith(h);
-            const first = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            const first = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
-            const other = h.conductor.submit(catchupEnvelope(), { priority: 'other', requestingChannelId: 'chan-1' });
-            const unscopedHuman = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human' });
+            const other = h.conductor.submit(catchupEnvelope(), { priority: 'normal', requestingChannelId: 'chan-1' });
+            const unscopedHuman = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent' });
             await flush();
 
             expect(h.instances[0].interruptCalls).toBe(0);
@@ -1236,11 +1232,11 @@ describe('createConductor', () => {
             await openWith(h);
             // A `task` envelope is the one non-discord contract that can carry a channel.
             const first = h.conductor.submit({
-                id: 'task-chan-1', mode: 'query', kind: 'task', text: 'task text', channelId: 'chan-1', hostPriority: 'wake', createdAt: new Date(0),
-            }, { priority: 'other' });
+                id: 'task-chan-1', mode: 'query', kind: 'task', text: 'task text', channelId: 'chan-1', createdAt: new Date(0),
+            }, { priority: 'normal' });
             await flush();
 
-            const second = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            const second = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(h.instances[0].interruptCalls).toBe(0);
@@ -1258,10 +1254,10 @@ describe('createConductor', () => {
             // A channel-less discord envelope is unrepresentable since #60 (the `Partial` override
             // slips it past the compiler); kept because it is the one state that tells
             // routeIncoming's `requestingChannelId !== undefined` guard from its removal.
-            const first = h.conductor.submit(discordEnvelope({ channelId: undefined }), { priority: 'human' });
+            const first = h.conductor.submit(discordEnvelope({ channelId: undefined }), { priority: 'urgent' });
             await flush();
 
-            const second = h.conductor.submit(discordEnvelope({ channelId: undefined }), { priority: 'human' });
+            const second = h.conductor.submit(discordEnvelope({ channelId: undefined }), { priority: 'urgent' });
             await flush();
 
             expect(h.instances[0].interruptCalls).toBe(0);
@@ -1275,12 +1271,12 @@ describe('createConductor', () => {
         it('keeps FIFO order between two other-priority envelopes', async () => {
             const h = build();
             await openWith(h);
-            const first = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const first = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             const otherA = catchupEnvelope({ text: 'other A' });
             const otherB = catchupEnvelope({ text: 'other B' });
-            const resultA = h.conductor.submit(otherA, { priority: 'other' });
-            const resultB = h.conductor.submit(otherB, { priority: 'other' });
+            const resultA = h.conductor.submit(otherA, { priority: 'normal' });
+            const resultB = h.conductor.submit(otherB, { priority: 'normal' });
 
             h.instances[0].emit(frames.resultSuccess());
             await first;
@@ -1297,9 +1293,9 @@ describe('createConductor', () => {
         it('interrupting never calls stopTask', async () => {
             const h = build();
             await openWith(h);
-            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].resolveInterrupt();
@@ -1322,7 +1318,7 @@ describe('createConductor', () => {
             expect(JSON.stringify(turnPrompts(h.instances[0])[0].message)).toContain('accumulate me');
             expect(h.conductor.status().turn).toBeNull();
 
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             expect(h.conductor.status().turn).toMatchObject({ kind: 'discord', channelId: 'chan-1' });
 
@@ -1360,7 +1356,7 @@ describe('createConductor', () => {
         it('a task_started frame journals task_started, and its task_notification journals exactly one task_finished even if repeated', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'run a thing' }));
@@ -1402,7 +1398,7 @@ describe('createConductor', () => {
         it.each(['completed', 'failed', 'stopped'] as const)('a %s task_notification journals task_finished with that outcome', async (status) => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'run a thing' }));
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-2', description: 'run another thing' }));
@@ -1420,7 +1416,7 @@ describe('createConductor', () => {
         it('a foreground task stopped when its turn ends journals task_finished with outcome stopped', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'run a thing', is_backgrounded: false }));
             await flush();
@@ -1436,7 +1432,7 @@ describe('createConductor', () => {
         it('a task whose finished record the ledger already evicted journals outcome completed and logs at debug', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             // One more foreground task than the ledger's finishedTasks cap (20): all of them stop
             // in the same turn-end event, so the first is appended and then evicted at once.
@@ -1466,7 +1462,7 @@ describe('createConductor', () => {
         ] as const)('a %s task_notification arriving after background_tasks_changed dropped the task journals its corrected outcome once', async (status, outcomes) => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'run a thing' }));
             await flush();
@@ -1490,7 +1486,7 @@ describe('createConductor', () => {
         it('a reused task id that finishes again journals only its own task_finished, not a correction of the earlier run', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'first run' }));
             await flush();
@@ -1511,7 +1507,7 @@ describe('createConductor', () => {
         it('a finished task whose record the ledger later evicts journals nothing more for it', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-0', description: 'task 0' }));
             await flush();
@@ -1537,7 +1533,7 @@ describe('createConductor', () => {
         it('an explicit task_lost ledger event journals the named task as lost', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'lost by supervisor' }));
             await flush();
@@ -1553,7 +1549,7 @@ describe('createConductor', () => {
         it('tasks still in flight when a mid-life reopen wipes the ledger\'s task list are journaled task_lost, not task_finished', async () => {
             const h = build();
             await openWith(h, 'sess-1');
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'abandoned task' }));
@@ -1583,9 +1579,9 @@ describe('createConductor', () => {
             await openWith(h);
             await beginSpontaneousNotificationTurn(h);
 
-            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
-            const secondHumanPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-2' });
+            const secondHumanPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-2' });
             await flush();
             expect(h.clock.pending()).toBe(1);
 
@@ -1602,7 +1598,7 @@ describe('createConductor', () => {
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             await flush();
-            h.instances[0].emit(frames.resultSuccess()); // closes the injected resume turn
+            h.instances[0].emit(frames.resultSuccess()); // closes the injected continuation turn
             await flush();
             h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
             await humanPromise;
@@ -1616,7 +1612,7 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.assistantToolUse('Read', { file_path: '/tmp/x' }, 'tool-1'));
             await flush();
 
-            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.clock.advance(10_000);
@@ -1635,32 +1631,32 @@ describe('createConductor', () => {
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             await flush();
-            h.instances[0].emit(frames.resultSuccess()); // closes the injected resume turn
+            h.instances[0].emit(frames.resultSuccess()); // closes the injected continuation turn
             await flush();
             h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
             await humanPromise;
         });
 
-        it('a resume envelope precedes the queued human envelope after an escalation interrupt', async () => {
+        it('a continuation envelope precedes the queued human envelope after an escalation interrupt', async () => {
             const h = build();
             await openWith(h);
             h.instances[0].emit(frames.assistantText('composing a reply'));
             await flush();
 
             const humanEnvelope = discordEnvelope();
-            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.clock.advance(10_000);
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             await flush();
 
-            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['resume']);
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['continuation']);
 
-            h.instances[0].emit(frames.resultSuccess()); // closes the resume turn
+            h.instances[0].emit(frames.resultSuccess()); // closes the continuation turn
             await flush();
 
-            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['resume', 'discord']);
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['continuation', 'discord']);
 
             h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
             const result = await humanPromise;
@@ -1673,7 +1669,7 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.assistantText('short answer'));
             await flush();
 
-            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess());
@@ -1685,16 +1681,16 @@ describe('createConductor', () => {
             await humanPromise;
         });
 
-        it('an interrupted discord turn is not a "background" kind: no resume note is injected even with partial work — only notification/task turns get one (isBackgroundKind boundary)', async () => {
+        it('an interrupted discord turn is not a "background" kind: no continuation note is injected even with partial work — only notification/task turns get one (isBackgroundKind boundary)', async () => {
             const h = build();
             await openWith(h);
             const firstEnvelope = discordEnvelope({ channelId: 'chan-1' });
-            const firstResult = h.conductor.submit(firstEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(firstEnvelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.assistantText('partial work in progress'));
             await flush();
 
-            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             expect(h.instances[0].interruptCalls).toBe(1);
 
@@ -1703,7 +1699,7 @@ describe('createConductor', () => {
             await firstResult;
             await flush();
 
-            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).not.toContain('resume');
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).not.toContain('continuation');
 
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -1715,9 +1711,9 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
-            const first = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const first = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
-            const queued = h.conductor.submit(catchupEnvelope(), { priority: 'other' });
+            const queued = h.conductor.submit(catchupEnvelope(), { priority: 'normal' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess());
@@ -1736,7 +1732,7 @@ describe('createConductor', () => {
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
 
-            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await firstResult;
@@ -1747,7 +1743,7 @@ describe('createConductor', () => {
 
             // A human envelope arriving mid-compaction is held (queued), not interrupted.
             const heldEnvelope = discordEnvelope();
-            const heldResult = h.conductor.submit(heldEnvelope, { priority: 'human', requestingChannelId: 'chan-2' });
+            const heldResult = h.conductor.submit(heldEnvelope, { priority: 'urgent', requestingChannelId: 'chan-2' });
             await flush();
             expect(h.instances[0].interruptCalls).toBe(0);
 
@@ -1768,7 +1764,7 @@ describe('createConductor', () => {
         it('a timeout failure only interrupts the /compact turn that timed out, never an unrelated discord turn', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.ledgerStore.dispatch({ type: 'compaction_started', trigger: 'manual', at: new Date(h.clock.now()) });
@@ -1782,7 +1778,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -1799,7 +1795,7 @@ describe('createConductor', () => {
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
 
-            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await firstResult;
@@ -1819,7 +1815,7 @@ describe('createConductor', () => {
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
 
-            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await firstResult;
@@ -1839,7 +1835,7 @@ describe('createConductor', () => {
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
 
-            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await firstResult;
@@ -1848,7 +1844,7 @@ describe('createConductor', () => {
             expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'compact' });
 
             const heldEnvelope = discordEnvelope();
-            const heldResult = h.conductor.submit(heldEnvelope, { priority: 'human', requestingChannelId: 'chan-2' });
+            const heldResult = h.conductor.submit(heldEnvelope, { priority: 'urgent', requestingChannelId: 'chan-2' });
             await flush();
             expect(h.instances[0].interruptCalls).toBe(0);
 
@@ -1873,7 +1869,7 @@ describe('createConductor', () => {
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
 
-            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await firstResult;
@@ -1882,7 +1878,7 @@ describe('createConductor', () => {
             expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'compact' });
 
             const heldEnvelope = discordEnvelope();
-            const heldResult = h.conductor.submit(heldEnvelope, { priority: 'human', requestingChannelId: 'chan-2' });
+            const heldResult = h.conductor.submit(heldEnvelope, { priority: 'urgent', requestingChannelId: 'chan-2' });
             await flush();
 
             // The CLI's /compact turn hangs forever: no boundary, no notification, no result.
@@ -1949,7 +1945,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
@@ -2008,7 +2004,7 @@ describe('createConductor', () => {
                 }
             });
 
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -2024,7 +2020,7 @@ describe('createConductor', () => {
         it('records queue-to-first-token latency by envelope kind on the first assistant frame of a turn', async () => {
             const h = build();
             await openWith(h);
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.clock.advance(250);
@@ -2047,7 +2043,7 @@ describe('createConductor', () => {
             h.conductor.compactionStarted('manual');
 
             const envelope = discordEnvelope();
-            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(turnPrompts(h.instances[0])).toHaveLength(0);
@@ -2081,7 +2077,7 @@ describe('createConductor', () => {
             h.conductor.compactionStarted('manual');
 
             const envelope = discordEnvelope();
-            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             expect(turnPrompts(h.instances[0])).toHaveLength(0);
 
@@ -2132,7 +2128,7 @@ describe('createConductor', () => {
                     failed.push(event);
                 }
             });
-            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await firstResult;
@@ -2156,7 +2152,7 @@ describe('createConductor', () => {
                     started.push(event);
                 }
             });
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess());
@@ -2169,7 +2165,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -2197,7 +2193,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -2216,7 +2212,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -2258,7 +2254,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             const deferredUsage = h.instances[0].deferContextUsage();
-            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess());
@@ -2307,7 +2303,7 @@ describe('createConductor', () => {
             const retryPolicy: RetryPolicy = { ...FAST_RETRY_POLICY, maxAttempts: 3 };
             const h = build({ retryPolicy });
             await openWith(h);
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'first overload', api_error_status: 529 }));
@@ -2333,7 +2329,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             const envelope = discordEnvelope();
-            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'overloaded', api_error_status: 529 }));
@@ -2356,7 +2352,7 @@ describe('createConductor', () => {
         it('a rate_limited error waits exactly retryAfterMs on the clock before resubmitting', async () => {
             const h = build();
             await openWith(h);
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'slow down', api_error_status: 429 }));
@@ -2379,7 +2375,7 @@ describe('createConductor', () => {
             const envelope = discordEnvelope();
             const controller = new AbortController();
             const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
-            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1', signal: controller.signal });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'bad request', api_error_status: 400 }));
@@ -2399,7 +2395,7 @@ describe('createConductor', () => {
             const classifyError = (): ErrorClassification => ({ category: 'rate_limited', retryAfterMs: 0, message: 'immediate retry' });
             const h = build({ classifyError });
             await openWith(h);
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'retry me', api_error_status: 429 }));
@@ -2417,7 +2413,7 @@ describe('createConductor', () => {
             await openWith(h);
             const controller = new AbortController();
             const envelope = discordEnvelope();
-            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1', signal: controller.signal });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'overloaded', api_error_status: 529 }));
@@ -2461,7 +2457,7 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.assistantText('thinking out loud'));
             await flush();
 
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             // The escalation timer (10s target) is now armed but has not fired.
             expect(h.clock.pending()).toBe(1);
@@ -2480,7 +2476,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h, 'sess-1');
             const envelope = discordEnvelope();
-            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const crash = new Error('worker crashed');
@@ -2506,7 +2502,7 @@ describe('createConductor', () => {
         it('a second consecutive throw during reopen falls back to a fresh session', async () => {
             const h = build();
             await openWith(h, 'sess-1');
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].fail(new Error('worker crashed'));
@@ -2531,7 +2527,7 @@ describe('createConductor', () => {
             await flush();
             expect(h.instances).toHaveLength(2);
 
-            const pendingSubmit = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const pendingSubmit = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             // Neither the dead instance nor the not-yet-open replacement should have received it —
@@ -2554,11 +2550,11 @@ describe('createConductor', () => {
             await openWith(h, 'sess-1');
             const inFlightController = new AbortController();
             const inFlightRemoveSpy = jest.spyOn(inFlightController.signal, 'removeEventListener');
-            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1', signal: inFlightController.signal });
+            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1', signal: inFlightController.signal });
             await flush();
             const queuedController = new AbortController();
             const queuedRemoveSpy = jest.spyOn(queuedController.signal, 'removeEventListener');
-            const queued = h.conductor.submit(discordEnvelope(), { priority: 'other', signal: queuedController.signal });
+            const queued = h.conductor.submit(discordEnvelope(), { priority: 'normal', signal: queuedController.signal });
             await flush();
 
             h.instances[0].fail(new Error('worker crashed'));
@@ -2583,7 +2579,7 @@ describe('createConductor', () => {
             expect(queuedRemoveSpy).toHaveBeenCalledWith('abort', expect.any(Function));
 
             // The conductor must not silently accept further work once it has given up.
-            await expect(h.conductor.submit(discordEnvelope(), { priority: 'human' })).rejects.toThrow('not open');
+            await expect(h.conductor.submit(discordEnvelope(), { priority: 'urgent' })).rejects.toThrow('not open');
         });
 
         it('normalises a non-Error final reopen failure and can be opened and used again after giving up', async () => {
@@ -2598,7 +2594,7 @@ describe('createConductor', () => {
             };
             const h = build({ resumeStore });
             await openWith(h, 'sess-1');
-            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].fail(new Error('worker crashed'));
@@ -2616,7 +2612,7 @@ describe('createConductor', () => {
             await flush();
             h.instances[3].emit(frames.init('sess-recovered'));
             await expect(reopened).resolves.toEqual({ sessionId: 'sess-recovered', resumed: false });
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[3].emit(frames.resultSuccess());
             await expect(resultPromise).resolves.toMatchObject({ isError: false, sessionId: 'sess-recovered' });
@@ -2626,7 +2622,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h, 'sess-1');
             h.resumeStore.scriptSaveRejection(new Error('resume store unavailable'));
-            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].fail(new Error('worker crashed'));
@@ -2644,7 +2640,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h, 'sess-1');
             h.resumeStore.scriptSaveRejection(new Error('DynamoDB throttled'));
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].fail(new Error('worker crashed'));
@@ -2713,7 +2709,7 @@ describe('createConductor', () => {
             const controller = new AbortController();
             controller.abort();
 
-            const result = await h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
+            const result = await h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1', signal: controller.signal });
 
             expect(result).toMatchObject({ response: null, wasInterrupted: true, isError: false, outcome: 'withdrawn' });
             expect(turnPrompts(h.instances[0])).toHaveLength(0);
@@ -2728,7 +2724,7 @@ describe('createConductor', () => {
 
             const controller = new AbortController();
             const heldEnvelope = discordEnvelope({ channelId: 'chan-1' });
-            const heldResult = h.conductor.submit(heldEnvelope, { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
+            const heldResult = h.conductor.submit(heldEnvelope, { priority: 'urgent', requestingChannelId: 'chan-1', signal: controller.signal });
             await flush();
 
             controller.abort();
@@ -2751,12 +2747,12 @@ describe('createConductor', () => {
         it('aborting while a DIFFERENT channel\'s turn is running withdraws the held envelope and never interrupts that other turn', async () => {
             const h = build();
             await openWith(h);
-            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-A' }), { priority: 'human', requestingChannelId: 'chan-A' });
+            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-A' }), { priority: 'urgent', requestingChannelId: 'chan-A' });
             await flush();
 
             const controller = new AbortController();
             const heldEnvelope = discordEnvelope({ channelId: 'chan-B' });
-            const heldResult = h.conductor.submit(heldEnvelope, { priority: 'human', requestingChannelId: 'chan-B', signal: controller.signal });
+            const heldResult = h.conductor.submit(heldEnvelope, { priority: 'urgent', requestingChannelId: 'chan-B', signal: controller.signal });
             await flush();
 
             controller.abort();
@@ -2776,7 +2772,7 @@ describe('createConductor', () => {
             const addSpy = jest.spyOn(controller.signal, 'addEventListener');
             const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
             const envelope = discordEnvelope({ channelId: 'chan-1' });
-            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1', signal: controller.signal });
             await flush();
             expect(h.instances[0].interruptCalls).toBe(0);
             expect(addSpy).toHaveBeenCalledWith('abort', expect.any(Function), { once: true });
@@ -2800,9 +2796,9 @@ describe('createConductor', () => {
         it('an interrupt caused by another human envelope for the same channel (no signal involved) still carries wasInterrupted but no outcome', async () => {
             const h = build();
             await openWith(h);
-            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
-            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             expect(h.instances[0].interruptCalls).toBe(1);
 
@@ -2819,7 +2815,7 @@ describe('createConductor', () => {
             await openWith(h);
             const controller = new AbortController();
             const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
-            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1', signal: controller.signal });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             const result = await resultPromise;
@@ -2836,7 +2832,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
 
-            const firstPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const firstPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             const firstOutcome = await firstPromise;
@@ -2844,14 +2840,14 @@ describe('createConductor', () => {
             await flush(); // let guard.onTurnEnd()'s poll land on the ledger before the next turn
 
             h.instances[0].scriptContextUsage({ percentage: 42, totalTokens: 420, maxTokens: 1000 });
-            const secondPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const secondPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             const secondOutcome = await secondPromise;
             expect(secondOutcome.contextUsagePercent).toBe(0); // still the pre-this-turn value; the fresh 42 hasn't been polled yet
 
             await flush();
-            const thirdPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const thirdPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             const thirdOutcome = await thirdPromise;
@@ -2861,18 +2857,18 @@ describe('createConductor', () => {
         it('aborting an envelope queued BEHIND another withdraws exactly that one: the envelope ahead of it still runs next, and the withdrawn envelope never reaches the SDK', async () => {
             const h = build();
             await openWith(h);
-            const runningResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-A' }), { priority: 'human', requestingChannelId: 'chan-A' });
+            const runningResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-A' }), { priority: 'urgent', requestingChannelId: 'chan-A' });
             await flush();
 
             // Both queue up behind chan-A's turn: `ahead` lands at index 0, the signal-bearing
             // `behind` at index 1 — the case where "the item's own index" and "the head" differ.
             const aheadEnvelope = discordEnvelope({ channelId: 'chan-B' });
-            const aheadResult = h.conductor.submit(aheadEnvelope, { priority: 'human', requestingChannelId: 'chan-B' });
+            const aheadResult = h.conductor.submit(aheadEnvelope, { priority: 'urgent', requestingChannelId: 'chan-B' });
             await flush();
 
             const controller = new AbortController();
             const behindEnvelope = discordEnvelope({ channelId: 'chan-C' });
-            const behindResult = h.conductor.submit(behindEnvelope, { priority: 'human', requestingChannelId: 'chan-C', signal: controller.signal });
+            const behindResult = h.conductor.submit(behindEnvelope, { priority: 'urgent', requestingChannelId: 'chan-C', signal: controller.signal });
             await flush();
             expect(h.conductor.status().queueLength).toBe(2);
 
@@ -2909,7 +2905,7 @@ describe('createConductor', () => {
         it('ignored when requestingChannelId does not own the running discord turn', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             await h.conductor.interruptCurrent({ requestingChannelId: 'chan-other' });
@@ -2924,7 +2920,7 @@ describe('createConductor', () => {
         it('allows an unscoped interrupt of a channel-owned turn', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const interruptPromise = h.conductor.interruptCurrent({ reason: 'operator requested' });
@@ -2938,7 +2934,7 @@ describe('createConductor', () => {
         it('allows a channel-scoped interrupt when the running turn itself has no channel', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(catchupEnvelope(), { priority: 'other' });
+            void h.conductor.submit(catchupEnvelope(), { priority: 'normal' });
             await flush();
 
             const interruptPromise = h.conductor.interruptCurrent({ requestingChannelId: 'chan-1' });
@@ -2952,7 +2948,7 @@ describe('createConductor', () => {
         it('interrupts the running turn when the channel matches', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const interruptPromise = h.conductor.interruptCurrent({ requestingChannelId: 'chan-1' });
@@ -2966,7 +2962,7 @@ describe('createConductor', () => {
         it('a rejecting handle.interrupt() is logged and does not throw out of interruptCurrent()', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const interruptPromise = h.conductor.interruptCurrent({ requestingChannelId: 'chan-1' });
@@ -2991,7 +2987,7 @@ describe('createConductor', () => {
 
             await openWith(h, 'sess-status');
             const envelope = discordEnvelope({ authorId: 'user-status' });
-            void h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(h.conductor.status()).toMatchObject({
@@ -3015,7 +3011,7 @@ describe('createConductor', () => {
         it('with a running turn: waits turnWaitMs, then interrupts, then flushes and closes', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
@@ -3043,7 +3039,7 @@ describe('createConductor', () => {
         it('honors the caller-supplied turnWaitMs, not a hardcoded or dropped wait — no interrupt until it elapses', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 5000, deadlineMs: 120_000 });
@@ -3067,7 +3063,7 @@ describe('createConductor', () => {
         it('clears both shutdown timers when the running turn ends naturally before turnWaitMs', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
             await flush();
@@ -3083,7 +3079,7 @@ describe('createConductor', () => {
         it('a naturally-ended turn reaches journal flush without an extra no-op interrupt await before the hard deadline', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 1 });
             await flush();
@@ -3110,7 +3106,7 @@ describe('createConductor', () => {
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
             await flush();
 
-            await expect(h.conductor.submit(discordEnvelope(), { priority: 'human' })).rejects.toThrow('shutting down');
+            await expect(h.conductor.submit(discordEnvelope(), { priority: 'urgent' })).rejects.toThrow('shutting down');
 
             await shutdownPromise;
         });
@@ -3118,7 +3114,7 @@ describe('createConductor', () => {
         it('a hard deadline forces close even if the turn never ends and interrupt never resolves', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 1000, deadlineMs: 5000 });
@@ -3137,9 +3133,9 @@ describe('createConductor', () => {
         it('rejects everything still waiting in pendingQueue, not just later submits, once shutdown begins', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
-            const queuedPromise = h.conductor.submit(discordEnvelope({ channelId: 'chan-2' }), { priority: 'human', requestingChannelId: 'chan-2' });
+            const queuedPromise = h.conductor.submit(discordEnvelope({ channelId: 'chan-2' }), { priority: 'urgent', requestingChannelId: 'chan-2' });
             await flush();
 
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
@@ -3157,7 +3153,7 @@ describe('createConductor', () => {
         it('calling shutdown() a second time while already shutting down is a no-op — exactly one flush, one close', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const firstShutdown = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
@@ -3647,7 +3643,7 @@ describe('createConductor', () => {
                 received.push(turnId);
             });
 
-            void h.conductor.submit(discordEnvelope({ id: 'env-sub' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope({ id: 'env-sub' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -3681,7 +3677,7 @@ describe('createConductor', () => {
             await openWith(h);
             const received: string[] = [];
             h.conductor.subscribeTurn(turnId => received.push(turnId));
-            const result = h.conductor.submit(discordEnvelope({ id: 'env-root' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            const result = h.conductor.submit(discordEnvelope({ id: 'env-root' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.assistantText('child progress', { parent_tool_use_id: 'toolu-parent' }));
@@ -3721,7 +3717,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
 
-            void h.conductor.submit(discordEnvelope({ synopsisSeed: 'fix the presence bug' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope({ synopsisSeed: 'fix the presence bug' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(h.ledgerStore.get().turn?.seed).toBe('fix the presence bug');
@@ -3753,7 +3749,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             const deferredUsage = h.instances[0].deferContextUsage();
-            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -3785,7 +3781,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             const deferredUsage = h.instances[0].deferContextUsage();
-            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -3805,7 +3801,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             const deferredUsage = h.instances[0].deferContextUsage();
-            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -3840,7 +3836,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             const deferredUsage = h.instances[0].deferContextUsage();
-            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const priorResult = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -3872,7 +3868,7 @@ describe('createConductor', () => {
         expect(DEFAULT_RETRY_CONFIG.claude.maxAttempts).toBeGreaterThanOrEqual(1);
         const h = build({ retryPolicy: DEFAULT_RETRY_CONFIG.claude });
         await openWith(h);
-        const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+        const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
         await flush();
 
         h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'bad request', api_error_status: 400 }));
@@ -3892,7 +3888,7 @@ describe('createConductor', () => {
             await openWith(h);
 
             const launchEnvelope = discordEnvelope({ channelId: 'chan-C', authorId: 'user-U' });
-            const launchResult = h.conductor.submit(launchEnvelope, { priority: 'human', requestingChannelId: 'chan-C' });
+            const launchResult = h.conductor.submit(launchEnvelope, { priority: 'urgent', requestingChannelId: 'chan-C' });
             await flush();
             registry.record({
                 taskId: 'agent-X', toolUseId: 'tool-T', toolName: 'Agent', envelopeId: launchEnvelope.id, kind: 'discord', channelId: 'chan-C', authorId: 'user-U', launchedAt: new Date(h.clock.now()),
@@ -3953,7 +3949,7 @@ describe('createConductor', () => {
             await openWith(h);
 
             const launchEnvelope = discordEnvelope({ channelId: 'chan-C', authorId: 'user-U' });
-            const discordResult = h.conductor.submit(launchEnvelope, { priority: 'human', requestingChannelId: 'chan-C' });
+            const discordResult = h.conductor.submit(launchEnvelope, { priority: 'urgent', requestingChannelId: 'chan-C' });
             await flush();
 
             // PostToolUse, mid-turn: an Agent launch (agentId 'agent-X', tool_use_id 'tool-T'),
@@ -3998,7 +3994,7 @@ describe('createConductor', () => {
             });
             expect(onWakeTurnSettled).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    id: taskEnvelopeId, mode: 'query', kind: 'task', channelId: 'chan-C', authorId: 'user-U', text: 'done', hostPriority: 'wake',
+                    id: taskEnvelopeId, mode: 'query', kind: 'task', channelId: 'chan-C', authorId: 'user-U', text: 'done',
                 }),
                 expect.objectContaining({ response: 'done', isError: false })
             );
@@ -4163,7 +4159,7 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.assistantText('working'));
             await flush();
 
-            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(h.instances[0].interruptCalls).toBe(0);
@@ -4174,7 +4170,7 @@ describe('createConductor', () => {
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             await flush();
-            h.instances[0].emit(frames.resultSuccess()); // closes the injected resume turn
+            h.instances[0].emit(frames.resultSuccess()); // closes the injected continuation turn
             await flush();
             h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
             await humanPromise;
@@ -4218,7 +4214,7 @@ describe('createConductor', () => {
             // dropped rather than adopted — exactly the pre-R2 behaviour for a racing frame.
             const deferredUsage = h.instances[0].deferContextUsage();
             const priorEnvelope = discordEnvelope();
-            const priorResult = h.conductor.submit(priorEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const priorResult = h.conductor.submit(priorEnvelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await flush();
@@ -4320,7 +4316,7 @@ describe('createConductor', () => {
             await flush();
 
             const otherEnvelope = catchupEnvelope();
-            const otherPromise = h.conductor.submit(otherEnvelope, { priority: 'other' });
+            const otherPromise = h.conductor.submit(otherEnvelope, { priority: 'normal' });
             await flush();
 
             h.clock.advance(60_000);
@@ -4328,7 +4324,7 @@ describe('createConductor', () => {
 
             h.instances[0].emit(frames.resultSuccess()); // closes the notification turn
             await flush();
-            h.instances[0].emit(frames.resultSuccess()); // closes the queued 'other' turn
+            h.instances[0].emit(frames.resultSuccess()); // closes the queued 'normal' turn
             const otherResult = await otherPromise;
             expect(otherResult.envelopeId).toBe(otherEnvelope.id);
         });
@@ -4337,13 +4333,13 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h);
             const directTaskEnvelope: QueryEnvelope = {
-                id: 'direct-task-1', mode: 'query', kind: 'task', text: 'direct task text', hostPriority: 'wake', createdAt: new Date(0),
+                id: 'direct-task-1', mode: 'query', kind: 'task', text: 'direct task text', createdAt: new Date(0),
             };
-            void h.conductor.submit(directTaskEnvelope, { priority: 'other' });
+            void h.conductor.submit(directTaskEnvelope, { priority: 'normal' });
             await flush();
 
             const humanEnvelope = discordEnvelope();
-            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(h.instances[0].interruptCalls).toBe(0);
@@ -4355,7 +4351,7 @@ describe('createConductor', () => {
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             await flush();
-            // No resume note is injected here (no partial work was ever streamed for this bare,
+            // No continuation note is injected here (no partial work was ever streamed for this bare,
             // frameless task turn before it was interrupted), so the very next result frame
             // closes the human's own discord turn directly.
             h.instances[0].emit(frames.resultSuccess());
@@ -4363,7 +4359,7 @@ describe('createConductor', () => {
             expect(result.envelopeId).toBe(humanEnvelope.id);
         });
 
-        it('an interrupted task turn injects a resume note ahead of the queued human envelope, exactly like an interrupted notification turn', async () => {
+        it('an interrupted task turn injects a continuation note ahead of the queued human envelope, exactly like an interrupted notification turn', async () => {
             const h = build();
             await openWith(h);
             h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'composing' });
@@ -4371,19 +4367,19 @@ describe('createConductor', () => {
             await flush();
 
             const humanEnvelope = discordEnvelope();
-            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.clock.advance(10_000);
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             await flush();
 
-            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['task', 'resume']);
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['task', 'continuation']);
 
-            h.instances[0].emit(frames.resultSuccess()); // closes the resume turn
+            h.instances[0].emit(frames.resultSuccess()); // closes the continuation turn
             await flush();
 
-            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['task', 'resume', 'discord']);
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['task', 'continuation', 'discord']);
 
             h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
             const result = await humanPromise;
@@ -4638,7 +4634,7 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.assistantText('answering the peer'));
             await flush();
 
-            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(h.instances[0].interruptCalls).toBe(0);
@@ -4649,13 +4645,13 @@ describe('createConductor', () => {
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             await flush();
-            h.instances[0].emit(frames.resultSuccess()); // closes the injected resume turn
+            h.instances[0].emit(frames.resultSuccess()); // closes the injected continuation turn
             await flush();
             h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
             await humanPromise;
         });
 
-        it('an interrupted peer turn injects a resume note ahead of the queued human envelope, exactly like an interrupted task turn', async () => {
+        it('an interrupted peer turn injects a continuation note ahead of the queued human envelope, exactly like an interrupted task turn', async () => {
             const h = build();
             await openWith(h);
             h.conductor.adoptPeerTurn(peerEnvelope());
@@ -4663,16 +4659,16 @@ describe('createConductor', () => {
             await flush();
 
             const humanEnvelope = discordEnvelope();
-            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.clock.advance(10_000);
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             await flush();
 
-            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['peer', 'resume']);
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['peer', 'continuation']);
 
-            h.instances[0].emit(frames.resultSuccess()); // closes the resume turn
+            h.instances[0].emit(frames.resultSuccess()); // closes the continuation turn
             await flush();
             h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
             const result = await humanPromise;
@@ -4861,7 +4857,7 @@ describe('createConductor', () => {
         it('a request made before a crash reopen is dropped by it — the replacement already carries the new prompt', async () => {
             const h = build();
             await openWith(h, 'sess-1');
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.conductor.requestReopen('an identity change');
@@ -4877,7 +4873,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h, 'sess-1');
             const envelope = discordEnvelope();
-            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.conductor.requestReopen('an identity change');
@@ -4897,7 +4893,7 @@ describe('createConductor', () => {
         it('waits for a running turn to end before reopening', async () => {
             const h = build();
             await openWith(h, 'sess-1');
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.conductor.requestReopen('an identity change');
@@ -4913,9 +4909,9 @@ describe('createConductor', () => {
         it('does not start a queued turn while a reopen is owed; the queued envelope plays on the replacement', async () => {
             const h = build();
             await openWith(h, 'sess-1');
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
-            const queued = h.conductor.submit(discordEnvelope(), { priority: 'other' });
+            const queued = h.conductor.submit(discordEnvelope(), { priority: 'normal' });
             await flush();
 
             h.conductor.requestReopen('an identity change');
@@ -4938,7 +4934,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h, 'sess-1');
             const deferredUsage = h.instances[0].deferContextUsage();
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess());
@@ -4960,7 +4956,7 @@ describe('createConductor', () => {
             const h = build();
             await openWith(h, 'sess-1');
             const deferredUsage = h.instances[0].deferContextUsage();
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             h.instances[0].emit(frames.resultSuccess());
@@ -4968,7 +4964,7 @@ describe('createConductor', () => {
             h.conductor.requestReopen('an identity change');
             // currentTurn is null and the reopen has not started (guard.onTurnEnd is still
             // outstanding), so this submit reaches processQueue with the reopen merely owed.
-            const queued = h.conductor.submit(discordEnvelope(), { priority: 'other' });
+            const queued = h.conductor.submit(discordEnvelope(), { priority: 'normal' });
             await flush();
 
             expect(turnPrompts(h.instances[0])).toHaveLength(1);
@@ -4993,7 +4989,7 @@ describe('createConductor', () => {
             await flush();
             expect(h.instances).toHaveLength(2);
 
-            const pendingSubmit = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const pendingSubmit = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             expect(turnPrompts(h.instances[0])).toHaveLength(0);
             expect(turnPrompts(h.instances[1])).toHaveLength(0);
@@ -5283,7 +5279,7 @@ describe('createConductor', () => {
             const h = build({ classifyError });
             await openWith(h);
             h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
-            const initial = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            const initial = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             await initial;
@@ -5299,8 +5295,8 @@ describe('createConductor', () => {
             expect(turnPrompts(h.instances[0])).toHaveLength(3);
         });
 
-        it('gives an injected background resume turn exactly two attempts', async () => {
-            const classifyError = (): ErrorClassification => ({ category: 'transient', retryAfterMs: 0, message: 'retry resume' });
+        it('gives an injected background continuation turn exactly two attempts', async () => {
+            const classifyError = (): ErrorClassification => ({ category: 'transient', retryAfterMs: 0, message: 'retry continuation' });
             const h = build({ classifyError });
             await openWith(h);
             h.instances[0].emit(frames.assistantText('meaningful partial work'));
@@ -5310,21 +5306,21 @@ describe('createConductor', () => {
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             await flush();
-            expect(h.conductor.status().turn?.kind).toBe('resume');
+            expect(h.conductor.status().turn?.kind).toBe('continuation');
 
-            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'resume overloaded', api_error_status: 529 }));
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'continuation overloaded', api_error_status: 529 }));
             await flush();
-            expect(h.journal.byKind('envelope_submitted').map(entry => entry.kind)).toEqual(['resume', 'resume']);
-            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'resume still overloaded', api_error_status: 529 }));
+            expect(h.journal.byKind('envelope_submitted').map(entry => entry.kind)).toEqual(['continuation', 'continuation']);
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'continuation still overloaded', api_error_status: 529 }));
             await flush();
-            expect(h.journal.byKind('envelope_submitted').map(entry => entry.kind)).toEqual(['resume', 'resume']);
+            expect(h.journal.byKind('envelope_submitted').map(entry => entry.kind)).toEqual(['continuation', 'continuation']);
         });
 
         it('honors a one millisecond retryAfter delay', async () => {
             const classifyError = (): ErrorClassification => ({ category: 'rate_limited', retryAfterMs: 1, message: 'brief limit' });
             const h = build({ classifyError });
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'limited', api_error_status: 429 }));
             await flush();
@@ -5362,10 +5358,10 @@ describe('createConductor', () => {
         it('rejects every queued submit when shutdown begins', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope({ channelId: 'active' }), { priority: 'human', requestingChannelId: 'active' });
+            void h.conductor.submit(discordEnvelope({ channelId: 'active' }), { priority: 'urgent', requestingChannelId: 'active' });
             await flush();
-            const queuedB = h.conductor.submit(discordEnvelope({ channelId: 'B' }), { priority: 'other' });
-            const queuedC = h.conductor.submit(discordEnvelope({ channelId: 'C' }), { priority: 'other' });
+            const queuedB = h.conductor.submit(discordEnvelope({ channelId: 'B' }), { priority: 'normal' });
+            const queuedC = h.conductor.submit(discordEnvelope({ channelId: 'C' }), { priority: 'normal' });
             await flush();
             void h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
             await expect(Promise.all([queuedB, queuedC])).rejects.toThrow('shutting down');
@@ -5377,9 +5373,9 @@ describe('createConductor', () => {
             await openWith(h, 'sess-1');
             const active = discordEnvelope({ text: 'active A' });
             const queued = discordEnvelope({ text: 'queued B' });
-            const activeResult = h.conductor.submit(active, { priority: 'human', requestingChannelId: 'A' });
+            const activeResult = h.conductor.submit(active, { priority: 'urgent', requestingChannelId: 'A' });
             await flush();
-            const queuedResult = h.conductor.submit(queued, { priority: 'other' });
+            const queuedResult = h.conductor.submit(queued, { priority: 'normal' });
             h.instances[0].fail(new Error('worker crashed'));
             await flush();
             h.instances[1].emit(frames.init('sess-1'));
@@ -5425,11 +5421,11 @@ describe('createConductor', () => {
         it('withdrawing one queued submit leaves the following submit runnable', async () => {
             const h = build();
             await openWith(h);
-            const active = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'A' });
+            const active = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'A' });
             await flush();
             const controller = new AbortController();
-            const withdrawn = h.conductor.submit(discordEnvelope({ text: 'withdraw B' }), { priority: 'other', signal: controller.signal });
-            const following = h.conductor.submit(discordEnvelope({ text: 'run C' }), { priority: 'other' });
+            const withdrawn = h.conductor.submit(discordEnvelope({ text: 'withdraw B' }), { priority: 'normal', signal: controller.signal });
+            const following = h.conductor.submit(discordEnvelope({ text: 'run C' }), { priority: 'normal' });
             controller.abort();
             await expect(withdrawn).resolves.toMatchObject({ outcome: 'withdrawn' });
             h.instances[0].emit(frames.resultSuccess());
@@ -5463,7 +5459,7 @@ describe('createConductor', () => {
         it('waits for the real interrupt call after shutdown turn-wait elapses', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             let settled = false;
             const shutdown = h.conductor.shutdown({ turnWaitMs: 1, deadlineMs: 120_000 }).finally(() => {
@@ -5506,7 +5502,7 @@ describe('createConductor', () => {
 
         /** Starts two background tasks and one foreground task inside a running turn on instance 0. */
         async function startTasksInTurn(h: Harness): Promise<void> {
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-bg-1', tool_use_id: 'tool-bg-1', description: 'index the archive', is_backgrounded: true }));
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-fg', tool_use_id: 'tool-fg', description: 'foreground helper', is_backgrounded: false }));
@@ -5516,7 +5512,7 @@ describe('createConductor', () => {
 
         /** Starts exactly one background task inside a running turn on instance 0. */
         async function startOneTaskInTurn(h: Harness): Promise<void> {
-            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[0].emit(frames.taskStarted({ task_id: 'task-bg-1', tool_use_id: 'tool-bg-1', description: 'index the archive', is_backgrounded: true }));
             await flush();
@@ -5781,7 +5777,7 @@ describe('createConductor', () => {
                 h.instances[1].emit(frames.init('sess-1'));
                 await flush();
 
-                void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
                 await flush();
                 h.conductor.requestReopen('a second change');
                 h.instances[1].emit(frames.resultSuccess());
@@ -5932,7 +5928,7 @@ describe('createConductor', () => {
             it('a foreground task stopped at the turn end neither holds nor settles the reopen', async () => {
                 const h = build();
                 await openWith(h, 'sess-1');
-                void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
                 await flush();
                 h.instances[0].emit(frames.taskStarted({ task_id: 'task-fg', tool_use_id: 'tool-fg', description: 'foreground helper', is_backgrounded: false }));
                 await flush();
@@ -6089,7 +6085,7 @@ describe('createConductor', () => {
                 h.instances[1].emit(frames.init('sess-1'));
                 await flush();
 
-                void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
                 await flush();
                 h.instances[1].emit(frames.taskStarted({ task_id: 'task-bg-9', tool_use_id: 'tool-bg-9', description: 'crawl the feed', is_backgrounded: true }));
                 h.instances[1].emit(frames.resultSuccess());
@@ -6282,7 +6278,7 @@ describe('createConductor', () => {
                 h.conductor.requestReopen('an identity change');
                 await flush();
 
-                const queued = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                const queued = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
                 await flush();
                 expect(turnPrompts(h.instances[0])).toHaveLength(1);
 
@@ -6547,7 +6543,7 @@ describe('createConductor', () => {
             await openWith(h, 'sess-1');
             const controller = new AbortController();
             const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
-            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
+            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1', signal: controller.signal });
             const inFlightOutcome = inFlight.catch((error: unknown) => error);
             await flush();
             h.instances[0].fail(new Error('worker crashed'));
@@ -6569,7 +6565,7 @@ describe('createConductor', () => {
         it('shutdown while a crash reopen\'s resume is in flight rejects the interrupted turn instead of re-queueing it', async () => {
             const h = build();
             await openWith(h, 'sess-1');
-            const inFlightOutcome = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' }).catch((error: unknown) => error);
+            const inFlightOutcome = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' }).catch((error: unknown) => error);
             await flush();
             h.instances[0].fail(new Error('worker crashed'));
             await flush();

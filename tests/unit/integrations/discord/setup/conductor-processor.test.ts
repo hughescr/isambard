@@ -222,7 +222,7 @@ describe('createConductorProcessor', () => {
         expect(envelope.channelId).toBe('chan-1');
         expect(envelope.authorId).toBe('user-1');
         expect(envelope.text).toContain('general');
-        expect(options).toMatchObject({ priority: 'human', requestingChannelId: 'chan-1' });
+        expect(options).toMatchObject({ priority: 'urgent', requestingChannelId: 'chan-1' });
         expect(contextPolicy.shouldInjectUserMemory).toHaveBeenCalledWith('user-1', '');
         expect(contextBuilder.loadUserMemories).toHaveBeenCalledWith('user-1');
     });
@@ -269,7 +269,7 @@ describe('createConductorProcessor', () => {
         expect(conductor.submitCalls).toHaveLength(2);
     });
 
-    it('preserves an interrupted turn\'s real stream progress for the next submit\'s resume context', async () => {
+    it('preserves an interrupted turn\'s real stream progress for the next submit\'s continuation context', async () => {
         coordinator.handleMessage(makeContext({ messageId: 'msg-A1' }), makeDiscordMessage('chan-1', 'msg-A1', 'first'));
         await flush();
         const firstEnvelope = conductor.submitCalls[0].envelope;
@@ -285,17 +285,17 @@ describe('createConductorProcessor', () => {
         await flush();
 
         // message-coordinator.ts forwards partialWork into the NEXT processor call's
-        // resumeContext only when hasMeaningfulProgress() was true (its own, already-covered
+        // continuationContext only when hasMeaningfulProgress() was true (its own, already-covered
         // contract — message-coordinator.test.ts, untouched by this package); this processor's
-        // own job, asserted directly here, is turning that resumeContext into a [RESUME NOTE]
+        // own job, asserted directly here, is turning that continuationContext into a [RESUME NOTE]
         // block on the resubmitted envelope so the partial work actually reaches Claude.
         expect(conductor.submitCalls).toHaveLength(2);
-        const resumedEnvelope = conductor.submitCalls[1].envelope;
-        expect(resumedEnvelope.text).toContain('[RESUME NOTE]');
-        expect(resumedEnvelope.text).toContain('partial reply');
+        const continuedEnvelope = conductor.submitCalls[1].envelope;
+        expect(continuedEnvelope.text).toContain('[RESUME NOTE]');
+        expect(continuedEnvelope.text).toContain('partial reply');
     });
 
-    it('submits no [RESUME NOTE] section on a fresh (non-resumed) turn', async () => {
+    it('submits no [RESUME NOTE] section on a fresh (non-continuation) turn', async () => {
         coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
         await flush();
 
@@ -322,15 +322,15 @@ describe('createConductorProcessor', () => {
             type: 'assistant', message: { content: [{ type: 'text', text: 'unrelated to A' }] },
         });
 
-        // Interrupt A via the debounce path so its captured progress surfaces in its own resume note.
+        // Interrupt A via the debounce path so its captured progress surfaces in its own continuation note.
         coordinator.handleMessage(makeContext({ channelId: createChannelId('chan-A'), messageId: 'msg-A2', content: 'second' }), makeDiscordMessage('chan-A', 'msg-A2', 'second'));
         jest.advanceTimersByTime(100);
         await flush();
 
-        const resumedA = conductor.submitCalls.find(call => call.envelope.text.includes('[RESUME NOTE]'));
-        expect(resumedA).toBeDefined();
-        expect(resumedA!.envelope.text).toContain('own progress on A');
-        expect(resumedA!.envelope.text).not.toContain('unrelated to A');
+        const continuedA = conductor.submitCalls.find(call => call.envelope.text.includes('[RESUME NOTE]'));
+        expect(continuedA).toBeDefined();
+        expect(continuedA!.envelope.text).toContain('own progress on A');
+        expect(continuedA!.envelope.text).not.toContain('unrelated to A');
     });
 
     it('processing an empty context batch directly returns a null response with no submit, and warns', async () => {

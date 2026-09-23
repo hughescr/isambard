@@ -159,7 +159,7 @@ export function setupConductorPresence(params: {
 
     // The ONE place a presence synopsis handler is attached (see presence/turn-synopsis.ts):
     // once per session, so every turn kind that session opens — human, bare notification, task
-    // wake, peer, catch-up, perch, wrapup, resume — gets a Haiku digest instead of the ledger's
+    // wake, peer, catch-up, perch, wrapup, continuation — gets a Haiku digest instead of the ledger's
     // bare base phase.
     const detachSynopses = attachedSessions.flatMap(({ ledger, conductor, dynamicStatusGenerator }) => {
         if(conductor === undefined) {

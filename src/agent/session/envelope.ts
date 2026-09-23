@@ -9,7 +9,7 @@
  * Builders whose header carries a timestamp (`buildDiscordEnvelope`, `buildPerchEnvelope`,
  * `buildNotificationEnvelope`, `buildPeerEnvelope`, `buildCatchupEnvelope`) take `now`/`timezone` and stamp the
  * header via `formatEnvelopeStamp`. The remaining builders (`buildWrapUpEnvelope`,
- * `buildResumeEnvelope`, `buildBootEnvelope`, `buildCompactEnvelope`) carry no stamp in their
+ * `buildContinuationEnvelope`, `buildBootEnvelope`, `buildCompactEnvelope`) carry no stamp in their
  * brief-specified signature, but `Envelope.createdAt` is non-optional — so each of those also
  * takes a plain `now: Date` (a small, deliberate signature addition beyond the brief) purely to
  * populate `createdAt` without reaching for `new Date()` inside a "pure builder" module.
@@ -114,18 +114,18 @@ function formatDiscordChannelSegment(isDM: boolean, channelName: string, guildNa
 
 /** Inputs to {@link buildDiscordEnvelope}. */
 export interface BuildDiscordEnvelopeParams {
-    messages:         EnvelopeSourceMessage[]
-    authorId:         string
-    authorName:       string
-    channelId:        string
-    channelName:      string
-    guildName?:       string
-    isDM:             boolean
-    now:              Date
-    timezone:         string
-    timeHeader:       string
-    newEvents?:       string[]
-    userMemoryBlock?: string
+    messages:          EnvelopeSourceMessage[]
+    authorId:          string
+    authorName:        string
+    channelId:         string
+    channelName:       string
+    guildName?:        string
+    isDM:              boolean
+    now:               Date
+    timezone:          string
+    timeHeader:        string
+    newEvents?:        string[]
+    userMemoryBlock?:  string
     /**
      * State top-set delta since the last mark (Q9): paths that newly entered the top set
      * (`added`), fell out of it (`removed`), or stayed in it with different content
@@ -133,7 +133,7 @@ export interface BuildDiscordEnvelopeParams {
      * added then removed then changed — only when at least one list is non-empty; omitted
      * entirely when `undefined` or when all three lists are empty.
      */
-    stateChanged?:    { added: string[], removed: string[], changed: string[] }
+    stateChanged?:     { added: string[], removed: string[], changed: string[] }
     /**
      * Calendar delta since the last mark (Q12): `agenda` is the full agenda text (already
      * formatted, e.g. via `formatCalendarContext`); `added`/`removed`/`changed` are already
@@ -141,18 +141,18 @@ export interface BuildDiscordEnvelopeParams {
      * `[Calendar]` section — on `isFirst` just the full agenda text, otherwise the `+/-/~`
      * change list followed by the full agenda text; omitted entirely when `undefined`.
      */
-    calendarChanged?: { agenda: string, added: string[], removed: string[], changed: string[], isFirst: boolean }
-    channelList?:     string
-    healthNote?:      string
-    images?:          PlatformImage[]
+    calendarChanged?:  { agenda: string, added: string[], removed: string[], changed: string[], isFirst: boolean }
+    channelList?:      string
+    healthNote?:       string
+    images?:           PlatformImage[]
     /**
-     * A pre-composed `[RESUME NOTE]` block (see `buildResumeNote` in resume-prompt-builder.ts),
+     * A pre-composed `[RESUME NOTE]` block (see `buildContinuationNote` in continuation-prompt-builder.ts),
      * rendered verbatim after `[Channels]` and before the message texts — the coordinator's own
      * partial-work summary for a turn this envelope's messages interrupted, so an interrupted
      * turn's progress still reaches Claude even though the interrupting messages arrive as a
      * fresh envelope rather than a continuation of the old one.
      */
-    resumeNote?:      string
+    continuationNote?: string
 }
 
 /**
@@ -167,7 +167,7 @@ export interface BuildDiscordEnvelopeParams {
 export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): DiscordQueryEnvelope {
     const {
         messages, authorId, authorName, channelId, channelName, guildName, isDM,
-        now, timezone, timeHeader, newEvents, userMemoryBlock, stateChanged, calendarChanged, channelList, healthNote, images, resumeNote,
+        now, timezone, timeHeader, newEvents, userMemoryBlock, stateChanged, calendarChanged, channelList, healthNote, images, continuationNote,
     } = params;
 
     const stamp = formatEnvelopeStamp(now, timezone);
@@ -189,7 +189,7 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Discor
         renderStateChangedSection(stateChanged),
         renderCalendarChangedSection(calendarChanged),
         renderSection('Channels', channelList),
-        resumeNote,
+        continuationNote,
         ...messages.map(message => message.content),
     ]);
 
@@ -202,7 +202,6 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Discor
         channelId,
         authorId,
         origin:       { kind: 'human' },
-        hostPriority: 'human',
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(messageText),
     };
@@ -247,7 +246,6 @@ export function buildPerchEnvelope(params: BuildPerchEnvelopeParams): QueryEnvel
         mode:         'query',
         kind:         'perch',
         text,
-        hostPriority: 'wake',
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(slotHint),
     };
@@ -265,9 +263,10 @@ export interface BuildNotificationEnvelopeParams {
 
 /**
  * Builds a notification envelope: `[NOTIFICATION · {source} · stamp]`, followed by the time
- * header and the notification text. `wake` drives both the contract and `hostPriority`: a
- * {@link QueryEnvelope} queued as 'wake' when true, an {@link AccumulationEnvelope} queued as
- * 'accumulate' when false — callers narrow on `mode` to pick the conductor seam.
+ * header and the notification text. `wake` drives the contract: a {@link QueryEnvelope}
+ * (`mode: 'query'`, `shouldQuery: true`) when true, an {@link AccumulationEnvelope}
+ * (`mode: 'append'`, `shouldQuery: false`) when false — callers narrow on `mode` to pick the
+ * conductor seam.
  * @param params Notification envelope inputs
  * @returns A `notification`-kind {@link QueryEnvelope} or {@link AccumulationEnvelope}
  */
@@ -282,7 +281,6 @@ export function buildNotificationEnvelope(params: BuildNotificationEnvelopeParam
         mode:         wake ? 'query' : 'append',
         kind:         'notification',
         text:         joinSections([header, timeHeader, text]),
-        hostPriority: wake ? 'wake' : 'accumulate',
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(text),
     };
@@ -328,7 +326,6 @@ export function buildPeerEnvelope(params: BuildPeerEnvelopeParams): AdoptedPeerE
         kind:         'peer',
         text:         joinSections([header, timeHeader, text, `Reply with SendMessage to ${name}.`]),
         peer:         { from, ...(fromName === undefined || fromName === '' ? {} : { fromName }) },
-        hostPriority: 'wake',
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(`${name}: ${text}`),
     };
@@ -394,7 +391,6 @@ export function buildCatchupEnvelope(params: BuildCatchupEnvelopeParams): QueryE
         mode:         wakes ? 'query' : 'append',
         kind:         'catchup',
         text,
-        hostPriority: wakes ? 'wake' : 'accumulate',
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(body),
     };
@@ -422,25 +418,23 @@ export function buildWrapUpEnvelope(params: BuildWrapUpEnvelopeParams): QueryEnv
         mode:         'query',
         kind:         'wrapup',
         text:         joinSections([header, instruction]),
-        hostPriority: 'wake',
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(instruction),
     };
 }
 
 /**
- * Builds a resume envelope carrying a pre-composed resume note verbatim.
- * @param note Resume note text (see `buildResumeNote` in resume-prompt-builder.ts)
+ * Builds a continuation envelope carrying a pre-composed continuation note verbatim.
+ * @param note Continuation note text (see `buildContinuationNote` in continuation-prompt-builder.ts)
  * @param now Envelope creation time, for `createdAt`
- * @returns A `resume`-kind {@link QueryEnvelope}
+ * @returns A `continuation`-kind {@link QueryEnvelope}
  */
-export function buildResumeEnvelope(note: string, now: Date): QueryEnvelope {
+export function buildContinuationEnvelope(note: string, now: Date): QueryEnvelope {
     return {
         id:           crypto.randomUUID(),
         mode:         'query',
-        kind:         'resume',
+        kind:         'continuation',
         text:         note,
-        hostPriority: 'wake',
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(note),
     };
@@ -448,38 +442,36 @@ export function buildResumeEnvelope(note: string, now: Date): QueryEnvelope {
 
 /**
  * Builds a boot envelope carrying a pre-composed boot bundle verbatim (see boot-bundle.ts).
- * Never interrupts and never escalates: it is an {@link AccumulationEnvelope} (sent with
- * `shouldQuery: false`) and its `hostPriority` is 'accumulate'.
+ * Never interrupts and never escalates: it is an {@link AccumulationEnvelope} sent with
+ * `shouldQuery: false`.
  * @param text Pre-composed boot bundle text
  * @param now Envelope creation time, for `createdAt`
  * @returns A `boot`-kind {@link AccumulationEnvelope}
  */
 export function buildBootEnvelope(text: string, now: Date): AccumulationEnvelope {
     return {
-        id:           crypto.randomUUID(),
-        mode:         'append',
-        kind:         'boot',
+        id:        crypto.randomUUID(),
+        mode:      'append',
+        kind:      'boot',
         text,
-        hostPriority: 'accumulate',
-        createdAt:    now,
+        createdAt: now,
     };
 }
 
 /**
  * Builds the host-driven '/compact' envelope submitted by the compaction guard at a turn
- * boundary. A {@link QueryEnvelope} queued as 'accumulate' — the one pairing that shows the
- * contract and `hostPriority` are independent.
+ * boundary. A {@link QueryEnvelope} — its `shouldQuery: true` contract is unrelated to how the
+ * conductor submits it, since the two are set independently at different points.
  * @param now Envelope creation time, for `createdAt`
  * @returns A `compact`-kind {@link QueryEnvelope} whose text is exactly '/compact'
  */
 export function buildCompactEnvelope(now: Date): QueryEnvelope {
     return {
-        id:           crypto.randomUUID(),
-        mode:         'query',
-        kind:         'compact',
-        text:         '/compact',
-        hostPriority: 'accumulate',
-        createdAt:    now,
+        id:        crypto.randomUUID(),
+        mode:      'query',
+        kind:      'compact',
+        text:      '/compact',
+        createdAt: now,
     };
 }
 
@@ -491,8 +483,8 @@ export function buildCompactEnvelope(now: Date): QueryEnvelope {
  * to `true`, as it did before the contracts were split: the adopted record is never pushed on
  * its own, but a crash reopen re-queues whatever turn was in flight, adopted or not, and
  * {@link import('./conductor')}'s `beginTurn` pushes it. Deliberately does not set the SDK's own
- * `priority?: 'now'|'next'|'later'` field — a different concept from `Envelope.hostPriority`
- * that this session core does not use.
+ * `priority?: 'now'|'next'|'later'` field — this session core does not use it; the conductor's
+ * own submit-time `SubmitPriority` is a separate, unrelated concept.
  * @param envelope Envelope to convert
  * @returns An `SDKUserMessage` ready to feed the session's input stream
  */

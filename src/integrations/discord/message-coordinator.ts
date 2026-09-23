@@ -6,14 +6,14 @@
  * - Batching rapid successive messages via debounce window
  * - Interrupting active processing only after debounce timer expires
  * - Capturing partial work from interrupted streams
- * - Resuming with full context including all batched messages
+ * - Continuing with full context including all batched messages
  *
  * When messages arrive during active processing:
  * 1. Add message to pending queue
  * 2. Start/reset debounce timer (don't interrupt yet)
  * 3. After debounce expires -> interrupt the active query
  * 4. Wait for interrupted query to complete
- * 5. Process all batched messages with resume context
+ * 5. Process all batched messages with continuation context
  *
  * This ensures the agent isn't idle during the debounce window and
  * batches all rapid messages before interrupting.
@@ -22,7 +22,7 @@
 import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
 import type { DiscordMessageContext, ChannelId } from './types';
-import type { StreamTracker, StreamProgress, ResumeContext } from '@/agent';
+import type { StreamTracker, StreamProgress, ContinuationContext } from '@/agent';
 import { InvariantViolationError } from '@/errors';
 
 const MAX_PENDING_MESSAGES = 50;
@@ -45,7 +45,7 @@ export interface ProcessResult {
 /** Processor function type - called to process batched messages */
 export type MessageProcessor = (
     contexts: DiscordMessageContext[],
-    resumeContext: ResumeContext | null,
+    continuationContext: ContinuationContext | null,
     abortSignal: AbortSignal
 ) => Promise<ProcessResult>;
 
@@ -54,13 +54,13 @@ export interface MessageCoordinatorConfig {
     debounceMs?:      number  // Default: 2000ms
     /**
      * Optional callback invoked when processing completes (not on interruption). `batch` is the
-     * non-null Discord `Message` of every context in the completed batch (originals + resumed),
+     * non-null Discord `Message` of every context in the completed batch (originals + continued),
      * in arrival order — a re-queued original message's `Message` reference is null (only its
      * context survives interruption) and is therefore excluded.
      */
     onResponse?:      (result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>
     /** Optional callback invoked when processing ends; an async callback is observed but does not delay the next run. */
-    onProcessingEnd?: (info: { wasInterrupted: boolean, willResume: boolean }) => void | Promise<void>
+    onProcessingEnd?: (info: { wasInterrupted: boolean, willContinue: boolean }) => void | Promise<void>
     /**
      * Optional synchronous callback that returns true when the channel registry is ready.
      * When provided and returns false, incoming messages are dropped with a warn log.
@@ -84,12 +84,12 @@ interface QueuedMessage {
 interface ChannelState {
     // Active processing
     activeQuery?: {
-        abortController:     AbortController
-        originalContexts:    DiscordMessageContext[]
-        processingPromise:   Promise<void>
-        firstDiscordMessage: Message | null  // First message in the batch for response
-        resumeScheduled:     boolean
-        resultCompleted:     boolean
+        abortController:       AbortController
+        originalContexts:      DiscordMessageContext[]
+        processingPromise:     Promise<void>
+        firstDiscordMessage:   Message | null  // First message in the batch for response
+        continuationScheduled: boolean
+        resultCompleted:       boolean
     }
     // Messages received during processing
     pendingMessages:          QueuedMessage[]
@@ -111,7 +111,7 @@ interface ChannelState {
  * ```typescript
  * const coordinator = new MessageCoordinator({ debounceMs: 500 });
  *
- * coordinator.setProcessor(async (contexts, resumeContext, abortSignal) => {
+ * coordinator.setProcessor(async (contexts, continuationContext, abortSignal) => {
  *   // Process messages
  *   return {
  *     response: 'Response text',
@@ -128,7 +128,7 @@ interface ChannelState {
 export class MessageCoordinator {
     private readonly debounceMs:       number;
     private readonly onResponse?:      (result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>;
-    private readonly onProcessingEnd?: (info: { wasInterrupted: boolean, willResume: boolean }) => void | Promise<void>;
+    private readonly onProcessingEnd?: (info: { wasInterrupted: boolean, willContinue: boolean }) => void | Promise<void>;
     private readonly registryReady?:   () => boolean;
     private readonly channelStates = new Map<ChannelId, ChannelState>();
     private processor:                 MessageProcessor | null = null;
@@ -199,7 +199,7 @@ export class MessageCoordinator {
     }
 
     /** The end callback is advisory; observe failures without delaying queued work. */
-    private notifyProcessingEnd(channelId: ChannelId, info: { wasInterrupted: boolean, willResume: boolean }): void {
+    private notifyProcessingEnd(channelId: ChannelId, info: { wasInterrupted: boolean, willContinue: boolean }): void {
         try {
             const notified = this.onProcessingEnd?.(info);
             if(notified) {
@@ -213,7 +213,7 @@ export class MessageCoordinator {
     }
 
     /**
-     * Shared post-processing logic for both startProcessing and processWithResume.
+     * Shared post-processing logic for both startProcessing and processWithContinuation.
      * Handles interrupted vs completed result, captures partial work, and invokes onResponse.
      * Returns the onResponse Promise when there is work to await, or void otherwise.
      * This avoids extra microtask hops in the interrupted/no-callback paths.
@@ -226,7 +226,7 @@ export class MessageCoordinator {
         firstDiscordMessage: Message | null,
         batch: Message[]
     ): Promise<void> | void {
-        // If interrupted, capture partial work for resume context (human-readable summary only)
+        // If interrupted, capture partial work for continuation context (human-readable summary only)
         if(result.wasInterrupted) {
             if(result.streamTracker.hasMeaningfulProgress()) {
                 state.partialWork = result.streamTracker.getProgress();
@@ -254,7 +254,7 @@ export class MessageCoordinator {
 
         const state = this.getOrCreateState(channelId);
 
-        // Fresh (non-resumed) path: contexts is always the single triggering message, so the
+        // Fresh (non-continuation) path: contexts is always the single triggering message, so the
         // batch is just that message's Message object (never null — the only call site passes
         // the real discord.js Message that triggered this processing run).
         const batch: Message[] = firstDiscordMessage ? [firstDiscordMessage] : [];
@@ -269,11 +269,11 @@ export class MessageCoordinator {
         // catch/finally before the IIFE returns; its finally must clear this same active run.
         const activeQuery: NonNullable<ChannelState['activeQuery']> = {
             abortController,
-            originalContexts:  contexts,
-            processingPromise: Promise.resolve(),
+            originalContexts:      contexts,
+            processingPromise:     Promise.resolve(),
             firstDiscordMessage,
-            resumeScheduled:   false,
-            resultCompleted:   false,
+            continuationScheduled: false,
+            resultCompleted:       false,
         };
         state.activeQuery = activeQuery;
 
@@ -286,7 +286,7 @@ export class MessageCoordinator {
                 // Call processor
                 const result = await this.processor!(
                     contexts,
-                    null, // no resume context for initial processing
+                    null, // no continuation context for initial processing
                     abortController.signal
                 );
                 wasInterrupted = result.wasInterrupted;
@@ -310,19 +310,19 @@ export class MessageCoordinator {
                 // Clear active query
                 state.activeQuery = undefined;
                 // Notify caller about processing end state
-                const willResume = state.pendingMessages.length > 0;
-                this.notifyProcessingEnd(channelId, { wasInterrupted, willResume });
+                const willContinue = state.pendingMessages.length > 0;
+                this.notifyProcessingEnd(channelId, { wasInterrupted, willContinue });
             }
         })();
         activeQuery.processingPromise = processingPromise;
     }
 
     /**
-     * Process with resume context after debounce.
+     * Process with continuation context after debounce.
      */
-    private processWithResume(channelId: ChannelId): void {
+    private processWithContinuation(channelId: ChannelId): void {
         if(!this.processor) {
-            throw new InvariantViolationError('processWithResume', 'Processor not set. Call setProcessor() before handling messages.');
+            throw new InvariantViolationError('processWithContinuation', 'Processor not set. Call setProcessor() before handling messages.');
         }
 
         const state = this.getOrCreateState(channelId);
@@ -350,7 +350,7 @@ export class MessageCoordinator {
         //           2) First new message's Discord message
         const firstDiscordMessage = state.interruptedFirstMessage ?? newMessages[0]?.discordMessage ?? null;
 
-        // The non-null Discord Message of every context in the batch (originals + resumed), in
+        // The non-null Discord Message of every context in the batch (originals + continued), in
         // arrival order. Re-queued original messages carry discordMessage: null (only their
         // context survives interruption — see the debounce-timer handler in handleMessage), so
         // they're excluded here; only messages we still hold a real Message object for appear.
@@ -359,8 +359,8 @@ export class MessageCoordinator {
             .map(msg => msg.discordMessage)
             .filter((message): message is Message => message !== null);
 
-        // Build the resume context up front — nothing below needs to resolve anything async.
-        const resumeContext: ResumeContext | null = state.partialWork
+        // Build the continuation context up front — nothing below needs to resolve anything async.
+        const continuationContext: ContinuationContext | null = state.partialWork
             ? {
                 partialWork: state.partialWork,
                 newMessages: newMessages.map(({ context }) => ({ messageId: context.messageId, content: context.content })),
@@ -379,11 +379,11 @@ export class MessageCoordinator {
 
         const activeQuery: NonNullable<ChannelState['activeQuery']> = {
             abortController,
-            originalContexts:  allContexts,
-            processingPromise: Promise.resolve(),
+            originalContexts:      allContexts,
+            processingPromise:     Promise.resolve(),
             firstDiscordMessage,
-            resumeScheduled:   false,
-            resultCompleted:   false,
+            continuationScheduled: false,
+            resultCompleted:       false,
         };
         state.activeQuery = activeQuery;
 
@@ -392,10 +392,10 @@ export class MessageCoordinator {
             let wasInterrupted = true; // Default: treat errors/aborts as interruptions
             let phase: 'processor' | 'onResponse' = 'processor';
             try {
-                // Call processor with resume context
+                // Call processor with continuation context
                 const result = await this.processor!(
                     allContexts,
-                    resumeContext,
+                    continuationContext,
                     abortController.signal
                 );
                 wasInterrupted = result.wasInterrupted;
@@ -419,19 +419,19 @@ export class MessageCoordinator {
                 // Clear active query
                 state.activeQuery = undefined;
                 // Notify caller about processing end state
-                const willResume = state.pendingMessages.length > 0;
-                this.notifyProcessingEnd(channelId, { wasInterrupted, willResume });
+                const willContinue = state.pendingMessages.length > 0;
+                this.notifyProcessingEnd(channelId, { wasInterrupted, willContinue });
             }
         })();
         activeQuery.processingPromise = processingPromise;
     }
 
-    /** Start one resumed run after both the active run and the latest debounce have ended. */
-    private resumePending(channelId: ChannelId, state: ChannelState): void {
+    /** Start one continuation run after both the active run and the latest debounce have ended. */
+    private processPending(channelId: ChannelId, state: ChannelState): void {
         if(this.channelStates.get(channelId) !== state || state.activeQuery || state.debounceTimer) {
             return;
         }
-        this.processWithResume(channelId);
+        this.processWithContinuation(channelId);
     }
 
     /**
@@ -484,15 +484,15 @@ export class MessageCoordinator {
                 if(activeQuery) {
                     // Several debounce windows may expire while one aborted processor cleans up.
                     // Only the first expiry owns its requeue and completion continuation.
-                    if(activeQuery.resumeScheduled) {
+                    if(activeQuery.continuationScheduled) {
                         return;
                     }
-                    activeQuery.resumeScheduled = true;
+                    activeQuery.continuationScheduled = true;
                     if(!activeQuery.resultCompleted) {
                         activeQuery.abortController.abort();
 
                         // Store the first message from interrupted query if we don't have one yet
-                        // Stryker disable next-line llm: the field is cleared before every activeQuery install and resumeScheduled makes this line reachable at most once per query, so it is always undefined here and `??=` equals `=`
+                        // Stryker disable next-line llm: the field is cleared before every activeQuery install and continuationScheduled makes this line reachable at most once per query, so it is always undefined here and `??=` equals `=`
                         state.interruptedFirstMessage ??= activeQuery.firstDiscordMessage;
 
                         // Re-queue original messages (with null discordMessage)
@@ -505,13 +505,13 @@ export class MessageCoordinator {
                     }
 
                     // A newer debounce may still be running when cleanup finishes; the continuation
-                    // and timer both use resumePending, which starts at most one nonempty batch.
-                    void activeQuery.processingPromise.then(() => this.resumePending(context.channelId, state)).catch((err: unknown) => {
-                        logger.error({ err, channelId: context.channelId, msg: 'MessageCoordinator: failed to resume after interruption' });
+                    // and timer both use processPending, which starts at most one nonempty batch.
+                    void activeQuery.processingPromise.then(() => this.processPending(context.channelId, state)).catch((err: unknown) => {
+                        logger.error({ err, channelId: context.channelId, msg: 'MessageCoordinator: failed to continue after interruption' });
                     });
                 } else {
                     // Active query finished before debounce expired, just process pending normally
-                    this.resumePending(context.channelId, state);
+                    this.processPending(context.channelId, state);
                 }
             }, this.debounceMs);
 
@@ -534,7 +534,7 @@ export class MessageCoordinator {
             clearTimeout(state.debounceTimer);
             state.debounceTimer = setTimeout(() => {
                 state.debounceTimer = undefined;
-                this.resumePending(context.channelId, state);
+                this.processPending(context.channelId, state);
             }, this.debounceMs);
 
             return;
@@ -551,7 +551,7 @@ export class MessageCoordinator {
                 state.pendingMessages.splice(oldestNewIndex, 1);
                 logger.debug({ evicted: 1, max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction (reentrant push)' });
             }
-            this.resumePending(context.channelId, state);
+            this.processPending(context.channelId, state);
             return;
         }
 

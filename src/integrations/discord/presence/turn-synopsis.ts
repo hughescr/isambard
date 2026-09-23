@@ -4,7 +4,7 @@
  * Before this module, `createLedgerStreamEventHandler` was constructed at exactly one call site
  * — inside `setup/conductor-processor.ts`'s closure for a human Discord envelope — so every
  * other turn (a bare notification, an adopted task wake, a peer message, catch-up, perch,
- * wrapup, resume) ran with the ledger's bare base phase and painted a generic "Thinking…".
+ * wrapup, continuation) ran with the ledger's bare base phase and painted a generic "Thinking…".
  *
  * The fix is to key attachment off the LEDGER's own turn rather than off any one submit path:
  * the conductor mints a turn's identity and dispatches it (`turn_submitted`, or

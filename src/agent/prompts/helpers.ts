@@ -2,7 +2,7 @@
  * Shared prompt formatting helpers.
  *
  * These utilities are used by the various prompt builders
- * (perch, catch-up, resume) for consistent section delimiters
+ * (perch, catch-up, continuation) for consistent section delimiters
  * and optional-section formatting.
  */
 

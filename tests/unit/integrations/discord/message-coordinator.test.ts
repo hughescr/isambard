@@ -4,14 +4,14 @@ import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:tes
 import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
 import { mockLogger } from '../../../setup';
-import type { ResumeContext } from '@/agent/resume-prompt-builder';
+import type { ContinuationContext } from '@/agent/continuation-prompt-builder';
 import { StreamTracker } from '@/agent/stream-tracker';
 import { InvariantViolationError } from '@/errors';
 import { MessageCoordinator, type ProcessResult, type MessageProcessor  } from '@/integrations/discord/message-coordinator';
 import { type DiscordMessageContext, createChannelId, createGuildId, createUserId  } from '@/integrations/discord/types';
 
 function createDelayedProcessor(delayMs: number): MessageProcessor {
-    return async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+    return async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
         await new Promise<void>((resolve) => {
             setTimeout(resolve, delayMs);
         });
@@ -103,12 +103,12 @@ describe('MessageCoordinator', () => {
 
         it('rejects internal processing entry points when no processor is configured', () => {
             const startProcessing = coordinator['startProcessing'].bind(coordinator);
-            const processWithResume = coordinator['processWithResume'].bind(coordinator);
+            const processWithContinuation = coordinator['processWithContinuation'].bind(coordinator);
             expect(() => startProcessing(mockContext.channelId, [mockContext], mockMessage)).toThrow(
                 new InvariantViolationError('startProcessing', 'Processor not set. Call setProcessor() before handling messages.')
             );
-            expect(() => processWithResume(mockContext.channelId)).toThrow(
-                new InvariantViolationError('processWithResume', 'Processor not set. Call setProcessor() before handling messages.')
+            expect(() => processWithContinuation(mockContext.channelId)).toThrow(
+                new InvariantViolationError('processWithContinuation', 'Processor not set. Call setProcessor() before handling messages.')
             );
         });
     });
@@ -215,7 +215,7 @@ describe('MessageCoordinator', () => {
             expect(processorMock).toHaveBeenCalledTimes(1);
             const callArgs = processorMock.mock.calls[0] as unknown[];
             expect(callArgs[0]).toEqual([mockContext]); // contexts array
-            expect(callArgs[1]).toBeNull(); // resumeContext
+            expect(callArgs[1]).toBeNull(); // continuationContext
             expect(callArgs[2]).toBeDefined(); // abortSignal
         });
     });
@@ -229,7 +229,7 @@ describe('MessageCoordinator', () => {
         it('should interrupt active processing only after debounce timer expires', async () => {
             // Make processor run slowly so we can interrupt it
             let abortSignalReceived: AbortSignal | null = null;
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 abortSignalReceived = abortSignal;
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
@@ -280,7 +280,7 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            const progressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const progressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - simulate slow processing (longer than debounce so it will be interrupted)
@@ -294,9 +294,9 @@ describe('MessageCoordinator', () => {
                     };
                 } else {
                     // Second call (after interrupt) - should have resume context
-                    expect(resumeContext).toBeDefined();
-                    expect(resumeContext?.partialWork.thinking).toBe('I am thinking...');
-                    expect(resumeContext?.partialWork.text).toBe('Partial response...');
+                    expect(continuationContext).toBeDefined();
+                    expect(continuationContext?.partialWork.thinking).toBe('I am thinking...');
+                    expect(continuationContext?.partialWork.text).toBe('Partial response...');
                     return {
                         response:       'Resumed response',
                         wasInterrupted: false,
@@ -321,18 +321,18 @@ describe('MessageCoordinator', () => {
             expect(callCount).toBe(2);
         });
 
-        it('should NOT pass resumeContext to the resumed call when interrupted stream had zero progress', async () => {
+        it('should NOT pass continuationContext to the resumed call when interrupted stream had zero progress', async () => {
             // Mirrors 'should capture partial work from stream tracker on interrupt' but with a
             // zero-progress StreamTracker on the interrupted first call. Kills the mutant that
             // changes `if(result.streamTracker.hasMeaningfulProgress())` to `if(true)`: under the
             // mutant, state.partialWork would be set to result.streamTracker.getProgress() (a
             // truthy object, even with empty fields) regardless of hasMeaningfulProgress(), so the
-            // very next processWithResume call would receive a non-null resumeContext instead of null.
-            // Capture the resumeContext and assert it after the processor settles so the failure
+            // very next processWithContinuation call would receive a non-null continuationContext instead of null.
+            // Capture the continuationContext and assert it after the processor settles so the failure
             // describes the public coordinator behavior rather than an asynchronous callback.
             let callCount = 0;
-            let resumeContextOnSecondCall: ResumeContext | null | undefined;
-            const zeroProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            let continuationContextOnSecondCall: ContinuationContext | null | undefined;
+            const zeroProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - interrupted with zero progress
@@ -346,7 +346,7 @@ describe('MessageCoordinator', () => {
                     };
                 } else {
                     // Second call (immediately resumed after interrupt) - must NOT have resume context
-                    resumeContextOnSecondCall = resumeContext;
+                    continuationContextOnSecondCall = continuationContext;
                     return {
                         response:       'Resumed response',
                         wasInterrupted: false,
@@ -371,15 +371,15 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            expect(resumeContextOnSecondCall).toBeNull();
+            expect(continuationContextOnSecondCall).toBeNull();
         });
 
         it('should NOT store partialWork when interrupted with zero progress (startProcessing)', async () => {
             // Processor that is interrupted but returns a fresh StreamTracker (zero progress)
             let callCount = 0;
-            let resumeContextOnSecondCall: ResumeContext | null = null;
+            let continuationContextOnSecondCall: ContinuationContext | null = null;
 
-            const zeroProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _abortSignal: AbortSignal) => {
+            const zeroProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, _abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - interrupted with zero progress
@@ -390,7 +390,7 @@ describe('MessageCoordinator', () => {
                     };
                 } else {
                     // Second call - should NOT receive resume context from first interrupted call
-                    resumeContextOnSecondCall = resumeContext;
+                    continuationContextOnSecondCall = continuationContext;
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -417,25 +417,25 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            // resumeContext should NOT be passed because first interruption had zero progress
-            expect(resumeContextOnSecondCall).toBeNull();
+            // continuationContext should NOT be passed because first interruption had zero progress
+            expect(continuationContextOnSecondCall).toBeNull();
         });
 
-        it('should NOT store partialWork when interrupted with zero progress (processWithResume)', async () => {
-            // Trigger the processWithResume path by:
+        it('should NOT store partialWork when interrupted with zero progress (processWithContinuation)', async () => {
+            // Trigger the processWithContinuation path by:
             // 1. First message starts processing (slow)
             // 2. Second message triggers interrupt via debounce
             // 3. Interrupted call returns zero-progress StreamTracker
             // 4. Third message after resumed call completes should NOT receive resume context
 
             let callCount = 0;
-            let resumeContextInThirdCall: ResumeContext | null = null;
+            let continuationContextInThirdCall: ContinuationContext | null = null;
 
-            const zeroProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const zeroProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 3) {
-                    resumeContextInThirdCall = resumeContext;
+                    continuationContextInThirdCall = continuationContext;
                 }
 
                 if(callCount === 1 || callCount === 2) {
@@ -486,12 +486,12 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(3);
-            // resumeContext should NOT be passed to third call because second interrupted call had zero progress
-            expect(resumeContextInThirdCall).toBeNull();
+            // continuationContext should NOT be passed to third call because second interrupted call had zero progress
+            expect(continuationContextInThirdCall).toBeNull();
         });
 
-        it('should store partialWork when processWithResume interrupted WITH thinking progress', async () => {
-            // Same 3-message pattern but processWithResume has thinking-only progress
+        it('should store partialWork when processWithContinuation interrupted WITH thinking progress', async () => {
+            // Same 3-message pattern but processWithContinuation has thinking-only progress
 
             const trackerWithThinking = new StreamTracker();
             trackerWithThinking.update({
@@ -502,13 +502,13 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let resumeContextInThirdCall: ResumeContext | null = null;
+            let continuationContextInThirdCall: ContinuationContext | null = null;
 
-            const thinkingProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const thinkingProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 3) {
-                    resumeContextInThirdCall = resumeContext;
+                    continuationContextInThirdCall = continuationContext;
                 }
 
                 if(callCount === 1) {
@@ -522,7 +522,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  new StreamTracker(), // zero progress - don't carry forward
                     };
                 } else if(callCount === 2) {
-                    // Second call (processWithResume) - interrupted with thinking-only progress
+                    // Second call (processWithContinuation) - interrupted with thinking-only progress
                     // Must run longer than debounce (100ms) so the abort signal fires before this resolves
                     await new Promise((resolve) => {
                         setTimeout(resolve, 300);
@@ -533,7 +533,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  trackerWithThinking, // thinking-only progress - SHOULD carry forward
                     };
                 } else {
-                    // Third call - should receive resume context from interrupted processWithResume call
+                    // Third call - should receive resume context from interrupted processWithContinuation call
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -561,7 +561,7 @@ describe('MessageCoordinator', () => {
 
             expect(callCount).toBe(2);
 
-            // Third message interrupts second (processWithResume) (starts debounce@t=460)
+            // Third message interrupts second (processWithContinuation) (starts debounce@t=460)
             // call2 finishes at t=500 (200ms start + 300ms wait), AFTER debounce fires at t=460
             const msg3Context = { ...mockContext, messageId: 'msg-003' };
             const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
@@ -575,18 +575,18 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(3);
-            // resumeContext SHOULD be passed to third call because processWithResume had thinking progress
-            expect(resumeContextInThirdCall).not.toBeNull();
-            expect(resumeContextInThirdCall!.partialWork.thinking).toBe('I am thinking deeply here...');
+            // continuationContext SHOULD be passed to third call because processWithContinuation had thinking progress
+            expect(continuationContextInThirdCall).not.toBeNull();
+            expect(continuationContextInThirdCall!.partialWork.thinking).toBe('I am thinking deeply here...');
         });
 
-        it('should store partialWork when processWithResume interrupted WITH text progress', async () => {
-            // Trigger processWithResume path:
+        it('should store partialWork when processWithContinuation interrupted WITH text progress', async () => {
+            // Trigger processWithContinuation path:
             // 1. First message starts processing (slow, 200ms)
             // 2. Second message triggers interrupt via debounce (100ms after msg2)
-            // 3. processWithResume (call 2) runs with text progress tracker, also interrupted
+            // 3. processWithContinuation (call 2) runs with text progress tracker, also interrupted
             // 4. Third message triggers that interrupt
-            // 5. Third call (call 3) should receive resume context from interrupted processWithResume
+            // 5. Third call (call 3) should receive resume context from interrupted processWithContinuation
 
             const trackerWithText = new StreamTracker();
             trackerWithText.update({
@@ -597,13 +597,13 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let resumeContextInThirdCall: ResumeContext | null = null;
+            let continuationContextInThirdCall: ContinuationContext | null = null;
 
-            const textProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const textProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 3) {
-                    resumeContextInThirdCall = resumeContext;
+                    continuationContextInThirdCall = continuationContext;
                 }
 
                 if(callCount === 1) {
@@ -617,7 +617,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  new StreamTracker(), // zero progress - don't carry forward
                     };
                 } else if(callCount === 2) {
-                    // Second call (processWithResume) - interrupted with text progress
+                    // Second call (processWithContinuation) - interrupted with text progress
                     // Must run longer than debounce (100ms) so the abort signal fires before this resolves
                     await new Promise((resolve) => {
                         setTimeout(resolve, 300);
@@ -628,7 +628,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  trackerWithText, // text progress - SHOULD carry forward
                     };
                 } else {
-                    // Third call - should receive resume context from interrupted processWithResume call
+                    // Third call - should receive resume context from interrupted processWithContinuation call
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -656,7 +656,7 @@ describe('MessageCoordinator', () => {
 
             expect(callCount).toBe(2);
 
-            // Third message interrupts second (processWithResume) (starts debounce@t=460)
+            // Third message interrupts second (processWithContinuation) (starts debounce@t=460)
             // call2 finishes at t=500 (200ms start + 300ms wait), AFTER debounce fires at t=460
             const msg3Context = { ...mockContext, messageId: 'msg-003' };
             const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
@@ -670,13 +670,13 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(3);
-            // resumeContext SHOULD be passed to third call because processWithResume had text progress
-            expect(resumeContextInThirdCall).not.toBeNull();
-            expect(resumeContextInThirdCall!.partialWork.text).toBe('I started writing...');
+            // continuationContext SHOULD be passed to third call because processWithContinuation had text progress
+            expect(continuationContextInThirdCall).not.toBeNull();
+            expect(continuationContextInThirdCall!.partialWork.text).toBe('I started writing...');
         });
 
-        it('should store partialWork when processWithResume interrupted WITH pendingToolUse progress', async () => {
-            // Same 3-message pattern but processWithResume has tool_use progress
+        it('should store partialWork when processWithContinuation interrupted WITH pendingToolUse progress', async () => {
+            // Same 3-message pattern but processWithContinuation has tool_use progress
 
             const trackerWithToolUse = new StreamTracker();
             trackerWithToolUse.update({
@@ -687,13 +687,13 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let resumeContextInThirdCall: ResumeContext | null = null;
+            let continuationContextInThirdCall: ContinuationContext | null = null;
 
-            const toolUseProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const toolUseProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 3) {
-                    resumeContextInThirdCall = resumeContext;
+                    continuationContextInThirdCall = continuationContext;
                 }
 
                 if(callCount === 1) {
@@ -707,7 +707,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  new StreamTracker(), // zero progress - don't carry forward
                     };
                 } else if(callCount === 2) {
-                    // Second call (processWithResume) - interrupted with pendingToolUse progress
+                    // Second call (processWithContinuation) - interrupted with pendingToolUse progress
                     // Must run longer than debounce (100ms) so the abort signal fires before this resolves
                     await new Promise((resolve) => {
                         setTimeout(resolve, 300);
@@ -718,7 +718,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  trackerWithToolUse, // tool_use progress - SHOULD carry forward
                     };
                 } else {
-                    // Third call - should receive resume context from interrupted processWithResume call
+                    // Third call - should receive resume context from interrupted processWithContinuation call
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -746,7 +746,7 @@ describe('MessageCoordinator', () => {
 
             expect(callCount).toBe(2);
 
-            // Third message interrupts second (processWithResume) (starts debounce@t=460)
+            // Third message interrupts second (processWithContinuation) (starts debounce@t=460)
             // call2 finishes at t=500 (200ms start + 300ms wait), AFTER debounce fires at t=460
             const msg3Context = { ...mockContext, messageId: 'msg-003' };
             const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
@@ -760,14 +760,14 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(3);
-            // resumeContext SHOULD be passed to third call because processWithResume had pendingToolUse progress
-            expect(resumeContextInThirdCall).not.toBeNull();
-            expect(resumeContextInThirdCall!.partialWork.pendingToolUse?.name).toBe('Read');
+            // continuationContext SHOULD be passed to third call because processWithContinuation had pendingToolUse progress
+            expect(continuationContextInThirdCall).not.toBeNull();
+            expect(continuationContextInThirdCall!.partialWork.pendingToolUse?.name).toBe('Read');
         });
 
         it('should store partialWork when interrupted WITH thinking progress', async () => {
             // Test via the interrupt path: first call is slow, second message triggers debounce interrupt.
-            // processWithResume carries the partialWork as resumeContext to the next call.
+            // processWithContinuation carries the partialWork as continuationContext to the next call.
             const trackerWithThinking = new StreamTracker();
             trackerWithThinking.update({
                 type:    'assistant',
@@ -777,9 +777,9 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let resumeContextOnSecondCall: ResumeContext | null = null;
+            let continuationContextOnSecondCall: ContinuationContext | null = null;
 
-            const thinkingProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const thinkingProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - slow enough to be interrupted by debounce
@@ -792,8 +792,8 @@ describe('MessageCoordinator', () => {
                         streamTracker:  trackerWithThinking,
                     };
                 } else {
-                    // Second call (processWithResume) - SHOULD receive resume context because thinking progress was meaningful
-                    resumeContextOnSecondCall = resumeContext;
+                    // Second call (processWithContinuation) - SHOULD receive resume context because thinking progress was meaningful
+                    continuationContextOnSecondCall = continuationContext;
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -818,9 +818,9 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            // resumeContext should be passed because first interruption had thinking progress
-            expect(resumeContextOnSecondCall).not.toBeNull();
-            expect(resumeContextOnSecondCall!.partialWork.thinking).toBe('I am thinking deeply...');
+            // continuationContext should be passed because first interruption had thinking progress
+            expect(continuationContextOnSecondCall).not.toBeNull();
+            expect(continuationContextOnSecondCall!.partialWork.thinking).toBe('I am thinking deeply...');
         });
 
         it('should store partialWork when interrupted WITH text progress', async () => {
@@ -834,9 +834,9 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let resumeContextOnSecondCall: ResumeContext | null = null;
+            let continuationContextOnSecondCall: ContinuationContext | null = null;
 
-            const textProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const textProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - slow enough to be interrupted by debounce
@@ -849,8 +849,8 @@ describe('MessageCoordinator', () => {
                         streamTracker:  trackerWithText,
                     };
                 } else {
-                    // Second call (processWithResume) - SHOULD receive resume context because text progress was meaningful
-                    resumeContextOnSecondCall = resumeContext;
+                    // Second call (processWithContinuation) - SHOULD receive resume context because text progress was meaningful
+                    continuationContextOnSecondCall = continuationContext;
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -875,9 +875,9 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            // resumeContext should be passed because first interruption had text progress
-            expect(resumeContextOnSecondCall).not.toBeNull();
-            expect(resumeContextOnSecondCall!.partialWork.text).toBe('I started writing a response...');
+            // continuationContext should be passed because first interruption had text progress
+            expect(continuationContextOnSecondCall).not.toBeNull();
+            expect(continuationContextOnSecondCall!.partialWork.text).toBe('I started writing a response...');
         });
 
         it('should store partialWork when interrupted WITH pendingToolUse progress', async () => {
@@ -891,9 +891,9 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let resumeContextOnSecondCall: ResumeContext | null = null;
+            let continuationContextOnSecondCall: ContinuationContext | null = null;
 
-            const toolUseProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const toolUseProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - slow enough to be interrupted by debounce
@@ -906,8 +906,8 @@ describe('MessageCoordinator', () => {
                         streamTracker:  trackerWithToolUse,
                     };
                 } else {
-                    // Second call (processWithResume) - SHOULD receive resume context because pendingToolUse was meaningful
-                    resumeContextOnSecondCall = resumeContext;
+                    // Second call (processWithContinuation) - SHOULD receive resume context because pendingToolUse was meaningful
+                    continuationContextOnSecondCall = continuationContext;
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -932,15 +932,15 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            // resumeContext should be passed because first interruption had pendingToolUse progress
-            expect(resumeContextOnSecondCall).not.toBeNull();
-            expect(resumeContextOnSecondCall!.partialWork.pendingToolUse?.name).toBe('Read');
+            // continuationContext should be passed because first interruption had pendingToolUse progress
+            expect(continuationContextOnSecondCall).not.toBeNull();
+            expect(continuationContextOnSecondCall!.partialWork.pendingToolUse?.name).toBe('Read');
         });
 
         it('should process pending messages without interruption if active query finishes before debounce', async () => {
             let callCount = 0;
             let firstCallInterrupted = false;
-            const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - completes quickly (before debounce expires)
@@ -955,7 +955,7 @@ describe('MessageCoordinator', () => {
                     };
                 } else {
                     // Second call - should NOT have resume context (no interruption)
-                    expect(resumeContext).toBeNull();
+                    expect(continuationContext).toBeNull();
                     return {
                         response:       'Second response',
                         wasInterrupted: false,
@@ -994,7 +994,7 @@ describe('MessageCoordinator', () => {
 
         it('should batch rapid messages within debounce window', async () => {
             // Make processor slow enough to allow interruption
-            const slowBatchProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const slowBatchProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 150);
                 });
@@ -1095,9 +1095,9 @@ describe('MessageCoordinator', () => {
                 }
             });
 
-            let resumeContextReceived: ResumeContext | null = null;
-            const contextProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
-                resumeContextReceived = resumeContext;
+            let continuationContextReceived: ContinuationContext | null = null;
+            const contextProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
+                continuationContextReceived = continuationContext;
                 await new Promise((resolve) => {
                     setTimeout(resolve, 150);
                 });
@@ -1122,7 +1122,7 @@ describe('MessageCoordinator', () => {
             jest.advanceTimersByTime(300);
 
             // Check resume context includes new messages
-            expect(resumeContextReceived).toBeDefined();
+            expect(continuationContextReceived).toBeDefined();
         });
     });
 
@@ -1195,7 +1195,7 @@ describe('MessageCoordinator', () => {
             });
 
             // Make processor slow to allow interruption
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 150);
                 });
@@ -1236,7 +1236,7 @@ describe('MessageCoordinator', () => {
             });
 
             // Make processor slow to allow interruption
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
                 });
@@ -1305,7 +1305,7 @@ describe('MessageCoordinator', () => {
             });
 
             // Make processor slow to allow interruption
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
                 });
@@ -1415,7 +1415,7 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
 
             let abortSignalReceived: AbortSignal | null = null;
-            const abortTestProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const abortTestProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 abortSignalReceived = abortSignal;
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
@@ -1452,12 +1452,12 @@ describe('MessageCoordinator', () => {
                 message: { content: [{ type: 'text', text: 'Some text' }] }
             });
 
-            let resumeContextReceived: ResumeContext | null = null;
+            let continuationContextReceived: ContinuationContext | null = null;
             let callCount = 0;
 
-            const notInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _abortSignal: AbortSignal) => {
+            const notInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, _abortSignal: AbortSignal) => {
                 callCount++;
-                resumeContextReceived = resumeContext;
+                continuationContextReceived = continuationContext;
                 // First call - not interrupted; second call - should NOT have partial work because first wasn't interrupted
                 return callCount === 1
                     ? {
@@ -1490,7 +1490,7 @@ describe('MessageCoordinator', () => {
 
             expect(callCount).toBe(2);
             // Resume context should be null because first call wasn't interrupted
-            expect(resumeContextReceived).toBeNull();
+            expect(continuationContextReceived).toBeNull();
         });
 
         it('should capture partial work ONLY when wasInterrupted is true (startProcessing)', async () => {
@@ -1500,12 +1500,12 @@ describe('MessageCoordinator', () => {
                 message: { content: [{ type: 'text', text: 'Partial text' }] }
             });
 
-            let resumeContextReceived: ResumeContext | null = null;
+            let continuationContextReceived: ContinuationContext | null = null;
             let callCount = 0;
 
-            const interruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const interruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
-                resumeContextReceived = resumeContext;
+                continuationContextReceived = continuationContext;
 
                 if(callCount === 1) {
                     // First call - simulate slow processing so it can be interrupted
@@ -1542,24 +1542,24 @@ describe('MessageCoordinator', () => {
 
             expect(callCount).toBe(2);
             // Resume context should have partial work from interrupted call
-            expect(resumeContextReceived).not.toBeNull();
-            expect(resumeContextReceived!.partialWork).toBeDefined();
-            expect(resumeContextReceived!.partialWork.text).toBe('Partial text');
+            expect(continuationContextReceived).not.toBeNull();
+            expect(continuationContextReceived!.partialWork).toBeDefined();
+            expect(continuationContextReceived!.partialWork.text).toBe('Partial text');
         });
     });
 
-    describe('Mutant Testing - processWithResume Logic', () => {
+    describe('Mutant Testing - processWithContinuation Logic', () => {
         beforeEach(() => {
             coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
-        it('should NOT capture partial work when wasInterrupted is false (processWithResume) - Mutant #1798', async () => {
+        it('should NOT capture partial work when wasInterrupted is false (processWithContinuation) - Mutant #1798', async () => {
             // This test kills Mutant #1798 which changes `if(result.wasInterrupted)` to `if(true)` at line 234
             // Strategy: First call gets interrupted. Second call (resume) completes successfully (wasInterrupted: false)
-            // and should NOT capture its tracker. Third call (ALSO through processWithResume) should NOT receive
+            // and should NOT capture its tracker. Third call (ALSO through processWithContinuation) should NOT receive
             // partialWork because second call completed successfully.
-            // KEY: Message 3 must arrive DURING call 2 so call 3 goes through processWithResume, not startProcessing.
+            // KEY: Message 3 must arrive DURING call 2 so call 3 goes through processWithContinuation, not startProcessing.
 
             const firstCallTracker = new StreamTracker();
             firstCallTracker.update({
@@ -1574,17 +1574,17 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let resumeContextInCall2: ResumeContext | null = 'NOT_SET' as unknown as ResumeContext | null;
-            let resumeContextInCall3: ResumeContext | null = 'NOT_SET' as unknown as ResumeContext | null;
+            let continuationContextInCall2: ContinuationContext | null = 'NOT_SET' as unknown as ContinuationContext | null;
+            let continuationContextInCall3: ContinuationContext | null = 'NOT_SET' as unknown as ContinuationContext | null;
 
-            const resumeNotInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const resumeNotInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 2) {
-                    resumeContextInCall2 = resumeContext;
+                    continuationContextInCall2 = continuationContext;
                 }
                 if(callCount === 3) {
-                    resumeContextInCall3 = resumeContext;
+                    continuationContextInCall3 = continuationContext;
                 }
 
                 if(callCount === 1) {
@@ -1598,7 +1598,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  firstCallTracker,  // This will be captured as partialWork
                     };
                 } else if(callCount === 2) {
-                    // Second call (processWithResume) - takes time so message 3 can arrive during it
+                    // Second call (processWithContinuation) - takes time so message 3 can arrive during it
                     // Completes WITHOUT interruption
                     await new Promise((resolve) => {
                         setTimeout(resolve, 150);
@@ -1609,7 +1609,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  secondCallTracker,  // Should NOT be captured at line 234
                     };
                 } else {
-                    // Third call (processWithResume) - should NOT have partialWork
+                    // Third call (processWithContinuation) - should NOT have partialWork
                     return {
                         response:       'Third response',
                         wasInterrupted: false,
@@ -1643,24 +1643,24 @@ describe('MessageCoordinator', () => {
 
             expect(callCount).toBe(2);
             // Call 2 should receive partialWork from first call (first call was interrupted)
-            expect(resumeContextInCall2).not.toBeNull();
-            expect(resumeContextInCall2).not.toBe('NOT_SET');
+            expect(continuationContextInCall2).not.toBeNull();
+            expect(continuationContextInCall2).not.toBe('NOT_SET');
 
             // Now wait for call 2 to complete + debounce for msg3 + call 3 to start and complete
             // Call 2 remaining: ~140ms, debounce: 100ms
             jest.advanceTimersByTime(250);
 
             expect(callCount).toBe(3);
-            // Critical: Call 3 goes through processWithResume (because msg3 arrived during call 2)
+            // Critical: Call 3 goes through processWithContinuation (because msg3 arrived during call 2)
             // If mutant changes if(result.wasInterrupted) to if(true) at line 234,
             // state.partialWork would be set with secondCallTracker when call 2 completed,
-            // and call 3 would receive a resumeContext with that tracker's text.
+            // and call 3 would receive a continuationContext with that tracker's text.
             // Since call 2 had wasInterrupted: false, partialWork should NOT be set,
             // so call 3 should receive null (no partialWork).
-            expect(resumeContextInCall3).toBeNull();
+            expect(continuationContextInCall3).toBeNull();
         });
 
-        it('should capture partial work ONLY when wasInterrupted is true (processWithResume)', async () => {
+        it('should capture partial work ONLY when wasInterrupted is true (processWithContinuation)', async () => {
             const trackerWithProgress = new StreamTracker();
             trackerWithProgress.update({
                 type:    'assistant',
@@ -1668,9 +1668,9 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let resumeContextInThirdCall: ResumeContext | null = null;
+            let continuationContextInThirdCall: ContinuationContext | null = null;
 
-            const resumeInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const resumeInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 1) {
@@ -1695,7 +1695,7 @@ describe('MessageCoordinator', () => {
                     };
                 } else {
                     // Third call - should have partial work from second interrupted call
-                    resumeContextInThirdCall = resumeContext;
+                    continuationContextInThirdCall = continuationContext;
                     return {
                         response:       'Final response',
                         wasInterrupted: false,
@@ -1732,9 +1732,9 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(3);
-            expect(resumeContextInThirdCall).not.toBeNull();
-            expect(resumeContextInThirdCall!.partialWork).toBeDefined();
-            expect(resumeContextInThirdCall!.partialWork.text).toBe('Resume partial');
+            expect(continuationContextInThirdCall).not.toBeNull();
+            expect(continuationContextInThirdCall!.partialWork).toBeDefined();
+            expect(continuationContextInThirdCall!.partialWork.text).toBe('Resume partial');
         });
     });
 
@@ -1744,22 +1744,22 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
         });
 
-        it('should correctly separate original and new messages in processWithResume', async () => {
+        it('should correctly separate original and new messages in processWithContinuation', async () => {
             let receivedContexts: DiscordMessageContext[] = [];
-            let resumeContextReceived: ResumeContext | null = null;
+            let continuationContextReceived: ContinuationContext | null = null;
             let filterCallCount = 0;
 
-            // First interrupted call needs meaningful progress so partialWork is captured and resumeContext is non-null
+            // First interrupted call needs meaningful progress so partialWork is captured and continuationContext is non-null
             const trackerForFiltering = new StreamTracker();
             trackerForFiltering.update({
                 type:    'assistant',
                 message: { content: [{ type: 'text', text: 'Partial response' }] }
             });
 
-            const filteringProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const filteringProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 filterCallCount++;
                 receivedContexts = contexts;
-                resumeContextReceived = resumeContext;
+                continuationContextReceived = continuationContext;
                 await new Promise((resolve) => {
                     setTimeout(resolve, 150);
                 });
@@ -1793,13 +1793,13 @@ describe('MessageCoordinator', () => {
             expect(receivedContexts[1].messageId).toBe('msg-002'); // New
 
             // Resume context should have only the new message
-            expect(resumeContextReceived!.newMessages).toEqual([{ messageId: 'msg-002', content: 'Second' }]);
+            expect(continuationContextReceived!.newMessages).toEqual([{ messageId: 'msg-002', content: 'Second' }]);
         });
 
         it('should correctly build contexts from lodash map operations', async () => {
             let receivedContexts: DiscordMessageContext[] = [];
 
-            const mapTestProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const mapTestProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 // Capture the contexts from each call
                 receivedContexts = contexts;
                 await new Promise((resolve) => {
@@ -1847,8 +1847,8 @@ describe('MessageCoordinator', () => {
             expect(messageIds).toContain('msg-003'); // New
         });
 
-        it('should handle empty original messages array in processWithResume', async () => {
-            const emptyOriginalsProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _abortSignal: AbortSignal) => {
+        it('should handle empty original messages array in processWithContinuation', async () => {
+            const emptyOriginalsProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, _abortSignal: AbortSignal) => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
@@ -1863,7 +1863,7 @@ describe('MessageCoordinator', () => {
             await Promise.resolve(); // Flush microtasks
             await Promise.resolve();
 
-            // Second message - no interruption, so processWithResume not triggered yet
+            // Second message - no interruption, so processWithContinuation not triggered yet
             const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
             const msg2 = { ...mockMessage, id: 'msg-002', content: 'Second' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
@@ -1899,14 +1899,14 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - _REMOVED_SessionId_section_', () => {
         // Formerly tested sessionId pass-through; removed because sessionId is no longer passed to the processor.
-        // Sessions are now fresh for every turn; partialWork (resumeContext) carries context instead.
+        // Sessions are now fresh for every turn; partialWork (continuationContext) carries context instead.
         beforeEach(() => {
             coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
         it('should never leak a sessionId into the resume context handed to the processor', async () => {
-            // The path that could actually leak is processWithResume(), which builds a REAL
+            // The path that could actually leak is processWithContinuation(), which builds a REAL
             // resume context out of state.partialWork. startProcessing() passes a literal
             // `null`, so asserting that a completed-path call got null proves nothing at all.
             // This drives a genuine interruption so the resumed call receives a populated
@@ -1922,9 +1922,9 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let resumedContext: ResumeContext | null = null;
+            let resumedContext: ContinuationContext | null = null;
 
-            const interruptingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const interruptingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     await new Promise((resolve) => {
@@ -1937,7 +1937,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  trackerWithProgress,
                     };
                 }
-                resumedContext = resumeContext;
+                resumedContext = continuationContext;
                 return {
                     response:       'Resumed response',
                     sessionId:      'session-123',
@@ -2013,7 +2013,7 @@ describe('MessageCoordinator', () => {
 
     describe('Mutant Testing - SessionId_passthrough_tests_removed', () => {
         // These tests were removed because sessionId is no longer passed to the processor.
-        // Sessions are always fresh (no SDK session resume). partialWork/resumeContext carries context.
+        // Sessions are always fresh (no SDK session resume). partialWork/continuationContext carries context.
         // The 'if(result.sessionId)' guard and state.sessionId field were removed from handleProcessingResult/ChannelState.
         beforeEach(() => {
             coordinator = new MessageCoordinator({ debounceMs: 100 });
@@ -2023,7 +2023,7 @@ describe('MessageCoordinator', () => {
         // NOTE: this covers the INITIAL processing path only, where startProcessing() passes a
         // literal `null` as the resume context. It therefore cannot detect a sessionId being
         // threaded across turns - that invariant is covered by 'should never leak a sessionId
-        // into the resume context handed to the processor', which drives processWithResume()
+        // into the resume context handed to the processor', which drives processWithContinuation()
         // and inspects a genuinely populated resume context.
         it('should pass a null resume context on every initial (non-resumed) processing call', async () => {
             coordinator.handleMessage(mockContext, mockMessage);
@@ -2047,9 +2047,9 @@ describe('MessageCoordinator', () => {
 
             expect(processorMock).toHaveBeenCalledTimes(3);
             const allCalls = processorMock.mock.calls as unknown[][];
-            expect(allCalls[0][1] as ResumeContext | null).toBeNull();
-            expect(allCalls[1][1] as ResumeContext | null).toBeNull();
-            expect(allCalls[2][1] as ResumeContext | null).toBeNull();
+            expect(allCalls[0][1] as ContinuationContext | null).toBeNull();
+            expect(allCalls[1][1] as ContinuationContext | null).toBeNull();
+            expect(allCalls[2][1] as ContinuationContext | null).toBeNull();
             expect(JSON.stringify(allCalls)).not.toContain('session-123');
         });
     });
@@ -2068,7 +2068,7 @@ describe('MessageCoordinator', () => {
 
             let callCount = 0;
 
-            const optionalChainingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const optionalChainingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 1) {
@@ -2318,7 +2318,7 @@ describe('MessageCoordinator', () => {
             };
             globalThis.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
-            const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _abortSignal: AbortSignal) => {
+            const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, _abortSignal: AbortSignal) => {
                 // Fast processor that completes before debounce expires
                 await new Promise((resolve) => {
                     setTimeout(resolve, 50);
@@ -2511,7 +2511,7 @@ describe('MessageCoordinator', () => {
             globalThis.clearInterval = clearIntervalSpy as unknown as typeof clearInterval;
 
             // Slow processor
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts, _continuationContext, abortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 5000);
                 });
@@ -2568,7 +2568,7 @@ describe('MessageCoordinator', () => {
 
         it('should continue typing across batched messages', async () => {
             // Slow processor
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts, _continuationContext, abortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 10_000);
                 });
@@ -2602,7 +2602,7 @@ describe('MessageCoordinator', () => {
 
         it('should start typing when resuming after interruption', async () => {
             // Slow processor that gets interrupted
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts, _continuationContext, abortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 5000);
                 });
@@ -2939,7 +2939,7 @@ describe('MessageCoordinator', () => {
             // is called the expected number of times (not doubled due to leaked intervals).
 
             // Long-running processor to allow multiple interval fires
-            processorMock.mockImplementation(async (_contexts, _resumeContext, abortSignal: AbortSignal) => {
+            processorMock.mockImplementation(async (_contexts, _continuationContext, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 25_000);
                 });
@@ -3053,7 +3053,7 @@ describe('MessageCoordinator', () => {
 
             let callCount = 0;
             // Processor that takes different amounts of time depending on call
-            processorMock.mockImplementation(async (_contexts, _resumeContext, abortSignal: AbortSignal) => {
+            processorMock.mockImplementation(async (_contexts, _continuationContext, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call: run for 18 seconds (will be interrupted)
@@ -3111,12 +3111,12 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             // First processing's finally block has run: stopTypingIndicator called
-            // processWithResume is called: startTypingIndicator called again
+            // processWithContinuation is called: startTypingIndicator called again
             // This should create ONE new interval (old was cleared)
             // If guard is broken, we'd have a leaked interval + new interval
 
             jest.advanceTimersByTime(50);
-            // The startTypingIndicator call from processWithResume adds 1 more sendTyping
+            // The startTypingIndicator call from processWithContinuation adds 1 more sendTyping
             // Total: 1 (initial) + 1 (tick @8050) + 1 (tick @16050) + 1 (resume initial) = 4
             expect(mockChannel.sendTyping).toHaveBeenCalledTimes(4);
 
@@ -3418,7 +3418,7 @@ describe('MessageCoordinator', () => {
             let abortCalled = false;
 
             // Slow processor that checks abort signal
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts, _continuationContext, abortSignal) => {
                 abortSignal.addEventListener('abort', () => {
                     abortCalled = true;
                 });
@@ -3454,7 +3454,7 @@ describe('MessageCoordinator', () => {
         it('should remove multiple channels for a guild', async () => {
             // Track abort calls
             let abortCount = 0;
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts, _continuationContext, abortSignal) => {
                 abortSignal.addEventListener('abort', () => {
                     abortCount++;
                 });
@@ -3520,8 +3520,8 @@ describe('MessageCoordinator', () => {
     });
 
     describe('onProcessingEnd callback', () => {
-        it('should call onProcessingEnd with wasInterrupted=false, willResume=false on normal completion', async () => {
-            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willResume: boolean }) => undefined);
+        it('should call onProcessingEnd with wasInterrupted=false, willContinue=false on normal completion', async () => {
+            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willContinue: boolean }) => undefined);
 
             coordinator = new MessageCoordinator({ onProcessingEnd });
             coordinator.setProcessor(processorMock);
@@ -3534,17 +3534,17 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(onProcessingEnd).toHaveBeenCalledTimes(1);
-            expect(onProcessingEnd).toHaveBeenCalledWith({ wasInterrupted: false, willResume: false });
+            expect(onProcessingEnd).toHaveBeenCalledWith({ wasInterrupted: false, willContinue: false });
         });
 
-        it('should call onProcessingEnd with wasInterrupted=true, willResume=true when interrupted with pending messages', async () => {
-            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willResume: boolean }) => undefined);
+        it('should call onProcessingEnd with wasInterrupted=true, willContinue=true when interrupted with pending messages', async () => {
+            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willContinue: boolean }) => undefined);
 
             // Short debounce so debounce fires quickly and interrupts the slow first processor
             coordinator = new MessageCoordinator({ debounceMs: 50, onProcessingEnd });
 
             let resolveFirst: (() => void) | undefined;
-            const slowProcessor: MessageProcessor = mock(async (_contexts, _resumeContext, abortSignal) => {
+            const slowProcessor: MessageProcessor = mock(async (_contexts, _continuationContext, abortSignal) => {
                 await new Promise<void>((resolve) => {
                     resolveFirst = resolve;
                     abortSignal.addEventListener('abort', resolve, { once: true });
@@ -3579,8 +3579,8 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
             await Promise.resolve();
 
-            // First callback: wasInterrupted=true (debounce fired abort), willResume=true (pending messages)
-            expect(onProcessingEnd.mock.calls[0][0]).toEqual({ wasInterrupted: true, willResume: true });
+            // First callback: wasInterrupted=true (debounce fired abort), willContinue=true (pending messages)
+            expect(onProcessingEnd.mock.calls[0][0]).toEqual({ wasInterrupted: true, willContinue: true });
         });
 
         it('should not throw when onProcessingEnd is not provided', async () => {
@@ -3600,7 +3600,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should call onProcessingEnd with wasInterrupted=true when processor throws', async () => {
-            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willResume: boolean }) => undefined);
+            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willContinue: boolean }) => undefined);
 
             const throwingProcessor: MessageProcessor = mock(async () => {
                 throw new Error('Processor error');
@@ -3617,15 +3617,15 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(onProcessingEnd).toHaveBeenCalledTimes(1);
-            expect(onProcessingEnd).toHaveBeenCalledWith({ wasInterrupted: true, willResume: false });
+            expect(onProcessingEnd).toHaveBeenCalledWith({ wasInterrupted: true, willContinue: false });
         });
 
-        it('should call onProcessingEnd from processWithResume with willResume=false on normal completion', async () => {
-            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willResume: boolean }) => undefined);
+        it('should call onProcessingEnd from processWithContinuation with willContinue=false on normal completion', async () => {
+            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willContinue: boolean }) => undefined);
             let callCount = 0;
 
             coordinator = new MessageCoordinator({ debounceMs: 50, onProcessingEnd });
-            coordinator.setProcessor(async (_contexts, _resumeContext, abortSignal): Promise<ProcessResult> => {
+            coordinator.setProcessor(async (_contexts, _continuationContext, abortSignal): Promise<ProcessResult> => {
                 callCount++;
                 if(callCount === 1) {
                     // First call: hang until aborted, then return interrupted
@@ -3638,7 +3638,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  new StreamTracker(),
                     };
                 }
-                // Second call (processWithResume): complete normally
+                // Second call (processWithContinuation): complete normally
                 return {
                     response:       'Resumed response',
                     sessionId:      'session-resume',
@@ -3669,19 +3669,19 @@ describe('MessageCoordinator', () => {
 
             // Both processing cycles have completed
             expect(onProcessingEnd).toHaveBeenCalledTimes(2);
-            // First: startProcessing was interrupted, pending messages present → willResume=true
-            expect(onProcessingEnd.mock.calls[0]?.[0]).toEqual({ wasInterrupted: true, willResume: true });
-            // Second: processWithResume completed normally, no pending → willResume=false
-            expect(onProcessingEnd.mock.calls[1]?.[0]).toEqual({ wasInterrupted: false, willResume: false });
+            // First: startProcessing was interrupted, pending messages present → willContinue=true
+            expect(onProcessingEnd.mock.calls[0]?.[0]).toEqual({ wasInterrupted: true, willContinue: true });
+            // Second: processWithContinuation completed normally, no pending → willContinue=false
+            expect(onProcessingEnd.mock.calls[1]?.[0]).toEqual({ wasInterrupted: false, willContinue: false });
         });
 
-        it('should call onProcessingEnd with wasInterrupted=true from processWithResume when processor throws', async () => {
+        it('should call onProcessingEnd with wasInterrupted=true from processWithContinuation when processor throws', async () => {
             mockLogger.error.mockClear();
-            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willResume: boolean }) => undefined);
+            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willContinue: boolean }) => undefined);
             let callCount = 0;
 
             coordinator = new MessageCoordinator({ debounceMs: 50, onProcessingEnd });
-            coordinator.setProcessor(async (_contexts, _resumeContext, abortSignal): Promise<ProcessResult> => {
+            coordinator.setProcessor(async (_contexts, _continuationContext, abortSignal): Promise<ProcessResult> => {
                 callCount++;
                 if(callCount === 1) {
                     // First call: hang until aborted
@@ -3694,7 +3694,7 @@ describe('MessageCoordinator', () => {
                         streamTracker:  new StreamTracker(),
                     };
                 }
-                // Second call (processWithResume): throw
+                // Second call (processWithContinuation): throw
                 throw new Error('Resume processor error');
             });
 
@@ -3709,7 +3709,7 @@ describe('MessageCoordinator', () => {
             const msg2 = { ...mockMessage, id: 'msg-002', content: 'Second' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
 
-            // Advance past debounce → aborts first query → processWithResume starts and throws
+            // Advance past debounce → aborts first query → processWithContinuation starts and throws
             jest.advanceTimersByTime(50);
             await Promise.resolve();
             await Promise.resolve();
@@ -3720,9 +3720,9 @@ describe('MessageCoordinator', () => {
 
             expect(onProcessingEnd).toHaveBeenCalledTimes(2);
             // First: startProcessing was interrupted with pending messages
-            expect(onProcessingEnd.mock.calls[0]?.[0]).toEqual({ wasInterrupted: true, willResume: true });
-            // Second: processWithResume threw → wasInterrupted stays true (default), no pending messages
-            expect(onProcessingEnd.mock.calls[1]?.[0]).toEqual({ wasInterrupted: true, willResume: false });
+            expect(onProcessingEnd.mock.calls[0]?.[0]).toEqual({ wasInterrupted: true, willContinue: true });
+            // Second: processWithContinuation threw → wasInterrupted stays true (default), no pending messages
+            expect(onProcessingEnd.mock.calls[1]?.[0]).toEqual({ wasInterrupted: true, willContinue: false });
             expect(mockLogger.error).toHaveBeenCalledWith({
                 err:        new Error('Resume processor error'),
                 channelId:  mockContext.channelId,
@@ -3732,13 +3732,13 @@ describe('MessageCoordinator', () => {
             });
         });
 
-        it('should call onProcessingEnd with willResume=true from processWithResume when new messages arrive during resume', async () => {
-            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willResume: boolean }) => undefined);
+        it('should call onProcessingEnd with willContinue=true from processWithContinuation when new messages arrive during resume', async () => {
+            const onProcessingEnd = mock((_info: { wasInterrupted: boolean, willContinue: boolean }) => undefined);
             let callCount = 0;
             let resolveSecond: (() => void) | undefined;
 
             coordinator = new MessageCoordinator({ debounceMs: 50, onProcessingEnd });
-            coordinator.setProcessor(async (_contexts, _resumeContext, abortSignal): Promise<ProcessResult> => {
+            coordinator.setProcessor(async (_contexts, _continuationContext, abortSignal): Promise<ProcessResult> => {
                 callCount++;
                 if(callCount === 1) {
                     // First call: hang until aborted
@@ -3752,7 +3752,7 @@ describe('MessageCoordinator', () => {
                     };
                 }
                 if(callCount === 2) {
-                    // Second call (processWithResume): hang until aborted by third message debounce
+                    // Second call (processWithContinuation): hang until aborted by third message debounce
                     await new Promise<void>((resolve) => {
                         resolveSecond = resolve;
                         abortSignal.addEventListener('abort', () => resolve(), { once: true });
@@ -3782,7 +3782,7 @@ describe('MessageCoordinator', () => {
             const msg2 = { ...mockMessage, id: 'msg-002', content: 'Second' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
 
-            // Advance past debounce → interrupts first query → processWithResume (call 2) starts
+            // Advance past debounce → interrupts first query → processWithContinuation (call 2) starts
             jest.advanceTimersByTime(50);
             await Promise.resolve();
             await Promise.resolve();
@@ -3791,12 +3791,12 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
             await Promise.resolve();
 
-            // Now processWithResume (call 2) is hanging; send message 3 → starts debounce
+            // Now processWithContinuation (call 2) is hanging; send message 3 → starts debounce
             const msg3Context = { ...mockContext, messageId: 'msg-003', content: 'Third' };
             const msg3 = { ...mockMessage, id: 'msg-003', content: 'Third' } as unknown as Message;
             coordinator.handleMessage(msg3Context, msg3);
 
-            // Advance past debounce for message 3 → aborts processWithResume (call 2)
+            // Advance past debounce for message 3 → aborts processWithContinuation (call 2)
             jest.advanceTimersByTime(50);
             await Promise.resolve();
             await Promise.resolve();
@@ -3811,9 +3811,9 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
             await Promise.resolve();
 
-            // The second onProcessingEnd (from processWithResume call 2) should have willResume=true
+            // The second onProcessingEnd (from processWithContinuation call 2) should have willContinue=true
             // because message 3 was queued as pending
-            expect(onProcessingEnd.mock.calls[1]?.[0]).toEqual({ wasInterrupted: true, willResume: true });
+            expect(onProcessingEnd.mock.calls[1]?.[0]).toEqual({ wasInterrupted: true, willContinue: true });
         });
     });
 
@@ -3832,7 +3832,7 @@ describe('MessageCoordinator', () => {
                 if(resumed) {
                     const state = coordinator['getOrCreateState'](mockContext.channelId);
                     state.pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
-                    coordinator['processWithResume'](mockContext.channelId);
+                    coordinator['processWithContinuation'](mockContext.channelId);
                 } else {
                     coordinator.handleMessage(mockContext, mockMessage);
                 }
@@ -3860,7 +3860,7 @@ describe('MessageCoordinator', () => {
                 }
                 return Promise.resolve();
             }) };
-            const processor = mock(async (_contexts: DiscordMessageContext[], _resume: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+            const processor = mock(async (_contexts: DiscordMessageContext[], _resume: ContinuationContext | null, signal: AbortSignal): Promise<ProcessResult> => {
                 if(!signal.aborted) {
                     await new Promise<void>((resolve) => {
                         signal.addEventListener('abort', () => resolve(), { once: true });
@@ -3882,19 +3882,19 @@ describe('MessageCoordinator', () => {
             expect(mockLogger.error).toHaveBeenCalledWith({
                 err:       typingError,
                 channelId: mockContext.channelId,
-                msg:       'MessageCoordinator: failed to resume after interruption',
+                msg:       'MessageCoordinator: failed to continue after interruption',
             });
         });
 
         it('starts fresh after unqueued partial work and does not leak it into a later batch', async () => {
             const tracker = new StreamTracker();
             tracker.update({ type: 'assistant', message: { content: [{ type: 'text', text: 'old partial' }] } });
-            const resumeContexts: (ResumeContext | null)[] = [];
+            const continuationContexts: (ContinuationContext | null)[] = [];
             let calls = 0;
             coordinator = new MessageCoordinator();
-            coordinator.setProcessor(mock(async (_contexts, resumeContext): Promise<ProcessResult> => {
+            coordinator.setProcessor(mock(async (_contexts, continuationContext): Promise<ProcessResult> => {
                 calls++;
-                resumeContexts.push(resumeContext);
+                continuationContexts.push(continuationContext);
                 return { response: calls === 1 ? null : 'fresh', wasInterrupted: calls === 1, streamTracker: calls === 1 ? tracker : new StreamTracker() };
             }));
             coordinator.handleMessage(mockContext, mockMessage);
@@ -3904,7 +3904,7 @@ describe('MessageCoordinator', () => {
             coordinator.handleMessage(next, { ...mockMessage, id: 'msg-002' } as Message);
             await Promise.resolve();
             await Promise.resolve();
-            expect(resumeContexts).toEqual([null, null]);
+            expect(continuationContexts).toEqual([null, null]);
             expect(coordinator['getOrCreateState'](mockContext.channelId).partialWork).toBeUndefined();
         });
 
@@ -3920,7 +3920,7 @@ describe('MessageCoordinator', () => {
                 if(resumed) {
                     const state = coordinator['getOrCreateState'](mockContext.channelId);
                     state.pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
-                    coordinator['processWithResume'](mockContext.channelId);
+                    coordinator['processWithContinuation'](mockContext.channelId);
                 } else {
                     coordinator.handleMessage(mockContext, mockMessage);
                 }
@@ -3937,7 +3937,7 @@ describe('MessageCoordinator', () => {
         it('does not start a resumed run from an empty pending queue', () => {
             coordinator = new MessageCoordinator();
             coordinator.setProcessor(processorMock);
-            coordinator['processWithResume'](mockContext.channelId);
+            coordinator['processWithContinuation'](mockContext.channelId);
             expect(processorMock).not.toHaveBeenCalled();
         });
 
@@ -3956,14 +3956,14 @@ describe('MessageCoordinator', () => {
             const state = coordinator['getOrCreateState'](mockContext.channelId);
             const second = { ...mockContext, messageId: 'msg-002' };
             state.pendingMessages.push({ context: second, discordMessage: mockMessage });
-            coordinator['resumePending'](mockContext.channelId, state);
+            coordinator['processPending'](mockContext.channelId, state);
             expect(processor).toHaveBeenCalledTimes(1);
             finishActive?.();
             await Promise.resolve();
             await Promise.resolve();
 
             state.debounceTimer = setTimeout(() => {}, 1000);
-            coordinator['resumePending'](mockContext.channelId, state);
+            coordinator['processPending'](mockContext.channelId, state);
             expect(processor).toHaveBeenCalledTimes(1);
             expect(state.pendingMessages).toHaveLength(1);
         });
@@ -3974,7 +3974,7 @@ describe('MessageCoordinator', () => {
             const state = coordinator['getOrCreateState'](mockContext.channelId);
             state.pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
             coordinator.removeChannel(mockContext.channelId);
-            coordinator['resumePending'](mockContext.channelId, state);
+            coordinator['processPending'](mockContext.channelId, state);
             expect(processorMock).not.toHaveBeenCalled();
             expect(coordinator['channelStates'].has(mockContext.channelId)).toBe(false);
         });
@@ -3988,7 +3988,7 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
             const state = coordinator['getOrCreateState'](mockContext.channelId);
             state.pendingMessages.push({ context: mockContext, discordMessage: null });
-            coordinator['processWithResume'](mockContext.channelId);
+            coordinator['processWithContinuation'](mockContext.channelId);
             await Promise.resolve();
             await Promise.resolve();
             expect(processorMock.mock.calls[0]?.[0]).toEqual([mockContext]);
@@ -4024,7 +4024,7 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
             const state = coordinator['getOrCreateState'](mockContext.channelId);
             state.pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
-            coordinator['processWithResume'](mockContext.channelId);
+            coordinator['processWithContinuation'](mockContext.channelId);
             await Promise.resolve();
             await Promise.resolve();
             expect(onProcessingEnd).not.toHaveBeenCalled();
@@ -4074,7 +4074,7 @@ describe('MessageCoordinator', () => {
                 msg:        'MessageCoordinator: processing failed',
             });
 
-            const succeedingProcessor = mock(async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _signal: AbortSignal): Promise<ProcessResult> => ({
+            const succeedingProcessor = mock(async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, _signal: AbortSignal): Promise<ProcessResult> => ({
                 response:       'next response',
                 wasInterrupted: false,
                 streamTracker:  new StreamTracker(),
@@ -4092,7 +4092,7 @@ describe('MessageCoordinator', () => {
         it('clears ownership when a resumed processor throws synchronously', async () => {
             mockLogger.error.mockClear();
             const processorError = new Error('synchronous resume failure');
-            const processor: MessageProcessor = mock((contexts, _resumeContext, signal) => {
+            const processor: MessageProcessor = mock((contexts, _continuationContext, signal) => {
                 if(contexts.length > 1) {
                     throw processorError;
                 }
@@ -4120,7 +4120,7 @@ describe('MessageCoordinator', () => {
                 msg:        'MessageCoordinator: processing failed',
             });
 
-            const succeedingProcessor = mock(async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _signal: AbortSignal): Promise<ProcessResult> => ({
+            const succeedingProcessor = mock(async (_contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, _signal: AbortSignal): Promise<ProcessResult> => ({
                 response:       'next response',
                 wasInterrupted: false,
                 streamTracker:  new StreamTracker(),
@@ -4139,14 +4139,14 @@ describe('MessageCoordinator', () => {
             const thirdContext = { ...mockContext, messageId: 'msg-003', content: 'Third' };
             const thirdMessage = { ...mockMessage, id: 'msg-003' } as Message;
             let submittedThird = false;
-            const onProcessingEnd = mock((info: { wasInterrupted: boolean, willResume: boolean }) => {
-                if(info.wasInterrupted && info.willResume && !submittedThird) {
+            const onProcessingEnd = mock((info: { wasInterrupted: boolean, willContinue: boolean }) => {
+                if(info.wasInterrupted && info.willContinue && !submittedThird) {
                     submittedThird = true;
                     coordinator.handleMessage(thirdContext, thirdMessage);
                 }
             });
             const onResponse = mock(async (): Promise<void> => undefined);
-            const processor = mock(async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+            const processor = mock(async (contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, signal: AbortSignal): Promise<ProcessResult> => {
                 if(contexts.length === 1) {
                     await new Promise<void>((resolve) => {
                         signal.addEventListener('abort', () => resolve(), { once: true });
@@ -4178,13 +4178,13 @@ describe('MessageCoordinator', () => {
             const newestContext = { ...mockContext, messageId: 'msg-052', content: 'Newest' };
             const newestMessage = { ...mockMessage, id: 'msg-052' } as Message;
             let submittedNewest = false;
-            const onProcessingEnd = mock((info: { wasInterrupted: boolean, willResume: boolean }) => {
-                if(info.wasInterrupted && info.willResume && !submittedNewest) {
+            const onProcessingEnd = mock((info: { wasInterrupted: boolean, willContinue: boolean }) => {
+                if(info.wasInterrupted && info.willContinue && !submittedNewest) {
                     submittedNewest = true;
                     coordinator.handleMessage(newestContext, newestMessage);
                 }
             });
-            const processor = mock(async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+            const processor = mock(async (contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, signal: AbortSignal): Promise<ProcessResult> => {
                 if(contexts.length === 1) {
                     await new Promise<void>((resolve) => {
                         signal.addEventListener('abort', () => resolve(), { once: true });
@@ -4257,7 +4257,7 @@ describe('MessageCoordinator', () => {
             });
             coordinator = new MessageCoordinator({ debounceMs: 100, onResponse });
             // Use a separate spy so the first invocation can stay unresolved deterministically.
-            const processor = mock(async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+            const processor = mock(async (contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, signal: AbortSignal): Promise<ProcessResult> => {
                 if(contexts.length === 1) {
                     await cleanup;
                     return { response: null, wasInterrupted: signal.aborted, streamTracker: new StreamTracker() };
@@ -4304,7 +4304,7 @@ describe('MessageCoordinator', () => {
                     await delivery;
                 }
             });
-            const processor = mock(async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _signal: AbortSignal): Promise<ProcessResult> => ({
+            const processor = mock(async (contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, _signal: AbortSignal): Promise<ProcessResult> => ({
                 response:       contexts[0]?.messageId === 'msg-001' ? 'first' : 'second',
                 wasInterrupted: false,
                 streamTracker:  new StreamTracker(),
@@ -4469,7 +4469,7 @@ describe('MessageCoordinator', () => {
         it('should cap pendingMessages at 50 when messages arrive during active processing (Case 1)', async () => {
             // Make processor respond to abort quickly so the second call can occur
             let receivedContextsCase1: DiscordMessageContext[] = [];
-            const slowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 receivedContextsCase1 = contexts;
                 await new Promise((resolve) => {
                     const t = setTimeout(resolve, 500);
@@ -4503,7 +4503,7 @@ describe('MessageCoordinator', () => {
                 coordinator.handleMessage(ctx, msg);
             }
 
-            // Advance past debounce (100ms) — aborts first call and triggers processWithResume
+            // Advance past debounce (100ms) — aborts first call and triggers processWithContinuation
             jest.advanceTimersByTime(150);
             await Promise.resolve();
             await Promise.resolve();
@@ -4517,7 +4517,7 @@ describe('MessageCoordinator', () => {
             const messageIds = receivedContextsCase1.map(ctx => ctx.messageId);
             expect(messageIds).toHaveLength(50);
             // msg-002 must NOT be present — it was evicted by the incremental push-cap at Case 1
-            // (if BlockStatement mutant removes the eviction, msg-002 would survive to processWithResume)
+            // (if BlockStatement mutant removes the eviction, msg-002 would survive to processWithContinuation)
             expect(messageIds).not.toContain('msg-002');
             // msg-001 (original, re-queued) must be preserved at the front
             expect(messageIds).toContain('msg-001');
@@ -4536,7 +4536,7 @@ describe('MessageCoordinator', () => {
             let callCount = 0;
             let receivedContexts: DiscordMessageContext[] = [];
 
-            const overflowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const overflowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 receivedContexts = contexts;
 
@@ -4621,7 +4621,7 @@ describe('MessageCoordinator', () => {
             let callCount = 0;
             let receivedContextsCase2: DiscordMessageContext[] = [];
 
-            const case2SlowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+            const case2SlowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _continuationContext: ContinuationContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 receivedContextsCase2 = contexts;
                 if(callCount === 1) {
@@ -4685,7 +4685,7 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
             await Promise.resolve();
 
-            // processWithResume should be called with at most 50 pending messages
+            // processWithContinuation should be called with at most 50 pending messages
             // (msg-002 + 60 new = 61 total; capped at 50)
             expect(callCount).toBe(2);
             const case2MessageIds = receivedContextsCase2.map(ctx => ctx.messageId);
@@ -4717,7 +4717,7 @@ describe('MessageCoordinator', () => {
                     allEnded.resolve();
                 }
             } });
-            coordinator.setProcessor(mock(async (_contexts: DiscordMessageContext[], _resume: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+            coordinator.setProcessor(mock(async (_contexts: DiscordMessageContext[], _resume: ContinuationContext | null, signal: AbortSignal): Promise<ProcessResult> => {
                 callCount++;
                 if(callCount === 1) {
                     firstSignal = signal;
@@ -4770,7 +4770,7 @@ describe('MessageCoordinator', () => {
         it('evicts one oldest queued message immediately when an active queue reaches fifty-one', async () => {
             const processingEnded = Promise.withResolvers<void>();
             coordinator = new MessageCoordinator({ onProcessingEnd: () => processingEnded.resolve() });
-            coordinator.setProcessor(mock(async (_contexts: DiscordMessageContext[], _resume: ResumeContext | null, signal: AbortSignal): Promise<ProcessResult> => {
+            coordinator.setProcessor(mock(async (_contexts: DiscordMessageContext[], _resume: ContinuationContext | null, signal: AbortSignal): Promise<ProcessResult> => {
                 await new Promise<void>((resolve) => {
                     signal.addEventListener('abort', () => resolve(), { once: true });
                 });
@@ -4817,7 +4817,7 @@ describe('MessageCoordinator', () => {
 
         it('reports one queued message when fresh processing ends', async () => {
             const processingGate = Promise.withResolvers<void>();
-            const ended = Promise.withResolvers<{ wasInterrupted: boolean, willResume: boolean }>();
+            const ended = Promise.withResolvers<{ wasInterrupted: boolean, willContinue: boolean }>();
             coordinator = new MessageCoordinator({ debounceMs: 100, onProcessingEnd: info => ended.resolve(info) });
             coordinator.setProcessor(mock(async (): Promise<ProcessResult> => {
                 await processingGate.promise;
@@ -4830,7 +4830,7 @@ describe('MessageCoordinator', () => {
             );
             processingGate.resolve();
 
-            expect(await ended.promise).toEqual({ wasInterrupted: false, willResume: true });
+            expect(await ended.promise).toEqual({ wasInterrupted: false, willContinue: true });
         });
 
         it('uses the first new Discord message as the resumed response anchor', async () => {
@@ -4847,7 +4847,7 @@ describe('MessageCoordinator', () => {
                 { context: { ...mockContext, messageId: 'first-new' }, discordMessage: firstMessage },
                 { context: { ...mockContext, messageId: 'second-new' }, discordMessage: { ...mockMessage, id: 'second-new' } as Message }
             );
-            coordinator['processWithResume'](mockContext.channelId);
+            coordinator['processWithContinuation'](mockContext.channelId);
 
             expect(await delivered.promise).toBe(firstMessage);
             await ended.promise;
@@ -4863,7 +4863,7 @@ describe('MessageCoordinator', () => {
             });
             coordinator.setProcessor(processorMock);
             coordinator['getOrCreateState'](mockContext.channelId).pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
-            coordinator['processWithResume'](mockContext.channelId);
+            coordinator['processWithContinuation'](mockContext.channelId);
             await ended.promise;
 
             expect(mockLogger.error).toHaveBeenCalledWith({
@@ -4877,7 +4877,7 @@ describe('MessageCoordinator', () => {
 
         it('reports one queued message when resumed processing ends', async () => {
             const processingGate = Promise.withResolvers<void>();
-            const ended = Promise.withResolvers<{ wasInterrupted: boolean, willResume: boolean }>();
+            const ended = Promise.withResolvers<{ wasInterrupted: boolean, willContinue: boolean }>();
             coordinator = new MessageCoordinator({ debounceMs: 100, onProcessingEnd: info => ended.resolve(info) });
             coordinator.setProcessor(mock(async (): Promise<ProcessResult> => {
                 await processingGate.promise;
@@ -4885,14 +4885,14 @@ describe('MessageCoordinator', () => {
             }));
             const state = coordinator['getOrCreateState'](mockContext.channelId);
             state.pendingMessages.push({ context: mockContext, discordMessage: mockMessage });
-            coordinator['processWithResume'](mockContext.channelId);
+            coordinator['processWithContinuation'](mockContext.channelId);
             coordinator.handleMessage(
                 { ...mockContext, messageId: 'queued-during-resume' },
                 { ...mockMessage, id: 'queued-during-resume' } as Message
             );
             processingGate.resolve();
 
-            expect(await ended.promise).toEqual({ wasInterrupted: false, willResume: true });
+            expect(await ended.promise).toEqual({ wasInterrupted: false, willContinue: true });
         });
     });
 });

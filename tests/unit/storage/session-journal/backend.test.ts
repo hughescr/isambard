@@ -98,6 +98,28 @@ describe('SessionJournalBackend', () => {
             expect(journalEntrySchema.safeParse({ ...row, outcome: 'running' }).success).toBe(false);
             expect(journalEntrySchema.safeParse(row).success).toBe(false);
         });
+
+        const envelopeSubmittedBase = {
+            at: '2026-09-05T10:00:00.000Z', type: 'envelope_submitted', envelopeId: 'e1',
+        } as const;
+
+        // Legacy pre-#76 journal rows: can be safely deleted 30 days after deploy, once every
+        // legacy row (30-day TTL) has expired — see the dated comment on envelopeKindSchema.
+        test('a legacy envelope_submitted row with kind: \'resume\' parses to kind: \'continuation\'', () => {
+            expect(journalEntrySchema.parse({ ...envelopeSubmittedBase, kind: 'resume' })).toEqual({
+                type: 'envelope_submitted', at: new Date('2026-09-05T10:00:00.000Z'), envelopeId: 'e1', kind: 'continuation',
+            });
+        });
+
+        test('an envelope_submitted row with kind: \'continuation\' parses unchanged', () => {
+            expect(journalEntrySchema.parse({ ...envelopeSubmittedBase, kind: 'continuation' })).toEqual({
+                type: 'envelope_submitted', at: new Date('2026-09-05T10:00:00.000Z'), envelopeId: 'e1', kind: 'continuation',
+            });
+        });
+
+        test('rejects an unknown envelope_submitted kind', () => {
+            expect(journalEntrySchema.safeParse({ ...envelopeSubmittedBase, kind: 'bogus' }).success).toBe(false);
+        });
     });
 
     describe('append', () => {

@@ -34,7 +34,7 @@ interface ReplayableMessage {
 }
 
 /**
- * Rendered as the replay envelope's `resumeNote` block (see {@link BuildDiscordEnvelopeParams}):
+ * Rendered as the replay envelope's `continuationNote` block (see {@link BuildDiscordEnvelopeParams}):
  * a crash-recovery replay is indistinguishable from a live message otherwise, so a reply already
  * posted before the crash (missed only by the delivery-guard write) would be answered a second
  * time with no signal to Izzy that it may be a repeat (the plan's own synthesis-risk mitigation).
@@ -108,7 +108,7 @@ export interface SubmitConductorEnvelopeDeps {
 export async function submitAndDeliverConductorEnvelope(envelope: QueryEnvelope, deps: SubmitConductorEnvelopeDeps): Promise<void> {
     const { conversationConductor, responseRouter, client, rateLimiter, discordCapability } = deps;
 
-    const result = await conversationConductor.submit(envelope, { priority: 'other' });
+    const result = await conversationConductor.submit(envelope, { priority: 'normal' });
     if(!result.response) {
         return;
     }
@@ -371,15 +371,15 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
                 messageId: message.id,
                 content:   `${message.author}: ${message.content}`,
             })),
-            authorId:    newest.authorId ?? newest.author,
-            authorName:  newest.author,
+            authorId:         newest.authorId ?? newest.author,
+            authorName:       newest.author,
             channelId,
-            channelName: newest.channelName,
-            isDM:        isDmScope(newest.guildId),
-            now:         new Date(),
+            channelName:      newest.channelName,
+            isDM:             isDmScope(newest.guildId),
+            now:              new Date(),
             timezone,
-            timeHeader:  timeHeader(),
-            resumeNote:  REPLAY_CAVEAT,
+            timeHeader:       timeHeader(),
+            continuationNote: REPLAY_CAVEAT,
         });
         await submitAndDeliverConductorEnvelope(envelope, envelopeDeps);
         // Stryker disable next-line llm: submitReplay groups messages by message.channelId, so newest.channelId always equals channelId here and the swap is unobservable.
@@ -411,7 +411,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
      * Builds and submits the R1 merged boot envelope: reads `contextPolicy.eventsDelta()` against
      * the mark {@link seedEventsMark} already seeded (BEFORE the ingress gate opened — see that
      * function's own doc for the concurrency hazard seeding here, after the gate is open, used to
-     * create); submits with a turn (`submitAndDeliverConductorEnvelope`, `{ priority: 'other' }`)
+     * create); submits with a turn (`submitAndDeliverConductorEnvelope`, `{ priority: 'normal' }`)
      * when the envelope is a query envelope (unread mail or a lost task), or appends it
      * without opening one (`conversationConductor.appendWithoutTurn`) otherwise; advances the
      * mark via `markEventsSeen()` only AFTER submission, so a failure partway through does not

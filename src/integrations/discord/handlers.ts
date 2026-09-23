@@ -467,7 +467,7 @@ export function dispatchToCoordinator(
 
 /**
  * Submits `message` (already known to be in the well-known `perch-time` channel) to the perch
- * conductor as a `discord`-kind envelope: priority `'other'` so it never interrupts a running
+ * conductor as a `discord`-kind envelope: priority `'normal'` so it never interrupts a running
  * perch slot turn (see `perch-driver.ts`'s own overlap contract — this is a completely separate
  * queue from the slot/wrap-up envelopes it submits). On a settled turn with a response, delivers
  * it back to the originating channel through `perch.conductor.deliver` (the same idempotent,
@@ -515,7 +515,7 @@ async function submitPerchChannelMessage(
     // message's perch turn was attempted" regardless of outcome.
     let result: { response: string | null } | undefined;
     try {
-        result = await perch.conductor.submit(envelope, { priority: 'other', requestingChannelId: message.channel.id });
+        result = await perch.conductor.submit(envelope, { priority: 'normal', requestingChannelId: message.channel.id });
     } catch (err) {
         logger.error({ err, channelId: message.channel.id, msg: 'Perch-channel envelope submission failed' });
     }

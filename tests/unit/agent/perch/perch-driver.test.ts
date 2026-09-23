@@ -165,7 +165,7 @@ describe('createPerchDriver', () => {
         expect(conductor.submit).toHaveBeenCalledTimes(1);
         const { envelope, options } = conductor.submissions[0];
         expect(envelope.kind).toBe('perch');
-        expect(options.priority).toBe('other');
+        expect(options.priority).toBe('normal');
         expect(activityLogger.log).toHaveBeenCalledWith({
             type:    'perch-start',
             summary: 'Perch slot started (slot: afternoon)',
@@ -191,7 +191,7 @@ describe('createPerchDriver', () => {
         expect(conductor.submissions[0].envelope.text).toContain('- Perch: idle');
     });
 
-    test('submits the wrap-up envelope exactly at endsAt - wrapUpLeadMinutes while the slot turn is still running, at priority \'human\'', async () => {
+    test('submits the wrap-up envelope exactly at endsAt - wrapUpLeadMinutes while the slot turn is still running, at priority \'urgent\'', async () => {
         const driver = createPerchDriver(deps);
         driver.runSlot('afternoon');
 
@@ -205,11 +205,11 @@ describe('createPerchDriver', () => {
         const { envelope: wrapUp, options: wrapUpOptions } = conductor.submissions[1];
         expect(wrapUp.kind).toBe('wrapup');
         expect(wrapUp.text).toContain(`ends in ${WRAP_UP_TIMEOUT_MINUTES} min`);
-        // 'human' (not 'other'): the conductor's own priority queue puts a 'human'-priority item
-        // ahead of any 'other'-priority one already queued — the only lever available (see the
+        // 'urgent' (not 'normal'): the conductor's own priority queue puts an 'urgent'-priority item
+        // ahead of any 'normal'-priority one already queued — the only lever available (see the
         // module doc) to make the wrap-up the very next turn the conductor runs once the slot
         // turn ends, since nothing can inject it into the still-running slot turn itself.
-        expect(wrapUpOptions.priority).toBe('human');
+        expect(wrapUpOptions.priority).toBe('urgent');
     });
 
     test('submits the wrap-up immediately when its lead time exceeds the configured session duration', () => {

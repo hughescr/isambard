@@ -43,7 +43,7 @@ export interface RecoveryResult {
  * (R2) is included: an adopted background-work wake turn that finished but was never confirmed
  * delivered — most likely a crash between `turn_completed` and the reply reaching Discord — is
  * exactly the kind of silently-lost reply this recovery path exists to catch. Every other kind
- * (perch, notification, wrapup, resume, compact, boot, peer) never counts as undelivered — `peer`
+ * (perch, notification, wrapup, continuation, compact, boot, peer) never counts as undelivered — `peer`
  * (session-peers block 2) least of all: its reply never passes through host delivery at all, since
  * Claude answers a peer with its own `SendMessage` call during the turn.
  */

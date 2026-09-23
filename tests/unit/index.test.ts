@@ -1327,7 +1327,7 @@ describe('createApp', () => {
             // ...and, now that the conductor has resolved and been attached, reaches it for real.
             botOptions.notify!({ source: 'post-boot', text: 'post-boot text', wake: true, dedupeKey: 'post-boot-key' });
             expect(conductor.submit).toHaveBeenCalledTimes(1);
-            expect(conductor.submit.mock.calls[0]?.[1]).toEqual({ priority: 'other' });
+            expect(conductor.submit.mock.calls[0]?.[1]).toEqual({ priority: 'normal' });
         });
 
         test('app.stop() detaches the notification bridge from the conductor', async () => {

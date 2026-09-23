@@ -1,18 +1,19 @@
 /**
- * Resume Prompt Builder Module
+ * Continuation Prompt Builder Module
  *
- * {@link ResumeContext} is `src/integrations/discord/message-coordinator.ts`'s own
- * interrupted-stream resume-context shape (only its `partialWork` is read, by
+ * {@link ContinuationContext} is `src/integrations/discord/message-coordinator.ts`'s own
+ * interrupted-stream continuation-context shape (only its `partialWork` is read, by
  * `setup/conductor-processor.ts`, to render a `[RESUME NOTE]` block via
- * {@link buildResumeNote}); that module builds the long-lived session core's short resume note.
+ * {@link buildContinuationNote}); that module builds the long-lived session core's short
+ * continuation note.
  */
 import type { StreamProgress } from './stream-tracker';
 import type { EnvelopeSourceMessage } from './types';
 
 /**
- * Context needed to build a resume prompt after an interruption.
+ * Context needed to build a continuation prompt after an interruption.
  */
-export interface ResumeContext {
+export interface ContinuationContext {
     /** Partial work captured from interrupted stream */
     partialWork: StreamProgress
     /** New messages that arrived during processing */
@@ -20,14 +21,14 @@ export interface ResumeContext {
 }
 
 /**
- * Builds the short resume note carried by a `resume`-kind envelope (P6) when the long-lived
- * session's human-wait escalation interrupts a running turn: just the partial-work blocks, with
- * no events section and no new-messages section (those already arrive via their own envelopes
- * on the same session).
+ * Builds the short continuation note carried by a `continuation`-kind envelope (P6) when the
+ * long-lived session's human-wait escalation interrupts a running turn: just the partial-work
+ * blocks, with no events section and no new-messages section (those already arrive via their own
+ * envelopes on the same session).
  * @param progress Partial work captured from the interrupted stream
- * @returns The resume note, or `undefined` when there is no partial work to report
+ * @returns The continuation note, or `undefined` when there is no partial work to report
  */
-export function buildResumeNote(progress: StreamProgress): string | undefined {
+export function buildContinuationNote(progress: StreamProgress): string | undefined {
     if(!progress.thinking && !progress.text && !progress.pendingToolUse) {
         return undefined;
     }

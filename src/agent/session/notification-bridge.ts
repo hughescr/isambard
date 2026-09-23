@@ -29,7 +29,7 @@
  * memory reads this to decide whether THIS occurrence may be forgotten or must be retried on the
  * next one. `wake` selects the routing through the envelope contract it builds (see
  * `./envelope.ts`'s `buildNotificationEnvelope`): `true` submits a turn-opening envelope via
- * `conductor.submit(envelope, { priority: 'other' })` — never `'human'`, so a notification can
+ * `conductor.submit(envelope, { priority: 'normal' })` — never `'urgent'`, so a notification can
  * never preempt a live Discord turn (`conductor.ts`'s human-only fast-path at
  * enqueue/routeIncoming); `false` appends via `conductor.appendWithoutTurn(envelope)`, the
  * accumulate-only seam — `conductor.submit()` unconditionally opens a turn, and the SDK
@@ -63,7 +63,7 @@ export interface NotifyParams {
     source:    string
     /** Human-readable notification body. */
     text:      string
-    /** `true` opens a turn (`conductor.submit`, `priority:'other'`); `false` appends without opening one (`conductor.appendWithoutTurn`). */
+    /** `true` opens a turn (`conductor.submit`, `priority:'normal'`); `false` appends without opening one (`conductor.appendWithoutTurn`). */
     wake:      boolean
     /** REQUIRED. The bridge's sole dedupe key — a repeated key (while still within {@link CreateNotificationBridgeParams.dedupeCapacity} recent distinct keys) is dropped silently. */
     dedupeKey: string
@@ -180,7 +180,7 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
             void (async (): Promise<void> => {
                 let result: TurnResult;
                 try {
-                    result = await conductor.submit(envelope, { priority: 'other' });
+                    result = await conductor.submit(envelope, { priority: 'normal' });
                 } catch (err) {
                     logger.warn({ err, source, dedupeKey }, 'Failed to submit wake notification');
                     return;

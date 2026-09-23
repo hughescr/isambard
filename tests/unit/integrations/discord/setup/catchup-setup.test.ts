@@ -108,7 +108,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse'));
 
         await submitAndDeliverConductorEnvelope(
-            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         );
 
@@ -130,7 +130,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
         const warnCount = warnSpy.mock.calls.length;
 
         await submitAndDeliverConductorEnvelope(
-            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         );
 
@@ -148,7 +148,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
         const warnCount = warnSpy.mock.calls.length;
 
         await expect(submitAndDeliverConductorEnvelope(
-            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         )).resolves.toBeUndefined();
 
@@ -170,7 +170,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
         warnSpy.mockClear();
 
         await expect(submitAndDeliverConductorEnvelope(
-            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         )).resolves.toBeUndefined();
 
@@ -186,7 +186,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
         warnSpy.mockClear();
 
         await submitAndDeliverConductorEnvelope(
-            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         );
 
@@ -215,7 +215,7 @@ describe('submitAndDeliverConductorEnvelope — discordCapability forwarding', (
         const discordCapability = { sendToChannel: mock(() => Promise.resolve({ status: 'sent' as const })) };
 
         await submitAndDeliverConductorEnvelope(
-            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never, discordCapability: discordCapability as never }
         );
 
@@ -242,7 +242,7 @@ describe('submitConductorCatchUp', () => {
             inboxManager: inboxManager as never, conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never,
         });
 
-        expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'catchup' }), { priority: 'other' });
+        expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'catchup' }), { priority: 'normal' });
     });
 
     test('renders the catch-up envelope\'s time header with formatTimeHeader by default', async () => {
@@ -729,7 +729,7 @@ describe('runConductorInboxInit', () => {
 
         await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));
 
-        expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'catchup' }), { priority: 'other' });
+        expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'catchup' }), { priority: 'normal' });
     });
 
     test('does not submit a catch-up envelope when there is no unread mail', async () => {
@@ -829,7 +829,7 @@ describe('runConductorInboxInit', () => {
 
             await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));
 
-            expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'catchup', mode: 'query' }), { priority: 'other' });
+            expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'catchup', mode: 'query' }), { priority: 'normal' });
             expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
         });
 
@@ -846,7 +846,7 @@ describe('runConductorInboxInit', () => {
 
             expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({
                 kind: 'catchup', mode: 'query', text: expect.stringContaining('Summarize last week') as unknown,
-            }), { priority: 'other' });
+            }), { priority: 'normal' });
         });
 
         test('commits only queued chunks when a boot-time redelivery is partial', async () => {

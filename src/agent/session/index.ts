@@ -123,7 +123,7 @@ export {
     buildPeerEnvelope,
     buildCatchupEnvelope,
     buildWrapUpEnvelope,
-    buildResumeEnvelope,
+    buildContinuationEnvelope,
     buildBootEnvelope,
     buildCompactEnvelope,
     toSdkUserMessage,

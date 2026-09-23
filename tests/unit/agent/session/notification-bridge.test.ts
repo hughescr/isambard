@@ -68,14 +68,13 @@ describe('createNotificationBridge', () => {
         bridge.attachConductor(conductor);
     });
 
-    test('wake:true submits via conductor.submit with priority "other", never appendWithoutTurn', () => {
+    test('wake:true submits via conductor.submit with priority "normal", never appendWithoutTurn', () => {
         bridge.notify(baseParams({ wake: true, dedupeKey: 'wake-key' }));
 
         expect(conductor.submit).toHaveBeenCalledTimes(1);
         expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
         const [envelope, options] = conductor.submit.mock.calls[0];
-        expect(options.priority).toBe('other');
-        expect(envelope.hostPriority).toBe('wake');
+        expect(options.priority).toBe('normal');
         expect(envelope.mode).toBe('query');
     });
 
@@ -102,7 +101,6 @@ describe('createNotificationBridge', () => {
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(1);
         expect(conductor.submit).not.toHaveBeenCalled();
         const [envelope] = conductor.appendWithoutTurn.mock.calls[0];
-        expect(envelope.hostPriority).toBe('accumulate');
         expect(envelope.mode).toBe('append');
     });
 
@@ -365,8 +363,7 @@ describe('createNotificationBridge', () => {
             await Promise.resolve();
 
             expect(delivery).toHaveBeenCalledTimes(1);
-            const [envelope, result] = delivery.mock.calls[0];
-            expect(envelope.hostPriority).toBe('wake');
+            const [, result] = delivery.mock.calls[0];
             expect(result.response).toBe('the reply');
         });
 

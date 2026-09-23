@@ -454,9 +454,9 @@ describe('createConversationConductor', () => {
 
         const submitPromise = conductor.submit(
             {
-                id: 'env-1', mode: 'query', kind: 'discord', text: 'hi', channelId: 'chan-1', authorId: 'user-42', origin: { kind: 'human' }, hostPriority: 'human', createdAt: new Date(0),
+                id: 'env-1', mode: 'query', kind: 'discord', text: 'hi', channelId: 'chan-1', authorId: 'user-42', origin: { kind: 'human' }, createdAt: new Date(0),
             },
-            { priority: 'human', requestingChannelId: 'chan-1' }
+            { priority: 'urgent', requestingChannelId: 'chan-1' }
         );
         await flush();
         h.instances[0].emit(frames.resultSuccess());
@@ -1015,9 +1015,9 @@ describe('createConversationConductor', () => {
                     {
                         // An authorless discord envelope is unrepresentable since #60; the assertion
                         // keeps pinning recordRecentAuthor's own undefined guard at runtime.
-                        id: envelopeId, mode: 'query', kind: 'discord', text: 'hi', channelId: 'chan-1', authorId: authorId!, origin: { kind: 'human' }, hostPriority: 'human', createdAt: new Date(0),
+                        id: envelopeId, mode: 'query', kind: 'discord', text: 'hi', channelId: 'chan-1', authorId: authorId!, origin: { kind: 'human' }, createdAt: new Date(0),
                     },
-                    { priority: 'human', requestingChannelId: 'chan-1' }
+                    { priority: 'urgent', requestingChannelId: 'chan-1' }
                 );
                 await flush();
                 h.instances[0].emit(frames.resultSuccess());
@@ -1028,9 +1028,9 @@ describe('createConversationConductor', () => {
                 const submitPromise = conductor.submit(
                     {
                         // `task` is the one non-discord contract that carries an author.
-                        id: envelopeId, mode: 'query', kind: 'task', text: 'note', authorId: 'user-NON-DISCORD', hostPriority: 'accumulate', createdAt: new Date(0),
+                        id: envelopeId, mode: 'query', kind: 'task', text: 'note', authorId: 'user-NON-DISCORD', createdAt: new Date(0),
                     },
-                    { priority: 'other' }
+                    { priority: 'normal' }
                 );
                 await flush();
                 h.instances[0].emit(frames.resultSuccess());
@@ -1120,7 +1120,7 @@ describe('createConversationConductor', () => {
 
         function discordEnvelope(overrides: Partial<DiscordQueryEnvelope> = {}): DiscordQueryEnvelope {
             return {
-                id: 'discord-1', mode: 'query', kind: 'discord', text: 'hello', channelId: 'chan-C', authorId: 'user-U', origin: { kind: 'human' }, hostPriority: 'human', createdAt: new Date(0), ...overrides,
+                id: 'discord-1', mode: 'query', kind: 'discord', text: 'hello', channelId: 'chan-C', authorId: 'user-U', origin: { kind: 'human' }, createdAt: new Date(0), ...overrides,
             };
         }
 
@@ -1152,7 +1152,7 @@ describe('createConversationConductor', () => {
             expect(postToolUseHook).toBeDefined();
             expect(userPromptSubmitHook).toBeDefined();
 
-            const discordResult = conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-C' });
+            const discordResult = conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-C' });
             await flush();
 
             await postToolUseHook?.(postToolUseInput(), undefined, { signal: new AbortController().signal });
@@ -2135,9 +2135,9 @@ describe('createPerchConductor', () => {
             expect(userPromptSubmitHook).toBeDefined();
 
             const perchEnvelope: QueryEnvelope = {
-                id: 'perch-1', mode: 'query', kind: 'perch', text: 'perch turn', hostPriority: 'wake', createdAt: new Date(0),
+                id: 'perch-1', mode: 'query', kind: 'perch', text: 'perch turn', createdAt: new Date(0),
             };
-            const perchResultPromise = conductor.submit(perchEnvelope, { priority: 'other' });
+            const perchResultPromise = conductor.submit(perchEnvelope, { priority: 'normal' });
             await flush();
 
             await postToolUseHook?.(perchPostToolUseInput(), undefined, { signal: new AbortController().signal });
