@@ -10,10 +10,13 @@
  *
  * This module never reads the SDK stream itself — the conductor (P7's other half) is the one
  * reader loop, and calls {@link CompactionGuard.onFrame} for every raw frame it observes and
- * {@link CompactionGuard.onCompactionFinished} from its PostCompact hook handler (which is not
- * itself a stream frame). `ledgerStore` is used write-only, purely so `context_usage_polled`,
- * `compaction_started` and `compaction_failed` are visible on the ledger the same way every other
- * conductor-observed fact is; the guard keeps its own in-flight/backoff state privately.
+ * {@link CompactionGuard.onCompactionFinished} from `Conductor.compactionCompleted` (the PostCompact
+ * hook's report, which is not itself a stream frame). The guard never dispatches a compaction
+ * ledger event itself: it announces its own `/compact` attempt through `compactionStarted` and a
+ * failed attempt through `compactionFailed`, the conductor's lifecycle API, so the conductor stays
+ * the sole writer of compaction ledger events. `ledgerStore` is used write-only, purely so
+ * `context_usage_polled` is visible on the ledger the same way every other conductor-observed
+ * fact is; the guard keeps its own in-flight/backoff state privately.
  *
  * @module agent/session/compaction-guard
  */
@@ -29,14 +32,18 @@ export type CompactionFailureReason = 'no-boundary' | 'notification' | 'timeout'
 
 /** Dependencies {@link createCompactionGuard} needs. */
 export interface CreateCompactionGuardParams {
-    getContextUsage:  SessionQuery['getContextUsage']
-    submitCompact:    () => Promise<void>
-    ledgerStore:      Pick<LedgerStore, 'dispatch'>
-    clock:            Clock
-    thresholdPercent: number
+    getContextUsage:   SessionQuery['getContextUsage']
+    submitCompact:     () => Promise<void>
+    /** The conductor's compaction lifecycle: called as the guard's own `/compact` attempt starts. */
+    compactionStarted: (trigger: 'auto') => void
+    /** The conductor's compaction lifecycle: called when the guard's attempt ends without completing. */
+    compactionFailed:  (reason: CompactionFailureReason) => void
+    ledgerStore:       Pick<LedgerStore, 'dispatch'>
+    clock:             Clock
+    thresholdPercent:  number
     /** How long to hold before giving up on an observable release and failing with `'timeout'`. Default 300000 (5 minutes). */
-    ceilingMs?:       number
-    logger:           Pick<Logger, 'info' | 'warn' | 'error'>
+    ceilingMs?:        number
+    logger:            Pick<Logger, 'info' | 'warn' | 'error'>
 }
 
 /** Host-driven compaction guard returned by {@link createCompactionGuard}. */
@@ -69,7 +76,7 @@ export interface CompactionGuard {
  * @param params See {@link CreateCompactionGuardParams}.
  */
 export function createCompactionGuard(params: CreateCompactionGuardParams): CompactionGuard {
-    const { getContextUsage, submitCompact, ledgerStore, clock, ceilingMs = 300_000, logger } = params;
+    const { getContextUsage, submitCompact, compactionStarted, compactionFailed, ledgerStore, clock, ceilingMs = 300_000, logger } = params;
 
     let inFlight = false;
     let ceilingTimer: TimerHandle | undefined;
@@ -94,14 +101,14 @@ export function createCompactionGuard(params: CreateCompactionGuardParams): Comp
             return;
         }
         logger.error({ reason }, 'Compaction guard: compaction failed');
-        ledgerStore.dispatch({ type: 'compaction_failed', reason, at: new Date(clock.now()) });
+        compactionFailed(reason);
         skipRemaining = nextBackoffSkips;
         nextBackoffSkips = Math.min(MAX_BACKOFF_SKIPS, nextBackoffSkips * 2);
     }
 
     async function submit(): Promise<void> {
         inFlight = true;
-        ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(clock.now()) });
+        compactionStarted('auto');
         ceilingTimer = clock.setTimer(() => {
             release('timeout');
         }, ceilingMs);

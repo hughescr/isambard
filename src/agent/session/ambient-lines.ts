@@ -85,12 +85,9 @@ function formatStamp(when: Date, now: Date, timezone: string): string {
     return at.hasSame(today, 'day') ? at.toFormat('HH:mm') : at.toFormat('ccc HH:mm');
 }
 
-/** The phase digest (`generatedStatus`) when the phase carries one — `compacting` never does. */
+/** The phase digest (`generatedStatus`) when there is a phase and it carries one. */
 function phaseDigest(phase: ActivityPhase | null): string | undefined {
-    if(phase === null || !('generatedStatus' in phase)) {
-        return undefined;
-    }
-    return phase.generatedStatus;
+    return phase?.generatedStatus;
 }
 
 /** One verb per {@link ActivityPhase} type, for a turn that is not a perch slot turn. */
@@ -108,15 +105,13 @@ function phaseVerb(phase: ActivityPhase | null): string {
         case 'responding': {
             return 'replying';
         }
-        case 'compacting': {
-            return 'compacting';
-        }
     }
 }
 
 /**
- * The leading clause of the other-session line: the perch slot for a live perch slot turn, the
- * phase verb for any other open turn, and `idle since <stamp>` (or a bare `idle`, before this
+ * The leading clause of the other-session line: the perch slot for a live perch slot turn,
+ * `compacting` for any other open turn while `ledger.compaction` says so (the single "compacting"
+ * authority), the phase verb otherwise, and `idle since <stamp>` (or a bare `idle`, before this
  * process has ever closed a turn on that session) when nothing is running. `ledger.perch` is
  * sticky — it survives the turn that set it — so the slot is only rendered while a `perch`-kind
  * turn is actually open, never afterwards and never for a Discord turn on the perch session.
@@ -131,6 +126,9 @@ function describeActivity(ledger: Ledger, now: Date, timezone: string): string {
     if(turn.kind === 'perch' && ledger.perch.slot !== undefined) {
         const until = ledger.perch.endsAt === undefined ? '' : ` until ${formatStamp(ledger.perch.endsAt, now, timezone)}`;
         return `slot "${ledger.perch.slot}"${until}`;
+    }
+    if(ledger.compaction === 'compacting') {
+        return 'compacting';
     }
     return phaseVerb(turn.phase);
 }

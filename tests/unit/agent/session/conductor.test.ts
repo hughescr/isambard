@@ -1894,6 +1894,9 @@ describe('createConductor', () => {
             expect(h.journal.byKind('compaction_failed')).toEqual([
                 { type: 'compaction_failed', at: expect.any(Date), error: 'timeout' },
             ]);
+            // The timeout's interrupt dispatches interrupt_requested re-entrantly from inside the
+            // failure's own ledger notification; that must not journal a completion as well.
+            expect(h.journal.byKind('compaction_completed')).toEqual([]);
             // Releasing the guard's own bookkeeping is not enough — the stuck turn itself must be
             // interrupted, or processQueue() stays blocked on currentTurn !== null forever.
             expect(h.instances[0].interruptCalls).toBe(1);
@@ -2034,14 +2037,14 @@ describe('createConductor', () => {
             await resultPromise;
         });
 
-        it('a submit arriving while ledger.compaction is compacting but no turn is running is held until compaction ends', async () => {
+        it('a submit held by a PreCompact-started compaction with no turn running starts once PostCompact completes it, journaling compaction_completed exactly once', async () => {
             const h = build();
             await openWith(h);
 
-            // Simulate compaction being reported as in-flight with no active turn — the branch
+            // The PreCompact hook reports a compaction with no active turn — the branch
             // processQueue() guards for even though the conductor's own auto-compaction flow
             // never leaves currentTurn null and ledger.compaction 'compacting' at the same time.
-            h.ledgerStore.dispatch({ type: 'compaction_started', trigger: 'manual', at: new Date(h.clock.now()) });
+            h.conductor.compactionStarted('manual');
 
             const envelope = discordEnvelope();
             const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
@@ -2050,15 +2053,205 @@ describe('createConductor', () => {
             expect(turnPrompts(h.instances[0])).toHaveLength(0);
             expect(h.ledgerStore.get().turn).toBeNull();
 
-            h.ledgerStore.dispatch({ type: 'compaction_finished', at: new Date(h.clock.now()) });
+            // Completing releases the held submit, whose beginTurn dispatches turn_submitted
+            // re-entrantly from inside the completion's own ledger notification: that nested
+            // notification must not journal the same compacting -> none transition again.
+            h.conductor.compactionCompleted();
             await flush();
 
+            expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
             expect(turnPrompts(h.instances[0])).toHaveLength(1);
             expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'discord' });
+
+            // The compact_boundary frame arriving afterwards observes the same completion again.
+            h.instances[0].emit(frames.compactBoundary());
+            await flush();
+
+            expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
 
             h.instances[0].emit(frames.resultSuccess());
             const result = await resultPromise;
             expect(result.envelopeId).toBe(envelope.id);
+        });
+
+        it('a submit held by a PreCompact-started compaction with no turn running starts once the compact_boundary frame completes it, journaling compaction_completed exactly once', async () => {
+            const h = build();
+            await openWith(h);
+            h.conductor.compactionStarted('manual');
+
+            const envelope = discordEnvelope();
+            const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            expect(turnPrompts(h.instances[0])).toHaveLength(0);
+
+            h.instances[0].emit(frames.compactBoundary());
+            await flush();
+
+            expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
+            expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'discord' });
+
+            h.conductor.compactionCompleted();
+            await flush();
+
+            expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
+
+            h.instances[0].emit(frames.resultSuccess());
+            const result = await resultPromise;
+            expect(result.envelopeId).toBe(envelope.id);
+        });
+
+        it('compactionStarted and compactionCompleted dispatch the lifecycle ledger events stamped with the conductor clock', async () => {
+            const h = build();
+            await openWith(h);
+            const events: unknown[] = [];
+            h.ledgerStore.subscribe((_ledger, event) => {
+                events.push(event);
+            });
+            h.clock.advance(1234);
+
+            h.conductor.compactionStarted('manual');
+            h.conductor.compactionCompleted();
+
+            expect(events).toEqual([
+                { type: 'compaction_started', trigger: 'manual', at: new Date(1234) },
+                { type: 'compaction_completed', at: new Date(1234) },
+            ]);
+            expect(h.ledgerStore.get().context.lastCompactionAt).toEqual(new Date(1234));
+        });
+
+        it('a guard failure dispatches compaction_failed with its reason, stamped with the conductor clock', async () => {
+            const h = build();
+            await openWith(h);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            const failed: unknown[] = [];
+            h.ledgerStore.subscribe((_ledger, event) => {
+                if(event.type === 'compaction_failed') {
+                    failed.push(event);
+                }
+            });
+            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await firstResult;
+            await flush();
+            h.clock.advance(4321);
+
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 10 }));
+            h.instances[0].emit(frames.resultSuccess()); // the /compact turn's own result, no boundary seen
+            await flush();
+
+            expect(failed).toEqual([{ type: 'compaction_failed', reason: 'no-boundary', at: new Date(4321) }]);
+        });
+
+        it('the guard\'s own /compact dispatches compaction_started with trigger auto', async () => {
+            const h = build();
+            await openWith(h);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            const started: unknown[] = [];
+            h.ledgerStore.subscribe((_ledger, event) => {
+                if(event.type === 'compaction_started') {
+                    started.push(event);
+                }
+            });
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            expect(started).toEqual([{ type: 'compaction_started', trigger: 'auto', at: new Date(h.clock.now()) }]);
+        });
+
+        it('a PreCompact report during the guard\'s /compact neither re-journals nor changes the ledger, and PostCompact then completes it exactly once', async () => {
+            const h = build();
+            await openWith(h);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+            expect(h.journal.byKind('compaction_started')).toHaveLength(1);
+            const compacting = h.ledgerStore.get();
+
+            h.conductor.compactionStarted('manual');
+
+            expect(h.ledgerStore.get()).toBe(compacting);
+            expect(h.journal.byKind('compaction_started')).toHaveLength(1);
+
+            h.conductor.compactionCompleted();
+            await flush();
+
+            expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
+            expect(h.ledgerStore.get().compaction).toBe('none');
+
+            h.instances[0].emit(frames.compactBoundary());
+            await flush();
+
+            expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
+        });
+
+        it('the compact_boundary frame then a PostCompact report during the guard\'s /compact journal compaction_completed exactly once', async () => {
+            const h = build();
+            await openWith(h);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            h.instances[0].emit(frames.compactBoundary());
+            await flush();
+            expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
+
+            h.conductor.compactionCompleted();
+            await flush();
+
+            expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
+        });
+
+        it('a PostCompact report with no boundary frame releases the guard as a success, so the next threshold turn end compacts again with no backoff', async () => {
+            const h = build();
+            await openWith(h);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'compact' });
+
+            h.conductor.compactionCompleted();
+            // The /compact turn's own result, with no boundary frame ever seen.
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            expect(h.journal.byKind('compaction_failed')).toEqual([]);
+            expect(h.journal.byKind('compaction_started')).toHaveLength(2);
+        });
+
+        it('a compact_boundary frame while no compaction is in progress journals nothing and stamps no lastCompactionAt', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.instances[0].emit(frames.compactBoundary());
+            await flush();
+
+            expect(h.journal.byKind('compaction_completed')).toEqual([]);
+            expect(h.ledgerStore.get().context.lastCompactionAt).toBeUndefined();
+        });
+
+        it('a system frame other than compact_boundary does not complete an in-progress compaction', async () => {
+            const h = build();
+            await openWith(h);
+            h.conductor.compactionStarted('manual');
+
+            h.instances[0].emit(notificationFrame('some-other-key'));
+            await flush();
+
+            expect(h.ledgerStore.get().compaction).toBe('compacting');
+            expect(h.journal.byKind('compaction_completed')).toEqual([]);
         });
 
         it('does not spuriously open a notification turn for a frame arriving while the compaction guard is still deciding (one-turn invariant)', async () => {

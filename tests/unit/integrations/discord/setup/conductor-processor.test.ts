@@ -93,6 +93,8 @@ class FakeConductor implements Conductor {
     private thresholdPercent = 60;
     getCompactionThresholdPercent = (): number => this.thresholdPercent;
     setCompactionThresholdPercent = (percent: number): void => { this.thresholdPercent = percent; };
+    compactionStarted = (): void => { throw new Error('FakeConductor.compactionStarted is unused by conductor-processor.ts'); };
+    compactionCompleted = (): void => { throw new Error('FakeConductor.compactionCompleted is unused by conductor-processor.ts'); };
 }
 
 function makeContextPolicy(overrides: Partial<ContextPolicy> = {}): ContextPolicy {

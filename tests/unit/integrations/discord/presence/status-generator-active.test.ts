@@ -26,7 +26,6 @@ describe('ActiveStatusGenerator', () => {
             { phase: { type: 'responding', startedAt: new Date() }, expected: 'Responding...', desc: 'responding fallback' },
             { phase: { type: 'thinking', startedAt: new Date(), generatedStatus: 'Deep thought...' }, expected: 'Deep thought...', desc: 'thinking override' },
             { phase: { type: 'responding', startedAt: new Date(), generatedStatus: 'Composing...' }, expected: 'Composing...', desc: 'responding override' },
-            { phase: { type: 'compacting', startedAt: new Date() }, expected: 'Compacting context...', desc: 'compacting' },
             { phase: { type: 'idle', since: new Date() }, expected: 'Idle', desc: 'idle' },
         ] as const)('$desc -> "$expected"', ({ phase, expected }) => {
             const generator = createActiveStatusGenerator({

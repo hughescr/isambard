@@ -9,13 +9,13 @@
  * precomputed intervals, only per-attempt `{startedAt, finishedAt?, failedAt?}` records. When
  * `telemetry` is supplied, this module derives millisecond intervals from consecutive *finished*
  * records' `startedAt` deltas, read fresh from `telemetry.getRecords()` every time a
- * `compact_boundary` event is observed. `createCompactionTelemetry`'s own `record()` runs
+ * `compaction_completed` event is observed. `createCompactionTelemetry`'s own `record()` runs
  * synchronously off the very same ledger event, so callers should subscribe `telemetry` to the
  * `ledgerStore` before constructing this tuner, so `getRecords()` already reflects the
  * just-finished compaction by the time this module's own subscriber callback runs.
  *
  * When `telemetry` is omitted, this module instead derives the same interval history itself by
- * tracking consecutive `compact_boundary` `sdk_frame` timestamps as they arrive on
+ * tracking consecutive `compaction_completed` timestamps as they arrive on
  * `ledgerStore.subscribe`, seeded at construction from `ledgerStore.get().context.lastCompactionAt`
  * (an existing `Ledger.context` field, stamped by `ledger.ts` on the same event) so a compaction
  * that already completed before this tuner was created still supplies one endpoint of the first
@@ -146,7 +146,7 @@ function intervalsFromFinishedRecords(telemetry: CompactionTelemetry): number[] 
 
 /**
  * Subscribes to `ledgerStore` and recomputes the tuned threshold on every observed
- * `compact_boundary` `sdk_frame` event (the only event that can change either interval source --
+ * `compaction_completed` event (the only event that can change either interval source --
  * see the module doc), calling `setThresholdPercent` only when the computed value differs from
  * `getThresholdPercent()`'s current answer.
  * @param params See {@link CreateCompactionThresholdTunerParams}.
@@ -176,7 +176,7 @@ export function createCompactionThresholdTuner(params: CreateCompactionThreshold
     const fallbackIntervalsMs: number[] = [];
 
     return ledgerStore.subscribe((_ledger, event) => {
-        if(!(event.type === 'sdk_frame' && event.frame.type === 'system' && event.frame.subtype === 'compact_boundary')) {
+        if(event.type !== 'compaction_completed') {
             return;
         }
 

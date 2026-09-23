@@ -505,7 +505,7 @@ describe('createConversationConductor', () => {
         expect(handshakeOf(h.instances[0])).toBe('[BOOT] Session opened at 1970-01-01T00:00:10.000Z. No boot context to report. Host handshake — nothing to do, no reply expected.');
     });
 
-    it('PreCompact dispatches compaction_started onto the ledger; PostCompact resets the context policy and records the compaction summary', async () => {
+    it('PreCompact starts a compaction through the conductor; PostCompact completes it through the conductor and resets the context policy', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
 
@@ -514,6 +514,12 @@ describe('createConversationConductor', () => {
         await flush();
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
+        const compactionEvents: unknown[] = [];
+        ledgerStore.subscribe((_ledger, event) => {
+            if(event.type.startsWith('compaction_')) {
+                compactionEvents.push(event);
+            }
+        });
 
         contextPolicy.markInjected('user-1', 'block text');
         expect(contextPolicy.shouldInjectUserMemory('user-1', 'block text')).toBe(false);
@@ -529,6 +535,12 @@ describe('createConversationConductor', () => {
 
         await postCompact?.({ compact_summary: 'summary text', session_id: 'sess-1', hook_event_name: 'PostCompact' } as never, undefined, undefined as never);
 
+        expect(ledgerStore.get().compaction).toBe('none');
+        expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
+        expect(compactionEvents).toEqual([
+            { type: 'compaction_started', trigger: 'auto', at: expect.any(Date) },
+            { type: 'compaction_completed', at: expect.any(Date) },
+        ]);
         expect(contextPolicy.shouldInjectUserMemory('user-1', 'block text')).toBe(true);
     });
 
@@ -875,14 +887,14 @@ describe('createConversationConductor', () => {
         expect(contextPolicy.healthNote()).toBeUndefined();
     });
 
-    it('returns a compactionTelemetry subscribed to the ledgerStore, recording a compaction_started/compact_boundary pair as one completed record', async () => {
+    it('returns a compactionTelemetry subscribed to the ledgerStore, recording a compaction_started/compaction_completed pair as one completed record', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
 
         const { ledgerStore, compactionTelemetry } = await createConversationConductor(h.params);
 
         ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(5) });
-        ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(10) });
+        ledgerStore.dispatch({ type: 'compaction_completed', at: new Date(10) });
 
         expect(compactionTelemetry.getRecords()).toEqual([
             { startedAt: new Date(5), thresholdAtStart: DEFAULT_CONFIG.compactThresholdPercent, finishedAt: new Date(10) },
@@ -924,7 +936,7 @@ describe('createConversationConductor', () => {
         // tuner two observed intervals, enough to take one bounded step down.
         for(let i = 0; i < 3; i += 1) {
             ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(i * 1000) });
-            ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(i * 1000 + 500) });
+            ledgerStore.dispatch({ type: 'compaction_completed', at: new Date(i * 1000 + 500) });
         }
 
         expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent - DEFAULT_STEP_PERCENT);
@@ -938,7 +950,7 @@ describe('createConversationConductor', () => {
 
         for(let i = 0; i < 5; i += 1) {
             ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(i * 1000) });
-            ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(i * 1000 + 1) });
+            ledgerStore.dispatch({ type: 'compaction_completed', at: new Date(i * 1000 + 1) });
         }
 
         expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent);
@@ -1651,14 +1663,14 @@ describe('createPerchConductor', () => {
         expect(typeof result.conductor.submit).toBe('function');
     });
 
-    it('returns a compactionTelemetry subscribed to the ledgerStore, recording a compaction_started/compact_boundary pair as one completed record', async () => {
+    it('returns a compactionTelemetry subscribed to the ledgerStore, recording a compaction_started/compaction_completed pair as one completed record', async () => {
         const h = buildPerch();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
 
         const { ledgerStore, compactionTelemetry } = await createPerchConductor(h.params);
 
         ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(5) });
-        ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(10) });
+        ledgerStore.dispatch({ type: 'compaction_completed', at: new Date(10) });
 
         expect(compactionTelemetry.getRecords()).toEqual([
             { startedAt: new Date(5), thresholdAtStart: DEFAULT_CONFIG.compactThresholdPercent, finishedAt: new Date(10) },
@@ -1696,7 +1708,7 @@ describe('createPerchConductor', () => {
 
         for(let i = 0; i < 3; i += 1) {
             ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(i * 1000) });
-            ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(i * 1000 + 500) });
+            ledgerStore.dispatch({ type: 'compaction_completed', at: new Date(i * 1000 + 500) });
         }
 
         expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent - DEFAULT_STEP_PERCENT);
@@ -1710,7 +1722,7 @@ describe('createPerchConductor', () => {
 
         for(let i = 0; i < 5; i += 1) {
             ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(i * 1000) });
-            ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(i * 1000 + 1) });
+            ledgerStore.dispatch({ type: 'compaction_completed', at: new Date(i * 1000 + 1) });
         }
 
         expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent);
@@ -2046,7 +2058,7 @@ describe('createPerchConductor', () => {
         });
     });
 
-    it('PreCompact dispatches compaction_started onto the ledger; PostCompact records the compaction summary', async () => {
+    it('PreCompact starts a compaction through the conductor; PostCompact completes it through the conductor', async () => {
         const h = buildPerch();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
 
@@ -2065,12 +2077,11 @@ describe('createPerchConductor', () => {
         await preCompact?.({ trigger: 'auto', session_id: 'sess-1', hook_event_name: 'PreCompact' } as never, undefined, undefined as never);
         expect(ledgerStore.get().compaction).toBe('compacting');
 
-        // PostCompact's own hook does nothing beyond the ledger dispatch — the ledger's
-        // `compaction` field returns to 'none' only on an actual `compact_boundary` SDK frame
-        // (ledger.ts's own reducer), which this test never emits; asserting the hook resolves
-        // without throwing is the meaningful behaviour to pin here (no ContextPolicy to reset).
+        // PostCompact ends the compaction through the conductor even with no compact_boundary
+        // frame (this test never emits one); perch has no ContextPolicy to reset.
         await expect(postCompact?.({ compact_summary: 'summary text', session_id: 'sess-1', hook_event_name: 'PostCompact' } as never, undefined, undefined as never)).resolves.toBeDefined();
-        expect(ledgerStore.get().compaction).toBe('compacting');
+        expect(ledgerStore.get().compaction).toBe('none');
+        expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
     });
 
     it('classifies the SDK\'s "Operation aborted" stderr as an error, never debug — like conversation, perch has no per-open interrupt flag threaded into isInterrupting', async () => {

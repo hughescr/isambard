@@ -110,7 +110,6 @@ describe('composeAmbientLines: the other-session line', () => {
     it.each([
         ['responding', { type: 'responding', startedAt: NOW }, 'Conversation: replying'],
         ['thinking', { type: 'thinking', startedAt: NOW }, 'Conversation: thinking'],
-        ['compacting', { type: 'compacting', startedAt: NOW }, 'Conversation: compacting'],
         ['using_tool', { type: 'using_tool', toolName: 'Read', startedAt: NOW }, 'Conversation: using Read'],
     ] as const)('renders the %s phase as its own verb', (_name, phase, expected) => {
         const other = ledger('conversation', { turn: turn({ phase }) });
@@ -130,10 +129,28 @@ describe('composeAmbientLines: the other-session line', () => {
         expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: thinking, working on drafting the reply']);
     });
 
-    it('appends no digest for a compacting phase, which carries none', () => {
-        const other = ledger('conversation', { turn: turn({ phase: { type: 'compacting', startedAt: NOW, trigger: 'auto' } }) });
+    it('renders `compacting` for an open turn while the ledger is compacting, whatever its phase', () => {
+        const other = ledger('conversation', { turn: turn({ phase: { type: 'thinking', startedAt: NOW } }), compaction: 'compacting' });
 
         expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: compacting']);
+    });
+
+    it('keeps the phase digest alongside `compacting`', () => {
+        const other = ledger('conversation', { turn: turn({ phase: { type: 'thinking', startedAt: NOW, generatedStatus: 'drafting the reply' } }), compaction: 'compacting' });
+
+        expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: compacting, working on drafting the reply']);
+    });
+
+    it('stays idle while compacting with no turn open', () => {
+        const other = ledger('conversation', { compaction: 'compacting' });
+
+        expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: idle']);
+    });
+
+    it('shows the live perch slot rather than `compacting`', () => {
+        const other = ledger('perch', { turn: turn({ kind: 'perch' }), perch: { slot: 'reflection' }, compaction: 'compacting' });
+
+        expect(compose({ other })).toEqual(['Perch: slot "reflection"']);
     });
 
     it('counts one running workflow', () => {

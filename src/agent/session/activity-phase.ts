@@ -17,7 +17,9 @@ import type { AssistantFrame, TextBlock, ToolUseBlock } from '../stream-extracto
  * - thinking: Bot is processing the user's message and formulating a response
  * - using_tool: Bot is executing a specific tool (memory search, file read, etc.)
  * - responding: Bot is generating and sending the response text
- * - compacting: Bot is compacting its context window (manual or auto-triggered)
+ *
+ * A context compaction is deliberately NOT a phase: `Ledger.compaction` is the single
+ * "compacting" authority, and presence renders it as a marker alongside whatever phase is open.
  *
  * @example
  * ```typescript
@@ -38,8 +40,7 @@ import type { AssistantFrame, TextBlock, ToolUseBlock } from '../stream-extracto
 export type ActivityPhase
     = | { type: 'thinking', startedAt: Date, userMessage?: string, generatedStatus?: string }
       | { type: 'using_tool', toolName: string, startedAt: Date, generatedStatus?: string }
-      | { type: 'responding', startedAt: Date, generatedStatus?: string }
-      | { type: 'compacting', startedAt: Date, trigger?: 'manual' | 'auto' };
+      | { type: 'responding', startedAt: Date, generatedStatus?: string };
 
 /**
  * Zod schema for validating activity phases.
@@ -62,11 +63,6 @@ export const activityPhaseSchema = z.discriminatedUnion('type', [
         type:            z.literal('responding'),
         startedAt:       z.date(),
         generatedStatus: z.string().optional(),
-    }),
-    z.object({
-        type:      z.literal('compacting'),
-        startedAt: z.date(),
-        trigger:   z.enum(['manual', 'auto']).optional(),
     }),
 ]);
 

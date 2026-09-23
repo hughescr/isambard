@@ -415,17 +415,10 @@ describe('reduceLedger: phase_synopsis', () => {
         expect(backToThinking.turn?.phase).toEqual({ type: 'thinking', startedAt: T3, generatedStatus: 'mulling it over' });
     });
 
-    it('does not carry the digest onto a compacting phase, and a compacting phase carries none onward', () => {
-        const withDigest = reduceLedger(
-            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
-            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
-        );
+    it('carries nothing onto the first phase of a turn that had no phase yet', () => {
+        const first = reduceLedger(openTurn(), frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T2 }, at: T2 }));
 
-        const compacting = reduceLedger(withDigest, frozenEvent({ type: 'phase_changed', phase: { type: 'compacting', startedAt: T3, trigger: 'manual' }, at: T3 }));
-        expect(compacting.turn?.phase).toEqual({ type: 'compacting', startedAt: T3, trigger: 'manual' });
-
-        const afterwards = reduceLedger(compacting, frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T3 }, at: T3 }));
-        expect(afterwards.turn?.phase).toEqual({ type: 'thinking', startedAt: T3 });
+        expect(first.turn?.phase).toEqual({ type: 'thinking', startedAt: T2 });
     });
 
     it('keeps a new phase\'s OWN digest rather than overwriting it with the carried one', () => {
@@ -1427,13 +1420,24 @@ describe('reduceLedger: tasks', () => {
 });
 
 describe('reduceLedger: compaction', () => {
-    it('compaction_started sets compaction to compacting and, with a turn open, sets turn.phase to compacting{trigger}', () => {
+    it('compaction_started with a turn open flips the compaction flag and leaves the turn untouched', () => {
         const opened = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T1 }));
+        const thinking = reduceLedger(opened, frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T1 }, at: T1 }));
 
-        const ledger = reduceLedger(opened, frozenEvent({ type: 'compaction_started', trigger: 'auto', at: T2 }));
+        const ledger = reduceLedger(thinking, frozenEvent({ type: 'compaction_started', trigger: 'auto', at: T2 }));
 
         expect(ledger.compaction).toBe('compacting');
-        expect(ledger.turn?.phase).toEqual({ type: 'compacting', startedAt: T2, trigger: 'auto' });
+        expect(ledger.turn).toBe(thinking.turn);
+        expect(ledger.turn?.phase).toEqual({ type: 'thinking', startedAt: T1 });
+    });
+
+    it('compaction_started is a no-op (same reference) when already compacting with a turn open', () => {
+        const opened = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T1 }));
+        const compacting = reduceLedger(opened, frozenEvent({ type: 'compaction_started', trigger: 'auto', at: T1 }));
+
+        const next = reduceLedger(compacting, frozenEvent({ type: 'compaction_started', trigger: 'manual', at: T2 }));
+
+        expect(next).toBe(compacting);
     });
 
     it('compaction_started with no turn open just flips the compaction flag', () => {
@@ -1451,30 +1455,31 @@ describe('reduceLedger: compaction', () => {
         expect(next).toBe(compacting);
     });
 
-    it('compaction_finished sets compaction to none and stamps lastCompactionAt', () => {
+    it('compaction_completed sets compaction to none and stamps lastCompactionAt', () => {
         const compacting = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'compaction_started', at: T1 }));
 
-        const ledger = reduceLedger(compacting, frozenEvent({ type: 'compaction_finished', at: T2 }));
+        const ledger = reduceLedger(compacting, frozenEvent({ type: 'compaction_completed', at: T2 }));
 
         expect(ledger.compaction).toBe('none');
         expect(ledger.context.lastCompactionAt).toEqual(T2);
     });
 
-    it('compaction_finished is a no-op (same reference) when compaction is already none', () => {
+    it('compaction_completed is a no-op (same reference) when compaction is already none', () => {
         const ledger = initialLedger('conversation');
 
-        const next = reduceLedger(ledger, frozenEvent({ type: 'compaction_finished', at: T1 }));
+        const next = reduceLedger(ledger, frozenEvent({ type: 'compaction_completed', at: T1 }));
 
         expect(next).toBe(ledger);
     });
 
-    it('sdk_frame compact_boundary sets compaction to none and stamps lastCompactionAt', () => {
+    it('an sdk_frame compact_boundary alone no longer ends a compaction or stamps lastCompactionAt', () => {
         const compacting = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'compaction_started', at: T1 }));
 
         const ledger = reduceLedger(compacting, frozenEvent({ type: 'sdk_frame', frame: frames.compactBoundary(), at: T2 }));
 
-        expect(ledger.compaction).toBe('none');
-        expect(ledger.context.lastCompactionAt).toEqual(T2);
+        expect(ledger).toBe(compacting);
+        expect(ledger.compaction).toBe('compacting');
+        expect(ledger.context.lastCompactionAt).toBeUndefined();
     });
 
     it('compaction_failed returns compaction to none without stamping lastCompactionAt', () => {
@@ -1507,7 +1512,7 @@ describe('reduceLedger: context, process, phase, session', () => {
 
     it('keeps the compaction timestamp when a later context usage reading changes', () => {
         const compacting = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'compaction_started', at: T1 }));
-        const compacted = reduceLedger(compacting, frozenEvent({ type: 'compaction_finished', at: T2 }));
+        const compacted = reduceLedger(compacting, frozenEvent({ type: 'compaction_completed', at: T2 }));
 
         const ledger = reduceLedger(compacted, frozenEvent({
             type:  'context_usage_polled', at:    T3,
@@ -1711,7 +1716,7 @@ describe('reduceLedger: clock-free', () => {
             { type: 'sdk_frame', frame: frames.assistantText('hi'), at: T3 },
             { type: 'sdk_frame', frame: frames.taskStarted({ task_id: 't1' }), at: T3 },
             { type: 'compaction_started', trigger: 'auto', at: T1 },
-            { type: 'compaction_finished', at: T2 },
+            { type: 'compaction_completed', at: T2 },
             { type: 'context_usage_polled', at: T1, usage: { totalTokens: 1, maxTokens: 2, percentage: 0.5 } },
             { type: 'tick', rssBytes: 1, at: T1 },
         ];

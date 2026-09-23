@@ -26,7 +26,7 @@ type DynamicStatusGenerator = ReturnType<typeof createDynamicStatusGenerator>;
  */
 export const IDLE_SETTLE_MS = 1500;
 
-/** `true` when the view's phase carries a ledger-overlaid synopsis (`compacting` has none). */
+/** The view phase's ledger-overlaid synopsis, when it carries one (`idle` has none). */
 function digestOf(view: PresenceView): string | undefined {
     return 'generatedStatus' in view.phase ? view.phase.generatedStatus : undefined;
 }

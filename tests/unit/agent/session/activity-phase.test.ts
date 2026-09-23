@@ -86,30 +86,8 @@ describe('activityPhaseSchema', () => {
         });
     });
 
-    describe('compacting', () => {
-        it('accepts required fields only', () => {
-            expect(() => activityPhaseSchema.parse({ type: 'compacting', startedAt: AT })).not.toThrow();
-        });
-
-        it('accepts trigger "manual"', () => {
-            expect(() => activityPhaseSchema.parse({ type: 'compacting', startedAt: AT, trigger: 'manual' })).not.toThrow();
-        });
-
-        it('accepts trigger "auto"', () => {
-            expect(() => activityPhaseSchema.parse({ type: 'compacting', startedAt: AT, trigger: 'auto' })).not.toThrow();
-        });
-
-        it('rejects trigger "invalid"', () => {
-            expect(() => activityPhaseSchema.parse({ type: 'compacting', startedAt: AT, trigger: 'invalid' })).toThrow();
-        });
-
-        it('rejects a missing startedAt', () => {
-            expect(() => activityPhaseSchema.parse({ type: 'compacting' })).toThrow();
-        });
-
-        it('rejects a non-Date startedAt', () => {
-            expect(() => activityPhaseSchema.parse({ type: 'compacting', startedAt: AT.toISOString() })).toThrow();
-        });
+    it('rejects a compacting phase: compaction is Ledger.compaction, not a phase', () => {
+        expect(() => activityPhaseSchema.parse({ type: 'compacting', startedAt: AT })).toThrow();
     });
 
     it('rejects an unknown type', () => {
@@ -130,8 +108,8 @@ describe('isActivityPhase', () => {
         expect(isActivityPhase({ type: 'using_tool', toolName: 'Bash', startedAt: AT })).toBe(true);
     });
 
-    it('is true for a valid compacting phase', () => {
-        expect(isActivityPhase({ type: 'compacting', startedAt: AT, trigger: 'auto' })).toBe(true);
+    it('is false for a retired compacting phase', () => {
+        expect(isActivityPhase({ type: 'compacting', startedAt: AT, trigger: 'auto' })).toBe(false);
     });
 
     it('is false for null/undefined/empty/unknown type/wrong shape', () => {
@@ -357,7 +335,7 @@ describe('phaseFromFrame', () => {
 
     it('returns prev by reference for every other frame type (e.g. init)', () => {
         const frame: SDKMessage = frames.init('sess-1');
-        const prev: ActivityPhase = { type: 'compacting', startedAt: AT };
+        const prev: ActivityPhase = { type: 'responding', startedAt: AT };
 
         expect(phaseFromFrame(frame, prev, AT)).toBe(prev);
     });

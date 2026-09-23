@@ -9,8 +9,9 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { ActivityType, type Client  } from 'discord.js';
 import { mockGenerateText, mockGenerateTextWithSystemPrompt, originalGenerateText, originalGenerateTextWithSystemPrompt } from '../../setup';
+import { initialLedger, reduceLedger } from '@/agent';
 import { PresenceManager } from '@/integrations/discord/presence/manager';
-import type { PresenceView } from '@/integrations/discord/presence/presence-view';
+import { composePresence, type PresenceView } from '@/integrations/discord/presence/presence-view';
 import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
 
@@ -98,6 +99,34 @@ describe('Discord Presence Flow (Integration)', () => {
         expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalled();
         expect(setActivity).toHaveBeenCalledTimes(2);
         expect(setActivity).toHaveBeenLastCalledWith({ name: '💤 • Contemplating digital dreams', type: ActivityType.Custom });
+
+        presenceManager.stop();
+    });
+
+    it('says "compacting" exactly once while a turn is open during a compaction', async () => {
+        const logger = {
+            debug: mock(() => undefined),
+            info:  mock(() => undefined),
+            warn:  mock(() => undefined),
+            error: mock(() => undefined),
+        };
+        const presenceManager = new PresenceManager({
+            discordClient:         mockDiscordClient,
+            config:                { updateThrottleMs: 50, idleTimeoutMs: 200, idleRefreshIntervalMs: 5000 },
+            activeStatusGenerator: createActiveStatusGenerator({ activityType: ActivityType.Custom, logger }),
+            idleStatusGenerator:   createIdleStatusGenerator({ logger, activityType: ActivityType.Custom, identityContext: () => Promise.resolve('Test Bot') }),
+            logger,
+        });
+        presenceManager.start();
+        const at = new Date(0);
+        const opened = reduceLedger(initialLedger('conversation'), { type: 'turn_submitted', envelope: { id: 'env-1', kind: 'compact', queuedAt: at }, at });
+        const compacting = reduceLedger(opened, { type: 'compaction_started', trigger: 'auto', at });
+
+        await presenceManager.applyView(composePresence([compacting, initialLedger('perch')]));
+
+        const [[{ name }]] = setActivity.mock.calls as unknown as [[{ name: string }]];
+        expect(name).toBe('💬 • compacting • Thinking...');
+        expect(name.match(/compacting/gi) ?? []).toHaveLength(1);
 
         presenceManager.stop();
     });

@@ -20,7 +20,7 @@ import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
 const DEFAULT_CONFIG: SessionConfig = sessionConfigSchema.parse({});
 
 function boundaryEvent(at: Date): LedgerEvent {
-    return { type: 'sdk_frame', frame: frames.compactBoundary(), at };
+    return { type: 'compaction_completed', at };
 }
 
 function sparseIntervals(length: number): number[] {
@@ -137,9 +137,9 @@ describe('createCompactionThresholdTuner', () => {
         expect(setThresholdPercent).not.toHaveBeenCalled();
     });
 
-    it('ignores ledger events other than an sdk_frame compact_boundary', () => {
+    it('ignores ledger events other than compaction_completed', () => {
         // Target deliberately does NOT equal the spacing between the events below (1000ms): if
-        // the compact_boundary guard were ever bypassed, these non-boundary events would still
+        // the compaction_completed guard were ever bypassed, these other events would still
         // feed the fallback tracker (each carries an `at`) and produce two 1000ms intervals,
         // which -- at this target -- would step the threshold up and be observed below. A target
         // that happened to equal the event spacing (as this test previously used) would make a
@@ -153,17 +153,15 @@ describe('createCompactionThresholdTuner', () => {
         expect(setThresholdPercent).not.toHaveBeenCalled();
     });
 
-    it('ignores a system sdk_frame whose subtype is not compact_boundary', () => {
-        // Distinguishes the subtype check from the shallower `frame.type === 'system'` check
-        // above it: `frames.init` is a real `system`-type frame, just not a `compact_boundary`
-        // one, so a bypassed subtype guard would still feed the fallback tracker two 1000ms
-        // intervals (three events needed for two intervals -- see the test above) and step the
-        // threshold at this target -- same reasoning as the test above.
+    it('ignores a raw compact_boundary sdk_frame: the conductor turns it into compaction_completed', () => {
+        // Three raw boundary frames 1000ms apart would give two 1000ms intervals and step the
+        // threshold at this target if the tuner still keyed off the frame -- same reasoning as the
+        // test above.
         build({ config: { ...DEFAULT_CONFIG, compactThresholdMinPercent: 10, compactThresholdMaxPercent: 90, compactTargetIntervalMs: 5000 } });
 
-        emit({ type: 'sdk_frame', frame: frames.init('s1'), at: new Date(0) });
-        emit({ type: 'sdk_frame', frame: frames.init('s1'), at: new Date(1000) });
-        emit({ type: 'sdk_frame', frame: frames.init('s1'), at: new Date(2000) });
+        emit({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(0) });
+        emit({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(1000) });
+        emit({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(2000) });
 
         expect(setThresholdPercent).not.toHaveBeenCalled();
     });
@@ -307,7 +305,7 @@ describe('createCompactionThresholdTuner', () => {
         );
     });
 
-    it('without telemetry, falls back to tracking compact_boundary timestamps itself, seeded from ledgerStore.get().context.lastCompactionAt', () => {
+    it('without telemetry, falls back to tracking compaction_completed timestamps itself, seeded from ledgerStore.get().context.lastCompactionAt', () => {
         ledgerSnapshot = baseLedger(new Date(0));
         build({ config: { ...DEFAULT_CONFIG, compactThresholdMinPercent: 10, compactThresholdMaxPercent: 90, compactTargetIntervalMs: 5000 } });
 

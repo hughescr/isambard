@@ -167,8 +167,15 @@ export type LedgerEvent
       | { type: 'envelope_queued', kind: EnvelopeKind, at: Date }
       | { type: 'turn_submitted', envelope: EnvelopeMeta, at: Date }
       | { type: 'interrupt_requested', at: Date }
+      /*
+       * The three compaction lifecycle events. The conductor is their only dispatcher (its
+       * `compactionStarted`/`compactionCompleted`/`compactionFailed`), and each reducer is
+       * idempotent: a start while already `'compacting'`, or a completion/failure while already
+       * `'none'`, returns the ledger by reference, so a second observation of the same fact
+       * notifies nobody.
+       */
       | { type: 'compaction_started', trigger?: 'manual' | 'auto', at: Date }
-      | { type: 'compaction_finished', at: Date }
+      | { type: 'compaction_completed', at: Date }
       | { type: 'compaction_failed', reason?: string, at: Date }
       | { type: 'context_usage_polled', usage: ContextUsageSummary, at: Date }
       | { type: 'tick', rssBytes: number, at: Date }
@@ -883,7 +890,11 @@ function reduceQuota(ledger: Ledger, windows: QuotaWindows, source: LedgerQuota[
     return { ...ledger, quota };
 }
 
-/** Frame-type-specific effects that never depend on the open turn: tasks and the compact boundary. */
+/**
+ * Frame-type-specific effects that never depend on the open turn: tasks and quota. A
+ * `compact_boundary` frame is deliberately not reduced here — the conductor observes it and
+ * dispatches `compaction_completed`, the one event that ends a compaction.
+ */
 function applyFrameSideEffects(ledger: Ledger, frame: SDKMessage, at: Date): Ledger {
     if(frame.type === 'user') {
         return applyToolResults(ledger, frame, at);
@@ -899,9 +910,6 @@ function applyFrameSideEffects(ledger: Ledger, frame: SDKMessage, at: Date): Led
     }
     if(frame.type === 'system' && frame.subtype === 'background_tasks_changed') {
         return applyBackgroundTasksChanged(ledger, frame, at);
-    }
-    if(frame.type === 'system' && frame.subtype === 'compact_boundary') {
-        return { ...ledger, compaction: 'none', context: { ...ledger.context, lastCompactionAt: at } };
     }
     if(frame.type === 'rate_limit_event') {
         return reduceQuota(ledger, quotaWindowsFromFrame(frame), 'headers', at);
@@ -990,18 +998,19 @@ function reduceInterruptRequested(ledger: Ledger): Ledger {
     return { ...ledger, turn: { ...ledger.turn, interrupting: true } };
 }
 
-function reduceCompactionStarted(ledger: Ledger, trigger: 'manual' | 'auto' | undefined, at: Date): Ledger {
-    if(ledger.turn === null) {
-        if(ledger.compaction === 'compacting') {
-            return ledger;
-        }
-        return { ...ledger, compaction: 'compacting' };
+/**
+ * A compaction started. Touches only `compaction` — never `turn.phase`: `Ledger.compaction` is
+ * the single "compacting" authority. A no-op (same reference) when one is already in progress.
+ */
+function reduceCompactionStarted(ledger: Ledger): Ledger {
+    if(ledger.compaction === 'compacting') {
+        return ledger;
     }
-    const phase: ActivityPhase = { type: 'compacting', startedAt: at, trigger };
-    return { ...ledger, compaction: 'compacting', turn: { ...ledger.turn, phase } };
+    return { ...ledger, compaction: 'compacting' };
 }
 
-function reduceCompactionFinished(ledger: Ledger, at: Date): Ledger {
+/** A compaction completed: back to `'none'`, stamping `lastCompactionAt`. A no-op (same reference) when none is in progress. */
+function reduceCompactionCompleted(ledger: Ledger, at: Date): Ledger {
     if(ledger.compaction === 'none') {
         return ledger;
     }
@@ -1063,35 +1072,21 @@ function reduceSessionOpened(ledger: Ledger, sessionId: string, at: Date): Ledge
  * own, so a phase flip within a turn (thinking -> using_tool -> thinking, every few seconds)
  * does not blank the presence text back to the static placeholder between digests. Returns
  * `next` by reference when there is nothing to carry (no `prev` digest, `next` already carries
- * one, `next` is `null` = turn over, or `next` is a phase kind that never carries one), so
- * callers' identity checks (`phase === turn.phase`) keep working.
+ * one, or `next` is `null` = turn over), so callers' identity checks (`phase === turn.phase`)
+ * keep working.
  */
 function carryDigest(prev: ActivityPhase | null, next: ActivityPhase | null): ActivityPhase | null {
     if(next === null) {
         return next;
     }
-    const digest = digestOf(prev);
+    const digest = prev?.generatedStatus;
     if(digest === undefined) {
-        return next;
-    }
-    if(next.type !== 'thinking' && next.type !== 'using_tool' && next.type !== 'responding') {
         return next;
     }
     if(next.generatedStatus !== undefined) {
         return next;
     }
     return { ...next, generatedStatus: digest };
-}
-
-/** The Haiku digest a phase carries, if it is a phase kind that can carry one. */
-function digestOf(phase: ActivityPhase | null): string | undefined {
-    if(phase === null) {
-        return undefined;
-    }
-    if(phase.type === 'compacting') {
-        return undefined;
-    }
-    return phase.generatedStatus;
 }
 
 function reducePhaseChanged(ledger: Ledger, phase: ActivityPhase | null): Ledger {
@@ -1148,10 +1143,10 @@ export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
             return reduceInterruptRequested(ledger);
         }
         case 'compaction_started': {
-            return reduceCompactionStarted(ledger, event.trigger, event.at);
+            return reduceCompactionStarted(ledger);
         }
-        case 'compaction_finished': {
-            return reduceCompactionFinished(ledger, event.at);
+        case 'compaction_completed': {
+            return reduceCompactionCompleted(ledger, event.at);
         }
         case 'compaction_failed': {
             return reduceCompactionFailed(ledger);

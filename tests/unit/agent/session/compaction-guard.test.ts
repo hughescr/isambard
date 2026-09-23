@@ -25,6 +25,8 @@ describe('createCompactionGuard', () => {
     let clock: FakeClock;
     let logger: CreateCompactionGuardParams['logger'];
     let dispatch: ReturnType<typeof jest.fn>;
+    let compactionStarted: ReturnType<typeof jest.fn<CreateCompactionGuardParams['compactionStarted']>>;
+    let compactionFailed: ReturnType<typeof jest.fn<CreateCompactionGuardParams['compactionFailed']>>;
     let getContextUsage: ReturnType<typeof jest.fn<CreateCompactionGuardParams['getContextUsage']>>;
     let submitCompact: ReturnType<typeof jest.fn<CreateCompactionGuardParams['submitCompact']>>;
     let guard: CompactionGuard;
@@ -33,6 +35,8 @@ describe('createCompactionGuard', () => {
         return createCompactionGuard({
             getContextUsage,
             submitCompact,
+            compactionStarted,
+            compactionFailed,
             ledgerStore:      { dispatch },
             clock,
             thresholdPercent: 60,
@@ -45,6 +49,8 @@ describe('createCompactionGuard', () => {
         clock = new FakeClock(0);
         logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
         dispatch = jest.fn();
+        compactionStarted = jest.fn<CreateCompactionGuardParams['compactionStarted']>();
+        compactionFailed = jest.fn<CreateCompactionGuardParams['compactionFailed']>();
         getContextUsage = jest.fn<CreateCompactionGuardParams['getContextUsage']>().mockResolvedValue(frames.contextUsage({ percentage: 59 }));
         submitCompact = jest.fn<CreateCompactionGuardParams['submitCompact']>().mockResolvedValue(undefined);
         guard = build();
@@ -64,13 +70,24 @@ describe('createCompactionGuard', () => {
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'context_usage_polled' }));
     });
 
-    it('at threshold with an empty queue: submits /compact once and dispatches compaction_started', async () => {
+    it('at threshold with an empty queue: submits /compact once and reports compactionStarted(auto)', async () => {
         getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
 
         await guard.onTurnEnd({ queueEmpty: true });
 
         expect(submitCompact).toHaveBeenCalledTimes(1);
-        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_started', trigger: 'auto' }));
+        expect(compactionStarted.mock.calls).toEqual([['auto']]);
+    });
+
+    it('never dispatches a compaction ledger event itself: only context_usage_polled reaches the ledger', async () => {
+        getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
+        submitCompact.mockRejectedValueOnce(new Error('CLI refused /compact'));
+
+        await guard.onTurnEnd({ queueEmpty: true });
+
+        expect(compactionStarted).toHaveBeenCalledTimes(1);
+        expect(compactionFailed).toHaveBeenCalledTimes(1);
+        expect(dispatch.mock.calls.map(([event]) => (event as { type: string }).type)).toEqual(['context_usage_polled']);
     });
 
     it('context_usage_polled carries the exact clock time, not wall-clock time', async () => {
@@ -79,16 +96,6 @@ describe('createCompactionGuard', () => {
         await guard.onTurnEnd({ queueEmpty: true });
 
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'context_usage_polled', at: new Date(654_321) }));
-    });
-
-    it('compaction_failed carries the exact clock time, not wall-clock time or an off-by-one', async () => {
-        clock.advance(123_456);
-        getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
-        submitCompact.mockRejectedValueOnce(new Error('CLI refused /compact'));
-
-        await guard.onTurnEnd({ queueEmpty: true });
-
-        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed', at: new Date(123_456) }));
     });
 
     it('a NaN percentage (a degenerate maxTokens=0 SDK response) is treated as below threshold, not at/above it', async () => {
@@ -150,7 +157,7 @@ describe('createCompactionGuard', () => {
         await guard.onTurnEnd({ queueEmpty: true });
 
         expect(submitCompact).toHaveBeenCalledTimes(2);
-        expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed' }));
+        expect(compactionFailed).not.toHaveBeenCalled();
     });
 
     it('onCompactionFinished (PostCompact) releases the hold, allowing a later submit', async () => {
@@ -161,16 +168,16 @@ describe('createCompactionGuard', () => {
         await guard.onTurnEnd({ queueEmpty: true });
 
         expect(submitCompact).toHaveBeenCalledTimes(2);
-        expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed' }));
+        expect(compactionFailed).not.toHaveBeenCalled();
     });
 
-    it('the /compact turn\'s own result with no boundary seen releases and dispatches compaction_failed', async () => {
+    it('the /compact turn\'s own result with no boundary seen releases and reports compactionFailed(no-boundary)', async () => {
         getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
         await guard.onTurnEnd({ queueEmpty: true });
 
         guard.onFrame(frames.resultSuccess());
 
-        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed', reason: 'no-boundary' }));
+        expect(compactionFailed.mock.calls).toEqual([['no-boundary']]);
         expect(logger.error).toHaveBeenCalledWith({ reason: 'no-boundary' }, 'Compaction guard: compaction failed');
     });
 
@@ -185,10 +192,12 @@ describe('createCompactionGuard', () => {
         expect(submitCompact).toHaveBeenCalledTimes(1);
     });
 
-    it('onCompactionFinished when nothing is in flight is a no-op — no dispatch, no logger call', () => {
+    it('onCompactionFinished when nothing is in flight is a no-op — no dispatch, no lifecycle call, no logger call', () => {
         guard.onCompactionFinished();
 
         expect(dispatch).not.toHaveBeenCalled();
+        expect(compactionStarted).not.toHaveBeenCalled();
+        expect(compactionFailed).not.toHaveBeenCalled();
         expect(logger.error).not.toHaveBeenCalled();
         expect(logger.warn).not.toHaveBeenCalled();
     });
@@ -196,16 +205,16 @@ describe('createCompactionGuard', () => {
     it('a result frame observed while nothing is in flight is a no-op', () => {
         guard.onFrame(frames.resultSuccess());
 
-        expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed' }));
+        expect(compactionFailed).not.toHaveBeenCalled();
     });
 
-    it('the error-compacting-conversation notification releases and dispatches compaction_failed', async () => {
+    it('the error-compacting-conversation notification releases and reports compactionFailed(notification)', async () => {
         getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
         await guard.onTurnEnd({ queueEmpty: true });
 
         guard.onFrame(notificationFrame('error-compacting-conversation'));
 
-        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed', reason: 'notification' }));
+        expect(compactionFailed.mock.calls).toEqual([['notification']]);
     });
 
     it('other notification keys are ignored — the guard stays in flight', async () => {
@@ -214,7 +223,7 @@ describe('createCompactionGuard', () => {
 
         guard.onFrame(notificationFrame('some-other-key'));
 
-        expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed' }));
+        expect(compactionFailed).not.toHaveBeenCalled();
         await guard.onTurnEnd({ queueEmpty: true });
         expect(submitCompact).toHaveBeenCalledTimes(1);
     });
@@ -224,21 +233,20 @@ describe('createCompactionGuard', () => {
         await guard.onTurnEnd({ queueEmpty: true });
 
         clock.advance(299_999);
-        expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed' }));
+        expect(compactionFailed).not.toHaveBeenCalled();
 
         clock.advance(1);
-        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed', reason: 'timeout' }));
+        expect(compactionFailed.mock.calls).toEqual([['timeout']]);
     });
 
     it('a release before the ceiling cancels the timer — no failure fires later', async () => {
         getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
         await guard.onTurnEnd({ queueEmpty: true });
         guard.onFrame(frames.compactBoundary());
-        dispatch.mockClear();
 
         clock.advance(300_000);
 
-        expect(dispatch).not.toHaveBeenCalled();
+        expect(compactionFailed).not.toHaveBeenCalled();
     });
 
     it('honours a custom ceilingMs', async () => {
@@ -248,7 +256,7 @@ describe('createCompactionGuard', () => {
 
         clock.advance(1000);
 
-        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed', reason: 'timeout' }));
+        expect(compactionFailed.mock.calls).toEqual([['timeout']]);
     });
 
     it('backs off after a failure: skip 1, then 2, then 4, capped at 8, reset on success', async () => {
@@ -325,7 +333,7 @@ describe('createCompactionGuard', () => {
         expect(submitCompact).not.toHaveBeenCalled();
     });
 
-    it('submitCompact rejection is logged and dispatches compaction_failed', async () => {
+    it('submitCompact rejection is logged and reports compactionFailed(submit-rejected)', async () => {
         getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
         const failure = new Error('CLI refused /compact');
         submitCompact.mockRejectedValue(failure);
@@ -333,7 +341,7 @@ describe('createCompactionGuard', () => {
         await guard.onTurnEnd({ queueEmpty: true });
 
         expect(logger.warn).toHaveBeenCalledWith({ error: failure }, 'Compaction guard: submitCompact rejected');
-        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed', reason: 'submit-rejected' }));
+        expect(compactionFailed.mock.calls).toEqual([['submit-rejected']]);
     });
 
     it('getThresholdPercent returns the constructor value before any setter call', () => {

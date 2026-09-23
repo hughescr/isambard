@@ -92,11 +92,6 @@ export function createActiveStatusGenerator(
                     break;
                 }
 
-                case 'compacting': {
-                    baseStatus = 'Compacting context...';
-                    break;
-                }
-
                 default: {
                     // Exhaustiveness check - TypeScript will error if we miss a case
                     const _exhaustive: never = phase;

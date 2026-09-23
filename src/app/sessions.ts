@@ -516,9 +516,10 @@ export async function createConversationConductor(params: CreateConversationCond
 
     const compactionSink: CompactionSink = {
         onCompactionStart: (trigger) => {
-            ledgerStore.dispatch({ type: 'compaction_started', trigger, at: new Date(clock.now()) });
+            getInnerConductor().compactionStarted(trigger);
         },
         onCompactionEnd: () => {
+            getInnerConductor().compactionCompleted();
             // Gap: re-arm both context-policy gates (per-user memory, events delta) as if this
             // were a cold start, so the next turn re-injects rather than assuming the compacted
             // transcript still remembers what was already shown. The summary itself is not
@@ -858,11 +859,12 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
 
     const compactionSink: CompactionSink = {
         onCompactionStart: (trigger) => {
-            ledgerStore.dispatch({ type: 'compaction_started', trigger, at: new Date(clock.now()) });
+            getConductor().compactionStarted(trigger);
         },
         onCompactionEnd: () => {
             // No ContextPolicy to reset (perch injects no per-user memory block), and the summary
-            // is not persisted (see conductor.ts's module doc): nothing to do here.
+            // is not persisted (see conductor.ts's module doc): only the conductor hears of it.
+            getConductor().compactionCompleted();
         },
     };
 

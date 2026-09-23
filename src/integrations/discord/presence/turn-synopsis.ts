@@ -31,8 +31,8 @@ import { sdkFrameToAgentStreamEvent, type Conductor, type LedgerStore, type Ledg
 
 /**
  * Turn kinds that deliberately get NO synopsis handler. `compact` is the only member:
- * `reduceCompactionStarted` already puts the turn in a `compacting` phase and `composePresence`
- * already renders its own marker for that, and the envelope's entire text is the literal
+ * presence already renders the compacting marker from `Ledger.compaction` for that turn, and the
+ * envelope's entire text is the literal
  * `/compact` — a Haiku call there would spend subscription quota to describe nothing.
  *
  * This set is also the cheapest dial for the ongoing Haiku volume this attachment adds: one line

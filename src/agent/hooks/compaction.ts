@@ -3,8 +3,9 @@
  *
  * Creates SDK hook callbacks for context compaction lifecycle events, sink-style: the hooks
  * report onCompactionStart/onCompactionEnd to whatever {@link CompactionSink} they were built
- * with, with no knowledge of what that sink does. The ledger sink (created elsewhere in the
- * session layer) is the sole consumer now that the one-shot path is gone.
+ * with, with no knowledge of what that sink does. The session layer's sink (`src/app/sessions.ts`)
+ * is the sole consumer: it reports each event to its session's conductor, the sole writer of
+ * compaction ledger events.
  */
 import type { HookCallbackMatcher, HookEvent, PostCompactHookInput, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';

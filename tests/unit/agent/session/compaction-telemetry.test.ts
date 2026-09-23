@@ -1,11 +1,9 @@
 /**
  * Table-driven tests for {@link createCompactionTelemetry} (design doc Q4): opens a record on
- * `compaction_started`, closes it on the `sdk_frame` carrying `system`/`compact_boundary` (the
- * actual, currently-only, production success signal) or on `compaction_failed`, and evicts the
- * oldest record once past `maxRecords`. Every timestamp comes straight off the event's own `at`
- * field -- this module never reads a clock itself. `compaction_finished` is declared on
- * `LedgerEvent` but never dispatched in production today, so it is deliberately left unhandled: a
- * harmless no-op, not a closing trigger.
+ * `compaction_started`, closes it on `compaction_completed` or on `compaction_failed`, and evicts
+ * the oldest record once past `maxRecords`. Every timestamp comes straight off the event's own
+ * `at` field -- this module never reads a clock itself. A raw `compact_boundary` `sdk_frame` is
+ * not a closing trigger: the conductor turns it into `compaction_completed`.
  */
 import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
 import * as frames from '../../../helpers/sdk-frames';
@@ -25,16 +23,12 @@ function failed(at: Date, reason = 'timeout'): LedgerEvent {
     return { type: 'compaction_failed', reason, at };
 }
 
-function boundary(at: Date): LedgerEvent {
+function completed(at: Date): LedgerEvent {
+    return { type: 'compaction_completed', at };
+}
+
+function boundaryFrame(at: Date): LedgerEvent {
     return { type: 'sdk_frame', frame: frames.compactBoundary(), at };
-}
-
-function otherFrame(at: Date): LedgerEvent {
-    return { type: 'sdk_frame', frame: frames.resultSuccess(), at };
-}
-
-function finished(at: Date): LedgerEvent {
-    return { type: 'compaction_finished', at };
 }
 
 describe('createCompactionTelemetry', () => {
@@ -50,11 +44,11 @@ describe('createCompactionTelemetry', () => {
         jest.restoreAllMocks();
     });
 
-    it('opens a record on compaction_started and closes it on an sdk_frame compact_boundary', () => {
+    it('opens a record on compaction_started and closes it on compaction_completed', () => {
         telemetry.record(started(T1));
         expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60 }]);
 
-        telemetry.record(boundary(T2));
+        telemetry.record(completed(T2));
         expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60, finishedAt: T2 }]);
     });
 
@@ -62,7 +56,7 @@ describe('createCompactionTelemetry', () => {
         telemetry.record(started(T1));
         telemetry.record(failed(T2, 'no-boundary'));
         telemetry.record(started(T3));
-        telemetry.record(boundary(T4));
+        telemetry.record(completed(T4));
 
         expect(telemetry.getRecords()).toEqual([
             { startedAt: T1, thresholdAtStart: 60, failedAt: T2, failureReason: 'no-boundary' },
@@ -79,62 +73,16 @@ describe('createCompactionTelemetry', () => {
         expect(record).not.toHaveProperty('failedAt');
     });
 
-    it('ignores a second compaction_started while one is already open, keeping the first start\'s thresholdAtStart', () => {
+    it('a second compaction_started opens a fresh record and leaves the first unfinished', () => {
         telemetry.record(started(T1));
         getThresholdPercent.mockReturnValue(90);
         telemetry.record(started(T2));
-
-        expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60 }]);
-    });
-
-    it('abandons an open record as stale and opens a fresh one when a new compaction_started arrives at least staleAfterMs after it started', () => {
-        telemetry = createCompactionTelemetry({ getThresholdPercent, staleAfterMs: 1000 });
-        const staleStart = T1;
-        const rescueStart = new Date(T1.getTime() + 1000);
-
-        telemetry.record(started(staleStart));
-        getThresholdPercent.mockReturnValue(90);
-        telemetry.record(started(rescueStart));
+        telemetry.record(completed(T3));
 
         expect(telemetry.getRecords()).toEqual([
-            { startedAt: staleStart, thresholdAtStart: 60, failedAt: rescueStart, failureReason: 'stale' },
-            { startedAt: rescueStart, thresholdAtStart: 90 },
+            { startedAt: T1, thresholdAtStart: 60 },
+            { startedAt: T2, thresholdAtStart: 90, finishedAt: T3 },
         ]);
-    });
-
-    it('keeps ignoring a second compaction_started that arrives one millisecond short of staleAfterMs', () => {
-        telemetry = createCompactionTelemetry({ getThresholdPercent, staleAfterMs: 1000 });
-        const nearlyStale = new Date(T1.getTime() + 999);
-
-        telemetry.record(started(T1));
-        telemetry.record(started(nearlyStale));
-
-        expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60 }]);
-    });
-
-    it('defaults staleAfterMs to 5 minutes, matching CompactionGuard\'s own default ceilingMs', () => {
-        const justUnderFiveMinutes = new Date(T1.getTime() + (5 * 60 * 1000) - 1);
-        const fiveMinutesLater = new Date(T1.getTime() + (5 * 60 * 1000));
-
-        telemetry.record(started(T1));
-        telemetry.record(started(justUnderFiveMinutes));
-        expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60 }]);
-
-        telemetry.record(started(fiveMinutesLater));
-        expect(telemetry.getRecords()).toEqual([
-            { startedAt: T1, thresholdAtStart: 60, failedAt: fiveMinutesLater, failureReason: 'stale' },
-            { startedAt: fiveMinutesLater, thresholdAtStart: 60 },
-        ]);
-    });
-
-    it('counts a stale-abandoned record toward maxRecords eviction like any other completed record', () => {
-        telemetry = createCompactionTelemetry({ getThresholdPercent, maxRecords: 1, staleAfterMs: 1000 });
-        const rescueStart = new Date(T1.getTime() + 1000);
-
-        telemetry.record(started(T1));
-        telemetry.record(started(rescueStart));
-
-        expect(telemetry.getRecords()).toEqual([{ startedAt: rescueStart, thresholdAtStart: 60 }]);
     });
 
     it('no-ops a compaction_failed that arrives with no open record', () => {
@@ -143,33 +91,23 @@ describe('createCompactionTelemetry', () => {
         expect(telemetry.getRecords()).toEqual([]);
     });
 
-    it('no-ops a compact_boundary sdk_frame that arrives with no open record', () => {
-        telemetry.record(boundary(T1));
+    it('no-ops a compaction_completed that arrives with no open record', () => {
+        telemetry.record(completed(T1));
 
         expect(telemetry.getRecords()).toEqual([]);
     });
 
-    it('an sdk_frame that is not a compact_boundary does not close the open record', () => {
+    it('a compaction_completed after the record already closed does not re-close it', () => {
         telemetry.record(started(T1));
-        telemetry.record(otherFrame(T2));
+        telemetry.record(completed(T2));
+        telemetry.record(completed(T3));
 
-        expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60 }]);
+        expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60, finishedAt: T2 }]);
     });
 
-    it('a non-boundary system sdk_frame does not close the open record', () => {
+    it('a raw compact_boundary sdk_frame does not close the open record', () => {
         telemetry.record(started(T1));
-        telemetry.record({
-            type:  'sdk_frame',
-            frame: frames.init('session-id'),
-            at:    T2,
-        });
-
-        expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60 }]);
-    });
-
-    it('does not close an open record on compaction_finished -- never dispatched in production, a harmless no-op', () => {
-        telemetry.record(started(T1));
-        telemetry.record(finished(T2));
+        telemetry.record(boundaryFrame(T2));
 
         expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60 }]);
     });
@@ -183,11 +121,11 @@ describe('createCompactionTelemetry', () => {
     it('keeps at most maxRecords records, evicting the oldest', () => {
         telemetry = createCompactionTelemetry({ getThresholdPercent, maxRecords: 2 });
         telemetry.record(started(T1));
-        telemetry.record(boundary(T1));
+        telemetry.record(completed(T1));
         telemetry.record(started(T2));
-        telemetry.record(boundary(T2));
+        telemetry.record(completed(T2));
         telemetry.record(started(T3));
-        telemetry.record(boundary(T3));
+        telemetry.record(completed(T3));
 
         expect(telemetry.getRecords()).toEqual([
             { startedAt: T2, thresholdAtStart: 60, finishedAt: T2 },
@@ -199,7 +137,7 @@ describe('createCompactionTelemetry', () => {
         const attempts = Array.from({ length: 51 }, (_value, index) => new Date(T1.getTime() + index));
         for(const at of attempts) {
             telemetry.record(started(at));
-            telemetry.record(boundary(at));
+            telemetry.record(completed(at));
         }
 
         const records = telemetry.getRecords();
@@ -211,7 +149,7 @@ describe('createCompactionTelemetry', () => {
 
     it('getThresholdPercent is invoked per-start so two compactions with a threshold change between them keep distinct thresholdAtStart values', () => {
         telemetry.record(started(T1));
-        telemetry.record(boundary(T2));
+        telemetry.record(completed(T2));
         getThresholdPercent.mockReturnValue(75);
         telemetry.record(started(T3));
 

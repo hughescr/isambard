@@ -6,8 +6,14 @@
  * injected `retryPolicy`, and a bounded shutdown sequence. Every timing decision goes through the
  * injected {@link Clock} — this module never reads a real timer.
  *
- * The post-compaction boot-bundle hook and PostCompact->`guard.onCompactionFinished()` plumbing
- * belong to whoever builds the session's `Options` (P9's `src/app/sessions.ts`). This module
+ * The conductor is the sole writer of compaction ledger events (`compaction_started`,
+ * `compaction_completed`, `compaction_failed`), and `Ledger.compaction` is the single "compacting"
+ * authority. The guard reports its own `/compact` attempt and failures through the conductor's
+ * lifecycle functions; the PreCompact/PostCompact hook sinks (built with the session's `Options`
+ * in P9's `src/app/sessions.ts`) report through {@link Conductor.compactionStarted} and
+ * {@link Conductor.compactionCompleted}, the latter also releasing the guard; and the conductor
+ * completes a compaction itself when it observes a `compact_boundary` frame on its own stream.
+ * The post-compaction boot-bundle hook belongs to whoever builds the session's `Options`. This module
  * pushes one opening `[BOOT]` handshake per query it creates (the SDK emits no frame until it has
  * read one), carrying the fresh or restart-resume boot bundle its injected `buildBootBundle`
  * builds for that attempt (#98: the SDK never fires a SessionStart callback for startup/resume in
@@ -26,7 +32,7 @@ import { classifyClaudeError } from '../claude-retry';
 import { buildResumeNote } from '../resume-prompt-builder';
 import { StreamTracker, type StreamProgress  } from '../stream-tracker';
 import type { BootKind } from './boot-bundle';
-import { createCompactionGuard, type CompactionGuard } from './compaction-guard';
+import { createCompactionGuard, type CompactionFailureReason, type CompactionGuard } from './compaction-guard';
 import { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';
 import {
     buildBootEnvelope,
@@ -467,6 +473,19 @@ export interface Conductor {
     getCompactionThresholdPercent: () => number
     /** Changes the compaction guard's live threshold percentage — see {@link CompactionGuard.setThresholdPercent}. */
     setCompactionThresholdPercent: (percent: number) => void
+    /**
+     * The PreCompact hook announced a compaction. Moves the ledger to `'compacting'` (holding the
+     * queue until it ends); a no-op while one is already in progress — the conductor is the
+     * single producer of `compaction_started`, whichever of the guard or the hook reports first.
+     */
+    compactionStarted:             (trigger?: 'manual' | 'auto') => void
+    /**
+     * The PostCompact hook reported a compaction finished. Releases the compaction guard as a
+     * success and ends the compaction on the ledger (journaling `compaction_completed` and
+     * releasing held submits). Idempotent with the conductor's own `compact_boundary`
+     * observation: whichever arrives second is a no-op.
+     */
+    compactionCompleted:           () => void
 }
 
 /** How a caller's `submit()` promise is settled once its turn is resolved one way or another. */
@@ -824,14 +843,19 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     ledgerStore.subscribe((ledger, event) => {
+        // Advance previousCompaction BEFORE any side effect: the store notifies synchronously and
+        // reentrantly, and both side effects below can dispatch — processQueue's beginTurn
+        // (turn_submitted) and a timeout's interrupt (interrupt_requested). A nested notification
+        // that still saw 'compacting' here would journal the same transition a second time.
+        const compactionEnded = previousCompaction === 'compacting' && ledger.compaction === 'none';
+        previousCompaction = ledger.compaction;
         noteBackgroundWorkChange(ledger, event);
         journalTaskLifecycle(ledger, event);
 
-        if(previousCompaction === 'compacting' && ledger.compaction === 'none') {
+        if(compactionEnded) {
             journalCompactionOutcome(event);
             processQueue();
         }
-        previousCompaction = ledger.compaction;
     });
 
     function getContextUsage(opts?: { detail?: 'summary' | 'full' }): ReturnType<SessionHandle['getContextUsage']> {
@@ -859,14 +883,36 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
     }
 
+    /*
+     * The compaction lifecycle: these three are the only dispatchers of compaction ledger events.
+     * Each reducer is idempotent and the store notifies nobody on an unchanged ledger, so a second
+     * start (the guard's `/compact` then the PreCompact hook) or a second completion (the
+     * `compact_boundary` frame and the PostCompact hook, in either order) is invisible to every
+     * subscriber — the journal, the queue gate, telemetry and the tuner hear each fact once.
+     */
+    function compactionStarted(trigger?: 'manual' | 'auto'): void {
+        ledgerStore.dispatch({ type: 'compaction_started', trigger, at: now() });
+    }
+
+    function compactionFailed(reason: CompactionFailureReason): void {
+        ledgerStore.dispatch({ type: 'compaction_failed', reason, at: now() });
+    }
+
     const guard: CompactionGuard = createCompactionGuard({
         getContextUsage,
         submitCompact,
+        compactionStarted,
+        compactionFailed,
         ledgerStore,
         clock,
         thresholdPercent: config.compactThresholdPercent,
         logger,
     });
+
+    function compactionCompleted(): void {
+        guard.onCompactionFinished();
+        ledgerStore.dispatch({ type: 'compaction_completed', at: now() });
+    }
 
     function enqueue(item: QueuedItem): void {
         if(item.priority === 'human') {
@@ -1345,6 +1391,13 @@ export function createConductor(params: CreateConductorParams): Conductor {
             wakeSettleFrom = clock.now();
         }
         ledgerStore.dispatch({ type: 'sdk_frame', frame, at: now() });
+        if(frame.type === 'system' && frame.subtype === 'compact_boundary') {
+            // After the frame's own fold, so everything that hears of the completion (the journal,
+            // processQueue, telemetry, the tuner) sees the ledger with this frame applied. The
+            // guard has already released through guard.onFrame above, so compactionCompleted's
+            // own guard release is a no-op here.
+            compactionCompleted();
+        }
         // Stryker disable llm: `void` is a compile-time-only marker here; dropping it does not change the runtime call or its fire-and-forget behavior
         if(frame.type === 'result') {
             void afterResult(frame);
@@ -2225,7 +2278,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     return {
-        open, submit, appendWithoutTurn, requestReopen, adoptWakeTurn, adoptPeerTurn, deliver, interruptCurrent, subscribeTurn, status, shutdown,
+        open, submit, appendWithoutTurn, requestReopen, adoptWakeTurn, adoptPeerTurn, deliver, interruptCurrent, subscribeTurn, status, shutdown, compactionStarted, compactionCompleted,
         getCompactionThresholdPercent: () => guard.getThresholdPercent(),
         setCompactionThresholdPercent: (percent: number) => { guard.setThresholdPercent(percent); },
     };

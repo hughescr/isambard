@@ -116,7 +116,7 @@ interface EnvelopeBase {
      * first `SYNOPSIS_SEED_CAP` characters of what it is given (`presence/status-generator-dynamic.ts`
      * imports that same constant from ./envelope.ts rather than declaring a second cap of its
      * own) — seeding from `text` would feed Haiku nothing but chrome. Absent for `boot` (opens no turn at all) and `compact` (the text is the literal
-     * `/compact`, and the ledger already renders a `compacting` phase of its own).
+     * `/compact`, and presence already renders the compacting marker from `Ledger.compaction`).
      */
     synopsisSeed?: string
 }
