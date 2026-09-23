@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, jest, mock } from 'bun:test';
 import { configureCustomSQLite as configureFreshSQLite } from '../../../src/storage/memory-vec-store/backend.ts?default-deps-setter-test';
 // @ts-expect-error Bun query specifiers create an isolated module instance for this process-global test.
 import { VectorIndex as DefaultConfigureVectorIndex } from '../../../src/storage/memory-vec-store/backend.ts?open-default-configure-test';
+import { VectorIndexError, VectorIndexUnavailableError } from '@/errors';
 import {
     VectorIndex,
     configureCustomSQLite,
@@ -11,7 +12,6 @@ import {
     type SQLiteConfigurationDeps,
     type VectorIndexOpenDeps
 } from '@/storage/memory-vec-store/backend';
-import { VectorIndexError, VectorIndexUnavailableError } from '@/storage/memory-vec-store/errors';
 
 const ARM_PATH = '/opt/homebrew/opt/sqlite3/lib/libsqlite3.dylib';
 const INTEL_PATH = '/usr/local/opt/sqlite3/lib/libsqlite3.dylib';

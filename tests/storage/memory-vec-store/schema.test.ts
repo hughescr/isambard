@@ -5,7 +5,7 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import * as sqliteVec from 'sqlite-vec';
-import { VectorIndexUnavailableError } from '@/storage/memory-vec-store/errors';
+import { VectorIndexUnavailableError } from '@/errors';
 import { runSchemaMigration } from '@/storage/memory-vec-store/schema';
 
 describe('runSchemaMigration', () => {

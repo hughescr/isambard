@@ -14,11 +14,11 @@
  */
 import { access } from 'node:fs/promises';
 import { getLlama, LlamaLogLevel, type LlamaEmbeddingContext, type Llama, type LlamaModel  } from 'node-llama-cpp';
-import { EmbedderClosedError, ModelFileNotFoundError } from './errors.js';
 import { ggufPath } from './paths.js';
 import type { EmbedderOptions, EmbedResult, ModelQuant, ModelSlug } from './types.js';
 import { packSignBits } from './ubinary.js';
 import { assertLlamaCppCompatible } from './version-check.js';
+import { EmbedderClosedError, ModelFileNotFoundError } from '@/errors';
 
 /** Dimensionality of pplx-embed-v1 vectors (1024 floats) */
 const EMBED_DIM = 1024;

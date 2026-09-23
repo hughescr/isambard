@@ -25,7 +25,7 @@ export {
     IncompatibleLlamaCppError,
     MemoryVecError,
     ModelFileNotFoundError
-} from './errors.js';
+} from '@/errors';
 
 // Path utility — so callers know where the GGUF should be placed
 export { ggufPath } from './paths.js';

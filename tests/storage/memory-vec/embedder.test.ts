@@ -16,8 +16,8 @@ import {
     resetMockFs,
     resetNodeLlamaCppMocks
 } from '../../setup';
+import { EmbedderClosedError, IncompatibleLlamaCppError, ModelFileNotFoundError } from '@/errors';
 import { Embedder, loadEmbedder } from '@/storage/memory-vec/embedder';
-import { EmbedderClosedError, IncompatibleLlamaCppError, ModelFileNotFoundError } from '@/storage/memory-vec/errors';
 import * as versionCheck from '@/storage/memory-vec/version-check';
 
 describe('loadEmbedder / Embedder.load', () => {

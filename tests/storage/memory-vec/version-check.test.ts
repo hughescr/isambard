@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
 import { mockFsPromises, resetMockFs } from '../../setup';
-import { IncompatibleLlamaCppError } from '@/storage/memory-vec/errors';
+import { IncompatibleLlamaCppError } from '@/errors';
 import { assertLlamaCppCompatible, getBundledLlamaCppVersion } from '@/storage/memory-vec/version-check';
 
 describe('getBundledLlamaCppVersion', () => {

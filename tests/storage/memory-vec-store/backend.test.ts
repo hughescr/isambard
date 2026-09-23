@@ -7,9 +7,9 @@
  */
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { VectorIndexClosedError, VectorIndexError } from '@/errors';
 import { createLayerName } from '@/storage/memory-tool/types';
 import { VectorIndex } from '@/storage/memory-vec-store/backend';
-import { VectorIndexClosedError, VectorIndexError } from '@/storage/memory-vec-store/errors';
 
 /** Create a deterministic 128-byte test vector with all bits set to given pattern byte */
 function makeVector(byte: number): Uint8Array {

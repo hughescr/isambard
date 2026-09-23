@@ -22,9 +22,12 @@ classDiagram
     StorageError <|-- DynamoTimeoutError
     StorageError <|-- ContactNotFoundError
     StorageError <|-- ContactLastIdentifierError
-    StorageError <|-- ContactIdentifierLimitError
     StorageError <|-- ContactNoIdentifiersError
     StorageError <|-- BatchWriteExhaustedError
+    StorageError <|-- VectorIndexError
+
+    VectorIndexError <|-- VectorIndexClosedError
+    VectorIndexError <|-- VectorIndexUnavailableError
 
 
     DiscordError <|-- ChannelNotFoundByIdError
@@ -56,6 +59,11 @@ classDiagram
     CaldavError <|-- CaldavFetchError
     CaldavError <|-- CaldavTimeoutError
     CaldavError <|-- AmbiguousCalendarMatchError
+
+    IsambardError <|-- MemoryVecError
+    MemoryVecError <|-- ModelFileNotFoundError
+    MemoryVecError <|-- IncompatibleLlamaCppError
+    MemoryVecError <|-- EmbedderClosedError
 
     class IsambardError {
         +code: ErrorCode
@@ -102,6 +110,16 @@ classDiagram
         +context?: Record~string, unknown~
     }
 
+    class VectorIndexError {
+        +code: ErrorCode
+        +context?: Record~string, unknown~
+    }
+
+    class MemoryVecError {
+        +code: ErrorCode
+        +context?: Record~string, unknown~
+    }
+
     class BrowserError {
         +code: ErrorCode
         +context?: Record~string, unknown~
@@ -123,7 +141,7 @@ classDiagram
     }
 ```
 
-> **Note:** All error classes are defined in `src/errors/` (e.g., email errors in `src/errors/email.ts`, Bluesky errors in `src/errors/bsky.ts`, CalDAV errors in `src/errors/caldav.ts`, media/path errors in `src/errors/utils.ts`, config errors in `src/errors/config.ts`, browser errors in `src/errors/browser.ts`) and exported from the `@/errors` barrel. Integration barrels (e.g., `@/integrations/email`) re-export them for convenience.
+> **Note:** All error classes are defined in `src/errors/` (e.g., email errors in `src/errors/email.ts`, Bluesky errors in `src/errors/bsky.ts`, CalDAV errors in `src/errors/caldav.ts`, media/path errors in `src/errors/utils.ts`, config errors in `src/errors/config.ts`, browser errors in `src/errors/browser.ts`, memory-vec embedding errors in `src/errors/memory-vec.ts`, vector index errors in `src/errors/vector-index.ts`) and exported from the `@/errors` barrel. Integration barrels (e.g., `@/integrations/email`, `@/storage`) re-export them for convenience.
 
 ## When to Create vs Reuse Errors
 
@@ -147,8 +165,10 @@ classDiagram
    - Bluesky operations → extend `BskyError`
    - CalDAV operations → extend `CaldavError`
    - Browser automation → extend `BrowserError`
+   - Vector index operations (SQLite-backed semantic search) → extend `VectorIndexError`
    - Media processing (video, audio, image conversion) → extend `MediaProcessingError` (extends `IsambardError` directly — media is cross-cutting, not a domain service)
    - Configuration validation → extend `ConfigValidationError` (extends `IsambardError` directly — fatal startup errors)
+   - Embedding-library operations (memory-vec) → extend `MemoryVecError` (extends `IsambardError` directly — the bundled embedding library is a cross-cutting ML runtime concern, not a storage operation)
 2. **Use intermediate base classes** for logical groupings (e.g., `WildDuckError` under `EmailError`, `CaldavError` under `IsambardError`)
 3. **Preserve the hierarchy** to enable broad catch blocks when appropriate
 

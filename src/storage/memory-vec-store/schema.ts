@@ -20,7 +20,7 @@
  * Idempotent: all non-migration statements use IF NOT EXISTS.
  */
 import type { Database } from 'bun:sqlite';
-import { VectorIndexUnavailableError } from './errors.js';
+import { VectorIndexUnavailableError } from '@/errors';
 
 /** Column info row returned by PRAGMA table_info */
 interface ColumnInfoRow {

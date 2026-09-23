@@ -12,7 +12,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IncompatibleLlamaCppError } from './errors.js';
+import { IncompatibleLlamaCppError } from '@/errors';
 
 /** Minimum llama.cpp build required for correct Qwen3 non-causal embeddings */
 const MINIMUM_LLAMA_CPP_BUILD = 8950;

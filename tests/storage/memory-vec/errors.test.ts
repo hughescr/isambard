@@ -1,15 +1,15 @@
 /**
- * Tests for errors.ts — MemoryVecError hierarchy
+ * Tests for @/errors/memory-vec.ts — MemoryVecError hierarchy
  */
 import { describe, expect, it } from 'bun:test';
-import { IsambardError } from '@/errors/base';
-import { ErrorCode } from '@/errors/codes';
 import {
     EmbedderClosedError,
     IncompatibleLlamaCppError,
     MemoryVecError,
     ModelFileNotFoundError
-} from '@/storage/memory-vec/errors';
+} from '@/errors';
+import { IsambardError } from '@/errors/base';
+import { ErrorCode } from '@/errors/codes';
 
 describe('MemoryVecError', () => {
     it('is an instance of IsambardError', () => {

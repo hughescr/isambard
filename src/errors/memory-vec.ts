@@ -3,8 +3,14 @@
  *
  * All errors extend MemoryVecError which extends IsambardError.
  */
-import type { ModelQuant, ModelSlug } from './types.js';
-import { ErrorCode, IsambardError } from '@/errors';
+import { IsambardError } from './base';
+import { ErrorCode } from './codes';
+
+/** @see ModelSlug in src/storage/memory-vec/types.ts */
+type ModelSlug = '0.6b' | '4b';
+
+/** @see ModelQuant in src/storage/memory-vec/types.ts */
+type ModelQuant = 'Q8_0' | 'Q4_K_M';
 
 /**
  * Base error class for all memory-vec errors.

@@ -26,9 +26,9 @@ import { Database } from 'bun:sqlite';
 import { existsSync } from 'node:fs';
 import * as sqliteVec from 'sqlite-vec';
 import type { LayerName } from '../memory-tool/types.js';
-import { VectorIndexClosedError, VectorIndexError, VectorIndexUnavailableError } from './errors.js';
 import { runSchemaMigration } from './schema.js';
 import type { VectorIndexEntry, VectorQueryResult } from './types.js';
+import { VectorIndexClosedError, VectorIndexError, VectorIndexUnavailableError } from '@/errors';
 
 // ---------------------------------------------------------------------------
 // macOS custom-SQLite setup

@@ -1,7 +1,8 @@
 /**
  * Error hierarchy for the memory-vec-store module.
  */
-import { StorageError, ErrorCode } from '@/errors';
+import { ErrorCode } from './codes';
+import { StorageError } from './storage';
 
 /**
  * Base error for all vector index errors.

@@ -64,3 +64,16 @@ export {
     CaldavTimeoutError,
     AmbiguousCalendarMatchError
 } from './caldav';
+
+export {
+    MemoryVecError,
+    ModelFileNotFoundError,
+    IncompatibleLlamaCppError,
+    EmbedderClosedError
+} from './memory-vec';
+
+export {
+    VectorIndexError,
+    VectorIndexClosedError,
+    VectorIndexUnavailableError
+} from './vector-index';

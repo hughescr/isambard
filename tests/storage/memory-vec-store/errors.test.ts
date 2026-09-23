@@ -1,14 +1,14 @@
 /**
- * Tests for memory-vec-store/errors.ts — VectorIndex error hierarchy
+ * Tests for @/errors/vector-index.ts — VectorIndex error hierarchy
  */
 import { describe, expect, it } from 'bun:test';
-import { ErrorCode } from '@/errors/codes';
-import { StorageError } from '@/errors/storage';
 import {
     VectorIndexClosedError,
     VectorIndexError,
     VectorIndexUnavailableError
-} from '@/storage/memory-vec-store/errors';
+} from '@/errors';
+import { ErrorCode } from '@/errors/codes';
+import { StorageError } from '@/errors/storage';
 
 describe('VectorIndexError', () => {
     it('is an instance of StorageError', () => {

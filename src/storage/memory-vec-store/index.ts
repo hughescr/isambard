@@ -25,7 +25,7 @@ export {
     VectorIndexError,
     VectorIndexClosedError,
     VectorIndexUnavailableError
-} from './errors.js';
+} from '@/errors';
 
 // Utilities
 export { sha256Hex } from './hash.js';

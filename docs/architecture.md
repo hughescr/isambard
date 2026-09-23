@@ -7,7 +7,7 @@ Isambard is a self-improving agentic thought partner built on the Claude Agent S
 | Module | Responsibility | Layer |
 |---|---|---|
 | `src/utils/` | Pure utilities: time, text, filename, path security, retry, media processing. No domain knowledge. | Foundation |
-| `src/errors/` | Centralized error hierarchy (`IsambardError` base, `StorageError` and `DiscordError` subtrees, `ErrorCode` enum). | Foundation |
+| `src/errors/` | Centralized error hierarchy (`IsambardError` base; `StorageError`, `DiscordError`, `EmailError`, `BskyError`, `CaldavError`, and `BrowserError` subtrees; direct-`IsambardError` exceptions `MediaProcessingError`, `ConfigValidationError`, `MemoryVecError`; `ErrorCode` enum). | Foundation |
 | `src/config/` | Zod-validated configuration loading from environment variables. | Foundation |
 | `src/storage/` | DynamoDB client, repository base, memory tool subsystem, contacts, person allowlist, task session persistence. | Data |
 | `src/services/` | Resilience infrastructure: health registry, reconnection loop, lifecycle orchestrator, outbox, approval saga, allowlist saga. | Infrastructure |
@@ -139,7 +139,7 @@ Boundary mapping between Discord-specific types and the agent's platform-agnosti
 
 `src/config/` loads all configuration from environment variables using the `env-var` package for type coercion, validated by Zod schemas at startup. `config/retry-config.ts` holds the Claude retry policy, validated with utils' `retryPolicySchema`, and `src/app/sessions.ts` reads it; utils does not import config.
 
-`src/errors/` defines `IsambardError` as the base class for all application errors. It carries a typed `code: ErrorCode` field and a context bag for structured diagnostics. Two main subtrees exist: `StorageError` (DynamoDB, memory tool, contacts, reconciliation errors) and `DiscordError` (channel registry, presence, permission errors). A separate `PathSecurityError` handles file path validation failures. All error codes are centralized in `ErrorCode` enum in `errors/codes.ts`.
+`src/errors/` defines `IsambardError` as the base class for all application errors. It carries a typed `code: ErrorCode` field and a context bag for structured diagnostics. The subtrees are: `StorageError` (DynamoDB, memory tool, contacts, vector index, reconciliation errors), `DiscordError` (channel registry, presence, permission errors), `EmailError` (WildDuck, classifier, processing errors), `BskyError` (AT Protocol auth, rate limit, validation errors), `CaldavError` (calendar auth, fetch, timeout, ambiguous-match errors), and `BrowserError` (navigation timeout errors). `MediaProcessingError`, `ConfigValidationError`, and `MemoryVecError` (embedding library errors) extend `IsambardError` directly as cross-cutting exceptions. A separate `PathSecurityError` handles file path validation failures. All error codes are centralized in `ErrorCode` enum in `errors/codes.ts`.
 
 ## Testing
 
