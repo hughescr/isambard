@@ -320,7 +320,7 @@ export interface MCPRetryHelper {
  * Return types are kept as unknown to avoid importing Discord-specific types.
  */
 export interface MCPMessageSearchService {
-    searchMessages(params: { channelId?: string, query?: string, startTime?: Date, endTime?: Date, limit?: number }): Promise<{ messages: { timestamp: string, localTimestamp?: string }[], overflowCount?: number, [key: string]: unknown }>
+    searchMessages(params: { channelId?: string, query?: string, startTime?: Date, endTime?: Date, limit?: number }): Promise<{ messages: { timestamp: string, localTimestamp?: string }[], overflow?: { count: number, batchSummaries?: unknown[], hasMore?: boolean, hint?: string }, [key: string]: unknown }>
     getRecentMessages(channelId: string, limit?: number): Promise<{ messages: { timestamp: string, localTimestamp?: string }[], [key: string]: unknown }>
     getMessageById(channelId: string, messageId: string): Promise<{ localTimestamp?: string, timestamp: string, [key: string]: unknown } | null>
     getMessagesById(channelId: string, messageIds: string[]): Promise<{ localTimestamp?: string, timestamp: string, [key: string]: unknown }[]>

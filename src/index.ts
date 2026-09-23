@@ -758,9 +758,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         // History coordinator
 
         return new PersonHistoryCoordinator({
-            contactBackend:       storage.contactBackend,
-            providers:            historyProviders,
-            messageSearchService: discordInfra.messageSearchService,
+            contactBackend: storage.contactBackend,
+            providers:      historyProviders,
         });
     }
     const historyCoordinator = createHistoryCoordinator();

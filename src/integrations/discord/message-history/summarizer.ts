@@ -1,15 +1,12 @@
 /**
  * Message Summarizer
  *
- * Generates brief synopses for Discord messages using Claude Haiku.
- * Used to summarize overflow messages when search results exceed the limit.
- *
- * Key design principle: Message IDs are maintained by our code, NOT passed through Haiku.
- * This prevents any possibility of ID hallucination or mangling.
+ * Generates batch synopses for Discord overflow messages using Claude Haiku.
+ * Groups messages into batches so one call summarizes each batch.
  */
 import { chain, isEmpty } from 'lodash-es';
 import pLimit from 'p-limit';
-import type { DiscordSearchResult, OverflowSummary, BatchOverflowSummary } from './types';
+import type { DiscordSearchResult, BatchOverflowSummary } from './types';
 import { generateText } from '@/agent';
 
 /**
@@ -25,12 +22,6 @@ interface SummarizerOptions {
  */
 export interface MessageSummarizer {
     /**
-     * Summarize multiple Discord messages in parallel using Claude Haiku.
-     * Each message gets its own Haiku call.
-     */
-    summarizeMessages(messages: DiscordSearchResult[]): Promise<OverflowSummary[]>
-
-    /**
      * Summarize messages in batches for efficiency.
      * Groups messages into chunks of batchSize, with one Haiku call per batch.
      *
@@ -41,12 +32,6 @@ export interface MessageSummarizer {
     summarizeMessageBatch(messages: DiscordSearchResult[], batchSize?: number): Promise<BatchOverflowSummary[]>
 }
 
-const SUMMARIZATION_PROMPT = `Summarize this Discord message in 1-2 sentences (~50 words max).
-Focus on: key topics, questions asked, decisions made, action items.
-
-Message:
-{content}`;
-
 const BATCH_SUMMARIZATION_PROMPT = `Summarize these Discord messages in 2-3 sentences (~75 words max).
 Focus on: key topics discussed, questions asked, decisions made, action items.
 
@@ -56,9 +41,7 @@ Messages:
 /**
  * Creates a message summarizer that uses Claude Haiku to generate synopses.
  *
- * The summarizer processes messages in parallel with configurable concurrency.
- * Message IDs are preserved by our code and never passed to Haiku, preventing
- * any possibility of ID hallucination or mangling.
+ * The summarizer processes batches in parallel with configurable concurrency.
  *
  * @param options Summarizer configuration
  * @returns MessageSummarizer instance
@@ -69,20 +52,10 @@ Messages:
  *   maxConcurrent: 5,
  * });
  *
- * const summaries = await summarizer.summarizeMessages(overflowMessages);
- * // Returns: [{ id, timestamp, author, synopsis }, ...]
+ * const summaries = await summarizer.summarizeMessageBatch(overflowMessages);
+ * // Returns: [{ startTimestamp, endTimestamp, messageCount, authors, synopsis }, ...]
  * ```
  */
-/**
- * Summarize a single message using Haiku.
- * @param content The message content to summarize
- * @returns The synopsis text
- */
-async function summarizeContent(content: string): Promise<string> {
-    const prompt = SUMMARIZATION_PROMPT.replace('{content}', content);
-    return generateText(prompt);
-}
-
 /**
  * Format messages for batch prompt.
  */
@@ -114,28 +87,6 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
     const { maxConcurrent = 10 } = options;
 
     return {
-        async summarizeMessages(messages: DiscordSearchResult[]): Promise<OverflowSummary[]> {
-            if(isEmpty(messages)) {
-                return [];
-            }
-
-            const limit = pLimit(maxConcurrent);
-
-            // Process all messages in parallel with concurrency limiting
-            const summaryPromises = messages.map(message =>
-                limit(async (): Promise<OverflowSummary> => {
-                    const synopsis = await summarizeContent(message.content);
-                    return {
-                        id:        message.id,
-                        timestamp: message.timestamp,
-                        author:    message.author.username,
-                        synopsis,
-                    };
-                }));
-
-            return Promise.all(summaryPromises);
-        },
-
         async summarizeMessageBatch(messages: DiscordSearchResult[], batchSize = 10): Promise<BatchOverflowSummary[]> {
             if(isEmpty(messages)) {
                 return [];

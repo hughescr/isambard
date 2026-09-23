@@ -63,7 +63,6 @@ describe('createMessageSearchService', () => {
         };
 
         mockSummarizer = {
-            summarizeMessages:     mock(() => Promise.resolve([])),
             summarizeMessageBatch: mock(() => Promise.resolve([])),
         };
 
@@ -620,7 +619,7 @@ describe('createMessageSearchService', () => {
         });
 
         describe('batch overflow summarization', () => {
-            test('should call summarizeMessageBatch instead of summarizeMessages for overflow', async () => {
+            test('should return batch overflow summaries for search', async () => {
                 const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
@@ -649,10 +648,15 @@ describe('createMessageSearchService', () => {
                     limit:     10,
                 });
 
-                expect(result.overflow).toBeDefined();
-                expect(result.overflow!.batchSummaries).toBeDefined();
+                expect(result.overflow?.count).toBe(5);
+                expect(result.overflow?.batchSummaries).toEqual([{
+                    startTimestamp: '2025-01-15T12:00:00.000Z',
+                    endTimestamp:   '2025-01-15T12:05:00.000Z',
+                    messageCount:   5,
+                    authors:        ['testuser'],
+                    synopsis:       'Batch summary',
+                }]);
                 expect(mockSummarizer.summarizeMessageBatch).toHaveBeenCalled();
-                expect(mockSummarizer.summarizeMessages).not.toHaveBeenCalled();
             });
 
             test('should cap overflow at 100 messages for batch summarization', async () => {
@@ -1016,10 +1020,8 @@ describe('createMessageSearchService', () => {
             ]);
             expect(result.overflow).toBeDefined();
             expect(result.overflow!.count).toBe(15);
-            expect(result.overflow!.summaries).toBeUndefined();
             expect(result.overflow!.batchSummaries).toBeUndefined();
             expect(result.overflow!.hint).toBe('Use searchMessages with startTime/endTime to get AI summaries of older messages');
-            expect(mockSummarizer.summarizeMessages).not.toHaveBeenCalled();
             expect(mockSummarizer.summarizeMessageBatch).not.toHaveBeenCalled();
         });
 

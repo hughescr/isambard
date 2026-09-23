@@ -5,7 +5,6 @@ import {
     discordEmbedSchema,
     discordReactionSchema,
     discordSearchResultSchema,
-    overflowSummarySchema,
     batchOverflowSummarySchema,
     searchResponseSchema,
     searchParamsSchema,
@@ -22,7 +21,6 @@ describe('message-history schema metadata', () => {
         [discordEmbedSchema, 'Rich embed content from a Discord message'],
         [discordReactionSchema, 'Reaction emoji with count from a Discord message'],
         [discordSearchResultSchema, 'Full Discord message data from search results'],
-        [overflowSummarySchema, 'Summarized message for overflow results'],
         [batchOverflowSummarySchema, 'Batch summary grouping multiple overflow messages'],
         [searchResponseSchema, 'Complete search response with messages and metadata'],
         [searchParamsSchema, 'Parameters for searching Discord message history'],
@@ -31,7 +29,7 @@ describe('message-history schema metadata', () => {
 
 describe('message-history validation messages', () => {
     test.each([
-        [discordAuthorSchema.shape.id, '', 'Author ID cannot be empty'], [discordAuthorSchema.shape.username, '', 'Username cannot be empty'], [discordAuthorSchema.shape.displayName, '', 'Display name cannot be empty'], [discordAttachmentSchema.shape.url, 'not a URL', 'URL must be a valid URL'], [discordAttachmentSchema.shape.filename, '', 'Filename cannot be empty'], [discordEmbedSchema.shape.url.unwrap(), 'not a URL', 'URL must be a valid URL'], [discordReactionSchema.shape.emoji, '', 'Emoji cannot be empty'], [discordReactionSchema.shape.count, 0, 'Count must be a positive integer'], [discordSearchResultSchema.shape.id, '', 'Message ID cannot be empty'], [overflowSummarySchema.shape.id, '', 'Message ID cannot be empty'], [overflowSummarySchema.shape.author, '', 'Author cannot be empty'], [overflowSummarySchema.shape.synopsis, '', 'Synopsis cannot be empty'], [batchOverflowSummarySchema.shape.synopsis, '', 'Synopsis cannot be empty'], [searchResponseSchema.shape.overflow.unwrap().shape.count, -1, 'Count cannot be negative'],
+        [discordAuthorSchema.shape.id, '', 'Author ID cannot be empty'], [discordAuthorSchema.shape.username, '', 'Username cannot be empty'], [discordAuthorSchema.shape.displayName, '', 'Display name cannot be empty'], [discordAttachmentSchema.shape.url, 'not a URL', 'URL must be a valid URL'], [discordAttachmentSchema.shape.filename, '', 'Filename cannot be empty'], [discordEmbedSchema.shape.url.unwrap(), 'not a URL', 'URL must be a valid URL'], [discordReactionSchema.shape.emoji, '', 'Emoji cannot be empty'], [discordReactionSchema.shape.count, 0, 'Count must be a positive integer'], [discordSearchResultSchema.shape.id, '', 'Message ID cannot be empty'], [batchOverflowSummarySchema.shape.synopsis, '', 'Synopsis cannot be empty'], [searchResponseSchema.shape.overflow.unwrap().shape.count, -1, 'Count cannot be negative'],
     ])('reports %s', (schema, input, message) => {
         const result = schema.safeParse(input);
         expect(result.success).toBe(false);

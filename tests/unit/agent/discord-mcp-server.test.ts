@@ -447,18 +447,20 @@ The channel must always be given explicitly — there is no ambient conversation
             expect(result.isError).toBe(true);
         });
 
-        test('should include overflow summaries in response when present', async () => {
+        test('should pass producible batch overflow summaries through unchanged', async () => {
+            const overflow = {
+                count:          5,
+                batchSummaries: [{
+                    startTimestamp: '2025-01-01T00:00:00.000Z',
+                    endTimestamp:   '2025-01-01T00:05:00.000Z',
+                    messageCount:   5,
+                    authors:        ['someuser'],
+                    synopsis:       'Summary of older messages',
+                }],
+            };
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse({
                 messages: [createMockSearchResult()],
-                overflow: {
-                    count:     5,
-                    summaries: [{
-                        id:        '333',
-                        timestamp: '2025-01-01T00:00:00.000Z',
-                        author:    'someuser',
-                        synopsis:  'Summary of older messages',
-                    }],
-                },
+                overflow,
             }));
 
             const server = createServer();
@@ -467,9 +469,7 @@ The channel must always be given explicitly — there is no ambient conversation
             const result = await handler({ channelId: '123456789012345678' });
 
             const parsed = JSON.parse(textContent(result.content[0])) as SearchResponse;
-            expect(parsed.overflow).toBeDefined();
-            expect(parsed.overflow?.count).toBe(5);
-            expect(parsed.overflow?.summaries).toHaveLength(1);
+            expect(parsed.overflow).toEqual(overflow);
         });
 
         test('should add localTimestamp when timezone is provided', async () => {

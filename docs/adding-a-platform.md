@@ -218,7 +218,6 @@ const yourPlatformHistory  = new YourPlatformHistoryProvider(yourPlatformClient)
 
 const coordinator = new PersonHistoryCoordinator({
     contactBackend:       contactBackend,
-    messageSearchService: messageSearchService,
     providers: [
         discordHistoryProvider,
         emailHistoryProvider,

@@ -1,5 +1,4 @@
 import { logger } from '@hughescr/logger';
-import type { MCPMessageSearchService } from '../types';
 import {
     DEFAULT_MAX_CHARACTERS,
     DEFAULT_MAX_MESSAGES_PER_PLATFORM,
@@ -16,27 +15,13 @@ import type { Contact, ContactBackend, PlatformType } from '@/storage';
 import { assertNever } from '@/utils';
 
 /**
- * Minimal shape of a raw Discord message returned by MCPMessageSearchService.
- * Fields are optional because the service contract only guarantees pass-through
- * from the underlying Discord search result; all access is guarded with `??`.
- */
-interface RawDiscordMessage {
-    id?:        string
-    timestamp?: string
-    author?:    { id?: string, displayName?: string, username?: string }
-    content?:   string
-}
-
-/**
  * Options for constructing a PersonHistoryCoordinator.
  */
 export interface PersonHistoryCoordinatorOptions {
     /** Backend for looking up contacts by name/identifier. */
-    contactBackend:       ContactBackend
+    contactBackend: ContactBackend
     /** Registered platform-specific history providers. */
-    providers:            PlatformHistoryProvider[]
-    /** Message search service used for channel-local fallback. */
-    messageSearchService: MCPMessageSearchService
+    providers:      PlatformHistoryProvider[]
 }
 
 interface NormalizedHistoryOptions {
@@ -248,58 +233,5 @@ export class PersonHistoryCoordinator {
         }
 
         return { history: formatted, person: stripInternal(contact) };
-    }
-
-    /**
-     * Fetch recent message history for a specific channel (local, channel-scoped fallback).
-     *
-     * @param channelId        - The channel to fetch recent messages from.
-     * @param excludeMessageId - Optional message ID to exclude (e.g. the triggering message).
-     * @param options          - Optional limits.
-     * @returns Formatted history string, or undefined if no messages were found.
-     */
-    async getChannelLocalHistory(
-        channelId:         string,
-        excludeMessageId?: string,
-        options?:          PersonHistoryOptions
-    ): Promise<string | undefined> {
-        const maxMessages = options?.maxMessagesPerPlatform ?? DEFAULT_MAX_MESSAGES_PER_PLATFORM;
-        const maxChars    = options?.maxCharacters          ?? DEFAULT_MAX_CHARACTERS;
-
-        const result = await this.options.messageSearchService.getRecentMessages(channelId, maxMessages);
-        let messages: RawDiscordMessage[] = result.messages;
-
-        if(excludeMessageId) {
-            messages = messages.filter(m => m.id !== excludeMessageId);
-        }
-
-        if(messages.length === 0) {
-            return undefined;
-        }
-
-        // Convert to HistoryEntry[] for uniform formatting
-        const entries: HistoryEntry[] = messages.map((m): HistoryEntry => {
-            // Stryker disable next-line NumberLiteralValue: MCPMessageSearchService requires timestamp and the production fetcher constructs it with createdAt.toISOString().
-            const ts      = m.timestamp ?? new Date(0).toISOString();
-            const author  = m.author;
-            const content = m.content ?? '';
-            const name    = author?.displayName ?? author?.username ?? 'unknown';
-            return {
-                platform:  'discord',
-                timestamp: ts,
-                summary:   `${name}: ${content}`,
-                direction: 'inbound' as const,
-            };
-        });
-
-        // Sort descending
-        entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-
-        let formatted = formatHistoryEntries('channel', entries);
-        if(!Number.isNaN(maxChars)) {
-            formatted = formatted.slice(0, maxChars);
-        }
-
-        return formatted;
     }
 }

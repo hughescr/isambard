@@ -1,11 +1,9 @@
 import { describe, test, expect } from 'bun:test';
 import {
     discordSearchResultSchema,
-    overflowSummarySchema,
     searchResponseSchema,
     batchOverflowSummarySchema,
     type DiscordSearchResult,
-    type OverflowSummary,
     type SearchResponse,
     type BatchOverflowSummary
 } from '@/integrations/discord/message-history/types';
@@ -92,42 +90,6 @@ describe.concurrent('discordSearchResultSchema', () => {
     });
 });
 
-describe('overflowSummarySchema', () => {
-    const validOverflow: OverflowSummary = {
-        id:        '999888777666555444',
-        timestamp: '2024-01-15T10:30:00.000Z',
-        author:    'testuser',
-        synopsis:  'User discussed the new feature implementation and mentioned several concerns about performance.',
-    };
-
-    test('should accept valid overflow summary', () => {
-        const result = overflowSummarySchema.safeParse(validOverflow);
-        expect(result.success).toBe(true);
-    });
-
-    test.each([
-        ['id', { id: undefined }],
-        ['timestamp', { timestamp: undefined }],
-        ['author', { author: undefined }],
-        ['synopsis', { synopsis: undefined }],
-    ])('should require %s field', (_fieldName, override) => {
-        const key = Object.keys(override)[0] as keyof typeof validOverflow;
-        const { [key]: _removed, ...incomplete } = validOverflow;
-        const result = overflowSummarySchema.safeParse(incomplete);
-        expect(result.success).toBe(false);
-    });
-
-    test.each([
-        ['id', { id: '' }],
-        ['timestamp', { timestamp: 'not-a-date' }],
-        ['author', { author: '' }],
-        ['synopsis', { synopsis: '' }],
-    ])('should reject invalid %s', (_fieldName, override) => {
-        const result = overflowSummarySchema.safeParse({ ...validOverflow, ...override });
-        expect(result.success).toBe(false);
-    });
-});
-
 describe('batchOverflowSummarySchema', () => {
     const validBatch: BatchOverflowSummary = {
         startTimestamp: '2024-01-14T10:00:00.000Z',
@@ -195,6 +157,12 @@ describe('searchResponseSchema', () => {
         },
     };
 
+    test('overflow exposes exactly the producible response fields', () => {
+        expect(Object.keys(searchResponseSchema.shape.overflow.unwrap().shape)).toEqual([
+            'count', 'batchSummaries', 'hasMore', 'hint',
+        ]);
+    });
+
     test('should accept valid search response', () => {
         const result = searchResponseSchema.safeParse(validSearchResponse);
         expect(result.success).toBe(true);
@@ -204,15 +172,7 @@ describe('searchResponseSchema', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             overflow: {
-                count:     50,
-                summaries: [
-                    {
-                        id:        '888777666555444333',
-                        timestamp: '2024-01-14T10:00:00.000Z',
-                        author:    'otheruser',
-                        synopsis:  'Earlier message summary',
-                    },
-                ],
+                count: 50,
             },
             metadata: {
                 ...validSearchResponse.metadata,
@@ -281,8 +241,7 @@ describe('searchResponseSchema', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             overflow: {
-                count:     -1,
-                summaries: [],
+                count: -1,
             },
         });
         expect(result.success).toBe(false);
@@ -292,8 +251,7 @@ describe('searchResponseSchema', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
             overflow: {
-                count:     0,
-                summaries: [],
+                count: 0,
             },
         });
         expect(result.success).toBe(true);
@@ -395,9 +353,6 @@ describe('message-history schema boundaries', () => {
             timeRange:  { start: '2024-01-15T00:00:00.000Z', end: '2024-01-15T23:59:59.999Z' },
         },
     };
-    const validOverflow = {
-        id: '999888777666555444', timestamp: '2024-01-15T10:30:00.000Z', author: 'testuser', synopsis: 'Summary',
-    };
     const validBatch = {
         startTimestamp: '2024-01-14T10:00:00.000Z', endTimestamp:   '2024-01-14T11:00:00.000Z',
         messageCount:   1, authors:        ['alice'], synopsis:       'Summary',
@@ -415,14 +370,6 @@ describe('message-history schema boundaries', () => {
         ['replyTo empty', { replyTo: '' }, false],
     ])('validates %s at its public boundary', (_name, override, expected) => {
         expect(discordSearchResultSchema.safeParse({ ...validSearchResult, ...override }).success).toBe(expected);
-    });
-
-    test.each([
-        ['overflow.id', { id: '1' }, true],
-        ['overflow.author', { author: 'x' }, true],
-        ['overflow.synopsis', { synopsis: 'x' }, true],
-    ])('accepts %s boundary value', (_name, override, expected) => {
-        expect(overflowSummarySchema.safeParse({ ...validOverflow, ...override }).success).toBe(expected);
     });
 
     test.each([

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
+import { describe, test, expect, afterEach, jest, mock } from 'bun:test';
 import { PersonHistoryCoordinator, type PersonHistoryCoordinatorOptions } from '../../../../src/agent/history-providers/coordinator';
 import type { HistoryEntry, HistoryFetchParams, KnownPlatform, PlatformHistoryProvider } from '../../../../src/agent/history-providers/types';
 import type { Contact, ContactId } from '../../../../src/storage/contacts';
@@ -42,24 +42,15 @@ interface MockContactBackend {
     getContact:        ReturnType<typeof mock>
 }
 
-interface MockSearchService {
-    getRecentMessages: ReturnType<typeof mock>
-    searchMessages:    ReturnType<typeof mock>
-    getMessageById:    ReturnType<typeof mock>
-    getMessagesById:   ReturnType<typeof mock>
-}
-
 function makeOptions(
     overrides: {
         backend?:   MockContactBackend
         providers?: PlatformHistoryProvider[]
-        search?:    MockSearchService
     } = {}
 ): PersonHistoryCoordinatorOptions {
     return {
-        contactBackend:       (overrides.backend  ?? makeMockBackend())  as unknown as PersonHistoryCoordinatorOptions['contactBackend'],
-        providers:            overrides.providers ?? [],
-        messageSearchService: overrides.search   ?? makeMockSearch(),
+        contactBackend: (overrides.backend ?? makeMockBackend()) as unknown as PersonHistoryCoordinatorOptions['contactBackend'],
+        providers:      overrides.providers ?? [],
     };
 }
 
@@ -68,15 +59,6 @@ function makeMockBackend(): MockContactBackend {
         fuzzyLookup:       mock(async (): Promise<Contact[]> => [makeContact()]),
         resolveIdentifier: mock(async (): Promise<Contact[]> => [makeContact()]),
         getContact:        mock(async (): Promise<Contact | undefined> => makeContact()),
-    };
-}
-
-function makeMockSearch(): MockSearchService {
-    return {
-        getRecentMessages: mock(async (): Promise<{ messages: unknown[] }> => ({ messages: [] })),
-        searchMessages:    mock(async () => ({ messages: [], metadata: { totalFound: 0, timeRange: { start: '', end: '' } } })),
-        getMessageById:    mock(async () => null),
-        getMessagesById:   mock(async () => []),
     };
 }
 
@@ -740,222 +722,7 @@ describe.concurrent('PersonHistoryCoordinator', () => {
         });
     });
 
-    // ── getChannelLocalHistory ──────────────────────────────────────────────────
-
-    describe('getChannelLocalHistory', () => {
-        let mockSearch: MockSearchService;
-
-        beforeEach(() => {
-            mockSearch = makeMockSearch();
-        });
-
-        test('returns undefined when no messages found', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({ messages: [] }));
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123');
-
-            expect(result).toBeUndefined();
-        });
-
-        test('returns formatted history when messages are found', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: { displayName: 'Craig' }, content: 'Hello world', timestamp: '2025-01-01T10:00:00.000Z' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123');
-
-            expect(result).toBeDefined();
-            expect(result).toContain('Craig: Hello world');
-            expect(result).toContain('[discord]');
-            expect(result).toContain('--- Recent interactions with channel ---');
-        });
-
-        test('keeps messages without IDs when exclusion is omitted', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async () => ({ messages: [
-                { content: 'message without an ID', timestamp: '2025-01-01T10:00:00.000Z' },
-            ] }));
-            const coord = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            expect(await coord.getChannelLocalHistory('ch-123')).toContain('message without an ID');
-        });
-
-        test('excludes the specified messageId', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: { displayName: 'Craig' }, content: 'keep this',    timestamp: '2025-01-01T10:00:00.000Z' },
-                    { id: 'msg2', author: { displayName: 'Craig' }, content: 'exclude this', timestamp: '2025-01-01T10:01:00.000Z' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123', 'msg2');
-
-            expect(result).toContain('keep this');
-            expect(result).not.toContain('exclude this');
-        });
-
-        test('returns undefined after excluding all messages', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: { displayName: 'Craig' }, content: 'only message', timestamp: '2025-01-01T10:00:00.000Z' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123', 'msg1');
-
-            expect(result).toBeUndefined();
-        });
-
-        test('passes maxMessagesPerPlatform to getRecentMessages', async () => {
-            let capturedLimit: number | undefined;
-            mockSearch.getRecentMessages.mockImplementation(async (_channelId: string, limit?: number): Promise<{ messages: unknown[] }> => {
-                capturedLimit = limit;
-                return { messages: [] };
-            });
-
-            const coord = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            await coord.getChannelLocalHistory('ch-123', undefined, { maxMessagesPerPlatform: 15 });
-
-            expect(capturedLimit).toBe(15);
-        });
-
-        test('uses the default per-platform limit when no limit is supplied', async () => {
-            let capturedLimit: number | undefined;
-            mockSearch.getRecentMessages.mockImplementation(async (_channelId: string, limit?: number): Promise<{ messages: unknown[] }> => {
-                capturedLimit = limit;
-                return { messages: [] };
-            });
-
-            const coord = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            await coord.getChannelLocalHistory('ch-123');
-
-            expect(capturedLimit).toBe(10);
-        });
-
-        test('truncates channel history at the default maxCharacters when omitted', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: Array.from({ length: 5 }, (_, _index) => ({ id: 'message', author: { displayName: 'Craig' }, content: 'x'.repeat(5000), timestamp: '2025-01-01T10:00:00.000Z' })),
-            }));
-
-            const coord = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123');
-
-            expect(result).toHaveLength(12_000);
-        });
-
-        test('uses the epoch timestamp when a raw message omits its timestamp', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: { displayName: 'Craig' }, content: 'timeless' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123');
-
-            expect(result).toContain('[1970-01-01] Craig: timeless');
-        });
-
-        test('prefers a display name over a username when both are available', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: { displayName: 'Craig Display', username: 'craiguser' }, content: 'hello', timestamp: '2025-01-01T10:00:00.000Z' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123');
-
-            expect(result).toContain('Craig Display: hello');
-            expect(result).not.toContain('craiguser: hello');
-        });
-
-        test('caps output at maxCharacters when formatted string is longer', async () => {
-            const longContent = 'x'.repeat(5000);
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: { displayName: 'Craig' }, content: longContent, timestamp: '2025-01-01T10:00:00.000Z' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123', undefined, { maxCharacters: 300 });
-
-            expect(result).toBeDefined();
-            expect(result!).toHaveLength(300);
-        });
-
-        test('does not truncate when output is shorter than maxCharacters', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: { displayName: 'Craig' }, content: 'short', timestamp: '2025-01-01T10:00:00.000Z' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123', undefined, { maxCharacters: 10_000 });
-
-            expect(result).toBeDefined();
-            expect(result).toContain('--- End of recent history ---');
-            expect(result!.length).toBeLessThan(10_000);
-        });
-
-        test('does not truncate channel history when maxCharacters is NaN', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async () => ({ messages: [
-                { id: 'message', content: 'complete', timestamp: '2025-01-01T10:00:00.000Z' },
-            ] }));
-            const coord = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123', undefined, { maxCharacters: Number.NaN });
-            expect(result).toContain('complete');
-            expect(result).toContain('--- End of recent history ---');
-        });
-
-        test('messages are sorted descending by timestamp', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: { displayName: 'Craig' }, content: 'earlier message', timestamp: '2025-01-01T09:00:00.000Z' },
-                    { id: 'msg2', author: { displayName: 'Craig' }, content: 'later message',   timestamp: '2025-01-01T10:00:00.000Z' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123');
-
-            expect(result).toBeDefined();
-            const laterPos   = result!.indexOf('later message');
-            const earlierPos = result!.indexOf('earlier message');
-            expect(laterPos).toBeLessThan(earlierPos);
-        });
-
-        test('uses username fallback when displayName is absent', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: { username: 'craiguser' }, content: 'hello', timestamp: '2025-01-01T10:00:00.000Z' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123');
-
-            expect(result).toContain('craiguser: hello');
-        });
-
-        test('uses unknown fallback when author has no displayName or username', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: {}, content: 'hello', timestamp: '2025-01-01T10:00:00.000Z' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123');
-
-            expect(result).toContain('unknown: hello');
-        });
-
+    describe('getPersonHistory formatting regressions', () => {
         test('formats a previous UTC date as a date at the midnight boundary', async () => {
             jest.useFakeTimers();
             jest.setSystemTime(new Date('2025-01-02T00:00:00.000Z'));
@@ -990,20 +757,6 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             const coord = new PersonHistoryCoordinator(makeOptions({ providers: [makeProvider('discord', [invalidEntry])] }));
 
             await expect(coord.getPersonHistory('craig')).rejects.toThrow('Unexpected platform: Symbol(invalid platform)');
-        });
-
-        test('uses empty string fallback when content is absent', async () => {
-            mockSearch.getRecentMessages.mockImplementation(async (): Promise<{ messages: unknown[] }> => ({
-                messages: [
-                    { id: 'msg1', author: { displayName: 'Craig' }, timestamp: '2025-01-01T10:00:00.000Z' },
-                ],
-            }));
-
-            const coord  = new PersonHistoryCoordinator(makeOptions({ search: mockSearch }));
-            const result = await coord.getChannelLocalHistory('ch-123');
-
-            // Summary should be "Craig: " with an empty content part (not some fallback text like "Stryker was here!")
-            expect(result).toContain('[discord] [2025-01-01] Craig: \n');
         });
     });
 });
