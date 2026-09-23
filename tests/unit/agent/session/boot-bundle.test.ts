@@ -183,10 +183,10 @@ describe('formatBootBundle — conversation compact', () => {
     });
 });
 
-describe('formatBootBundle — conversation resume', () => {
+describe('formatBootBundle — conversation restart_resume', () => {
     const baseParts: BootBundleParts = {
         role:        'conversation',
-        kind:        'resume',
+        kind:        'restart_resume',
         recentUsers: [],
         lostTasks:   [],
         undelivered: [],
@@ -205,7 +205,7 @@ describe('formatBootBundle — conversation resume', () => {
         const text = formatBootBundle({ ...baseParts, timeHeader: '## Current Time\n- UTC: now', activeTasks: ['active-1'] });
 
         expect(text).toBe([
-            '[BOOT BUNDLE · conversation · resume]',
+            '[BOOT BUNDLE · conversation · restart_resume]',
             '## Current Time\n- UTC: now',
             '## Background tasks\nactive-1',
         ].join('\n\n'));
@@ -232,7 +232,7 @@ describe('formatBootBundle — conversation resume', () => {
         const text = formatBootBundle({ ...baseParts, events: '- /events/1 (10m ago): did a thing' });
 
         expect(text).toBe([
-            '[BOOT BUNDLE · conversation · resume]',
+            '[BOOT BUNDLE · conversation · restart_resume]',
             '## Events since you last knew\n- /events/1 (10m ago): did a thing',
         ].join('\n\n'));
     });
@@ -243,7 +243,7 @@ describe('formatBootBundle — conversation resume', () => {
         });
 
         expect(text).toBe([
-            '[BOOT BUNDLE · conversation · resume]',
+            '[BOOT BUNDLE · conversation · restart_resume]',
             '## Background tasks lost at restart\nlost-1',
             '## Envelopes without a delivered response\nundelivered-1',
             '## Background tasks\nactive-1',
@@ -321,10 +321,10 @@ describe('formatBootBundle — perch fresh/compact', () => {
     });
 });
 
-describe('formatBootBundle — perch resume', () => {
+describe('formatBootBundle — perch restart_resume', () => {
     const baseParts: BootBundleParts = {
         role:        'perch',
-        kind:        'resume',
+        kind:        'restart_resume',
         recentUsers: [],
         lostTasks:   [],
         undelivered: [],
@@ -351,7 +351,7 @@ describe('formatBootBundle — perch resume', () => {
         });
 
         expect(text).toBe([
-            '[BOOT BUNDLE · perch · resume]',
+            '[BOOT BUNDLE · perch · restart_resume]',
             '## Background tasks lost at restart\nlost-a',
             '## Envelopes without a delivered response\nundelivered-a',
             '## Background tasks\nactive-a',
@@ -559,7 +559,7 @@ describe('createBootBundleBuilder — conversation compact', () => {
     });
 });
 
-describe('createBootBundleBuilder — conversation resume', () => {
+describe('createBootBundleBuilder — conversation restart_resume', () => {
     test('never fetches the task list, hot state or the channel list', async () => {
         const contextBuilder = makeContextBuilder();
         const taskListReader = makeTaskListReader('summary');
@@ -568,7 +568,7 @@ describe('createBootBundleBuilder — conversation resume', () => {
             role: 'conversation', contextBuilder, taskListReader, channelListProvider, now: NOW,
         });
 
-        const text = await builder.build({ ...emptyInput, kind: 'resume' });
+        const text = await builder.build({ ...emptyInput, kind: 'restart_resume' });
 
         expect(taskListReader.buildTaskListSummary).not.toHaveBeenCalled();
         expect(contextBuilder.loadHotState).not.toHaveBeenCalled();
@@ -583,7 +583,7 @@ describe('createBootBundleBuilder — conversation resume', () => {
             role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
         });
 
-        const text = await builder.build({ ...emptyInput, kind: 'resume', activeTasks: ['active-1'] });
+        const text = await builder.build({ ...emptyInput, kind: 'restart_resume', activeTasks: ['active-1'] });
 
         expect(text).toContain('## Current Time\n- Perch: idle');
     });
@@ -598,7 +598,7 @@ describe('createBootBundleBuilder — conversation resume', () => {
             role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
-        const text = await builder.build({ ...emptyInput, kind: 'resume', eventsSinceMs: NOW() - 3000 });
+        const text = await builder.build({ ...emptyInput, kind: 'restart_resume', eventsSinceMs: NOW() - 3000 });
 
         expect(contextBuilder.loadRecentEventsSince).toHaveBeenCalledWith(3000, 50, new Date(NOW()));
         expect(text).not.toContain('Working memory was reset');
@@ -611,7 +611,7 @@ describe('createBootBundleBuilder — conversation resume', () => {
             role: 'conversation', contextBuilder, taskListReader: makeTaskListReader(), now: NOW,
         });
 
-        const text = await builder.build({ ...emptyInput, kind: 'resume' });
+        const text = await builder.build({ ...emptyInput, kind: 'restart_resume' });
 
         expect(contextBuilder.loadRecentEventsSince).not.toHaveBeenCalled();
         expect(text).toBe('');
@@ -624,7 +624,7 @@ describe('createBootBundleBuilder — conversation resume', () => {
         });
 
         const text = await builder.build({
-            kind: 'resume', lostTasks: ['lost-1'], undelivered: [], recentUsers: [], activeTasks: [],
+            kind: 'restart_resume', lostTasks: ['lost-1'], undelivered: [], recentUsers: [], activeTasks: [],
         });
 
         expect(text).toContain('## Background tasks lost at restart\nlost-1');
@@ -701,7 +701,7 @@ describe('createBootBundleBuilder — perch fresh/compact', () => {
     });
 });
 
-describe('createBootBundleBuilder — perch resume', () => {
+describe('createBootBundleBuilder — perch restart_resume', () => {
     test('never fetches the task list or perch context', async () => {
         const contextBuilder = makeContextBuilder();
         const taskListReader = makeTaskListReader('summary');
@@ -709,7 +709,7 @@ describe('createBootBundleBuilder — perch resume', () => {
             role: 'perch', contextBuilder, taskListReader, now: NOW,
         });
 
-        const text = await builder.build({ ...emptyInput, kind: 'resume' });
+        const text = await builder.build({ ...emptyInput, kind: 'restart_resume' });
 
         expect(taskListReader.buildTaskListSummary).not.toHaveBeenCalled();
         expect(contextBuilder.buildPerchContext).not.toHaveBeenCalled();
@@ -723,7 +723,7 @@ describe('createBootBundleBuilder — perch resume', () => {
             role: 'perch', contextBuilder, taskListReader: makeTaskListReader(), now: NOW, timeHeader,
         });
 
-        const text = await builder.build({ ...emptyInput, kind: 'resume', activeTasks: ['active-a'] });
+        const text = await builder.build({ ...emptyInput, kind: 'restart_resume', activeTasks: ['active-a'] });
 
         expect(text).toContain('## Current Time\n- Conversation: idle');
     });
@@ -735,14 +735,49 @@ describe('createBootBundleBuilder — perch resume', () => {
         });
 
         const text = await builder.build({
-            kind: 'resume', lostTasks: ['lost-a'], undelivered: ['undelivered-a'], recentUsers: [], activeTasks: ['active-a'],
+            kind: 'restart_resume', lostTasks: ['lost-a'], undelivered: ['undelivered-a'], recentUsers: [], activeTasks: ['active-a'],
         });
 
         expect(text).toBe([
-            '[BOOT BUNDLE · perch · resume]',
+            '[BOOT BUNDLE · perch · restart_resume]',
             '## Background tasks lost at restart\nlost-a',
             '## Envelopes without a delivered response\nundelivered-a',
             '## Background tasks\nactive-a',
         ].join('\n\n'));
     });
+});
+
+describe('createBootBundleBuilder — reopen', () => {
+    // A reopen is an in-process replacement of the session: the host kept the queue, and the
+    // conductor's own reopen handshake names the background tasks the reopen may have cut off.
+    // So the bundle is empty for both roles, whatever it is handed, and fetches nothing at all.
+    for(const role of ['conversation', 'perch'] as const) {
+        test(`${role}: renders '' and calls no provider, not even the time header, even with every input populated`, async () => {
+            const contextBuilder = makeContextBuilder({
+                loadHotState:          jest.fn().mockResolvedValue('Working on P6.'),
+                loadRecentEventsSince: jest.fn().mockResolvedValue([
+                    { path: '/events/1', content: 'deployed the thing', contentType: 'text/plain', metadata: {}, createdAt: T0.toISOString(), updatedAt: T0.toISOString() },
+                ]),
+                buildPerchContext: jest.fn().mockResolvedValue('## Perch context'),
+            });
+            const taskListReader = makeTaskListReader('summary');
+            const channelListProvider = jest.fn().mockResolvedValue('#general');
+            const timeHeader = jest.fn(() => '## Current Time\n- now');
+            const builder = createBootBundleBuilder({
+                role, contextBuilder, taskListReader, channelListProvider, now: NOW, timeHeader,
+            });
+
+            const text = await builder.build({
+                kind: 'reopen', eventsSinceMs: NOW() - 3000, lostTasks: ['lost-x'], undelivered: ['undelivered-y'], recentUsers: ['user-u'], activeTasks: ['active-t'],
+            });
+
+            expect(text).toBe('');
+            expect(timeHeader).not.toHaveBeenCalled();
+            expect(taskListReader.buildTaskListSummary).not.toHaveBeenCalled();
+            expect(contextBuilder.loadHotState).not.toHaveBeenCalled();
+            expect(contextBuilder.loadRecentEventsSince).not.toHaveBeenCalled();
+            expect(contextBuilder.buildPerchContext).not.toHaveBeenCalled();
+            expect(channelListProvider).not.toHaveBeenCalled();
+        });
+    }
 });

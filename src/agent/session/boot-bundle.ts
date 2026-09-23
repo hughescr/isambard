@@ -13,30 +13,46 @@
  *   events since the mark, the task list, and the active-task set — NO channel list, recent
  *   users, lost tasks or undelivered envelopes, because nothing was lost across a compaction
  *   (Discord turns are held by the conductor for the duration; see `conductor.ts`).
- * - `resume` (the transcript survived — a process restart resuming an existing session): ONLY
- *   what happened while offline — events since the last journaled turn, lost tasks, undelivered
- *   envelopes, and the active-task set — no state/task-list/channels, since none of
- *   that was lost. `build()` returns `''` (and the hook then adds no `additionalContext` at
- *   all — see `../hooks/boot-bundle.ts`) when every one of those sections is empty.
+ * - `restart_resume` (the transcript survived a PROCESS restart — the host process was down, and
+ *   the new process resumed the stored session): ONLY what happened while offline — events since
+ *   the last journaled turn, lost tasks, undelivered envelopes, and the active-task set — no
+ *   state/task-list/channels, since none of that was lost. `build()` returns `''` (and the hook
+ *   then adds no `additionalContext` at all — see `../hooks/boot-bundle.ts`) when every one of
+ *   those sections is empty.
+ * - `reopen` (the transcript survived an IN-PROCESS reopen — the conductor replaced a crashed
+ *   session, or closed and resumed it on request, e.g. after an identity change, while the host
+ *   process kept running): ALWAYS `''`, returned before the time header or any fetch. Nothing
+ *   was offline: the conductor held its queue across the reopen and re-delivers whatever the dead
+ *   session never read (see `reopenReplacementSession` in `conductor.ts`). The one thing a reopen
+ *   can lose — background tasks the old session process was running — is named in the
+ *   conductor's own reopen `[BOOT]` handshake instead, which is the first thing the replacement
+ *   reads whether its resume succeeds or falls back to a fresh session.
+ *
+ * The SDK's `SessionStart` source alone cannot tell the two resumes apart (both arrive as
+ * `resume`), so `src/app/sessions.ts` maps the source plus the conductor's open cause onto a
+ * kind: `startup` is `fresh`, `compact` is `compact` whatever the cause, and `resume` is
+ * `restart_resume` for a boot open and `reopen` for either in-process reopen. A reopen whose
+ * resume fails falls back to a fresh session (`startup`, so `fresh`): it gets the full re-seed,
+ * minus the old session's tasks and recovery, which that reopen handshake already covers.
  *
  * Two role variants share one builder: `conversation` re-seeds the sections above; `perch`
  * re-seeds the task list and `ContextBuilder.buildPerchContext`'s own block verbatim
  * for `fresh`/`compact` (it already carries a time header, top state and recent events, so
  * those sections are not rendered separately for perch, and there is no channel list) and, for
- * `resume`, only lost tasks/undelivered/active tasks — no task list or perch context
+ * `restart_resume`, only lost tasks/undelivered/active tasks — no task list or perch context
  * fetch at all.
  *
  * NO bundle of any kind carries an `## Identity` section (WP4a): identity is rendered into the
  * session's own SDK `systemPrompt` instead, and a change to it drives a controlled
- * close-and-resume (`Conductor.requestReopen`) rather than a fresh boot bundle — so re-seeding it
- * here as USER-turn text would only duplicate, in every fresh/compact bundle, what the system
- * prompt already states once and caches.
+ * close-and-resume (`Conductor.requestReopen`, a `reopen` kind) rather than a fresh boot bundle
+ * — so re-seeding it here as USER-turn text would only duplicate, in every fresh/compact bundle,
+ * what the system prompt already states once and caches.
  *
  * Session-peers block 4: every non-empty bundle opens with the role's ambient time header (the
  * injected `timeHeader` provider — `ambience.timeHeaderFor(role)` at the composition root), so a
  * boot turn carries the same time / other-session / quota block every other envelope does. It is
- * rendered ahead of the body but is NOT one of the sections the empty-`resume` test consults, so
- * a resume with nothing to report still renders `''` rather than waking the session with a clock.
+ * rendered ahead of the body but is NOT one of the sections the empty-`restart_resume` test consults, so
+ * a restart_resume with nothing to report still renders `''` rather than waking the session with a clock.
  * The perch `fresh`/`compact` bundle consequently carries the header twice — once ambient, once
  * as the bare `formatTimeHeader()` that leads `buildPerchContext`'s own block — exactly as the
  * perch SLOT envelope already does; `buildPerchContext` stays ledger-unaware by design.
@@ -68,7 +84,7 @@ export interface TaskListSource {
  * Which SessionStart trigger a boot bundle is re-seeding for — see the module doc for what each
  * kind injects.
  */
-export type BootKind = 'fresh' | 'resume' | 'compact';
+export type BootKind = 'fresh' | 'restart_resume' | 'reopen' | 'compact';
 
 /** Inputs to {@link createBootBundleBuilder}. */
 export interface CreateBootBundleBuilderParams {
@@ -95,12 +111,12 @@ export interface CreateBootBundleBuilderParams {
 
 /** Ledger/journal-derived facts supplied at build time (not known to the builder itself). */
 export interface BuildBootBundleInput {
-    /** Which SessionStart trigger this bundle is re-seeding for. */
+    /** Which SessionStart trigger this bundle is re-seeding for; a `reopen` renders `''` whatever else is given. */
     kind:           BootKind
     /**
      * Absolute epoch ms events high-water mark (e.g. `ContextPolicy.eventsSinceMs()` or a
      * journal-derived `lastKnownAt`). When given, the events section covers `now - eventsSinceMs`
-     * regardless of kind. When omitted: `fresh` falls back to `bootEventsWindowMs`; `resume`/
+     * regardless of kind. When omitted: `fresh` falls back to `bootEventsWindowMs`; `restart_resume`/
      * `compact` render no events section at all (and fetch nothing).
      */
     eventsSinceMs?: number
@@ -122,11 +138,12 @@ export interface BootBundleBuilder {
 /** Already-gathered pieces {@link formatBootBundle} renders, in role-and-kind-dependent order. */
 export interface BootBundleParts {
     role:             'conversation' | 'perch'
-    kind:             BootKind
+    /** Never `reopen`: {@link BootBundleBuilder.build} returns `''` for a reopen before gathering any parts. */
+    kind:             Exclude<BootKind, 'reopen'>
     /**
      * The ambient time header (session-peers block 4), rendered verbatim ahead of every other
-     * section. Deliberately NOT one of the sections the empty-`resume` check consults: a header
-     * is true of every moment, so a resume with nothing else to say still renders `''`.
+     * section. Deliberately NOT one of the sections the empty-`restart_resume` check consults: a header
+     * is true of every moment, so a restart_resume with nothing else to say still renders `''`.
      */
     timeHeader?:      string
     /** Conversation only; fresh/compact only. */
@@ -145,7 +162,7 @@ export interface BootBundleParts {
     lostTasks:        string[]
     /** Rendered for every kind except `compact`. */
     undelivered:      string[]
-    /** Conversation: every kind. Perch: `resume` only (fresh/compact never rendered it). */
+    /** Conversation: every kind. Perch: `restart_resume` only (fresh/compact never rendered it). */
     activeTasks:      string[]
 }
 
@@ -164,7 +181,7 @@ function renderListSection(heading: string, items: string[]): string | undefined
 /**
  * The events section's heading: only `fresh` actually covers a fixed `bootEventsWindowMs`
  * (default 24h) rolling window when no `eventsSinceMs` override is given, so only `fresh` is
- * labelled that way. `compact`/`resume` always render an arbitrary since-the-mark span (whatever
+ * labelled that way. `compact`/`restart_resume` always render an arbitrary since-the-mark span (whatever
  * `eventsSinceMs` the caller supplied — minutes after a fast compaction, days after an outage),
  * so a literal "last 24h" would misrepresent the window and could lead Izzy to assume the rest of
  * the day is already covered when it is not.
@@ -175,7 +192,7 @@ function eventsHeading(kind: BootKind): string {
 
 /** The `conversation` role's sections, selected by `parts.kind` — see the module doc for what each kind carries. */
 function conversationSections(parts: BootBundleParts): (string | undefined)[] {
-    if(parts.kind === 'resume') {
+    if(parts.kind === 'restart_resume') {
         return [
             renderHeadingSection(eventsHeading(parts.kind), parts.events),
             renderListSection('Background tasks lost at restart', parts.lostTasks),
@@ -205,7 +222,7 @@ function conversationSections(parts: BootBundleParts): (string | undefined)[] {
 
 /** The `perch` role's sections, selected by `parts.kind` — see the module doc for what each kind carries. */
 function perchSections(parts: BootBundleParts): (string | undefined)[] {
-    if(parts.kind === 'resume') {
+    if(parts.kind === 'restart_resume') {
         return [
             renderListSection('Background tasks lost at restart', parts.lostTasks),
             renderListSection('Envelopes without a delivered response', parts.undelivered),
@@ -222,20 +239,20 @@ function perchSections(parts: BootBundleParts): (string | undefined)[] {
 
 /**
  * Pure formatter: renders {@link BootBundleParts} into the boot bundle's envelope text, or `''`
- * for a `resume` bundle whose sections are all empty (nothing happened while offline).
+ * for a `restart_resume` bundle whose sections are all empty (nothing happened while offline).
  * @param parts Already-gathered boot bundle pieces
- * @returns The full boot bundle text, or `''` for an empty resume
+ * @returns The full boot bundle text, or `''` for an empty restart_resume
  */
 export function formatBootBundle(parts: BootBundleParts): string {
     const bodySections = parts.role === 'perch' ? perchSections(parts) : conversationSections(parts);
 
-    if(parts.kind === 'resume' && bodySections.every(section => !section)) {
+    if(parts.kind === 'restart_resume' && bodySections.every(section => !section)) {
         return '';
     }
 
     const sections: (string | undefined)[] = [
         `[BOOT BUNDLE · ${parts.role} · ${parts.kind}]`,
-        parts.kind === 'resume' ? undefined : RESET_NOTICE,
+        parts.kind === 'restart_resume' ? undefined : RESET_NOTICE,
         parts.timeHeader,
         ...bodySections,
     ];
@@ -246,7 +263,7 @@ export function formatBootBundle(parts: BootBundleParts): string {
 /**
  * Resolves the events section for one `build()` call: `eventsSinceMs` (when given) always wins
  * and is used for every kind; absent that, only `fresh` falls back to `bootEventsWindowMs` — a
- * `resume`/`compact` bundle with no mark renders (and fetches) no events section at all.
+ * `restart_resume`/`compact` bundle with no mark renders (and fetches) no events section at all.
  */
 async function loadEventsSection(
     contextBuilder: BootContextSource, kind: BootKind, eventsSinceMs: number | undefined,
@@ -281,14 +298,20 @@ export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): 
     return {
         async build(input: BuildBootBundleInput): Promise<string> {
             const { kind, eventsSinceMs, lostTasks, undelivered, recentUsers, activeTasks } = input;
+            if(kind === 'reopen') {
+                // Nothing to re-seed and nothing worth a fetch — not even the clock: the
+                // transcript survived and the host kept the queue, and the conductor's own reopen
+                // handshake already names the background tasks the reopen may have cut off.
+                return '';
+            }
             // Read once per build, before any await, so every branch renders the same stamp and
             // the ambient lines describe the moment the bundle was composed.
             const header = timeHeader?.();
 
             // Stryker disable next-line llm: role is the primitive union 'conversation' | 'perch', so loose and strict equality are indistinguishable
             if(role === 'perch') {
-                if(kind === 'resume') {
-                    // No task-list/perch-context fetch at all for a perch resume -- neither is
+                if(kind === 'restart_resume') {
+                    // No task-list/perch-context fetch at all for a perch restart_resume -- neither is
                     // rendered, so there is nothing worth the round trip.
                     return formatBootBundle({ role: 'perch', kind, timeHeader: header, recentUsers, lostTasks, undelivered, activeTasks });
                 }
@@ -305,8 +328,8 @@ export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): 
                 });
             }
 
-            if(kind === 'resume') {
-                // Only the events section needs a fetch for a conversation resume; state and the
+            if(kind === 'restart_resume') {
+                // Only the events section needs a fetch for a conversation restart_resume; state and the
                 // task list were not lost, so they are not re-fetched.
                 const events = await loadEventsSection(contextBuilder, kind, eventsSinceMs, bootEventsWindowMs, bootEventsLimit, now);
                 return formatBootBundle({ role: 'conversation', kind, timeHeader: header, events, recentUsers, lostTasks, undelivered, activeTasks });

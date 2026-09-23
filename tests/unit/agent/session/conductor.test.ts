@@ -190,7 +190,7 @@ describe('createConductor', () => {
             const result = await openWith(h2, 'sess-old');
 
             expect(result).toEqual({ sessionId: 'sess-old', resumed: true });
-            expect(buildOptions).toHaveBeenCalledWith('sess-old');
+            expect(buildOptions).toHaveBeenCalledWith('sess-old', 'boot');
             expect(h2.journal.byKind('session_opened')).toEqual([
                 { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-old', outcome: 'resumed', cause: 'boot' },
             ]);
@@ -4542,6 +4542,214 @@ describe('createConductor', () => {
             h.instances[0].resolveInterrupt();
             await shutdown;
             expect(h.journal.flushCount).toBe(1);
+        });
+    });
+
+    describe('reopen cause and handshake (#62)', () => {
+        /** The text of the `[BOOT]` handshake an instance consumed first. */
+        function handshakeTextOf(instance: FakeQuery): string {
+            const content = instance.consumedPrompts[0]?.message.content;
+            return Array.isArray(content) ? content.map(block => (block.type === 'text' ? block.text : '')).join('') : String(content);
+        }
+
+        /** Builds a harness whose buildOptions is a spy echoing `resume` like the default one. */
+        function buildWithOptionsSpy(): Harness & { buildOptions: ReturnType<typeof jest.fn<CreateConductorParams['buildOptions']>> } {
+            const buildOptions = jest.fn<CreateConductorParams['buildOptions']>(resume => (resume === undefined ? {} : { resume }));
+            return { ...build({ buildOptions }), buildOptions };
+        }
+
+        const RESUMED_CONTINUITY = 'This same conversation was resumed, so this was not an offline gap: messages waiting for you were kept and will still be delivered, and no conversation was lost.';
+        const FALLBACK_CONTINUITY = 'The previous conversation could not be resumed, so this is a new session transcript and the host re-seeds your working memory separately. It was still not an offline gap: messages waiting for you were kept and will still be delivered.';
+        const TASKS_INTRO = 'Background tasks you had started in the previous session process were still running when it ended. They may have been stopped, or may still be running with no way to report back to you — either way, do not wait for a result from them:';
+        const TASKS_ADVICE = 'If you still need a result from one of them, check whether it finished and re-run it if needed. If one finished just before the reopen, its result may already be in the transcript.';
+        const HANDSHAKE_SUFFIX = 'Host handshake — no reply expected.';
+        const CRASH_OPENING = 'because the previous session process ended unexpectedly (it crashed or was killed). The host process kept running throughout; only the session process was replaced.';
+        const REQUESTED_OPENING = 'because the host deliberately closed the previous session process to apply an identity change. The host process kept running throughout; only the session process was replaced.';
+
+        /** Starts two background tasks and one foreground task inside a running turn on instance 0. */
+        async function startTasksInTurn(h: Harness): Promise<void> {
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-bg-1', tool_use_id: 'tool-bg-1', description: 'index the archive', is_backgrounded: true }));
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-fg', tool_use_id: 'tool-fg', description: 'foreground helper', is_backgrounded: false }));
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-bg-2', tool_use_id: 'tool-bg-2', description: 'summarise the inbox', is_backgrounded: true }));
+            await flush();
+        }
+
+        /** Starts exactly one background task inside a running turn on instance 0. */
+        async function startOneTaskInTurn(h: Harness): Promise<void> {
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.taskStarted({ task_id: 'task-bg-1', tool_use_id: 'tool-bg-1', description: 'index the archive', is_backgrounded: true }));
+            await flush();
+        }
+
+        it('a boot open with no stored id builds its options with (undefined, boot)', async () => {
+            const h = buildWithOptionsSpy();
+
+            await openWith(h, 'sess-1');
+
+            expect(h.buildOptions.mock.calls).toEqual([[undefined, 'boot']]);
+        });
+
+        it('a boot open whose resume fails builds both attempts with cause boot', async () => {
+            const h = buildWithOptionsSpy();
+            await h.resumeStore.save('conversation', 'sess-old');
+
+            const openPromise = h.conductor.open();
+            await flush();
+            h.instances[0].fail(new Error('resume rejected by CLI'));
+            await flush();
+            h.instances[1].emit(frames.init('sess-new'));
+            await openPromise;
+
+            expect(h.buildOptions.mock.calls).toEqual([['sess-old', 'boot'], [undefined, 'boot']]);
+        });
+
+        it('a crash reopen builds the resume attempt and its fresh fallback with cause crash_reopen', async () => {
+            const h = buildWithOptionsSpy();
+            await openWith(h, 'sess-1');
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].fail(new Error('resume also failed'));
+            await flush();
+
+            expect(h.buildOptions.mock.calls).toEqual([[undefined, 'boot'], ['sess-1', 'crash_reopen'], [undefined, 'crash_reopen']]);
+        });
+
+        it('a requested reopen builds the resume attempt and its fresh fallback with cause requested_reopen', async () => {
+            const h = buildWithOptionsSpy();
+            await openWith(h, 'sess-1');
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            h.instances[1].fail(new Error('resume rejected by CLI'));
+            await flush();
+
+            expect(h.buildOptions.mock.calls).toEqual([[undefined, 'boot'], ['sess-1', 'requested_reopen'], [undefined, 'requested_reopen']]);
+        });
+
+        it('a crash reopen with no background task running pushes the exact handshake with no tasks paragraph', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            h.clock.advance(5000);
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+
+            expect(handshakeTextOf(h.instances[1])).toBe([
+                `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                RESUMED_CONTINUITY,
+                HANDSHAKE_SUFFIX,
+            ].join('\n\n'));
+        });
+
+        it('a crash reopen with exactly one background task running pushes the tasks paragraph with a single task line', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            await startOneTaskInTurn(h);
+            h.clock.advance(5000);
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+
+            expect(handshakeTextOf(h.instances[1])).toBe([
+                `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                RESUMED_CONTINUITY,
+                `${TASKS_INTRO}\n- index the archive\n${TASKS_ADVICE}`,
+                HANDSHAKE_SUFFIX,
+            ].join('\n\n'));
+        });
+
+        it('a crash reopen names each background task running at the crash, in start order, and leaves out the interrupted turn\'s foreground task', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            await startTasksInTurn(h);
+            h.clock.advance(5000);
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+
+            expect(handshakeTextOf(h.instances[1])).toBe([
+                `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                RESUMED_CONTINUITY,
+                `${TASKS_INTRO}\n- index the archive\n- summarise the inbox\n${TASKS_ADVICE}`,
+                HANDSHAKE_SUFFIX,
+            ].join('\n\n'));
+
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            // The foreground task belonged to the interrupted turn, which is re-queued and re-run,
+            // so the handshake leaves it out; the ledger reset still journals all three as lost.
+            expect(h.journal.byKind('task_lost').map(entry => entry.taskId).toSorted((a, b) => a.localeCompare(b))).toEqual(['task-bg-1', 'task-bg-2', 'task-fg']);
+        });
+
+        it('a requested reopen names the reason and each background task still running, and its journal loses exactly those tasks', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            await startTasksInTurn(h);
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+            h.clock.advance(7000);
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+
+            expect(handshakeTextOf(h.instances[1])).toBe([
+                `[BOOT] Session reopened at 1970-01-01T00:00:07.000Z ${REQUESTED_OPENING}`,
+                RESUMED_CONTINUITY,
+                `${TASKS_INTRO}\n- index the archive\n- summarise the inbox\n${TASKS_ADVICE}`,
+                HANDSHAKE_SUFFIX,
+            ].join('\n\n'));
+
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            expect(h.journal.byKind('task_lost').map(entry => entry.taskId).toSorted((a, b) => a.localeCompare(b))).toEqual(['task-bg-1', 'task-bg-2']);
+        });
+
+        it('a requested reopen that falls back to a fresh session says the conversation could not be resumed, still naming the tasks', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            await startTasksInTurn(h);
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+            h.clock.advance(7000);
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            h.clock.advance(1000);
+            h.instances[1].fail(new Error('resume rejected by CLI'));
+            await flush();
+
+            expect(handshakeTextOf(h.instances[2])).toBe([
+                `[BOOT] Session reopened at 1970-01-01T00:00:08.000Z ${REQUESTED_OPENING}`,
+                FALLBACK_CONTINUITY,
+                `${TASKS_INTRO}\n- index the archive\n- summarise the inbox\n${TASKS_ADVICE}`,
+                HANDSHAKE_SUFFIX,
+            ].join('\n\n'));
+        });
+
+        it('a task that finishes between the snapshot and the replacement open is journaled finished, while the cautious handshake still lists it', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            await startTasksInTurn(h);
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            h.conductor.requestReopen('an identity change');
+            await flush();
+            // A notification the discarded reader had already buffered lands after the snapshot.
+            h.instances[0].emit(frames.taskNotification('completed', { task_id: 'task-bg-1', tool_use_id: 'tool-bg-1' }));
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+
+            expect(handshakeTextOf(h.instances[1])).toContain(`${TASKS_INTRO}\n- index the archive\n- summarise the inbox\n${TASKS_ADVICE}`);
+            expect(h.journal.byKind('task_lost').map(entry => entry.taskId)).toEqual(['task-bg-2']);
+            expect(h.journal.byKind('task_finished').filter(entry => entry.taskId === 'task-bg-1')).toEqual([
+                { type: 'task_finished', at: expect.any(Date), taskId: 'task-bg-1', description: 'index the archive', outcome: 'completed' },
+            ]);
         });
     });
 });

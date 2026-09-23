@@ -1,6 +1,6 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import type { HookCallback, SessionStartHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { createBootBundleHooks } from '../../../../src/agent/hooks/boot-bundle';
+import { createBootBundleHooks, type BootBundleSource } from '../../../../src/agent/hooks/boot-bundle';
 import { mockLogger } from '../../../setup';
 
 const makeSignal = (): AbortSignal => new AbortController().signal;
@@ -40,7 +40,7 @@ describe('createBootBundleHooks', () => {
     });
 
     test.each(['startup', 'resume', 'compact'] as const)('injects additionalContext from the builder for source=%s', async (source) => {
-        const build = mock(async (s: 'startup' | 'resume' | 'compact') => `bundle for ${s}`);
+        const build = mock(async (s: BootBundleSource) => `bundle for ${s}`);
         const hooks = createBootBundleHooks(build);
         const fn = getSessionStartHook(hooks);
 

@@ -11,6 +11,7 @@ export type {
     ContextUsageSummary,
     SessionQuery,
     SessionQueryFn,
+    SessionOpenCause,
     EnvelopeKind,
     Envelope,
     EnvelopeMeta,

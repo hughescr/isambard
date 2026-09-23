@@ -5,16 +5,21 @@
  * fresh). `clear`/`fork` pass through untouched, and a builder rejection degrades to a bare
  * `{ continue: true }` with a warning rather than blocking the session from starting.
  *
- * An empty string from `build` (R1: an empty `resume` bundle — nothing happened while offline)
- * adds NO `additionalContext` at all, rather than injecting an empty string as context.
+ * An empty string from `build` (R1: an empty `restart_resume` bundle — nothing happened while
+ * offline — or any `reopen` bundle) adds NO `additionalContext` at all, rather than injecting an
+ * empty string as context. The hook itself knows only the SDK source: telling a process-restart
+ * resume from an in-process reopen is the caller's job (`src/app/sessions.ts`'s `bootKindFor`).
  *
  * @module agent/hooks/boot-bundle
  */
 import type { HookCallbackMatcher, HookEvent, SessionStartHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 
-/** SessionStart sources the boot bundle is built for. */
-type BootBundleSource = 'startup' | 'resume' | 'compact';
+/**
+ * SessionStart sources the boot bundle is built for. The hook passes the raw source through; the
+ * caller maps it (plus the conductor's open cause) onto a `BootKind` — see `src/app/sessions.ts`.
+ */
+export type BootBundleSource = 'startup' | 'resume' | 'compact';
 
 const BOOT_BUNDLE_SOURCES: ReadonlySet<BootBundleSource> = new Set(['startup', 'resume', 'compact']);
 

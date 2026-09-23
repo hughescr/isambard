@@ -230,8 +230,15 @@ export interface ConductorStatus {
 export interface CreateConductorParams {
     role:               SessionRole
     queryFn:            SessionQueryFn
-    /** Builds full Agent SDK `Options` for a fresh (`undefined`) or resumed (session id) open. */
-    buildOptions:       (resume?: string) => Options
+    /**
+     * Builds full Agent SDK `Options` for a fresh (`undefined`) or resumed (session id) open, once
+     * per query. `cause` is why this query is being opened — `boot` from {@link Conductor.open},
+     * `crash_reopen`/`requested_reopen` from an in-process reopen — including the fresh fallback
+     * after a failed resume, which keeps its attempt's cause. Anything built from it (the
+     * SessionStart boot-bundle hook, in `src/app/sessions.ts`) is bound to that one query, so a
+     * later query can never change what an earlier one's hooks see.
+     */
+    buildOptions:       (resume: string | undefined, cause: SessionOpenCause) => Options
     clock:              Clock
     /** Reads the process's current resident set size, in bytes. */
     readRss:            () => number
@@ -1187,13 +1194,16 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * open sat frameless past 30 s; a `shouldQuery:false` first message produced `init` plus a
      * bare `result` in under a second, with no model turn). Without this push, `open()` would
      * never resolve.
+     *
+     * `cause` is handed to {@link CreateConductorParams.buildOptions} with the resume id, so the
+     * query's own hooks know why it was opened (see that field's doc).
      */
-    async function openWithHandle(resumeId: string | undefined, handshakeText: string): Promise<{ handle: SessionHandle, sessionId: string }> {
+    async function openWithHandle(resumeId: string | undefined, handshakeText: string, cause: SessionOpenCause): Promise<{ handle: SessionHandle, sessionId: string }> {
         return new Promise((resolve, reject) => {
             let settled = false;
             const queue = new InputQueue();
             const interrupting = createInterruptFlag();
-            const options = buildOptions(resumeId);
+            const options = buildOptions(resumeId, cause);
             // Counted here, at the single point where a query's options are actually built, so
             // `maybeStartRequestedReopen` can tell "a query already captured the new prompt" from
             // "every live query predates the request" without comparing handle identities.
@@ -1251,6 +1261,50 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
         const verb = resuming ? 'resumed' : 'opened';
         return `[BOOT] Session ${verb} at ${now().toISOString()}. No boot context to report. Host handshake — nothing to do, no reply expected.`;
+    }
+
+    /**
+     * Descriptions of the BACKGROUND tasks the ledger shows running, in start order. Taken
+     * synchronously where a reopen starts, before the old handle is discarded or anything is
+     * opened: the replacement's `finishOpen` dispatches `session_opened`, which clears the ledger's
+     * task list (journaling each as `task_lost`). Foreground tasks are left out — they belong to the
+     * turn a crash interrupted, which is re-queued and re-run, and a requested reopen only ever
+     * starts while idle, when no foreground task is left.
+     */
+    function runningBackgroundTaskDescriptions(): string[] {
+        return ledgerStore.get().tasks.filter(task => task.background).map(task => task.description);
+    }
+
+    /**
+     * The `[BOOT]` handshake for an in-process reopen. The model cannot see this code, so the text
+     * spells the situation out: why the session was replaced, that the host process never stopped
+     * (so nothing queued was lost), and — only when there were any — which background tasks the
+     * old session process was running, which were most likely terminated with it.
+     *
+     * The task wording is deliberately cautious ("do not wait for a result from them"): the list is a snapshot,
+     * and a task can still finish, and its notification still land, between the snapshot and the
+     * replacement's open (a discarded reader keeps delivering already-buffered frames).
+     *
+     * @param why Why the old session went away, completing "Session reopened at <time> because …"
+     * @param backgroundTasks {@link runningBackgroundTaskDescriptions}, taken where the reopen started
+     * @param resumed Whether this attempt resumes the old transcript, or is the fresh fallback after that failed
+     */
+    function reopenHandshakeText(why: string, backgroundTasks: readonly string[], resumed: boolean): string {
+        const paragraphs = [
+            `[BOOT] Session reopened at ${now().toISOString()} because ${why}. The host process kept running throughout; only the session process was replaced.`,
+            resumed
+                ? 'This same conversation was resumed, so this was not an offline gap: messages waiting for you were kept and will still be delivered, and no conversation was lost.'
+                : 'The previous conversation could not be resumed, so this is a new session transcript and the host re-seeds your working memory separately. It was still not an offline gap: messages waiting for you were kept and will still be delivered.',
+        ];
+        if(backgroundTasks.length > 0) {
+            paragraphs.push([
+                'Background tasks you had started in the previous session process were still running when it ended. They may have been stopped, or may still be running with no way to report back to you — either way, do not wait for a result from them:',
+                ...backgroundTasks.map(description => `- ${description}`),
+                'If you still need a result from one of them, check whether it finished and re-run it if needed. If one finished just before the reopen, its result may already be in the transcript.',
+            ].join('\n'));
+        }
+        paragraphs.push('Host handshake — no reply expected.');
+        return paragraphs.join('\n\n');
     }
 
     function appendWithoutTurn(envelope: Envelope): boolean {
@@ -1362,9 +1416,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * both are pushed onto the replacement's queue after its boot handshake, so a notification is
      * neither lost nor delivered twice.
      *
-     * @param handshake The `[BOOT]` text pushed onto the replacement's queue before any frame is
-     *   awaited — mandatory, because the SDK emits nothing at all (not even `system/init`) until
-     *   it has read a first user message.
+     * @param handshake What the `[BOOT]` text pushed onto the replacement's queue before any frame
+     *   is awaited says — mandatory, because the SDK emits nothing at all (not even `system/init`)
+     *   until it has read a first user message. Rendered per attempt by {@link reopenHandshakeText},
+     *   so the fresh fallback does not claim the conversation was resumed; `backgroundTasks` is the
+     *   caller's {@link runningBackgroundTaskDescriptions} snapshot, taken before any close or open.
      * @param inFlightItem The turn that was running when the session went away, re-queued ahead of
      *   everything else on success and rejected if the reopen is abandoned; `undefined` on the
      *   controlled path, which only ever runs while idle.
@@ -1374,10 +1430,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
      *   there is no dying queue left to ask.
      * @param cause Which of the two paths this is, journaled on the replacement's `session_opened`.
      */
-    async function reopenReplacementSession(handshake: string, inFlightItem: QueuedItem | undefined, carryOver: SDKUserMessage[], cause: 'crash_reopen' | 'requested_reopen'): Promise<void> {
+    async function reopenReplacementSession(handshake: { why: string, backgroundTasks: string[] }, inFlightItem: QueuedItem | undefined, carryOver: SDKUserMessage[], cause: 'crash_reopen' | 'requested_reopen'): Promise<void> {
         try {
             try {
-                const { handle, sessionId } = await openWithHandle(currentSessionId, handshake);
+                const { handle, sessionId } = await openWithHandle(currentSessionId, reopenHandshakeText(handshake.why, handshake.backgroundTasks, true), cause);
                 try {
                     await finishOpen(sessionId, { outcome: 'resumed', cause });
                 } catch (finishError) {
@@ -1385,7 +1441,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
                     throw finishError;
                 }
             } catch{
-                const { sessionId } = await openWithHandle(undefined, handshake);
+                const { sessionId } = await openWithHandle(undefined, reopenHandshakeText(handshake.why, handshake.backgroundTasks, false), cause);
                 await finishOpen(sessionId, { outcome: 'resume_fallback', cause });
             }
         } catch (reopenError) {
@@ -1448,7 +1504,8 @@ export function createConductor(params: CreateConductorParams): Conductor {
         resolveTurnEndedWaiters();
         // Taken before any open: openWithHandle reassigns currentQueue as part of settling.
         const carryOver = currentQueue?.takePending() ?? [];
-        const handshake = `[BOOT] Session reopened at ${now().toISOString()} after the previous session ended unexpectedly. Host handshake — nothing to do, no reply expected.`;
+        // Also before any open: the replacement's finishOpen clears the ledger's task list.
+        const handshake = { why: 'the previous session process ended unexpectedly (it crashed or was killed)', backgroundTasks: runningBackgroundTaskDescriptions() };
         reopenInFlight = reopenReplacementSession(handshake, inFlightItem, carryOver, 'crash_reopen');
         // Stryker disable next-line AwaitDrop: onClosed discards this wrapper promise, while lifecycle synchronization observes the separately assigned reopenInFlight promise directly.
         await reopenInFlight;
@@ -1462,11 +1519,13 @@ export function createConductor(params: CreateConductorParams): Conductor {
     async function startRequestedReopen(reason: string, handle: SessionHandle): Promise<void> {
         reopening = true;
         logger.info({ reason }, 'Reopening the session on request');
-        // Taken BEFORE discardHandle, which clears currentQueue along with currentHandleRef.
+        // Both taken BEFORE discardHandle, which clears currentQueue along with currentHandleRef and
+        // closes the session process the background tasks were running in.
         const carryOver = currentQueue?.takePending() ?? [];
+        const backgroundTasks = runningBackgroundTaskDescriptions();
         discardHandle(handle);
         await reopenReplacementSession(
-            `[BOOT] Session reopened at ${now().toISOString()} to apply ${reason}. Host handshake — nothing to do, no reply expected.`,
+            { why: `the host deliberately closed the previous session process to apply ${reason}`, backgroundTasks },
             undefined,
             carryOver,
             'requested_reopen'
@@ -1516,7 +1575,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         const stored = await resumeStore.load(role);
         if(stored !== undefined) {
             try {
-                const { handle, sessionId } = await openWithHandle(stored, openHandshakeText(true));
+                const { handle, sessionId } = await openWithHandle(stored, openHandshakeText(true), 'boot');
                 try {
                     await finishOpen(sessionId, { outcome: 'resumed', cause: 'boot' });
                 } catch (finishError) {
@@ -1529,7 +1588,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 logger.warn({ error }, 'Resuming the stored session failed; opening a fresh session');
             }
         }
-        const { sessionId } = await openWithHandle(undefined, openHandshakeText(false));
+        const { sessionId } = await openWithHandle(undefined, openHandshakeText(false), 'boot');
         await finishOpen(sessionId, stored === undefined ? { outcome: 'fresh', cause: 'boot' } : { outcome: 'resume_fallback', cause: 'boot' });
         maybeStartRequestedReopen();
         return { sessionId, resumed: false };
