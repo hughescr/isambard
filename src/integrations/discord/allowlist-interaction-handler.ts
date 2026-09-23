@@ -12,6 +12,7 @@ import {
 import { BRIGHT_GREEN, BLUE, RED } from './colors';
 import type { AllowlistSagaExecutor, AllowlistSagaStarter, SagaInteractionResult } from '@/services';
 import type { ContactBackend, Contact, ContactId } from '@/storage';
+import { encodeCustomId, parseCustomId } from '@/utils';
 
 export interface AllowlistInteractionHandlerDeps {
     executor:       AllowlistSagaExecutor
@@ -40,7 +41,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
      * CustomId: allowlist-name:{sagaId}
      */
     async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
-        const sagaId = interaction.customId.split(':')[1];
+        const sagaId = parseCustomId(interaction.customId)?.id;
         if(!sagaId) {
             return;
         }
@@ -63,16 +64,11 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
      *            allowlist-startmodal:{sagaId}
      */
     async handleButton(interaction: ButtonInteraction): Promise<void> {
-        const colonIdx = interaction.customId.indexOf(':');
-        // Stryker disable next-line llm: String.indexOf returns only -1 or a non-negative integer, so `=== -1` and `< 0` are equivalent.
-        if(colonIdx === -1) {
+        const parsed = parseCustomId(interaction.customId);
+        if(!parsed) {
             return;
         }
-        const prefix  = interaction.customId.slice(0, colonIdx);
-        const sagaId  = interaction.customId.slice(colonIdx + 1);
-        if(!sagaId) {
-            return;
-        }
+        const { prefix, id: sagaId } = parsed;
 
         // allowlist-startmodal must show a modal — cannot deferUpdate first
         if(prefix === 'allowlist-startmodal') {
@@ -134,7 +130,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
                 const sagaId = result.sagaId;
                 const row    = new ActionRowBuilder<ButtonBuilder>().addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`allowlist-startmodal:${sagaId}`)
+                        .setCustomId(encodeCustomId({ prefix: 'allowlist-startmodal', id: sagaId }))
                         .setLabel('Set up allowlist entry')
                         .setStyle(ButtonStyle.Primary)
                 );
@@ -152,7 +148,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
      */
     private async handleStartModal(interaction: ButtonInteraction, sagaId: string): Promise<void> {
         const modal = new ModalBuilder()
-            .setCustomId(`allowlist-name:${sagaId}`)
+            .setCustomId(encodeCustomId({ prefix: 'allowlist-name', id: sagaId }))
             .setTitle('Add to Allowlist');
 
         const nameInput = new TextInputBuilder()
@@ -238,15 +234,15 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
     private buildReviewButtons(sagaId: string): ActionRowBuilder<ButtonBuilder> {
         return new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
-                .setCustomId(`allowlist-yes:${sagaId}`)
+                .setCustomId(encodeCustomId({ prefix: 'allowlist-yes', id: sagaId }))
                 .setLabel('Yes, this person')
                 .setStyle(ButtonStyle.Success),
             new ButtonBuilder()
-                .setCustomId(`allowlist-next:${sagaId}`)
+                .setCustomId(encodeCustomId({ prefix: 'allowlist-next', id: sagaId }))
                 .setLabel('No, show next')
                 .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
-                .setCustomId(`allowlist-create:${sagaId}`)
+                .setCustomId(encodeCustomId({ prefix: 'allowlist-create', id: sagaId }))
                 .setLabel('Create new person')
                 .setStyle(ButtonStyle.Primary)
         );

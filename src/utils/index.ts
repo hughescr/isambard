@@ -24,6 +24,14 @@ export { safeAsyncHandler } from './safe-async-handler';
 export { sanitizeFilename, deduplicateFilename } from './filename';
 
 export {
+    encodeCustomId,
+    parseCustomId,
+    customIdSchema,
+    type CustomId,
+    type ParsedCustomId
+} from './interaction-route';
+
+export {
     retryAsync,
     retryAsyncGenerator,
     retryPolicySchema,

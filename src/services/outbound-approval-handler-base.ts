@@ -2,6 +2,7 @@ import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builder
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder, TextInputStyle } from 'discord.js';
 import type { AllowlistSagaStarter, SagaWriter } from '@/services';
+import { parseCustomId } from '@/utils';
 
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
@@ -102,11 +103,11 @@ export abstract class BaseOutboundApprovalHandler<TId> {
     // ---------------------------------------------------------------------------
 
     async handleButton(interaction: ButtonInteraction): Promise<void> {
-        const parts = interaction.customId.split(':');
-        if(parts.length < 2) {
+        const parsed = parseCustomId(interaction.customId);
+        if(!parsed) {
             return;
         }
-        const [prefix, rawId] = parts as [string, string, ...string[]];
+        const { prefix, id: rawId } = parsed;
 
         if(!this.isKnownButtonPrefix(prefix)) {
             return;
@@ -147,11 +148,11 @@ export abstract class BaseOutboundApprovalHandler<TId> {
     }
 
     async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
-        const parts = interaction.customId.split(':');
-        if(parts.length < 2) {
+        const parsed = parseCustomId(interaction.customId);
+        if(!parsed) {
             return;
         }
-        const [prefix, rawId] = parts as [string, string, ...string[]];
+        const { prefix, id: rawId } = parsed;
 
         if(!this.isKnownModalPrefix(prefix)) {
             return;

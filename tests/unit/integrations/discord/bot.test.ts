@@ -49,6 +49,40 @@ async function expectPromiseToRemainPending(promise: Promise<unknown>): Promise<
     expect(settled).toBe(false);
 }
 
+type InteractionRouteFeature = 'bsky' | 'email' | 'contact' | 'allowlist';
+
+interface InteractionRouteExpectation {
+    button:        string
+    buttonHandler: ReturnType<typeof mock>
+    modal?:        string
+    modalHandler?: ReturnType<typeof mock>
+}
+
+/**
+ * Dispatches each configured feature's owned button — and modal, where that feature has one —
+ * except `omit`, through `onInteraction`, and asserts it reaches its real handler exactly once.
+ * Proves that omitting one feature's setup/handler leaves the other three features' routing
+ * tables intact, not merely that the omitted feature's own handlers were left untouched.
+ */
+async function expectRemainingFeaturesRouted(
+    onInteraction: (interaction: unknown) => Promise<void>,
+    featureRoutes: Record<InteractionRouteFeature, InteractionRouteExpectation>,
+    omit: InteractionRouteFeature
+): Promise<void> {
+    const remainingFeatures = (['bsky', 'email', 'contact', 'allowlist'] as const).filter(feature => feature !== omit);
+    for(const feature of remainingFeatures) {
+        const route = featureRoutes[feature];
+        // eslint-disable-next-line no-await-in-loop -- each remaining feature's route is checked independently
+        await onInteraction({ customId: route.button, isButton: () => true, isModalSubmit: () => false, isStringSelectMenu: () => false, isChatInputCommand: () => false });
+        expect(route.buttonHandler).toHaveBeenCalledTimes(1);
+        if(route.modal !== undefined && route.modalHandler) {
+            // eslint-disable-next-line no-await-in-loop -- each remaining feature's route is checked independently
+            await onInteraction({ customId: route.modal, isButton: () => false, isModalSubmit: () => true, isStringSelectMenu: () => false, isChatInputCommand: () => false });
+            expect(route.modalHandler).toHaveBeenCalledTimes(1);
+        }
+    }
+}
+
 function deferredPromise<T>(): { promise: Promise<T>, resolve: (value: T) => void, reject: (reason: unknown) => void } {
     let resolveFn!: (value: T) => void;
     let rejectFn!: (reason: unknown) => void;
@@ -4009,7 +4043,13 @@ describe('createDiscordBot', () => {
             expect(handleButtonMock).toHaveBeenCalledWith(mockInteraction);
         });
 
-        test('email-* button interactions do not fall through to default button handler', async () => {
+        test('an unregistered prefix that merely starts like an owned one falls through to the question handler, not reviewHandler', async () => {
+            // Exact-prefix dispatch (the codec's whole point): 'email-approve' is NOT a
+            // registered email-review prefix (only email-trash/junk/allow/allowlist are), so it
+            // must fall through to the generic question/default button handler instead of
+            // reaching reviewHandler — unlike the old startsWith('email-') chain, which claimed
+            // it. This directly exercises acceptance criterion 3 ("unknown prefix falls through
+            // to the question handler and is ignored").
             let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
 
             // Track all handlers for 'interactionCreate'
@@ -4031,8 +4071,8 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             const handleButtonMock = mock(async () => undefined);
-            // A reply mock would be called if the interaction fell through to the default handler
-            const replyMock = mock(async (_opts: unknown) => undefined);
+            const handleButtonInteraction = mock(async () => undefined);
+            spies.push(spyOn(interactionsModule, 'createInteractionHandler').mockReturnValue({ handleButtonInteraction }));
             const mockEmailSetup = {
                 listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
                 reviewHandler:    { handleButton: handleButtonMock },
@@ -4058,19 +4098,19 @@ describe('createDiscordBot', () => {
 
             expect(interactionCreateHandler).toBeDefined();
 
-            // email-* button must not call reply (which would be called by the fallback handler)
             const mockInteraction = {
                 isButton:           mock(() => true),
+                isModalSubmit:      mock(() => false),
+                isStringSelectMenu: mock(() => false),
                 isChatInputCommand: mock(() => false),
                 customId:           'email-approve:99:Approve',
-                reply:              replyMock,
             };
 
             await interactionCreateHandler!(mockInteraction);
 
-            expect(handleButtonMock).toHaveBeenCalledTimes(1);
-            // reply must NOT have been called — routing returned early
-            expect(replyMock).not.toHaveBeenCalled();
+            expect(handleButtonMock).not.toHaveBeenCalled();
+            expect(handleButtonInteraction).toHaveBeenCalledTimes(1);
+            expect(handleButtonInteraction).toHaveBeenCalledWith(mockInteraction);
         });
 
         test('/allowlist command is routed to allowlistHandler.handle() when emailSetup is present', async () => {
@@ -4648,6 +4688,88 @@ describe('createDiscordBot', () => {
             }
             for(const handler of [bskyButton, bskyModal, emailSendButton, emailReviewButton, emailModal, emailSelect, contactButton, allowlistButton, allowlistModal]) {
                 expect(handler).not.toHaveBeenCalled();
+            }
+        });
+
+        test('an owned prefix falls through (or is ignored) when only ITS OWN setup/handler is absent — the other three routes stay registered', async () => {
+            // Route registration is gated per-feature (`if(bskySetup)`, `if(emailSetup)`, etc.),
+            // built once from the closed prefix tuples. A mutant that always registers — or
+            // registers from the wrong gate — would still pass every other test in this
+            // describe block, since they all supply every setup together. This proves each gate
+            // is independently load-bearing: with exactly one setup/handler omitted, its owned
+            // button falls through to the question handler (buttons always have a fallback) or
+            // is silently ignored (modals have none), while the other three features — still
+            // configured — are unaffected. "Unaffected" is checked both negatively (the omitted
+            // feature's own handlers are never reached) and positively (each remaining
+            // configured feature's owned route is dispatched and does reach its handler) — a
+            // mutant that dropped a non-omitted feature's registration entirely, e.g. omitting
+            // email's routes specifically when bskySetup is absent, would still pass the
+            // negative-only checks but is caught by the positive dispatch below.
+            const scenarios: {
+                omit:         'bsky' | 'email' | 'contact' | 'allowlist'
+                ownedButton?: string
+                ownedModal?:  string
+            }[] = [
+                { omit: 'bsky', ownedButton: 'bsky-send-approve:1', ownedModal: 'bsky-send-reject-reason:1' },
+                { omit: 'email', ownedButton: 'email-send-approve:1', ownedModal: 'email-send-reject-reason:1' },
+                { omit: 'contact', ownedButton: 'contact-approve:1' },
+                { omit: 'allowlist', ownedButton: 'allowlist-yes:1', ownedModal: 'allowlist-name:1' },
+            ];
+
+            for(const scenario of scenarios) {
+                const client = makeMockClientForConductor();
+                const bskyButton = mock(async () => undefined);
+                const bskyModal = mock(async () => undefined);
+                const emailSendButton = mock(async () => undefined);
+                const emailReviewButton = mock(async () => undefined);
+                const emailModal = mock(async () => undefined);
+                const contactButton = mock(async () => undefined);
+                const allowlistButton = mock(async () => undefined);
+                const allowlistModal = mock(async () => undefined);
+                const handleButtonInteraction = mock(async () => undefined);
+                spies.push(spyOn(interactionsModule, 'createInteractionHandler').mockReturnValue({ handleButtonInteraction }));
+
+                createDiscordBot({
+                    config:                      mockConfig, client, channelRegistry:             mockChannelRegistry,
+                    bskySetup:                   scenario.omit === 'bsky' ? undefined : { outboundApprovalHandler: { handleButton: bskyButton, handleModalSubmit: bskyModal } } as unknown as DiscordBotOptions['bskySetup'],
+                    emailSetup:                  scenario.omit === 'email' ? undefined : { outboundApprovalHandler: { handleButton: emailSendButton, handleModalSubmit: emailModal }, reviewHandler: { handleButton: emailReviewButton } } as unknown as EmailSetupResult,
+                    contactApprovalHandler:      scenario.omit === 'contact' ? undefined : { handleButton: contactButton } as unknown as DiscordBotOptions['contactApprovalHandler'],
+                    allowlistInteractionHandler: scenario.omit === 'allowlist' ? undefined : { handleButton: allowlistButton, handleModalSubmit: allowlistModal } as unknown as DiscordBotOptions['allowlistInteractionHandler'],
+                });
+                // eslint-disable-next-line no-await-in-loop -- each scenario builds an independent bot instance
+                await triggerReady(client);
+                const onInteraction = (client.on as ReturnType<typeof mock>).mock.calls.find(([event]) => event === 'interactionCreate')?.[1] as (interaction: unknown) => Promise<void>;
+
+                if(scenario.ownedButton) {
+                    // eslint-disable-next-line no-await-in-loop -- each scenario is checked independently
+                    await onInteraction({ customId: scenario.ownedButton, isButton: () => true, isModalSubmit: () => false, isStringSelectMenu: () => false, isChatInputCommand: () => false });
+                    expect(bskyButton).not.toHaveBeenCalled();
+                    expect(emailSendButton).not.toHaveBeenCalled();
+                    expect(emailReviewButton).not.toHaveBeenCalled();
+                    expect(contactButton).not.toHaveBeenCalled();
+                    expect(allowlistButton).not.toHaveBeenCalled();
+                    // The omitted feature's owned button falls through to the generic question handler
+                    expect(handleButtonInteraction).toHaveBeenCalledTimes(1);
+                }
+                if(scenario.ownedModal) {
+                    // eslint-disable-next-line no-await-in-loop -- each scenario is checked independently
+                    await onInteraction({ customId: scenario.ownedModal, isButton: () => false, isModalSubmit: () => true, isStringSelectMenu: () => false, isChatInputCommand: () => false });
+                    expect(bskyModal).not.toHaveBeenCalled();
+                    expect(emailModal).not.toHaveBeenCalled();
+                    expect(allowlistModal).not.toHaveBeenCalled();
+                    // Modals have no fallback handler — the interaction is simply ignored
+                }
+
+                // The other three features stay routable: dispatch each remaining configured
+                // feature's owned button (and modal, where it has one) and confirm it still
+                // reaches its real handler rather than falling through or being dropped.
+                // eslint-disable-next-line no-await-in-loop -- each scenario is checked independently
+                await expectRemainingFeaturesRouted(onInteraction, {
+                    bsky:      { button: 'bsky-send-approve:1', buttonHandler: bskyButton, modal: 'bsky-send-reject-reason:1', modalHandler: bskyModal },
+                    email:     { button: 'email-send-approve:1', buttonHandler: emailSendButton, modal: 'email-send-reject-reason:1', modalHandler: emailModal },
+                    contact:   { button: 'contact-approve:1', buttonHandler: contactButton },
+                    allowlist: { button: 'allowlist-yes:1', buttonHandler: allowlistButton, modal: 'allowlist-name:1', modalHandler: allowlistModal },
+                }, scenario.omit);
             }
         });
 

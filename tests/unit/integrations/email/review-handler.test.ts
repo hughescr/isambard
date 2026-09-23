@@ -1,10 +1,12 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { MessageFlags, type ButtonInteraction, type InteractionUpdateOptions } from 'discord.js';
 import { mockLogger } from '../../../setup';
+import { EmailFolder } from '@/config';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { ReviewHandler } from '@/integrations/email/review-handler';
 import type { EmailMetadata } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
+import { encodeCustomId } from '@/utils';
 // Craig's Discord user ID used in tests
 const CRAIG_ID = '111111111111111111';
 
@@ -458,6 +460,23 @@ describe('ReviewHandler.handleButton()', () => {
             expect(wildDuck.moveMessage).not.toHaveBeenCalled();
             expect(deferUpdate).not.toHaveBeenCalled();
             expect(editReply).not.toHaveBeenCalled();
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // Folder value containing a space (encodeCustomId/parseCustomId end-to-end)
+    // -------------------------------------------------------------------------
+
+    describe('folder value with a space', () => {
+        test('allows a customId built through encodeCustomId with the "Sent Mail" folder value', async () => {
+            const wildDuck  = makeWildDuck();
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
+            const customId  = encodeCustomId({ prefix: 'email-allow', id: '42', value: EmailFolder.Sent });
+            const { interaction } = makeInteraction(customId);
+
+            await handler.handleButton(interaction);
+
+            expect(wildDuck.moveMessage).toHaveBeenCalledWith(EmailFolder.Sent, 42, EmailFolder.CleanInbox);
         });
     });
 

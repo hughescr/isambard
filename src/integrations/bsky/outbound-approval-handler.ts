@@ -6,6 +6,7 @@ import type { BlueskyClient } from '@/integrations/bsky/client';
 import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
 import { createAtUri, createCid, type BskyReplyInput } from '@/integrations/bsky/types';
 import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
+import { encodeCustomId } from '@/utils';
 
 const AMBER = 0xFF_AA_00;
 
@@ -76,12 +77,14 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
     }
 
     protected parseId(raw: string): string | null {
-        return raw || null;
+        // Guaranteed non-empty: this is only ever called with an id already validated non-empty
+        // by parseCustomId (BaseOutboundApprovalHandler.handleButton/handleModalSubmit).
+        return raw;
     }
 
     protected rejectModalCustomId(buttonPrefix: string, rawId: string): string {
         const modalPrefix = buttonPrefix === 'bsky-dm-reject' ? 'bsky-dm-reject-reason' : 'bsky-send-reject-reason';
-        return `${modalPrefix}:${rawId}`;
+        return encodeCustomId({ prefix: modalPrefix, id: rawId });
     }
 
     protected rejectModalTitle(buttonPrefix: string): string {

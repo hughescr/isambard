@@ -1,9 +1,10 @@
 import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction, EmbedBuilder  } from 'discord.js';
-import { EmailFolder } from '@/config';
+import { EmailFolder, EMAIL_REVIEW_PREFIXES } from '@/config';
 import { EmailProcessingError } from '@/errors';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import type { AllowlistSagaStarter } from '@/services';
+import { parseCustomId } from '@/utils';
 
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
@@ -38,12 +39,12 @@ export class ReviewHandler {
             return;
         }
 
-        const parts = interaction.customId.split(':');
-        const prefix    = parts[0];
-        const uidStr    = parts[1];
-        const folderStr = parts[2];
+        const parsed     = parseCustomId(interaction.customId);
+        const prefix     = parsed?.prefix;
+        const uidStr     = parsed?.id;
+        const folderStr  = parsed?.value;
 
-        if(prefix !== 'email-trash' && prefix !== 'email-junk' && prefix !== 'email-allow' && prefix !== 'email-allowlist') {
+        if(!prefix || !(EMAIL_REVIEW_PREFIXES as readonly string[]).includes(prefix)) {
             return;
         }
 

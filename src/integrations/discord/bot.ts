@@ -29,10 +29,22 @@ import { createWakeTurnDelivery } from './setup/wake-delivery';
 import { setupTaskBoard } from './task-board/setup';
 import { createChannelId, createUserId, type ChannelId } from './types';
 import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type DeliverableEnvelope, type Envelope, type TimeHeaderProvider, type PerchSlotHooks, type TurnResult  } from '@/agent';
-import { DEFAULT_TASK_BOARD_CONFIG, type DiscordConfig } from '@/config';
+import {
+    DEFAULT_TASK_BOARD_CONFIG,
+    BSKY_BUTTON_PREFIXES,
+    BSKY_MODAL_PREFIXES,
+    EMAIL_SEND_BUTTON_PREFIXES,
+    EMAIL_SEND_MODAL_PREFIXES,
+    EMAIL_REVIEW_PREFIXES,
+    EMAIL_ALLOWLIST_SELECT_PREFIX,
+    CONTACT_PREFIXES,
+    ALLOWLIST_BUTTON_PREFIXES,
+    ALLOWLIST_MODAL_PREFIXES,
+    type DiscordConfig
+} from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
-import { resolveTimezone } from '@/utils';
+import { parseCustomId, resolveTimezone } from '@/utils';
 
 /**
  * Global state for Discord client to survive Bun hot reload.
@@ -381,6 +393,55 @@ export interface DiscordBot {
     shutdown?: Shutdown
 }
 
+type ButtonRouteHandler = (interaction: ButtonInteraction) => Promise<void>;
+type ModalRouteHandler = (interaction: ModalSubmitInteraction) => Promise<void>;
+
+/** Register the same handler for every prefix in a feature's closed vocabulary. */
+function registerRoutes<T>(map: Map<string, T>, prefixes: readonly string[], handler: T): void {
+    for(const prefix of prefixes) {
+        map.set(prefix, handler);
+    }
+}
+
+/**
+ * Build the button/modal dispatch tables keyed on the EXACT parsed customId prefix (see
+ * `@/utils`'s `parseCustomId`) — once per bot instance, not per interaction, so ordering never
+ * matters and a prefix that merely starts like an owned one (e.g. 'email-approve:...' vs. the
+ * registered 'email-allow') can no longer mis-route. Each feature registers only the prefixes it
+ * owns, and only when its setup/handler is present — an owned-looking prefix with no setup falls
+ * through to the generic question-button handler (or, for modals, is silently ignored) exactly
+ * as it did before, when the equivalent startsWith chain was simply unreached for that feature.
+ */
+function buildInteractionRoutes(deps: {
+    bskySetup?:                   BskySetupResult
+    emailSetup?:                  EmailSetupResult
+    contactApprovalHandler?:      ContactApprovalHandler
+    allowlistInteractionHandler?: AllowlistInteractionHandler
+}): { buttonRoutes: Map<string, ButtonRouteHandler>, modalRoutes: Map<string, ModalRouteHandler> } {
+    const { bskySetup, emailSetup, contactApprovalHandler, allowlistInteractionHandler } = deps;
+    const buttonRoutes = new Map<string, ButtonRouteHandler>();
+    const modalRoutes = new Map<string, ModalRouteHandler>();
+
+    if(bskySetup) {
+        registerRoutes(buttonRoutes, BSKY_BUTTON_PREFIXES, i => bskySetup.outboundApprovalHandler.handleButton(i));
+        registerRoutes(modalRoutes, BSKY_MODAL_PREFIXES, i => bskySetup.outboundApprovalHandler.handleModalSubmit(i));
+    }
+    if(emailSetup) {
+        registerRoutes(buttonRoutes, EMAIL_SEND_BUTTON_PREFIXES, i => emailSetup.outboundApprovalHandler.handleButton(i));
+        registerRoutes(buttonRoutes, EMAIL_REVIEW_PREFIXES, i => emailSetup.reviewHandler.handleButton(i));
+        registerRoutes(modalRoutes, EMAIL_SEND_MODAL_PREFIXES, i => emailSetup.outboundApprovalHandler.handleModalSubmit(i));
+    }
+    if(contactApprovalHandler) {
+        registerRoutes(buttonRoutes, CONTACT_PREFIXES, i => contactApprovalHandler.handleButton(i));
+    }
+    if(allowlistInteractionHandler) {
+        registerRoutes(buttonRoutes, ALLOWLIST_BUTTON_PREFIXES, i => allowlistInteractionHandler.handleButton(i));
+        registerRoutes(modalRoutes, ALLOWLIST_MODAL_PREFIXES, i => allowlistInteractionHandler.handleModalSubmit(i));
+    }
+
+    return { buttonRoutes, modalRoutes };
+}
+
 /**
  * Creates a Discord bot with the specified configuration and message handler.
  *
@@ -595,41 +656,34 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         questionRegistry,
     });
 
+    // Route tables keyed on the EXACT parsed customId prefix (see `@/utils`'s parseCustomId) —
+    // built once here, not per interaction, so ordering never matters and a prefix that merely
+    // starts like an owned one (e.g. 'email-approve:...' vs. the registered 'email-allow') can no
+    // longer mis-route. Each feature registers only the prefixes it owns, and only when its
+    // setup/handler is present — an owned-looking prefix with no setup falls through to the
+    // generic question-button handler (or, for modals, is silently ignored) exactly as it did
+    // before, when the equivalent startsWith chain was simply unreached for that feature.
+    const { buttonRoutes, modalRoutes } = buildInteractionRoutes({ bskySetup, emailSetup, contactApprovalHandler, allowlistInteractionHandler });
+
     // Register interaction handler for button clicks and slash commands
     // This uses `client` (not `readyClient`) so it is registered immediately at bot creation time,
     // not inside the clientReady handler. This allows interactions to be routed even before the
     // first clientReady fires.
     async function routeButton(interaction: ButtonInteraction): Promise<void> {
-        if(bskySetup && (interaction.customId.startsWith('bsky-send-') || interaction.customId.startsWith('bsky-dm-'))) {
-            await bskySetup.outboundApprovalHandler.handleButton(interaction);
-            return;
-        }
-        if(emailSetup && interaction.customId.startsWith('email-send-')) {
-            await emailSetup.outboundApprovalHandler.handleButton(interaction);
-            return;
-        }
-        if(emailSetup && interaction.customId.startsWith('email-')) {
-            await emailSetup.reviewHandler.handleButton(interaction);
-            return;
-        }
-        if(contactApprovalHandler && (interaction.customId.startsWith('contact-approve:') || interaction.customId.startsWith('contact-reject:') || interaction.customId.startsWith('contact-delete-confirm:') || interaction.customId.startsWith('contact-delete-cancel:'))) {
-            await contactApprovalHandler.handleButton(interaction);
-            return;
-        }
-        if(allowlistInteractionHandler && interaction.customId.startsWith('allowlist-')) {
-            await allowlistInteractionHandler.handleButton(interaction);
+        const parsed = parseCustomId(interaction.customId);
+        const handler = parsed && buttonRoutes.get(parsed.prefix);
+        if(handler) {
+            await handler(interaction);
             return;
         }
         await interactionHandler.handleButtonInteraction(interaction);
     }
 
     async function routeModal(interaction: ModalSubmitInteraction): Promise<void> {
-        if(bskySetup && (interaction.customId.startsWith('bsky-send-reject-reason:') || interaction.customId.startsWith('bsky-dm-reject-reason:'))) {
-            await bskySetup.outboundApprovalHandler.handleModalSubmit(interaction);
-        } else if(emailSetup && interaction.customId.startsWith('email-send-reject-reason:')) {
-            await emailSetup.outboundApprovalHandler.handleModalSubmit(interaction);
-        } else if(allowlistInteractionHandler && interaction.customId.startsWith('allowlist-name:')) {
-            await allowlistInteractionHandler.handleModalSubmit(interaction);
+        const parsed = parseCustomId(interaction.customId);
+        const handler = parsed && modalRoutes.get(parsed.prefix);
+        if(handler) {
+            await handler(interaction);
         }
     }
 
@@ -655,7 +709,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             await routeButton(interaction);
         } else if(interaction.isModalSubmit()) {
             await routeModal(interaction);
-        } else if(interaction.isStringSelectMenu() && interaction.customId.startsWith('email-allowlist-select:')) {
+        } else if(interaction.isStringSelectMenu() && parseCustomId(interaction.customId)?.prefix === EMAIL_ALLOWLIST_SELECT_PREFIX) {
             await (emailSetup ? emailSetup.outboundApprovalHandler.handleSelectMenu(interaction) : interaction.reply({ content: 'Email integration is not currently available.', flags: MessageFlags.Ephemeral }));
         } else if(interaction.isChatInputCommand()) {
             await routeCommand(interaction);

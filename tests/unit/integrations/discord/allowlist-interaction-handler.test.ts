@@ -240,13 +240,18 @@ describe('AllowlistInteractionHandler', () => {
             expect(editReply).toHaveBeenCalledTimes(1);
         });
 
-        test('splits customId at the first colon, keeping later colons in sagaId', async () => {
+        test('drops a segment after a second colon rather than folding it into sagaId', async () => {
+            // Real sagaIds are crypto.randomUUID() and never contain colons; this exercises the
+            // interaction-route codec's id/value boundary on an off-spec input. Under the shared
+            // `prefix:id:value` grammar, a third colon-delimited segment is the codec's `value`
+            // slot, not part of the id — unlike the old ad hoc indexOf(':') parse this handler
+            // used to have, which folded everything after the first colon into sagaId.
             const { interaction, deferUpdate } = makeButtonInteraction(`allowlist-yes:${SAGA_ID}:extra`);
 
             await handler.handleButton(interaction);
 
             expect(deferUpdate).toHaveBeenCalledTimes(1);
-            expect(deps.executor.confirmMatch).toHaveBeenCalledWith(`${SAGA_ID}:extra`);
+            expect(deps.executor.confirmMatch).toHaveBeenCalledWith(SAGA_ID);
         });
 
         test('allowlist-next calls skipMatch', async () => {

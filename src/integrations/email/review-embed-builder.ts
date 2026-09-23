@@ -2,6 +2,7 @@ import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'disc
 import { truncate } from 'lodash-es';
 import type { EmailFolder } from '@/config';
 import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
+import { encodeCustomId } from '@/utils';
 
 interface OutboundApprovalEmbedParams {
     to:       string
@@ -36,19 +37,19 @@ function formatFromValue(email: EmailMetadata): string {
 function buildInboxActionRow(uid: number, folder: string): ActionRowBuilder<ButtonBuilder> {
     return new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-            .setCustomId(`email-trash:${uid}:${folder}`)
+            .setCustomId(encodeCustomId({ prefix: 'email-trash', id: String(uid), value: folder }))
             .setLabel('Trash')
             .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
-            .setCustomId(`email-junk:${uid}:${folder}`)
+            .setCustomId(encodeCustomId({ prefix: 'email-junk', id: String(uid), value: folder }))
             .setLabel('Junk')
             .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
-            .setCustomId(`email-allow:${uid}:${folder}`)
+            .setCustomId(encodeCustomId({ prefix: 'email-allow', id: String(uid), value: folder }))
             .setLabel('Allow')
             .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-            .setCustomId(`email-allowlist:${uid}:${folder}`)
+            .setCustomId(encodeCustomId({ prefix: 'email-allowlist', id: String(uid), value: folder }))
             .setLabel('Allow + Allowlist')
             .setStyle(ButtonStyle.Primary)
     );
@@ -116,7 +117,7 @@ export function buildRestrictedAccessEmbed(mailboxName: string, uid: number, ref
 
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-            .setCustomId(`email-allow:${uid}:${mailboxName}`)
+            .setCustomId(encodeCustomId({ prefix: 'email-allow', id: String(uid), value: mailboxName }))
             .setLabel('Move to CleanInbox')
             .setStyle(ButtonStyle.Success)
     );
@@ -143,19 +144,18 @@ export function buildOutboundApprovalEmbed(params: OutboundApprovalEmbedParams):
             ...ccFields
         );
 
-    // Stryker disable next-line llm: draftUid is a required number, so the nullish fallback can never run.
-    const approveCustomId = `email-send-approve:${params.draftUid}`;
+    const approveCustomId = encodeCustomId({ prefix: 'email-send-approve', id: String(params.draftUid) });
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setCustomId(approveCustomId)
             .setLabel('Approve')
             .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-            .setCustomId(`email-send-approveallowlist:${params.draftUid}`)
+            .setCustomId(encodeCustomId({ prefix: 'email-send-approveallowlist', id: String(params.draftUid) }))
             .setLabel('Approve + Allowlist')
             .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
-            .setCustomId(`email-send-reject:${params.draftUid}`)
+            .setCustomId(encodeCustomId({ prefix: 'email-send-reject', id: String(params.draftUid) }))
             .setLabel('Reject')
             .setStyle(ButtonStyle.Danger)
     );

@@ -35,3 +35,16 @@ export {
 } from './retry-config';
 
 export { EmailFolder } from './email-folders';
+
+export {
+    QUESTION_PREFIX,
+    CONTACT_PREFIXES,
+    ALLOWLIST_BUTTON_PREFIXES,
+    ALLOWLIST_MODAL_PREFIXES,
+    EMAIL_REVIEW_PREFIXES,
+    EMAIL_SEND_BUTTON_PREFIXES,
+    EMAIL_SEND_MODAL_PREFIXES,
+    EMAIL_ALLOWLIST_SELECT_PREFIX,
+    BSKY_BUTTON_PREFIXES,
+    BSKY_MODAL_PREFIXES
+} from './interaction-routes';

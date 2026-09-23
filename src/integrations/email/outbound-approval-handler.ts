@@ -3,9 +3,10 @@ import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectM
 import { chain } from 'lodash-es';
 import { markDraftReviewState } from './draft-review-state';
 import type { NotifyFn } from '@/agent';
-import { EmailFolder } from '@/config';
+import { EmailFolder, EMAIL_ALLOWLIST_SELECT_PREFIX } from '@/config';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
+import { encodeCustomId, parseCustomId } from '@/utils';
 
 export interface OutboundApprovalHandlerDeps {
     wildDuckClient:              WildDuckClient
@@ -70,7 +71,7 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
     }
 
     protected rejectModalCustomId(_buttonPrefix: string, rawId: string): string {
-        return `email-send-reject-reason:${rawId}`;
+        return encodeCustomId({ prefix: 'email-send-reject-reason', id: rawId });
     }
 
     protected rejectModalTitle(_buttonPrefix: string): string {
@@ -143,15 +144,15 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
     // ---------------------------------------------------------------------------
 
     async handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
-        const parts  = interaction.customId.split(':');
-        const prefix = parts[0]!;
-        const uidStr = parts[1]!;
-
-        if(prefix !== 'email-allowlist-select') {
+        const parsed = parseCustomId(interaction.customId);
+        if(!parsed) {
+            return;
+        }
+        if(parsed.prefix !== EMAIL_ALLOWLIST_SELECT_PREFIX) {
             return;
         }
 
-        const uid = Number.parseInt(uidStr, 10);
+        const uid = Number.parseInt(parsed.id, 10);
         if(Number.isNaN(uid)) {
             return;
         }
@@ -295,7 +296,7 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
 
         // Build Select Menu with all recipients
         const menu = new StringSelectMenuBuilder()
-            .setCustomId(`email-allowlist-select:${uid}`)
+            .setCustomId(encodeCustomId({ prefix: EMAIL_ALLOWLIST_SELECT_PREFIX, id: String(uid) }))
             .setPlaceholder('Select recipients to add to allowlist')
             .setMinValues(0)
             .setMaxValues(allRecipients.length)

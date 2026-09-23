@@ -2,8 +2,10 @@ import { logger } from '@hughescr/logger';
 import { ActionRowBuilder, ApplicationIntegrationType, ButtonBuilder, ButtonStyle, EmbedBuilder, InteractionContextType, MessageFlags, SlashCommandBuilder, type ButtonInteraction, type ChatInputCommandInteraction } from 'discord.js';
 import { z } from 'zod';
 import { GREEN, RED, AMBER } from './colors';
+import { CONTACT_PREFIXES } from '@/config';
 import { ContactNotFoundError } from '@/errors';
 import { contactIdentifierSchema, createContactId, type Contact, type ContactBackend, type ContactChangeRequest, type ContactIdentifier, type PersonAllowlist, generatePersonId, findAvailablePersonId } from '@/storage';
+import { encodeCustomId, parseCustomId } from '@/utils';
 
 /**
  * Format a list of contact identifiers into a human-readable string.
@@ -77,11 +79,11 @@ export function buildContactApprovalEmbed(request: ContactChangeRequest, uuid: s
 
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-            .setCustomId(`contact-approve:${uuid}`)
+            .setCustomId(encodeCustomId({ prefix: 'contact-approve', id: uuid }))
             .setLabel('Approve')
             .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-            .setCustomId(`contact-reject:${uuid}`)
+            .setCustomId(encodeCustomId({ prefix: 'contact-reject', id: uuid }))
             .setLabel('Reject')
             .setStyle(ButtonStyle.Danger)
     );
@@ -269,11 +271,11 @@ export function buildDeleteConfirmationEmbed(contact: Contact, uuid: string): {
 
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-            .setCustomId(`contact-delete-confirm:${uuid}`)
+            .setCustomId(encodeCustomId({ prefix: 'contact-delete-confirm', id: uuid }))
             .setLabel('Confirm')
             .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-            .setCustomId(`contact-delete-cancel:${uuid}`)
+            .setCustomId(encodeCustomId({ prefix: 'contact-delete-cancel', id: uuid }))
             .setLabel('Cancel')
             .setStyle(ButtonStyle.Secondary)
     );
@@ -633,15 +635,13 @@ export class ContactApprovalHandler {
      * Handle a contact-approve, contact-reject, contact-delete-confirm, or contact-delete-cancel button interaction.
      */
     async handleButton(interaction: ButtonInteraction): Promise<void> {
-        const parts  = interaction.customId.split(':');
-        const prefix = parts[0];
-        const uuid   = parts[1];
-
-        if(prefix !== 'contact-approve' && prefix !== 'contact-reject' && prefix !== 'contact-delete-confirm' && prefix !== 'contact-delete-cancel') {
+        const parsed = parseCustomId(interaction.customId);
+        if(!parsed) {
             return;
         }
+        const { prefix, id: uuid } = parsed;
 
-        if(!uuid) {
+        if(!(CONTACT_PREFIXES as readonly string[]).includes(prefix)) {
             return;
         }
 

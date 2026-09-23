@@ -1,5 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import type { QuestionOption } from '@/agent';
+import { QUESTION_PREFIX } from '@/config';
+import { encodeCustomId } from '@/utils';
 
 interface ButtonBuilderConfig {
     questionId: string
@@ -23,7 +25,7 @@ export function buildQuestionButtons(config: ButtonBuilderConfig): ActionRowBuil
 
         for(const option of rowOptions) {
             const button = new ButtonBuilder()
-                .setCustomId(`question:${questionId}:${option.value}`)
+                .setCustomId(encodeCustomId({ prefix: QUESTION_PREFIX, id: questionId, value: option.value }))
                 .setLabel(option.label)
                 .setStyle(ButtonStyle.Primary);
 

@@ -1,6 +1,7 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { truncate } from 'lodash-es';
 import type { BskyReplyInput } from './types';
+import { encodeCustomId } from '@/utils';
 
 export interface BskyReplyApprovalEmbedParams {
     type:         'reply'
@@ -51,15 +52,15 @@ export function buildBskyApprovalEmbed(params: BskyApprovalEmbedParams): BskyApp
 
         const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
-                .setCustomId(`bsky-dm-approve:${uuid}`)
+                .setCustomId(encodeCustomId({ prefix: 'bsky-dm-approve', id: uuid }))
                 .setLabel('Approve')
                 .setStyle(ButtonStyle.Success),
             new ButtonBuilder()
-                .setCustomId(`bsky-dm-approveallowlist:${uuid}`)
+                .setCustomId(encodeCustomId({ prefix: 'bsky-dm-approveallowlist', id: uuid }))
                 .setLabel('Approve + Allowlist')
                 .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
-                .setCustomId(`bsky-dm-reject:${uuid}`)
+                .setCustomId(encodeCustomId({ prefix: 'bsky-dm-reject', id: uuid }))
                 .setLabel('Reject')
                 .setStyle(ButtonStyle.Danger)
         );
@@ -93,15 +94,15 @@ export function buildBskyApprovalEmbed(params: BskyApprovalEmbedParams): BskyApp
     // Use a UUID for button custom IDs to avoid collisions
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-            .setCustomId(`bsky-send-approve:${uuid}`)
+            .setCustomId(encodeCustomId({ prefix: 'bsky-send-approve', id: uuid }))
             .setLabel('Approve')
             .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-            .setCustomId(`bsky-send-approveallowlist:${uuid}`)
+            .setCustomId(encodeCustomId({ prefix: 'bsky-send-approveallowlist', id: uuid }))
             .setLabel('Approve + Allowlist')
             .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
-            .setCustomId(`bsky-send-reject:${uuid}`)
+            .setCustomId(encodeCustomId({ prefix: 'bsky-send-reject', id: uuid }))
             .setLabel('Reject')
             .setStyle(ButtonStyle.Danger)
     );

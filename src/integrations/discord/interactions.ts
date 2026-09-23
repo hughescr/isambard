@@ -2,6 +2,8 @@ import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction } from 'discord.js';
 import { createUserId, createChannelId } from './types';
 import type { QuestionRegistry, QuestionAnswer } from '@/agent';
+import { QUESTION_PREFIX } from '@/config';
+import { parseCustomId } from '@/utils';
 
 interface InteractionHandlerConfig {
     questionRegistry: QuestionRegistry
@@ -26,20 +28,18 @@ export function createInteractionHandler(config: InteractionHandlerConfig): Inte
     async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
         // Parse customId: question:${questionId}:${value}
 
-        const parts = interaction.customId.split(':');
-
-        // Ignore if not a question button
-        if(parts[0] !== 'question') {
+        const parsed = parseCustomId(interaction.customId);
+        if(!parsed) {
             return;
         }
 
-        if(parts.length < 3) {
+        // Ignore if not a question button, or if there is no value segment
+        if(parsed.prefix !== QUESTION_PREFIX || parsed.value === undefined) {
             return;
         }
 
-        // The preceding length check guarantees this index exists at runtime.
-        const questionId = parts[1]!;
-        const value = parts.slice(2).join(':'); // Rejoin in case value contains colons
+        const questionId = parsed.id;
+        const value = parsed.value;
 
         // Look up question in registry
         const question = questionRegistry.getQuestion(questionId);

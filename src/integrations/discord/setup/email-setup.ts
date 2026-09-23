@@ -24,7 +24,7 @@ import {
 } from '@/integrations/email';
 import { TokenBucketRateLimiter, type ApprovalSagaBackend, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import type { DynamoDBClientHolder, PersonAllowlist } from '@/storage';
-import { retryAsync } from '@/utils';
+import { encodeCustomId, retryAsync } from '@/utils';
 
 /** Type guard: check if a Discord channel supports sending messages (has send method). */
 function isSendableChannel(channel: unknown): channel is { send: (options: unknown) => Promise<unknown> } {
@@ -298,15 +298,15 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
         const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
-                .setCustomId(`email-send-approve:${draftUid}`)
+                .setCustomId(encodeCustomId({ prefix: 'email-send-approve', id: String(draftUid) }))
                 .setLabel('Approve')
                 .setStyle(ButtonStyle.Success),
             new ButtonBuilder()
-                .setCustomId(`email-send-approveallowlist:${draftUid}`)
+                .setCustomId(encodeCustomId({ prefix: 'email-send-approveallowlist', id: String(draftUid) }))
                 .setLabel('Approve + Allowlist...')
                 .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
-                .setCustomId(`email-send-reject:${draftUid}`)
+                .setCustomId(encodeCustomId({ prefix: 'email-send-reject', id: String(draftUid) }))
                 .setLabel('Reject')
                 .setStyle(ButtonStyle.Danger)
         );
