@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach, mock, spyOn, jest } from 'bun:test';
+import { describe, test, expect, afterEach, beforeEach, mock, spyOn, jest } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
 import { MessageFlags, type Client } from 'discord.js';
@@ -97,6 +97,24 @@ describe('createDiscordBot', () => {
         debug: (..._args: unknown[]) => mockLogger,
     } as unknown as Logger;
 
+    // Most tests here build a one-off, minimal client mock (no `guilds`) and never care
+    // about channel discovery at all. clientReady wires up initializeChannelRegistry(),
+    // whose post-hydration channelRegistry.onReady() callback is fire-and-forget from
+    // production code's perspective: it runs the real (unmocked, unless a test spies it
+    // below) discoverAllChannels(), which throws on a client missing `guilds`. That throw
+    // is caught internally and reaches the real ResponseRouter (bot.ts always constructs
+    // one over whatever channelRegistry the test supplied), which itself throws because
+    // mockChannelRegistry has no getWellKnownChannel() — logging 'Failed to send channel
+    // registry error notification to owner' on a delay this test never observes. Left
+    // undrained, that logger.error can settle during a LATER, unrelated test's own
+    // microtask-flush and trip an assertion there. Defaulting discovery to a trivial
+    // success keeps that fire-and-forget chain from ever reaching the notification path
+    // for the many tests that don't care about it; a test that specifically exercises
+    // discovery failure overrides this with its own spyOn(...).mockRejectedValue(...).
+    beforeEach(() => {
+        spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({ discovered: 0, updated: 0, errors: [] });
+    });
+
     afterEach(() => {
         for(const spy of spies) {
             try {
@@ -121,7 +139,14 @@ describe('createDiscordBot', () => {
             removeAllListeners: mock(() => undefined),
             user:               { id: '999999999999999999', tag: 'TestBot#1234' },
             rest:               mockRest(),
-            guilds:             { cache: { get: mock(() => undefined) } },
+            // `size` and `entries()` are populated so the REAL discoverAllChannels()
+            // (unmocked by most tests here) resolves with zero guilds instead of throwing
+            // ('entries is not a function' / reading `.size` of undefined). An empty,
+            // successful discovery keeps clientReady's fire-and-forget onReady() callback
+            // from reaching the operator-notification path and logging 'Failed to send
+            // channel registry error notification to owner' on a delay that can otherwise
+            // leak past this test's own assertions into a later, unrelated test.
+            guilds:             { cache: { get: mock(() => undefined), size: 0, entries: mock(() => [].entries()) } },
         } as unknown as Client;
         return client;
     }
@@ -1265,17 +1290,24 @@ describe('createDiscordBot', () => {
         // `ready` resolves/rejects based on the provided promise.
         function makeHydrationRegistry(readyPromise: Promise<void>): ChannelRegistryManager {
             return {
-                shouldProcess:  mock(() => true),
-                getChannel:     mock(() => Promise.resolve(null)),
-                warmCache:      mock(() => Promise.resolve()),
-                startHydration: mock(() => undefined),
-                stop:           mock(() => undefined),
-                ready:          readyPromise,
+                shouldProcess:       mock(() => true),
+                getChannel:          mock(() => Promise.resolve(null)),
+                warmCache:           mock(() => Promise.resolve()),
+                startHydration:      mock(() => undefined),
+                stop:                mock(() => undefined),
+                ready:               readyPromise,
                 // onReady mirrors the real implementation: attach callback to the current ready promise
                 // eslint-disable-next-line promise/no-callback-in-promise -- intentional: cb is a registered lifecycle callback, not a Node-style errback
-                onReady:        mock((cb: () => void | Promise<void>) => { void readyPromise.then(() => cb()); }),
-                getAllChannels: mock(() => []),
-                muteChannel:    mock(async (): Promise<void> => undefined),
+                onReady:             mock((cb: () => void | Promise<void>) => { void readyPromise.then(() => cb()); }),
+                getAllChannels:      mock(() => []),
+                muteChannel:         mock(async (): Promise<void> => undefined),
+                // createDiscordBot() always constructs a real ResponseRouter over this manager
+                // (bot.ts's own responseRouter, independent of anything a test mocks). Without
+                // this, a discovery-failure test's fire-and-forget notification path throws
+                // 'getWellKnownChannel is not a function' instead of exercising the failure mode
+                // the test actually names — and, undrained, that stray rejection can settle late
+                // enough to log past this test's own boundary.
+                getWellKnownChannel: mock(async () => ({ channelId: 'fallback-channel-id', channelName: 'fallback' })),
             } as unknown as ChannelRegistryManager;
         }
 
