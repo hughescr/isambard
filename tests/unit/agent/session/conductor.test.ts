@@ -5905,6 +5905,21 @@ describe('createConductor', () => {
                 ]);
             });
 
+            it('the cut-off warning\'s waitedMs counts from the first request, not from t=0', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                await advance(h, 50_000);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, WAIT_MS - 1);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(callsWithMessage(h.logger.warn, CUT_OFF_MESSAGE)).toEqual([
+                    [{ reason: 'an identity change', tasks: ['index the archive'], waitedMs: WAIT_MS }, CUT_OFF_MESSAGE],
+                ]);
+            });
+
             it('a request after a completed reopen starts a fresh deadline of its own', async () => {
                 const h = build();
                 await openWith(h, 'sess-1');

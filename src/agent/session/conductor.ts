@@ -1870,7 +1870,8 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * - the {@link REOPEN_WAKE_SETTLE_MS} window is running (released when it ends).
      *
      * Returns the EARLIEST of the active holds' boundaries, clamped to the deadline, so the one
-     * recheck timer never fires later than the deadline; each recheck recomputes from scratch.
+     * recheck timer never fires later than the deadline; each recheck recomputes from scratch. A
+     * hold that is not active contributes the deadline itself, which the clamp absorbs.
      */
     function reopenHoldUntil(pending: NonNullable<typeof pendingReopen>): number | undefined {
         const at = clock.now();
@@ -1878,22 +1879,18 @@ export function createConductor(params: CreateConductorParams): Conductor {
         if(at >= deadline) {
             return undefined;
         }
-        const boundaries: number[] = [];
-        if(runningBackgroundTaskDescriptions().length > 0) {
-            boundaries.push(deadline);
-        }
+        const tasksRunning = runningBackgroundTaskDescriptions().length > 0;
         const [oldestAdoption] = freshPendingAdoptions();
-        if(oldestAdoption !== undefined) {
-            boundaries.push(oldestAdoption.setAt + PENDING_WAKE_TTL_MS + 1);
-        }
         const settleEnd = wakeSettleEnd();
-        if(at < settleEnd) {
-            boundaries.push(settleEnd);
-        }
-        if(boundaries.length === 0) {
+        const settling = at < settleEnd;
+        if(!tasksRunning && oldestAdoption === undefined && !settling) {
             return undefined;
         }
-        return Math.min(deadline, ...boundaries);
+        return Math.min(
+            deadline,
+            oldestAdoption === undefined ? deadline : oldestAdoption.setAt + PENDING_WAKE_TTL_MS + 1,
+            settling ? settleEnd : deadline
+        );
     }
 
     /** One line per adoption for {@link warnIfReopenCutsWorkShort}'s log. */

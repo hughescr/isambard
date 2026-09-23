@@ -620,12 +620,16 @@ describe('createConversationConductor', () => {
         await flush();
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
+        // The fresh bundle built at open() reads events over config.bootEventsWindowMs (also 24h),
+        // so clear that call: only the compaction's own read may satisfy the assertion below.
+        const loadRecentEventsSince = h.contextBuilder.loadRecentEventsSince as ReturnType<typeof jest.fn>;
+        loadRecentEventsSince.mockClear();
 
         const options = h.instances[0].receivedParams?.options;
         const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
         await hookFn?.({ source: 'compact' } as never, undefined, undefined as never);
 
-        expect(h.contextBuilder.loadRecentEventsSince).toHaveBeenCalledWith(24 * 60 * 60 * 1000, expect.any(Number), new Date(5000));
+        expect(loadRecentEventsSince.mock.calls).toEqual([[86_400_000, expect.any(Number), new Date(5000)]]);
     });
 
     it.each([false, true])('R1: markEventsSeen is never called for a non-compact boot kind (stored session: %p)', async (stored) => {
@@ -1047,7 +1051,9 @@ describe('createConversationConductor', () => {
             await submitDiscord(undefined, 'env-anon');
 
             const bundle = await freshFallbackBundle();
-            expect(bundle).toContain('## Recently talking to\nuser-A\nuser-B');
+            // The whole section, exactly: nothing else rides along in the list (not even an
+            // entry the list started with before any submit).
+            expect(bundle.split('\n\n')).toContain('## Recently talking to\nuser-A\nuser-B');
             expect(bundle.match(/user-A/g)).toHaveLength(1);
             expect(bundle.match(/user-B/g)).toHaveLength(1);
             expect(bundle).not.toContain('user-NON-DISCORD');
@@ -1830,6 +1836,44 @@ describe('createPerchConductor', () => {
         const startupContext = handshakeOf(h.instances[0]);
 
         expect(startupContext).toContain('discord envelope env-no-text');
+    });
+
+    it('a compaction bundle\'s own recovery read lists an undelivered envelope with no response text as "<kind> envelope <id>"', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        h.journal.scriptReadSince([
+            { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-no-text', kind: 'discord' },
+            { type: 'turn_completed', at: new Date(1), envelopeId: 'env-no-text', kind: 'discord' },
+        ]);
+        const compactContext = await bootContextOf(h.instances[0], 'compact');
+
+        expect(compactContext?.split('\n\n')).toContain('## Envelopes without a delivered response\ndiscord envelope env-no-text');
+    });
+
+    it('a compaction whose recovery read fails renders neither recovery section, and logs the degrade', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        h.journal.scriptReadSinceRejection(new Error('DynamoDB unavailable'));
+        const compactContext = await bootContextOf(h.instances[0], 'compact');
+
+        expect(compactContext).toContain('[BOOT BUNDLE · perch · compact]');
+        expect(compactContext).not.toContain('Background tasks lost at restart');
+        expect(compactContext).not.toContain('Envelopes without a delivered response');
+        expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error) }), 'Perch boot-bundle recovery read failed; continuing with an empty recovery section');
     });
 
     it('R1: loadBootRecovery reads the perch journal from exactly 24h (RECOVERY_WINDOW_MS) before the clock\'s current time, at construction', async () => {
