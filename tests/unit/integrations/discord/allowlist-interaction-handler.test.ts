@@ -78,7 +78,6 @@ function makeDeps(overrides: {
         confirmMatch: mock(async (): Promise<SagaInteractionResult> => ({ action: 'completed', personId: PERSON_ID, displayName: DISPLAY_NAME })),
         skipMatch:    mock(async (): Promise<SagaInteractionResult> => ({ action: 'completed', personId: PERSON_ID, displayName: DISPLAY_NAME })),
         createNew:    mock(async (): Promise<SagaInteractionResult> => ({ action: 'completed', personId: PERSON_ID, displayName: DISPLAY_NAME })),
-        cancel:       mock(async (): Promise<SagaStepResult> => ({ action: 'cancelled' })),
         ...overrides.executor,
     } as unknown as AllowlistSagaExecutor;
 
@@ -163,16 +162,35 @@ describe('AllowlistInteractionHandler', () => {
             expect(call.components[0].components[0].data.custom_id).toContain('allowlist-yes:');
         });
 
-        test('renders cancelled embed when submitName returns cancelled', async () => {
+        test.each(['not_found', 'wrong_state', 'invalid_step_data'] as const)('renders the no-longer-active embed when submitName is unavailable (%s)', async (reason) => {
             const { interaction, editReply } = makeModalInteraction(`allowlist-name:${SAGA_ID}`);
-            deps.executor.submitName = mock(async (): Promise<SagaInteractionResult> => ({ action: 'cancelled' }));
+            deps.executor.submitName = mock(async (): Promise<SagaInteractionResult> => ({ action: 'unavailable', reason }));
 
             await handler.handleModalSubmit(interaction);
 
-            const call = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string, color?: number } }[], components: unknown[] };
-            expect(call.embeds[0].data.title).toBe('Allowlist Flow Cancelled');
-            // Kills llm mutant: BLUE -> BRIGHT_GREEN on the cancelled embed's color.
+            expect(editReply).toHaveBeenCalledTimes(1);
+            const call = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string, description?: string, color?: number } }[], components: unknown[] };
+            expect(call.embeds[0].data.title).toBe('This request is no longer active');
+            expect(call.embeds[0].data.title).not.toBe('Allowlist Flow Cancelled');
+            expect(call.embeds[0].data.description).toBe('It has expired or was already processed.');
+            // Kills llm mutant: BLUE -> BRIGHT_GREEN on the unavailable embed's color.
             expect(call.embeds[0].data.color).toBe(BLUE);
+            expect(call.components).toEqual([]);
+        });
+
+        test('re-renders the completed embed when a repeated click finds the saga already completed', async () => {
+            const { interaction, editReply } = makeButtonInteraction(`allowlist-yes:${SAGA_ID}`);
+            deps.executor.confirmMatch = mock(async (): Promise<SagaInteractionResult> => ({
+                action: 'unavailable', reason: 'already_completed', personId: PERSON_ID, displayName: 'Bob Jones',
+            }));
+
+            await handler.handleButton(interaction);
+
+            expect(editReply).toHaveBeenCalledTimes(1);
+            const call = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string, description?: string, color?: number } }[], components: unknown[] };
+            expect(call.embeds[0].data.title).toBe('Added to Allowlist ✓');
+            expect(call.embeds[0].data.description).toBe('**Bob Jones** has been added to the allowlist.');
+            expect(call.embeds[0].data.color).toBe(BRIGHT_GREEN);
             expect(call.components).toEqual([]);
         });
 
@@ -676,10 +694,13 @@ describe('AllowlistInteractionHandler', () => {
             }
         });
 
-        test('cancelled results wait for their response edits', async () => {
+        test.each([
+            ['no-longer-active', { action: 'unavailable', reason: 'not_found' }],
+            ['already-completed', { action: 'unavailable', reason: 'already_completed', personId: PERSON_ID, displayName: DISPLAY_NAME }],
+        ] as [string, SagaInteractionResult][])('unavailable %s results wait for their response edits', async (_label, unavailable) => {
             const editGate = Promise.withResolvers<void>();
             const { interaction, editReply } = makeButtonInteraction(`allowlist-yes:${SAGA_ID}`);
-            deps.executor.confirmMatch = mock(async (): Promise<SagaInteractionResult> => ({ action: 'cancelled' }));
+            deps.executor.confirmMatch = mock(async (): Promise<SagaInteractionResult> => unavailable);
             editReply.mockImplementation(() => editGate.promise);
             let settled = false;
             const pending = handler.handleButton(interaction).then(() => {

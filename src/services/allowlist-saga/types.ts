@@ -1,28 +1,60 @@
 import { z } from 'zod';
-
-const allowlistSagaStateSchema = z.enum([
-    'pending_name',      // waiting for admin to provide a display name
-    'pending_review',    // showing a fuzzy match, waiting for admin decision
-    'completed',         // person added to allowlist (terminal)
-    'cancelled',         // flow abandoned (terminal)
-]);
+import { contactIdSchema } from '@/storage';
 
 const allowlistSagaPlatformSchema = z.enum(['email', 'bsky']);
 export type AllowlistSagaPlatform = z.infer<typeof allowlistSagaPlatformSchema>;
 
-export const allowlistSagaSchema = z.object({
-    id:               z.uuid(),
-    state:            allowlistSagaStateSchema,
-    platform:         allowlistSagaPlatformSchema,
-    identifierValue:  z.string(),              // the email address or bsky handle
-    displayNameHint:  z.string().optional(),   // pre-filled from email headers or bsky profile
-    adminDisplayName: z.string().optional(),   // what admin typed in the modal
-    fuzzyMatches:     z.array(z.string()).optional(), // personId strings from fuzzy search
-    matchIndex:       z.number().int().optional(),    // current match being reviewed
-    resultPersonId:   z.string().optional(),   // the personId that was added to allowlist
-    addedBy:          z.string(),              // 'outbound-approval'
-    createdAt:        z.iso.datetime(),
-    updatedAt:        z.iso.datetime(),
-    ttl:              z.number().int().optional(),
+/** Fields every saga row carries regardless of state. */
+const allowlistSagaBaseSchema = z.object({
+    id:              z.uuid(),
+    platform:        allowlistSagaPlatformSchema,
+    identifierValue: z.string(),              // the email address or bsky handle
+    displayNameHint: z.string().optional(),   // pre-filled from email headers or bsky profile
+    addedBy:         z.string(),              // 'outbound-approval'
+    createdAt:       z.iso.datetime(),
+    updatedAt:       z.iso.datetime(),
+    ttl:             z.number().int().optional(),
 });
+
+/** Waiting for the admin to provide a display name. */
+const pendingNameAllowlistSagaSchema = allowlistSagaBaseSchema.extend({
+    state: z.literal('pending_name'),
+});
+
+/** Showing fuzzy match `matchIndex` of `fuzzyMatches`, waiting for the admin's decision. */
+const pendingReviewAllowlistSagaSchema = allowlistSagaBaseSchema.extend({
+    state:            z.literal('pending_review'),
+    adminDisplayName: z.string().optional(),  // what admin typed in the modal
+    fuzzyMatches:     z.array(contactIdSchema).nonempty(),
+    matchIndex:       z.number().int().nonnegative(),
+}).refine(saga => saga.matchIndex < saga.fuzzyMatches.length, {
+    message: 'matchIndex must address a fuzzy match',
+    path:    ['matchIndex'],
+});
+
+/** Person added to the allowlist (terminal). */
+const completedAllowlistSagaSchema = allowlistSagaBaseSchema.extend({
+    state:          z.literal('completed'),
+    resultPersonId: contactIdSchema,
+});
+
+/** Flow abandoned (terminal). No code path writes this today; legacy rows still parse. */
+const cancelledAllowlistSagaSchema = allowlistSagaBaseSchema.extend({
+    state: z.literal('cancelled'),
+});
+
+/**
+ * A persisted allowlist saga. Each state carries exactly the data valid in that state,
+ * so a review without a candidate list or a completion without a result cannot be stored.
+ */
+export const allowlistSagaSchema = z.discriminatedUnion('state', [
+    pendingNameAllowlistSagaSchema,
+    pendingReviewAllowlistSagaSchema,
+    completedAllowlistSagaSchema,
+    cancelledAllowlistSagaSchema,
+]);
 export type AllowlistSaga = z.infer<typeof allowlistSagaSchema>;
+export type PendingNameAllowlistSaga = z.infer<typeof pendingNameAllowlistSagaSchema>;
+export type PendingReviewAllowlistSaga = z.infer<typeof pendingReviewAllowlistSagaSchema>;
+/** A saga an admin interaction can still advance. */
+export type OpenAllowlistSaga = PendingNameAllowlistSaga | PendingReviewAllowlistSaga;

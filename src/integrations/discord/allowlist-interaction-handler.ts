@@ -178,11 +178,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
     ): Promise<void> {
         switch(result.action) {
             case 'completed': {
-                const embed = new EmbedBuilder()
-                    .setTitle('Added to Allowlist \u2713')
-                    .setDescription(`**${result.displayName}** has been added to the allowlist.`)
-                    .setColor(BRIGHT_GREEN);
-                await interaction.editReply({ embeds: [embed], components: [] });
+                await this.renderCompleted(interaction, result.displayName);
                 break;
             }
             case 'review_match': {
@@ -192,14 +188,28 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
                 await interaction.editReply({ embeds: [embed], components: [row] });
                 break;
             }
-            case 'cancelled': {
+            case 'unavailable': {
+                if(result.reason === 'already_completed') {
+                    // A repeated click on a finished flow shows the same completion again.
+                    await this.renderCompleted(interaction, result.displayName);
+                    break;
+                }
                 const embed = new EmbedBuilder()
-                    .setTitle('Allowlist Flow Cancelled')
+                    .setTitle('This request is no longer active')
+                    .setDescription('It has expired or was already processed.')
                     .setColor(BLUE);
                 await interaction.editReply({ embeds: [embed], components: [] });
                 break;
             }
         }
+    }
+
+    private async renderCompleted(interaction: ModalSubmitInteraction | ButtonInteraction, displayName: string): Promise<void> {
+        const embed = new EmbedBuilder()
+            .setTitle('Added to Allowlist ✓')
+            .setDescription(`**${displayName}** has been added to the allowlist.`)
+            .setColor(BRIGHT_GREEN);
+        await interaction.editReply({ embeds: [embed], components: [] });
     }
 
     private buildContactReviewEmbed(contact: Contact | undefined, personId: ContactId): EmbedBuilder {

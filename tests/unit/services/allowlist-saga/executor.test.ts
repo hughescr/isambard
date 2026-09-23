@@ -1,7 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
-import type { AllowlistSagaBackend } from '@/services/allowlist-saga/backend';
+import type { AllowlistSagaBackend, AllowlistSagaLookup } from '@/services/allowlist-saga/backend';
 import { AllowlistSagaExecutor } from '@/services/allowlist-saga/executor';
-import { allowlistSagaSchema, type AllowlistSaga } from '@/services/allowlist-saga/types';
+import {
+    allowlistSagaSchema,
+    type AllowlistSaga,
+    type PendingNameAllowlistSaga,
+    type PendingReviewAllowlistSaga
+} from '@/services/allowlist-saga/types';
 import type { ContactBackend } from '@/storage/contacts/backend';
 import type { Contact, ContactId } from '@/storage/contacts/types';
 import type { PersonAllowlist } from '@/storage/person-allowlist';
@@ -19,17 +24,35 @@ function makeContact(personId: ContactId, displayName: string): Contact {
     };
 }
 
-function makeSaga(overrides: Partial<AllowlistSaga> = {}): AllowlistSaga {
-    return {
-        id:              SAGA_UUID,
-        state:           'pending_name',
-        platform:        'email',
-        identifierValue: 'alice@example.com',
-        addedBy:         'outbound-approval',
-        createdAt:       '2026-01-01T00:00:00.000Z',
-        updatedAt:       '2026-01-01T00:00:00.000Z',
-        ...overrides,
-    };
+const SAGA_BASE = {
+    id:              SAGA_UUID,
+    platform:        'email',
+    identifierValue: 'alice@example.com',
+    addedBy:         'outbound-approval',
+    createdAt:       '2026-01-01T00:00:00.000Z',
+    updatedAt:       '2026-01-01T00:00:00.000Z',
+} as const;
+
+function makePendingName(overrides: { displayNameHint?: string } = {}): PendingNameAllowlistSaga {
+    return { ...SAGA_BASE, state: 'pending_name', ...overrides };
+}
+
+/** Built through the schema so fuzzyMatches carry the ContactId brand, as get() returns them. */
+function makeReview(fields: {
+    fuzzyMatches:      string[]
+    matchIndex?:       number
+    adminDisplayName?: string
+    displayNameHint?:  string
+}): PendingReviewAllowlistSaga {
+    return allowlistSagaSchema.parse({ ...SAGA_BASE, state: 'pending_review', matchIndex: 0, ...fields }) as PendingReviewAllowlistSaga;
+}
+
+function makeCompleted(resultPersonId: string): AllowlistSaga {
+    return allowlistSagaSchema.parse({ ...SAGA_BASE, state: 'completed', resultPersonId });
+}
+
+function found(saga: AllowlistSaga): AllowlistSagaLookup {
+    return { status: 'found', saga };
 }
 
 function controlledPromise(): { promise: Promise<void>, start: () => void, started: Promise<void>, resolve: () => void } {
@@ -62,9 +85,11 @@ describe('AllowlistSagaExecutor', () => {
         } as unknown as PersonAllowlist;
 
         allowlistSagaBackend = {
-            create: jest.fn(async () => undefined),
-            get:    jest.fn(async (): Promise<AllowlistSaga | undefined> => undefined),
-            update: jest.fn(async () => undefined),
+            create:        jest.fn(async () => undefined),
+            get:           jest.fn(async (): Promise<AllowlistSagaLookup> => ({ status: 'not_found' })),
+            enterReview:   jest.fn(async () => undefined),
+            advanceCursor: jest.fn(async () => undefined),
+            complete:      jest.fn(async () => undefined),
         } as unknown as AllowlistSagaBackend;
 
         executor = new AllowlistSagaExecutor({
@@ -151,25 +176,90 @@ describe('AllowlistSagaExecutor', () => {
         });
     });
 
+    describe('unavailable interactions', () => {
+        const steps = {
+            submitName:   (e: AllowlistSagaExecutor) => e.submitName(SAGA_UUID, 'Alice'),
+            confirmMatch: (e: AllowlistSagaExecutor) => e.confirmMatch(SAGA_UUID),
+            skipMatch:    (e: AllowlistSagaExecutor) => e.skipMatch(SAGA_UUID),
+            createNew:    (e: AllowlistSagaExecutor) => e.createNew(SAGA_UUID),
+        } as const;
+        const allSteps = Object.keys(steps) as (keyof typeof steps)[];
+
+        function expectNoStepEffects(): void {
+            expect(allowlistSagaBackend.enterReview).not.toHaveBeenCalled();
+            expect(allowlistSagaBackend.advanceCursor).not.toHaveBeenCalled();
+            expect(allowlistSagaBackend.complete).not.toHaveBeenCalled();
+            expect(contactBackend.fuzzyLookup).not.toHaveBeenCalled();
+            expect(contactBackend.addIdentifier).not.toHaveBeenCalled();
+            expect(contactBackend.putContact).not.toHaveBeenCalled();
+            expect(personAllowlist.addPerson).not.toHaveBeenCalled();
+            expect(personAllowlist.refreshPerson).not.toHaveBeenCalled();
+        }
+
+        test.each(allSteps)('%s reports a missing saga as not_found', async (step) => {
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue({ status: 'not_found' });
+
+            expect(await steps[step](executor)).toEqual({ action: 'unavailable', reason: 'not_found' });
+            expect(allowlistSagaBackend.get).toHaveBeenCalledWith(SAGA_UUID);
+            expectNoStepEffects();
+        });
+
+        test.each(allSteps)('%s reports an unparseable saga row as invalid_step_data', async (step) => {
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue({ status: 'invalid' });
+
+            expect(await steps[step](executor)).toEqual({ action: 'unavailable', reason: 'invalid_step_data' });
+            expectNoStepEffects();
+        });
+
+        test.each(allSteps)('%s reports a completed saga as already_completed with the contact display name', async (step) => {
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(makeCompleted('bob-jones')));
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
+
+            expect(await steps[step](executor)).toEqual({
+                action:      'unavailable',
+                reason:      'already_completed',
+                personId:    'bob-jones' as ContactId,
+                displayName: 'Bob Jones',
+            });
+            expect(contactBackend.getContact).toHaveBeenCalledWith('bob-jones');
+            expectNoStepEffects();
+        });
+
+        test.each(allSteps)('%s falls back to the personId for an already_completed saga whose contact is gone', async (step) => {
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(makeCompleted('bob-jones')));
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
+
+            expect(await steps[step](executor)).toEqual({
+                action:      'unavailable',
+                reason:      'already_completed',
+                personId:    'bob-jones' as ContactId,
+                displayName: 'bob-jones',
+            });
+        });
+
+        test.each(allSteps)('%s reports a cancelled saga as wrong_state', async (step) => {
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found({ ...SAGA_BASE, state: 'cancelled' }));
+
+            expect(await steps[step](executor)).toEqual({ action: 'unavailable', reason: 'wrong_state' });
+            expect(contactBackend.getContact).not.toHaveBeenCalled();
+            expectNoStepEffects();
+        });
+
+        test.each([
+            ['submitName', makeReview({ fuzzyMatches: ['bob-jones'] })],
+            ['confirmMatch', makePendingName()],
+            ['skipMatch', makePendingName()],
+        ] as const)('%s reports a saga in another open state as wrong_state', async (step, saga) => {
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
+
+            expect(await steps[step](executor)).toEqual({ action: 'unavailable', reason: 'wrong_state' });
+            expectNoStepEffects();
+        });
+    });
+
     describe('submitName()', () => {
-        test('returns cancelled when saga not found', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(undefined);
-
-            const result = await executor.submitName(SAGA_UUID, 'Alice');
-
-            expect(result).toEqual({ action: 'cancelled' });
-        });
-
-        test('returns cancelled when saga state is not pending_name', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'pending_review' }));
-
-            const result = await executor.submitName(SAGA_UUID, 'Alice');
-
-            expect(result).toEqual({ action: 'cancelled' });
-        });
-
         test('creates contact and completes when no fuzzy matches', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga());
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(makePendingName()));
             jest.spyOn(contactBackend, 'fuzzyLookup').mockResolvedValue([]);
             // getContact returns undefined (no collision), so personId will be generated from displayName
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
@@ -183,26 +273,28 @@ describe('AllowlistSagaExecutor', () => {
                 // displayName falls back to input since getContact returns undefined
                 expect(result.displayName).toBe('Alice Smith');
             }
+            expect(allowlistSagaBackend.enterReview).not.toHaveBeenCalled();
         });
 
-        test('enters pending_review state when fuzzy matches found', async () => {
+        test('enters pending_review with every fuzzy match when fuzzy matches found', async () => {
+            const saga = makePendingName();
             const bob = makeContact('bob-jones' as ContactId, 'Bob Jones');
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga());
-            jest.spyOn(contactBackend, 'fuzzyLookup').mockResolvedValue([bob]);
+            const bobby = makeContact('bobby-jones' as ContactId, 'Bobby Jones');
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
+            jest.spyOn(contactBackend, 'fuzzyLookup').mockResolvedValue([bob, bobby]);
 
             await executor.submitName(SAGA_UUID, 'Bob');
 
-            expect(allowlistSagaBackend.update).toHaveBeenCalledWith(SAGA_UUID, expect.objectContaining({
-                state:            'pending_review',
+            expect(contactBackend.fuzzyLookup).toHaveBeenCalledWith('Bob');
+            expect(allowlistSagaBackend.enterReview).toHaveBeenCalledWith(saga, {
                 adminDisplayName: 'Bob',
-                fuzzyMatches:     ['bob-jones'],
-                matchIndex:       0,
-            }));
+                fuzzyMatches:     ['bob-jones', 'bobby-jones'],
+            });
         });
 
         test('returns review_match with first match when fuzzy matches found', async () => {
             const bob = makeContact('bob-jones' as ContactId, 'Bob Jones');
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga());
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(makePendingName()));
             jest.spyOn(contactBackend, 'fuzzyLookup').mockResolvedValue([bob]);
 
             const result = await executor.submitName(SAGA_UUID, 'Bob');
@@ -215,7 +307,7 @@ describe('AllowlistSagaExecutor', () => {
         });
 
         test('rejects a sparse fuzzy-match result array with the persisted-data invariant', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga());
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(makePendingName()));
             const sparseMatches: Contact[] = [];
             sparseMatches.length = 1;
             jest.spyOn(contactBackend, 'fuzzyLookup').mockResolvedValue(sparseMatches);
@@ -226,19 +318,15 @@ describe('AllowlistSagaExecutor', () => {
                     invariant: 'fuzzyMatches[0] undefined despite matches.length > 0',
                 },
             });
+            expect(allowlistSagaBackend.enterReview).not.toHaveBeenCalled();
         });
     });
 
     describe('confirmMatch()', () => {
-        const reviewSaga = makeSaga({
-            state:            'pending_review',
-            adminDisplayName: 'Bob',
-            fuzzyMatches:     ['bob-jones'],
-            matchIndex:       0,
-        });
+        const reviewSaga = makeReview({ adminDisplayName: 'Bob', fuzzyMatches: ['bob-jones'] });
 
         test('adds identifier to matched contact', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(reviewSaga);
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(reviewSaga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
 
             await executor.confirmMatch(SAGA_UUID);
@@ -250,16 +338,28 @@ describe('AllowlistSagaExecutor', () => {
         });
 
         test('adds person to allowlist', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(reviewSaga);
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(reviewSaga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
 
             await executor.confirmMatch(SAGA_UUID);
 
             expect(personAllowlist.addPerson).toHaveBeenCalledWith('bob-jones', { addedBy: 'outbound-approval' });
+            expect(personAllowlist.refreshPerson).toHaveBeenCalledWith('bob-jones');
+        });
+
+        test('confirms the candidate under the persisted review cursor', async () => {
+            const saga = makeReview({ fuzzyMatches: ['bob-jones', 'bobby-jones'], matchIndex: 1 });
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bobby-jones' as ContactId, 'Bobby Jones'));
+
+            const result = await executor.confirmMatch(SAGA_UUID);
+
+            expect(result).toEqual({ action: 'completed', personId: 'bobby-jones' as ContactId, displayName: 'Bobby Jones' });
+            expect(allowlistSagaBackend.complete).toHaveBeenCalledWith(saga, 'bobby-jones');
         });
 
         test('returns completed with correct personId and displayName', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(reviewSaga);
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(reviewSaga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
 
             const result = await executor.confirmMatch(SAGA_UUID);
@@ -272,7 +372,7 @@ describe('AllowlistSagaExecutor', () => {
         });
 
         test('falls back to personId when the matched contact has no display name', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(reviewSaga);
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(reviewSaga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue({
                 ...makeContact('bob-jones' as ContactId, 'Bob Jones'),
                 // A legacy/partial contact record can carry an absent display name.
@@ -288,55 +388,37 @@ describe('AllowlistSagaExecutor', () => {
             });
         });
 
-        test('persists resultPersonId in saga update', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(reviewSaga);
+        test('reports a review cursor outside the candidate list as invalid_step_data without side effects', async () => {
+            // Bypasses the schema, which rejects this cursor on read and write.
+            const saga: PendingReviewAllowlistSaga = { ...reviewSaga, matchIndex: 4 };
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
+
+            const result = await executor.confirmMatch(SAGA_UUID);
+
+            expect(result).toEqual({ action: 'unavailable', reason: 'invalid_step_data' });
+            expect(contactBackend.addIdentifier).not.toHaveBeenCalled();
+            expect(personAllowlist.addPerson).not.toHaveBeenCalled();
+            expect(allowlistSagaBackend.complete).not.toHaveBeenCalled();
+        });
+
+        test('persists resultPersonId through the complete transition', async () => {
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(reviewSaga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(makeContact('bob-jones' as ContactId, 'Bob Jones'));
 
             await executor.confirmMatch(SAGA_UUID);
 
-            expect(allowlistSagaBackend.update).toHaveBeenCalledWith(SAGA_UUID, expect.objectContaining({
-                state:          'completed',
-                resultPersonId: 'bob-jones' as ContactId,
-            }));
-        });
-
-        test('returns cancelled for invalid state', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'pending_name' }));
-
-            const result = await executor.confirmMatch(SAGA_UUID);
-
-            expect(result).toEqual({ action: 'cancelled' });
-        });
-
-        test('rejects a persisted out-of-range matchIndex with the persisted-data invariant', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga({
-                state:        'pending_review',
-                fuzzyMatches: ['bob-jones'],
-                matchIndex:   4,
-            }));
-
-            await expect(executor.confirmMatch(SAGA_UUID)).rejects.toMatchObject({
-                context: {
-                    location:  'confirmMatch',
-                    invariant: 'fuzzyMatches[matchIndex] undefined despite valid saga state',
-                },
-            });
+            expect(allowlistSagaBackend.complete).toHaveBeenCalledWith(reviewSaga, 'bob-jones');
         });
     });
 
     describe('skipMatch()', () => {
         test('shows next match when more available', async () => {
-            const saga = makeSaga({
-                state:            'pending_review',
-                adminDisplayName: 'Alice',
-                fuzzyMatches:     ['alice-a', 'alice-b'],
-                matchIndex:       0,
-            });
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(saga);
+            const saga = makeReview({ adminDisplayName: 'Alice', fuzzyMatches: ['alice-a', 'alice-b'] });
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
 
             const result = await executor.skipMatch(SAGA_UUID);
 
-            expect(allowlistSagaBackend.update).toHaveBeenCalledWith(SAGA_UUID, { matchIndex: 1 });
+            expect(allowlistSagaBackend.advanceCursor).toHaveBeenCalledWith(saga, 1);
             expect(result).toEqual({
                 action:        'review_match',
                 sagaId:        SAGA_UUID,
@@ -345,31 +427,26 @@ describe('AllowlistSagaExecutor', () => {
         });
 
         test('creates new contact when no more matches', async () => {
-            const saga = makeSaga({
-                state:            'pending_review',
-                adminDisplayName: 'Alice Smith',
-                fuzzyMatches:     ['alice-a'],
-                matchIndex:       0,
-            });
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(saga);
+            const saga = makeReview({ adminDisplayName: 'Alice Smith', fuzzyMatches: ['alice-a'] });
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
 
             const result = await executor.skipMatch(SAGA_UUID);
 
             expect(result.action).toBe('completed');
+            expect(allowlistSagaBackend.advanceCursor).not.toHaveBeenCalled();
         });
 
         test.each([
             ['display-name hint', { displayNameHint: 'Alice Hint' }, 'Alice Hint'],
             ['identifier value', {}, 'alice@example.com'],
         ] as const)('uses the %s for an accepted review row without an admin display name', async (_label, optionalNames, expectedName) => {
-            const persisted = allowlistSagaSchema.parse(makeSaga({
-                state:        'pending_review',
+            const persisted = makeReview({
                 fuzzyMatches: ['alice-a'],
                 matchIndex:   0,
                 ...optionalNames,
-            }));
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(persisted);
+            });
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(persisted));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
 
             const result = await executor.skipMatch(SAGA_UUID);
@@ -379,21 +456,17 @@ describe('AllowlistSagaExecutor', () => {
                 displayName: expectedName,
             }));
             expect(result).toEqual(expect.objectContaining({ action: 'completed', displayName: expectedName }));
-            expect(allowlistSagaBackend.update).toHaveBeenCalledWith(SAGA_UUID, expect.objectContaining({
-                state:          'completed',
-                resultPersonId: expect.any(String),
-            }));
+            expect(allowlistSagaBackend.complete).toHaveBeenCalledWith(persisted, expect.any(String));
         });
 
         test('prefers the admin display name over the caller-supplied hint when no more matches', async () => {
-            const saga = allowlistSagaSchema.parse(makeSaga({
-                state:            'pending_review',
+            const saga = makeReview({
                 adminDisplayName: 'Alice Smith',
                 displayNameHint:  'Alice Hint',
                 fuzzyMatches:     ['alice-a'],
                 matchIndex:       0,
-            }));
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(saga);
+            });
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
 
             const result = await executor.skipMatch(SAGA_UUID);
@@ -403,135 +476,83 @@ describe('AllowlistSagaExecutor', () => {
             }));
             expect(result).toEqual(expect.objectContaining({ action: 'completed', displayName: 'Alice Smith' }));
         });
-
-        test('returns cancelled for invalid state', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'pending_name' }));
-
-            const result = await executor.skipMatch(SAGA_UUID);
-
-            expect(result).toEqual({ action: 'cancelled' });
-        });
-
-        test('rejects a sparse persisted fuzzyMatches array with the persisted-data invariant', async () => {
-            const fuzzyMatches = ['alice-a'] as string[];
-            fuzzyMatches.length = 2;
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga({
-                state: 'pending_review', fuzzyMatches, matchIndex: 0,
-            }));
-
-            await expect(executor.skipMatch(SAGA_UUID)).rejects.toMatchObject({
-                context: {
-                    location:  'skipMatch',
-                    invariant: 'fuzzyMatches[nextIndex] undefined despite nextIndex < fuzzyMatches.length',
-                },
-            });
-        });
     });
 
     describe('createNew()', () => {
         test('creates new contact and completes', async () => {
-            const saga = makeSaga({
-                state:            'pending_review',
-                adminDisplayName: 'Alice Smith',
-                fuzzyMatches:     ['some-match'],
-                matchIndex:       0,
-            });
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(saga);
+            const saga = makeReview({ adminDisplayName: 'Alice Smith', fuzzyMatches: ['some-match'] });
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
 
             const result = await executor.createNew(SAGA_UUID);
 
             expect(result.action).toBe('completed');
             expect(personAllowlist.addPerson).toHaveBeenCalledWith(ALICE_ID, { addedBy: 'outbound-approval' });
+            expect(allowlistSagaBackend.complete).toHaveBeenCalledWith(saga, ALICE_ID);
         });
 
         test('uses adminDisplayName when available', async () => {
-            const saga = makeSaga({
-                state:            'pending_review',
+            const saga = makeReview({
                 adminDisplayName: 'Alice Smith',
                 displayNameHint:  'A. Smith',
                 fuzzyMatches:     ['x'],
-                matchIndex:       0,
             });
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(saga);
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
 
             await executor.createNew(SAGA_UUID);
 
             // saga completes successfully with admin-provided display name
-            expect(allowlistSagaBackend.update).toHaveBeenCalledWith(
-                SAGA_UUID,
-                expect.objectContaining({ state: 'completed' })
-            );
+            expect(contactBackend.putContact).toHaveBeenCalledWith(expect.objectContaining({ displayName: 'Alice Smith' }));
+            expect(allowlistSagaBackend.complete).toHaveBeenCalledWith(saga, ALICE_ID);
         });
 
         test('falls back to identifierValue when no name available', async () => {
-            const saga = makeSaga({
-                state:        'pending_review',
-                fuzzyMatches: ['x'],
-                matchIndex:   0,
-            });
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(saga);
+            const saga = makeReview({ fuzzyMatches: ['x'] });
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
 
             const result = await executor.createNew(SAGA_UUID);
 
             expect(result.action).toBe('completed');
-        });
-
-        test('returns cancelled for invalid state (completed)', async () => {
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'completed' }));
-
-            const result = await executor.createNew(SAGA_UUID);
-
-            expect(result).toEqual({ action: 'cancelled' });
         });
 
         test('creates contact and completes when in pending_name state', async () => {
-            const saga = makeSaga({
-                state:           'pending_name',
-                displayNameHint: 'Alice Smith',
-            });
-            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(saga);
+            const saga = makePendingName({ displayNameHint: 'Alice Smith' });
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
             jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
 
             const result = await executor.createNew(SAGA_UUID);
 
             expect(result.action).toBe('completed');
-            expect(allowlistSagaBackend.update).toHaveBeenCalledWith(
-                SAGA_UUID,
-                expect.objectContaining({ state: 'completed' })
-            );
-        });
-    });
-
-    describe('cancel()', () => {
-        test('updates state to cancelled', async () => {
-            await executor.cancel(SAGA_UUID);
-
-            expect(allowlistSagaBackend.update).toHaveBeenCalledWith(SAGA_UUID, { state: 'cancelled' });
+            expect(allowlistSagaBackend.complete).toHaveBeenCalledWith(saga, ALICE_ID);
         });
 
-        test('returns cancelled', async () => {
-            const result = await executor.cancel(SAGA_UUID);
+        test('ignores a stray admin display name on a pending_name saga', async () => {
+            // Bypasses the schema: only a pending_review saga may carry adminDisplayName.
+            const saga = { ...makePendingName({ displayNameHint: 'Alice Smith' }), adminDisplayName: 'Stray' } as PendingNameAllowlistSaga;
+            jest.spyOn(allowlistSagaBackend, 'get').mockResolvedValue(found(saga));
+            jest.spyOn(contactBackend, 'getContact').mockResolvedValue(undefined);
 
-            expect(result).toEqual({ action: 'cancelled' });
+            const result = await executor.createNew(SAGA_UUID);
+
+            expect(contactBackend.putContact).toHaveBeenCalledWith(expect.objectContaining({ displayName: 'Alice Smith' }));
+            expect(result).toEqual({ action: 'completed', personId: ALICE_ID, displayName: 'Alice Smith' });
         });
     });
 
     describe('public completion boundaries', () => {
         const cases: [string, string, string][] = [
             ['start existing contact allowlist write', 'start-existing', 'addPerson'],
-            ['start new saga persistence', 'start-new', 'update'],
-            ['submit-name review persistence', 'submit-review', 'update'],
+            ['start new saga persistence', 'start-new', 'create'],
+            ['submit-name review persistence', 'submit-review', 'enterReview'],
             ['confirm-match identifier write', 'confirm', 'addIdentifier'],
             ['confirm-match allowlist write', 'confirm', 'addPerson'],
             ['confirm-match allowlist refresh', 'confirm', 'refreshPerson'],
-            ['confirm-match completion persistence', 'confirm', 'update'],
-            ['skip-match index persistence', 'skip', 'update'],
-            ['cancellation persistence', 'cancel', 'update'],
+            ['confirm-match completion persistence', 'confirm', 'complete'],
+            ['skip-match index persistence', 'skip', 'advanceCursor'],
             ['create-new allowlist write', 'create-new', 'addPerson'],
-            ['create-new completion persistence', 'create-new', 'update'],
+            ['create-new completion persistence', 'create-new', 'complete'],
         ];
 
         test.each(cases)('waits for %s', async (_name, method, target) => {
@@ -547,9 +568,11 @@ describe('AllowlistSagaExecutor', () => {
                 refreshPerson: jest.fn(async () => undefined),
             } as unknown as PersonAllowlist;
             const localSagaBackend = {
-                create: jest.fn(async () => undefined),
-                get:    jest.fn(async (): Promise<AllowlistSaga | undefined> => undefined),
-                update: jest.fn(async () => undefined),
+                create:        jest.fn(async () => undefined),
+                get:           jest.fn(async (): Promise<AllowlistSagaLookup> => ({ status: 'not_found' })),
+                enterReview:   jest.fn(async () => undefined),
+                advanceCursor: jest.fn(async () => undefined),
+                complete:      jest.fn(async () => undefined),
             } as unknown as AllowlistSagaBackend;
             const localExecutor = new AllowlistSagaExecutor({
                 contactBackend: localContactBackend, personAllowlist: localAllowlist, allowlistSagaBackend: localSagaBackend,
@@ -569,7 +592,8 @@ describe('AllowlistSagaExecutor', () => {
                     targetMock = localAllowlist.refreshPerson;
                     break;
                 }
-                default: { targetMock = method === 'start-new' ? localSagaBackend.create : localSagaBackend.update;
+                default: {
+                    targetMock = localSagaBackend[target as 'create' | 'enterReview' | 'advanceCursor' | 'complete'];
                 }
             }
             (targetMock as ReturnType<typeof jest.fn>).mockImplementation(() => {
@@ -590,27 +614,23 @@ describe('AllowlistSagaExecutor', () => {
                     break;
                 }
                 case 'submit-review': {
-                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(makeSaga());
+                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(found(makePendingName()));
                     jest.spyOn(localContactBackend, 'fuzzyLookup').mockResolvedValue([bob]);
                     completion = localExecutor.submitName(SAGA_UUID, 'Bob');
                     break;
                 }
                 case 'confirm': {
-                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'pending_review', fuzzyMatches: ['bob-jones'], matchIndex: 0 }));
+                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(found(makeReview({ fuzzyMatches: ['bob-jones'] })));
                     completion = localExecutor.confirmMatch(SAGA_UUID);
                     break;
                 }
                 case 'skip': {
-                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'pending_review', fuzzyMatches: ['alice-a', 'alice-b'], matchIndex: 0 }));
+                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(found(makeReview({ fuzzyMatches: ['alice-a', 'alice-b'] })));
                     completion = localExecutor.skipMatch(SAGA_UUID);
                     break;
                 }
-                case 'cancel': {
-                    completion = localExecutor.cancel(SAGA_UUID);
-                    break;
-                }
                 default: {
-                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(makeSaga({ state: 'pending_name', displayNameHint: 'Alice Smith' }));
+                    jest.spyOn(localSagaBackend, 'get').mockResolvedValue(found(makePendingName({ displayNameHint: 'Alice Smith' })));
                     completion = localExecutor.createNew(SAGA_UUID);
                 }
             }

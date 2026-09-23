@@ -6,12 +6,23 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import * as loggerModule from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
+import { mockLogger } from '../../../setup';
 import { AllowlistSagaBackend } from '@/services/allowlist-saga/backend';
-import type { AllowlistSaga } from '@/services/allowlist-saga/types';
+import {
+    allowlistSagaSchema,
+    type PendingNameAllowlistSaga,
+    type PendingReviewAllowlistSaga
+} from '@/services/allowlist-saga/types';
+import type { ContactId } from '@/storage';
 
 const SAGA_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 
-const BASE_SAGA: AllowlistSaga = {
+const KEY = {
+    PK: 'ALLOWLIST#SAGA',
+    SK: `SAGA#${SAGA_UUID}`,
+};
+
+const BASE_SAGA: PendingNameAllowlistSaga = {
     id:              SAGA_UUID,
     state:           'pending_name',
     platform:        'email',
@@ -21,11 +32,30 @@ const BASE_SAGA: AllowlistSaga = {
     updatedAt:       '2026-03-30T10:00:00.000Z',
 };
 
+const REVIEW_SAGA = allowlistSagaSchema.parse({
+    ...BASE_SAGA,
+    state:            'pending_review',
+    adminDisplayName: 'Alice',
+    fuzzyMatches:     ['alice-a', 'alice-b'],
+    matchIndex:       0,
+}) as PendingReviewAllowlistSaga;
+
+const FAKE_NOW = '2026-03-30T12:00:00.000Z';
+// TTL is recomputed from createdAt (2026-03-30T10:00:00Z) + 30 days, matching the TTL set at creation.
+const EXPECTED_TTL = Math.floor(new Date('2026-03-30T10:00:00.000Z').getTime() / 1000) + (30 * 24 * 60 * 60);
+
+const CONDITION = {
+    ConditionExpression:      '#state = :expectedState',
+    ExpressionAttributeNames: { '#state': 'state' },
+};
+
 describe('AllowlistSagaBackend', () => {
     let ddbMock: ReturnType<typeof mockClient>;
     let backend: AllowlistSagaBackend;
 
     beforeEach(() => {
+        // The setup-module logger is a shared singleton whose call history survives spyOn/restoreAllMocks.
+        mockLogger.warn.mockClear();
         ddbMock = mockClient(DynamoDBDocumentClient);
         backend = new AllowlistSagaBackend(
             ddbMock as unknown as DynamoDBDocumentClient,
@@ -35,6 +65,7 @@ describe('AllowlistSagaBackend', () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
+        mockLogger.warn.mockClear();
         jest.useRealTimers();
         ddbMock.restore();
     });
@@ -67,28 +98,13 @@ describe('AllowlistSagaBackend', () => {
             expect(item.TTL as number).toBeLessThanOrEqual(after + thirtyDays);
         });
 
-        test('stores saga with optional fields when present', async () => {
+        test('stores the display-name hint of a pending_name saga', async () => {
             ddbMock.on(PutCommand).resolves({});
 
-            const sagaWithOptionals: AllowlistSaga = {
-                ...BASE_SAGA,
-                displayNameHint:  'Alice Smith',
-                adminDisplayName: 'Alice',
-                fuzzyMatches:     ['alice-smith'],
-                matchIndex:       0,
-                resultPersonId:   'alice-smith',
-            };
-
-            await backend.create(sagaWithOptionals);
+            await backend.create({ ...BASE_SAGA, displayNameHint: 'Alice Smith' });
 
             const item = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item!;
-            expect(item).toMatchObject({
-                displayNameHint:  'Alice Smith',
-                adminDisplayName: 'Alice',
-                fuzzyMatches:     ['alice-smith'],
-                matchIndex:       0,
-                resultPersonId:   'alice-smith',
-            });
+            expect(item).toMatchObject({ displayNameHint: 'Alice Smith' });
         });
 
         test('propagates a write failure to the caller', async () => {
@@ -99,129 +115,157 @@ describe('AllowlistSagaBackend', () => {
     });
 
     describe('get', () => {
-        test('returns parsed saga when item is found', async () => {
-            ddbMock.on(GetCommand).resolves({
-                Item: {
-                    PK: 'ALLOWLIST#SAGA',
-                    SK: `SAGA#${SAGA_UUID}`,
-                    ...BASE_SAGA,
-                },
-            });
+        test('returns the parsed saga as found when the item exists', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...BASE_SAGA, TTL: EXPECTED_TTL } });
 
             const result = await backend.get(SAGA_UUID);
 
-            expect(result).toEqual(BASE_SAGA);
+            expect(result).toEqual({ status: 'found', saga: BASE_SAGA });
         });
 
-        test('returns undefined when item is not found', async () => {
+        test('returns not_found when the item is absent', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             const result = await backend.get('nonexistent-id');
 
-            expect(result).toBeUndefined();
+            expect(result).toEqual({ status: 'not_found' });
         });
 
-        test('queries with correct PK and SK', async () => {
+        test('reads the saga key with a strongly consistent read', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
             await backend.get(SAGA_UUID);
 
             const calls = ddbMock.commandCalls(GetCommand);
             expect(calls).toHaveLength(1);
-            expect(calls[0].args[0].input.Key).toEqual({
-                PK: 'ALLOWLIST#SAGA',
-                SK: `SAGA#${SAGA_UUID}`,
+            expect(calls[0].args[0].input).toEqual({
+                TableName:      'TestTable',
+                Key:            KEY,
+                ConsistentRead: true,
             });
+        });
+
+        test('reports a stored row that fails validation as invalid without throwing', async () => {
+            const loggerWarnSpy = jest.spyOn(loggerModule.logger, 'warn');
+            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...BASE_SAGA, state: 'pending_review' } });
+
+            const result = await backend.get(SAGA_UUID);
+
+            expect(result).toEqual({ status: 'invalid' });
+            expect(loggerWarnSpy).toHaveBeenCalledTimes(1);
+            expect(loggerWarnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ id: SAGA_UUID, issues: expect.arrayContaining([expect.objectContaining({ path: ['fuzzyMatches'] })]) }),
+                'AllowlistSagaBackend.get: stored saga failed validation'
+            );
         });
     });
 
-    describe('update', () => {
-        test('merges fields and updates updatedAt when saga is found', async () => {
-            ddbMock.on(GetCommand).resolves({
-                Item: {
-                    PK: 'ALLOWLIST#SAGA',
-                    SK: `SAGA#${SAGA_UUID}`,
-                    ...BASE_SAGA,
-                },
-            });
+    describe('transitions', () => {
+        beforeEach(() => {
             ddbMock.on(PutCommand).resolves({});
-
             jest.useFakeTimers();
-            jest.setSystemTime(new Date('2026-03-30T12:00:00.000Z'));
-
-            await backend.update(SAGA_UUID, { state: 'completed', resultPersonId: 'alice-smith' });
-
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            expect(putCalls).toHaveLength(1);
-            const item = putCalls[0].args[0].input.Item!;
-            expect(item).toMatchObject({
-                PK:              'ALLOWLIST#SAGA',
-                SK:              `SAGA#${SAGA_UUID}`,
-                id:              SAGA_UUID,
-                state:           'completed',
-                resultPersonId:  'alice-smith',
-                updatedAt:       '2026-03-30T12:00:00.000Z',
-                // Original fields preserved
-                platform:        'email',
-                identifierValue: 'alice@example.com',
-                addedBy:         'outbound-approval',
-            });
-
-            // TTL should be preserved from createdAt (2026-03-30T10:00:00Z + 30 days)
-            const createdAtEpoch = Math.floor(new Date('2026-03-30T10:00:00.000Z').getTime() / 1000);
-            const thirtyDays = 30 * 24 * 60 * 60;
-            expect(item.TTL as number).toBe(createdAtEpoch + thirtyDays);
+            jest.setSystemTime(new Date(FAKE_NOW));
         });
 
-        test('uses ConditionExpression to guard against concurrent updates', async () => {
-            ddbMock.on(GetCommand).resolves({
-                Item: {
-                    PK: 'ALLOWLIST#SAGA',
-                    SK: `SAGA#${SAGA_UUID}`,
-                    ...BASE_SAGA,
-                },
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('enterReview writes a whole pending_review row conditioned on pending_name without re-reading', async () => {
+            await backend.enterReview({ ...BASE_SAGA, displayNameHint: 'Alice Hint' }, {
+                adminDisplayName: 'Alice',
+                fuzzyMatches:     ['alice-a' as ContactId],
             });
-            ddbMock.on(PutCommand).resolves({});
 
-            await backend.update(SAGA_UUID, { state: 'completed' });
-
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
             const putCalls = ddbMock.commandCalls(PutCommand);
             expect(putCalls).toHaveLength(1);
-            expect(putCalls[0].args[0].input).toMatchObject({
-                ConditionExpression:       '#state = :expectedState',
-                ExpressionAttributeNames:  { '#state': 'state' },
+            expect(putCalls[0].args[0].input).toEqual({
+                TableName: 'TestTable',
+                Item:      {
+                    ...KEY,
+                    ...BASE_SAGA,
+                    displayNameHint:  'Alice Hint',
+                    state:            'pending_review',
+                    adminDisplayName: 'Alice',
+                    fuzzyMatches:     ['alice-a'],
+                    matchIndex:       0,
+                    updatedAt:        FAKE_NOW,
+                    TTL:              EXPECTED_TTL,
+                },
+                ...CONDITION,
                 ExpressionAttributeValues: { ':expectedState': 'pending_name' },
             });
         });
 
-        test('is idempotent when saga not found — logs warning and does not throw', async () => {
-            const loggerWarnSpy = jest.spyOn(loggerModule.logger, 'warn');
-            ddbMock.on(GetCommand).resolves({ Item: undefined });
+        test('advanceCursor writes the new matchIndex conditioned on pending_review', async () => {
+            await backend.advanceCursor(REVIEW_SAGA, 1);
 
-            await backend.update('nonexistent-id', { state: 'cancelled' });
-
-            // No PutCommand should be called
-            expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
-            expect(loggerWarnSpy).toHaveBeenCalledWith(
-                expect.objectContaining({ id: 'nonexistent-id' }),
-                expect.stringContaining('saga not found')
-            );
-
-            loggerWarnSpy.mockRestore();
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(1);
+            expect(putCalls[0].args[0].input).toEqual({
+                TableName: 'TestTable',
+                Item:      {
+                    ...KEY,
+                    ...REVIEW_SAGA,
+                    matchIndex: 1,
+                    updatedAt:  FAKE_NOW,
+                    TTL:        EXPECTED_TTL,
+                },
+                ...CONDITION,
+                ExpressionAttributeValues: { ':expectedState': 'pending_review' },
+            });
         });
 
-        test('propagates a conditional-put failure to the caller', async () => {
-            ddbMock.on(GetCommand).resolves({
-                Item: {
-                    PK: 'ALLOWLIST#SAGA',
-                    SK: `SAGA#${SAGA_UUID}`,
+        test('advanceCursor refuses to persist a cursor past the candidate list', async () => {
+            await expect(backend.advanceCursor(REVIEW_SAGA, 2)).rejects.toThrow('matchIndex must address a fuzzy match');
+
+            expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+        });
+
+        test('complete from pending_review writes the result and drops the review fields', async () => {
+            await backend.complete(REVIEW_SAGA, 'alice-b' as ContactId);
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(1);
+            expect(putCalls[0].args[0].input).toEqual({
+                TableName: 'TestTable',
+                Item:      {
+                    ...KEY,
                     ...BASE_SAGA,
+                    state:          'completed',
+                    resultPersonId: 'alice-b',
+                    updatedAt:      FAKE_NOW,
+                    TTL:            EXPECTED_TTL,
                 },
+                ...CONDITION,
+                ExpressionAttributeValues: { ':expectedState': 'pending_review' },
             });
+        });
+
+        test('complete from pending_name conditions on pending_name', async () => {
+            await backend.complete(BASE_SAGA, 'alice-a' as ContactId);
+
+            const input = ddbMock.commandCalls(PutCommand)[0].args[0].input;
+            expect(input.Item).toEqual({
+                ...KEY,
+                ...BASE_SAGA,
+                state:          'completed',
+                resultPersonId: 'alice-a',
+                updatedAt:      FAKE_NOW,
+                TTL:            EXPECTED_TTL,
+            });
+            expect(input.ExpressionAttributeValues).toEqual({ ':expectedState': 'pending_name' });
+        });
+
+        test.each([
+            ['enterReview', (b: AllowlistSagaBackend) => b.enterReview(BASE_SAGA, { adminDisplayName: 'Alice', fuzzyMatches: ['alice-a' as ContactId] })],
+            ['advanceCursor', (b: AllowlistSagaBackend) => b.advanceCursor(REVIEW_SAGA, 1)],
+            ['complete', (b: AllowlistSagaBackend) => b.complete(REVIEW_SAGA, 'alice-a' as ContactId)],
+        ] as const)('%s propagates a conditional-put failure to the caller', async (_name, transition) => {
             ddbMock.on(PutCommand).rejects(new Error('ConditionalCheckFailedException'));
 
-            await expect(backend.update(SAGA_UUID, { state: 'completed' }))
-                .rejects.toThrow('ConditionalCheckFailedException');
+            await expect(transition(backend)).rejects.toThrow('ConditionalCheckFailedException');
         });
     });
 });

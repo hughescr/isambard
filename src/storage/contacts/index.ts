@@ -2,6 +2,7 @@
 export {
     platformTypeSchema,
     contactIdentifierSchema,
+    contactIdSchema,
     createContactId,
     type ContactIdentifier,
     type ContactId,

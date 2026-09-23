@@ -120,7 +120,7 @@ Boundary mapping between Discord-specific types and the agent's platform-agnosti
 - **LifecycleOrchestrator**: sequences startup (in dependency order) and graceful shutdown.
 - **Outbox pattern** (`services/outbox/`): DynamoDB-backed reliable message delivery with a background drainer and retry, ensuring eventual delivery even across restarts.
 - **ApprovalSaga** (`services/approval-saga/`): distributed approval workflow for multi-step, stateful human-in-the-loop decisions persisted in DynamoDB.
-- **AllowlistSaga** (`services/allowlist-saga/`): multi-step Discord UI flow (button → modal → confirm) for adding a contact to the person allowlist, with DynamoDB state and optimistic concurrency.
+- **AllowlistSaga** (`services/allowlist-saga/`): multi-step Discord UI flow (button → modal → confirm) for adding a contact to the person allowlist. Persisted state is a zod discriminated union (`pending_name` / `pending_review` / `completed` / `cancelled`, each arm carrying only its own data) validated at the read boundary with a strongly consistent read. Steps advance only through typed transitions (`enterReview` / `advanceCursor` / `complete`), each a schema-validated whole-row conditional put on the prior state. A missing, unparseable, wrong-state or completed saga yields an `unavailable` result: the handler renders "This request is no longer active", or re-renders the completed embed for an already-completed saga.
 
 ## Cross-Cutting Patterns
 

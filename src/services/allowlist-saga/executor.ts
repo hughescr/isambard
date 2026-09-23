@@ -1,10 +1,14 @@
 import type { AllowlistSagaBackend } from './backend';
-import type { AllowlistSaga, AllowlistSagaPlatform } from './types';
+import type {
+    AllowlistSaga,
+    AllowlistSagaPlatform,
+    OpenAllowlistSaga,
+    PendingNameAllowlistSaga
+} from './types';
 import { InvariantViolationError } from '@/errors';
 import {
     type ContactBackend,
     type ContactId,
-    createContactId,
     findOrCreateContact,
     type PersonAllowlist
 } from '@/storage';
@@ -15,15 +19,32 @@ interface AllowlistSagaExecutorDeps {
     allowlistSagaBackend: AllowlistSagaBackend
 }
 
+/**
+ * A step was invoked on a saga it can no longer advance: the row is gone, unparseable,
+ * in a state the step does not accept, or already completed (carrying the completed
+ * result so the caller can re-render it idempotently).
+ */
+export type SagaUnavailableResult
+    = | { action: 'unavailable', reason: 'not_found' | 'wrong_state' | 'invalid_step_data' }
+      | { action: 'unavailable', reason: 'already_completed', personId: ContactId, displayName: string };
+
 /** Result of a saga step — tells the caller what UI action to take */
 export type SagaStepResult
     = | { action: 'completed', personId: ContactId, displayName: string }
       | { action: 'need_name', sagaId: string, hint?: string }
       | { action: 'review_match', sagaId: string, matchPersonId: ContactId }
-      | { action: 'cancelled' };
+      | SagaUnavailableResult;
 
 /** Results returned after the initial saga start, suitable for rendering in an existing interaction. */
 export type SagaInteractionResult = Exclude<SagaStepResult, { action: 'need_name' }>;
+
+type OpenSagaState = OpenAllowlistSaga['state'];
+type SagaInState<S extends AllowlistSaga['state']> = Extract<AllowlistSaga, { state: S }>;
+type LoadedSaga<S extends OpenSagaState> = { saga: SagaInState<S> } | { unavailable: SagaUnavailableResult };
+
+function isInState<S extends AllowlistSaga['state']>(saga: AllowlistSaga, states: readonly S[]): saga is SagaInState<S> {
+    return (states as readonly AllowlistSaga['state'][]).includes(saga.state);
+}
 
 export class AllowlistSagaExecutor {
     constructor(private readonly deps: AllowlistSagaExecutorDeps) {}
@@ -53,7 +74,7 @@ export class AllowlistSagaExecutor {
 
         // Step 2: Create saga in pending_name state
         const now = new Date().toISOString();
-        const saga: AllowlistSaga = {
+        const saga: PendingNameAllowlistSaga = {
             id:        crypto.randomUUID(),
             state:     'pending_name',
             platform,
@@ -72,10 +93,11 @@ export class AllowlistSagaExecutor {
      * Performs fuzzy match against existing contacts.
      */
     async submitName(sagaId: string, displayName: string): Promise<SagaInteractionResult> {
-        const saga = await this.deps.allowlistSagaBackend.get(sagaId);
-        if(saga?.state !== 'pending_name') {
-            return { action: 'cancelled' };
+        const loaded = await this.loadOpen(sagaId, ['pending_name']);
+        if('unavailable' in loaded) {
+            return loaded.unavailable;
         }
+        const { saga } = loaded;
 
         // Fuzzy match
         const matches = await this.deps.contactBackend.fuzzyLookup(displayName);
@@ -86,35 +108,31 @@ export class AllowlistSagaExecutor {
         }
 
         // Has matches — enter review state
-        // Stryker disable next-line llm: fuzzyLookup returns contactSchema-parsed contacts whose personId is a required string.
-        const fuzzyMatches = matches.map(c => c.personId as string);
-        await this.deps.allowlistSagaBackend.update(sagaId, {
-            state:            'pending_review',
-            adminDisplayName: displayName,
-            fuzzyMatches,
-            matchIndex:       0,
-        });
-        const firstFuzzyMatch = fuzzyMatches[0];
-        if(firstFuzzyMatch === undefined) {
+        const firstMatch = matches[0];
+        if(firstMatch === undefined) {
             throw new InvariantViolationError('submitName', 'fuzzyMatches[0] undefined despite matches.length > 0');
         }
-        return { action: 'review_match', sagaId, matchPersonId: createContactId(firstFuzzyMatch) };
+        await this.deps.allowlistSagaBackend.enterReview(saga, {
+            adminDisplayName: displayName,
+            fuzzyMatches:     matches.map(c => c.personId),
+        });
+        return { action: 'review_match', sagaId, matchPersonId: firstMatch.personId };
     }
 
     /**
      * Admin confirms a fuzzy match — link identifier to existing contact and complete.
      */
     async confirmMatch(sagaId: string): Promise<SagaInteractionResult> {
-        const saga = await this.deps.allowlistSagaBackend.get(sagaId);
-        if(saga?.state !== 'pending_review' || !saga.fuzzyMatches || saga.matchIndex === undefined) {
-            return { action: 'cancelled' };
+        const loaded = await this.loadOpen(sagaId, ['pending_review']);
+        if('unavailable' in loaded) {
+            return loaded.unavailable;
         }
-
-        const fuzzyMatchAtIndex = saga.fuzzyMatches[saga.matchIndex];
-        if(fuzzyMatchAtIndex === undefined) {
-            throw new InvariantViolationError('confirmMatch', 'fuzzyMatches[matchIndex] undefined despite valid saga state');
+        const { saga } = loaded;
+        const personId = saga.fuzzyMatches[saga.matchIndex];
+        if(personId === undefined) {
+            // The schema rejects an out-of-range cursor on read and write; only a row that bypassed it lands here.
+            return { action: 'unavailable', reason: 'invalid_step_data' };
         }
-        const personId = createContactId(fuzzyMatchAtIndex);
 
         // Add the identifier to the existing contact
         await this.deps.contactBackend.addIdentifier(personId, {
@@ -129,10 +147,7 @@ export class AllowlistSagaExecutor {
         // Get display name for result
         const contact = await this.deps.contactBackend.getContact(personId);
 
-        await this.deps.allowlistSagaBackend.update(sagaId, {
-            state:          'completed',
-            resultPersonId: personId,
-        });
+        await this.deps.allowlistSagaBackend.complete(saga, personId);
 
         return { action: 'completed', personId, displayName: contact?.displayName ?? personId };
     }
@@ -141,20 +156,18 @@ export class AllowlistSagaExecutor {
      * Admin skips current match — show next match or transition to create.
      */
     async skipMatch(sagaId: string): Promise<SagaInteractionResult> {
-        const saga = await this.deps.allowlistSagaBackend.get(sagaId);
-        if(saga?.state !== 'pending_review' || !saga.fuzzyMatches || saga.matchIndex === undefined) {
-            return { action: 'cancelled' };
+        const loaded = await this.loadOpen(sagaId, ['pending_review']);
+        if('unavailable' in loaded) {
+            return loaded.unavailable;
         }
+        const { saga } = loaded;
 
         const nextIndex = saga.matchIndex + 1;
-        if(nextIndex < saga.fuzzyMatches.length) {
+        const nextMatch = saga.fuzzyMatches[nextIndex];
+        if(nextMatch !== undefined) {
             // More matches to review
-            await this.deps.allowlistSagaBackend.update(sagaId, { matchIndex: nextIndex });
-            const nextFuzzyMatch = saga.fuzzyMatches[nextIndex];
-            if(nextFuzzyMatch === undefined) {
-                throw new InvariantViolationError('skipMatch', 'fuzzyMatches[nextIndex] undefined despite nextIndex < fuzzyMatches.length');
-            }
-            return { action: 'review_match', sagaId, matchPersonId: createContactId(nextFuzzyMatch) };
+            await this.deps.allowlistSagaBackend.advanceCursor(saga, nextIndex);
+            return { action: 'review_match', sagaId, matchPersonId: nextMatch };
         }
 
         // No more matches — create new contact
@@ -165,25 +178,42 @@ export class AllowlistSagaExecutor {
      * Admin explicitly requests creating a new contact (skipping remaining matches).
      */
     async createNew(sagaId: string): Promise<SagaInteractionResult> {
-        const saga = await this.deps.allowlistSagaBackend.get(sagaId);
-        if(saga?.state !== 'pending_review' && saga?.state !== 'pending_name') {
-            return { action: 'cancelled' };
+        const loaded = await this.loadOpen(sagaId, ['pending_name', 'pending_review']);
+        if('unavailable' in loaded) {
+            return loaded.unavailable;
         }
+        const { saga } = loaded;
 
-        const displayName = saga.adminDisplayName ?? saga.displayNameHint ?? saga.identifierValue;
-        return this.createAndComplete(saga, displayName);
+        const adminDisplayName = saga.state === 'pending_review' ? saga.adminDisplayName : undefined;
+        return this.createAndComplete(saga, adminDisplayName ?? saga.displayNameHint ?? saga.identifierValue);
     }
 
     /**
-     * Admin cancels the flow.
+     * Internal: load a saga a step can advance, or explain why the step is unavailable.
+     * A completed saga reports its result so a repeated click can re-render it.
      */
-    async cancel(sagaId: string): Promise<SagaStepResult> {
-        await this.deps.allowlistSagaBackend.update(sagaId, { state: 'cancelled' });
-        return { action: 'cancelled' };
+    private async loadOpen<S extends OpenSagaState>(sagaId: string, accepted: readonly S[]): Promise<LoadedSaga<S>> {
+        const lookup = await this.deps.allowlistSagaBackend.get(sagaId);
+        if(lookup.status === 'not_found') {
+            return { unavailable: { action: 'unavailable', reason: 'not_found' } };
+        }
+        if(lookup.status === 'invalid') {
+            return { unavailable: { action: 'unavailable', reason: 'invalid_step_data' } };
+        }
+        const { saga } = lookup;
+        if(isInState(saga, accepted)) {
+            return { saga };
+        }
+        if(saga.state === 'completed') {
+            const personId = saga.resultPersonId;
+            const contact  = await this.deps.contactBackend.getContact(personId);
+            return { unavailable: { action: 'unavailable', reason: 'already_completed', personId, displayName: contact?.displayName ?? personId } };
+        }
+        return { unavailable: { action: 'unavailable', reason: 'wrong_state' } };
     }
 
     /** Internal: create contact and add to allowlist */
-    private async createAndComplete(saga: AllowlistSaga, displayName: string): Promise<SagaInteractionResult> {
+    private async createAndComplete(saga: OpenAllowlistSaga, displayName: string): Promise<SagaInteractionResult> {
         const personId = await findOrCreateContact(
             this.deps.contactBackend,
             saga.platform,
@@ -193,10 +223,7 @@ export class AllowlistSagaExecutor {
 
         await this.deps.personAllowlist.addPerson(personId, { addedBy: saga.addedBy });
 
-        await this.deps.allowlistSagaBackend.update(saga.id, {
-            state:          'completed',
-            resultPersonId: personId,
-        });
+        await this.deps.allowlistSagaBackend.complete(saga, personId);
 
         const contact = await this.deps.contactBackend.getContact(personId);
         return { action: 'completed', personId, displayName: contact?.displayName ?? displayName };
