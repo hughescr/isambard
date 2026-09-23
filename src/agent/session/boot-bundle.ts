@@ -76,6 +76,7 @@
  * @module agent/session/boot-bundle
  */
 import { formatMemoryPreview, type ContextBuilder } from '../context-builder';
+import type { SessionRole } from './types';
 
 /** The subset of `ContextBuilder` this builder depends on. */
 export type BootContextSource = Pick<ContextBuilder, 'loadHotState' | 'loadRecentEventsSince' | 'buildPerchContext'>;
@@ -97,7 +98,7 @@ export type BootKind = 'fresh' | 'restart_resume' | 'reopen' | 'compact';
 
 /** Inputs to {@link createBootBundleBuilder}. */
 export interface CreateBootBundleBuilderParams {
-    role:                 'conversation' | 'perch'
+    role:                 SessionRole
     contextBuilder:       BootContextSource
     taskListReader:       TaskListSource
     /** Optional channel-list text provider; never invoked for the perch variant, nor for any non-`fresh` kind. */
@@ -146,7 +147,7 @@ export interface BootBundleBuilder {
 
 /** Already-gathered pieces {@link formatBootBundle} renders, in role-and-kind-dependent order. */
 export interface BootBundleParts {
-    role:             'conversation' | 'perch'
+    role:             SessionRole
     /** Never `reopen`: {@link BootBundleBuilder.build} returns `''` for a reopen before gathering any parts. */
     kind:             Exclude<BootKind, 'reopen'>
     /**
@@ -343,7 +344,7 @@ export function createBootBundleBuilder(params: CreateBootBundleBuilderParams): 
             // the ambient lines describe the moment the bundle was composed.
             const header = timeHeader?.();
 
-            // Stryker disable next-line llm: role is the primitive union 'conversation' | 'perch', so loose and strict equality are indistinguishable
+            // Stryker disable next-line llm: SessionRole's values make loose and strict equality indistinguishable
             if(role === 'perch') {
                 if(kind === 'restart_resume') {
                     // No task-list/perch-context fetch at all for a perch restart_resume -- neither is

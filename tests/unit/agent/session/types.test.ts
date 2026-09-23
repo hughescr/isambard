@@ -4,11 +4,25 @@ import type { Conductor } from '../../../../src/agent/session/conductor';
 import { buildBootEnvelope, buildCompactEnvelope, buildPeerEnvelope } from '../../../../src/agent/session/envelope';
 import { ENVELOPE_KINDS, type Envelope, type EnvelopeMeta, type JournalEntry, type SessionQuery } from '../../../../src/agent/session/types';
 import type { SystemEvent } from '../../../../src/agent/types';
+// @ts-expect-error -- McpServerRole was retired in favour of the shared SessionRole
+import type { McpServerRole } from '../../../../src/app';
+// @ts-expect-error -- PresenceRole was retired in favour of the shared SessionRole
+import type { PresenceRole } from '../../../../src/integrations/discord/presence';
 import { FakeQuery } from '../../../helpers/fake-query';
 
 // Compile-time-only assertions live in this file; each `describe`/`it` below carries exactly
 // one runtime `expect` so `jest/expect-expect` is satisfied without pretending these are
 // behavioural tests.
+
+describe('retired SessionRole aliases (#80)', () => {
+    it('are no longer re-exported by app and Discord presence barrels', () => {
+        type RetiredMcpServerRole = McpServerRole;
+        type RetiredPresenceRole = PresenceRole;
+        const retiredRoles: [RetiredMcpServerRole, RetiredPresenceRole] = ['conversation', 'perch'];
+
+        expect(retiredRoles).toEqual(['conversation', 'perch']);
+    });
+});
 
 describe('SessionQuery', () => {
     it('is satisfiable by FakeQuery with no `as` casts', () => {

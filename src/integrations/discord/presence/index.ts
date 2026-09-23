@@ -43,7 +43,6 @@ export {
     renderPrefixedText,
     createPresenceThrottle,
     planPresenceUpdate,
-    type PresenceRole,
     type PresenceView,
     type PresenceThrottle,
     type PresencePlan,

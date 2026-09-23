@@ -1,7 +1,7 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createPersonContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createPersonContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator, type SessionRole } from '@/agent';
 import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend, type BskyReplyInput } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
@@ -267,18 +267,11 @@ export interface McpSharedDeps {
 }
 
 /**
- * Which kind of session an MCP server instance set is being built for.
- * The browser MCP server (a single Bun.WebView) attaches only to 'conversation' —
- * there is exactly one WebView, so a second ('perch') session set must not get one.
- */
-export type McpServerRole = 'conversation' | 'perch';
-
-/**
  * Options for {@link createMcpServerInstances}.
  */
 export interface CreateMcpServerInstancesOptions {
     /** Which kind of session this server set is for; gates the browser MCP server. */
-    role: McpServerRole
+    role: SessionRole
 
     /**
      * Optional factory that builds a fresh email MCP server instance for this

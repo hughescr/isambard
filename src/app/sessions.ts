@@ -392,7 +392,8 @@ export async function createConversationConductor(params: CreateConversationCond
     const taskLaunchRegistry = createTaskLaunchRegistry({ journal });
     taskLaunchRegistry.seed(bootTaskLaunches);
 
-    const mcpInstances = createMcpServerInstances(mcpShared, { role: 'conversation', emailServerFactory });
+    const role: SessionRole = 'conversation';
+    const mcpInstances = createMcpServerInstances(mcpShared, { role, emailServerFactory });
     const sessionMcpServers: SessionMcpServers = {
         memory:         mcpInstances.memoryMcpServer,
         discord:        mcpInstances.discordMcpServer,
@@ -796,7 +797,8 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     const taskLaunchRegistry = createTaskLaunchRegistry({ journal });
     taskLaunchRegistry.seed(bootTaskLaunches);
 
-    const mcpInstances = createMcpServerInstances(mcpShared, { role: 'perch', emailServerFactory });
+    const role: SessionRole = 'perch';
+    const mcpInstances = createMcpServerInstances(mcpShared, { role, emailServerFactory });
     const sessionMcpServers: SessionMcpServers = {
         memory:         mcpInstances.memoryMcpServer,
         discord:        mcpInstances.discordMcpServer,

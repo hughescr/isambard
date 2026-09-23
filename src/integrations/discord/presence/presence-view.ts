@@ -14,7 +14,7 @@
  * @module integrations/discord/presence/presence-view
  */
 import type { PresencePhase } from './types.js';
-import type { ActivityPhase, Ledger } from '@/agent';
+import type { ActivityPhase, Ledger, SessionRole } from '@/agent';
 import { truncateToWordBoundary } from '@/utils';
 
 /** Discord's custom-status length limit, in UTF-16 code units (`.length`). */
@@ -29,10 +29,7 @@ const SEPARATOR = ' • ';
 /** Literal marker inserted between the prefix and the digest while either ledger is compacting. */
 const COMPACTING_MARKER = 'compacting';
 
-/** Which session ledgers can be "live" (carrying an open turn), in composePresence's fixed order. */
-export type PresenceRole = 'conversation' | 'perch';
-
-const LIVE_EMOJI: Record<PresenceRole, string> = { conversation: '💬', perch: '🦉' };
+const LIVE_EMOJI: Record<SessionRole, string> = { conversation: '💬', perch: '🦉' };
 const IDLE_EMOJI = '💤';
 
 /** Emoji for each recognised {@link Ledger}`.tasks[].kind`, in the order counts are rendered. */
@@ -56,7 +53,7 @@ const IDLE_SINCE_SENTINEL = new Date(0);
  */
 export interface PresenceView {
     /** Which roles currently have an open turn, conversation first. */
-    readonly live:       readonly PresenceRole[]
+    readonly live:       readonly SessionRole[]
     /** Session indicators + task counts, e.g. `'💬🦉 • 2 🔬 1 ⌚'` or `'💤 • 1 🪾'`. Never truncated. */
     readonly prefix:     string
     /** True when either ledger's `compaction` is `'compacting'`. */
@@ -64,7 +61,7 @@ export interface PresenceView {
     /** The winning turn's phase (conversation first), or `{ type: 'idle' }` when neither is live. */
     readonly phase:      PresencePhase
     /** Which role's phase won, or `null` when idle. */
-    readonly activeRole: PresenceRole | null
+    readonly activeRole: SessionRole | null
 }
 
 /** Counts tasks by `kind` across every ledger, rendered in {@link TASK_KIND_EMOJI} order, zeros omitted. */
@@ -106,7 +103,7 @@ function phaseOfLedger(ledger: Ledger | undefined): ActivityPhase | null {
 }
 
 /** Whichever of `conversationPhase`/`perchPhase` is non-null wins, conversation first. */
-function resolveActiveRole(conversationPhase: ActivityPhase | null, perchPhase: ActivityPhase | null): PresenceRole | null {
+function resolveActiveRole(conversationPhase: ActivityPhase | null, perchPhase: ActivityPhase | null): SessionRole | null {
     if(conversationPhase !== null) {
         return 'conversation';
     }
@@ -129,7 +126,7 @@ const PERCH_PAUSED_MARKER = '⏸ perch';
 export function composePresence(ledgers: readonly Ledger[], perchPaused = false): PresenceView {
     const [conversation, perch] = ledgers;
 
-    const live: PresenceRole[] = [];
+    const live: SessionRole[] = [];
     if(turnOf(conversation) !== null) {
         // Stryker disable next-line ArrayMethodSwap: live is empty at this first insertion, so push and unshift are equivalent
         live.push('conversation');
@@ -148,7 +145,7 @@ export function composePresence(ledgers: readonly Ledger[], perchPaused = false)
 
     const conversationPhase = phaseOfLedger(conversation);
     const perchPhase = phaseOfLedger(perch);
-    const activeRole: PresenceRole | null = resolveActiveRole(conversationPhase, perchPhase);
+    const activeRole: SessionRole | null = resolveActiveRole(conversationPhase, perchPhase);
     const phase: PresencePhase = conversationPhase ?? perchPhase ?? { type: 'idle', since: IDLE_SINCE_SENTINEL };
 
     return { live, prefix, compacting, phase, activeRole };
