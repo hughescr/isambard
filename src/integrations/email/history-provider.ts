@@ -1,6 +1,8 @@
 import { logger } from '@hughescr/logger';
+import { parseMailboxMessageRef } from './types';
 import type { WildDuckClient, WildDuckSearchParams, WildDuckSearchResult } from './wildduck-client';
 import type { PlatformHistoryProvider, HistoryFetchParams, HistoryEntry } from '@/agent';
+import { EmailFolder } from '@/config';
 
 /** Maximum characters for subject truncation in summary */
 const MAX_SUBJECT_CHARS = 100;
@@ -8,14 +10,9 @@ const MAX_SUBJECT_CHARS = 100;
 /** Default maximum messages to return */
 const DEFAULT_MAX_MESSAGES = 10;
 
-/**
- * Whether a WildDuck result belongs to the logical Sent Mail folder.
- * The message field is in the format 'FolderName:uid'.
- */
+/** Whether a WildDuck result belongs to the logical Sent Mail folder. */
 function isSentMailFolder(message: string): boolean {
-    const colonIdx = message.lastIndexOf(':');
-    // Stryker disable next-line llm: lastIndexOf yields only -1 or a non-negative index, so `> -1` equals `!== -1`, and after that guard slice(0, n) and substring(0, n) agree for n >= 0
-    return colonIdx !== -1 && message.slice(0, colonIdx) === 'Sent Mail';
+    return parseMailboxMessageRef(message)?.folder === EmailFolder.Sent;
 }
 
 /**

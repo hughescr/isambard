@@ -76,7 +76,7 @@ export class BskyCheckpointManager {
     /**
      * Generic helper: saves a checkpoint to a memory path, creating or updating as needed.
      */
-    private async saveCheckpoint(path: MemoryPath, checkpoint: { processedUris: string[] }, exists: boolean): Promise<void> {
+    private async saveCheckpoint<T>(path: MemoryPath, checkpoint: T, exists: boolean): Promise<void> {
         const content = JSON.stringify(checkpoint);
 
         await (exists
@@ -224,7 +224,7 @@ export class BskyCheckpointManager {
     /**
      * Saves the DM checkpoint.
      * Creates or updates the checkpoint as needed.
-     * Applies FIFO eviction to processedUris if over MAX_PROCESSED_URIS.
+     * Applies FIFO eviction to processedMessageIds if over MAX_PROCESSED_URIS.
      *
      * @param checkpoint - The checkpoint data to save
      * @param exists - Whether the checkpoint already exists in the backend (skips a redundant backend.get)
@@ -232,7 +232,7 @@ export class BskyCheckpointManager {
     async saveDmCheckpoint(checkpoint: BskyDmCheckpoint, exists: boolean): Promise<void> {
         const path = this.getDmCheckpointPath();
 
-        const bounded = { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) };
+        const bounded = { ...checkpoint, processedMessageIds: checkpoint.processedMessageIds.slice(-MAX_PROCESSED_URIS) };
 
         await this.saveCheckpoint(path, bounded, exists);
     }
@@ -240,7 +240,7 @@ export class BskyCheckpointManager {
     /**
      * Processes a batch of fetched conversations in a single DynamoDB round-trip.
      * Loads the checkpoint once, filters conversations whose lastMessage is new, updates
-     * processedUris, and saves. Does NOT call any Bluesky API — that is left to the caller.
+     * processedMessageIds, and saves. Does NOT call any Bluesky API — that is left to the caller.
      *
      * Dedupe is per-message (`lastMessage.id`), not per-conversation: a new message arriving in
      * an already-processed conversation raises the conversation again rather than being
@@ -260,7 +260,7 @@ export class BskyCheckpointManager {
     async processDirectMessages(convos: BskyConversation[]): Promise<{ newConvos: (BskyConversation & { lastMessage: NonNullable<BskyConversation['lastMessage']> })[], totalFetched: number, lastSeenSentAt: string | undefined, hadExistingCheckpoint: boolean }> {
         const checkpoint            = await this.loadDmCheckpoint();
         const hadExistingCheckpoint = !!checkpoint;
-        const processedSet          = new Set(checkpoint?.processedUris);
+        const processedSet          = new Set(checkpoint?.processedMessageIds);
         const totalFetched          = convos.length;
 
         // Candidates: unread conversations that actually carry a lastMessage — a convo with no
@@ -281,18 +281,18 @@ export class BskyCheckpointManager {
             ? candidateSentAts.toSorted((a, b) => a.localeCompare(b)).at(-1)
             : checkpoint?.lastSeenSentAt;
 
-        // Build deduplicated processedUris (lastMessage.id values)
-        const updatedUris = [...new Set([...(checkpoint?.processedUris ?? []), ...candidates.map(c => c.lastMessage.id)])];
+        // Build deduplicated processed lastMessage IDs.
+        const updatedMessageIds = [...new Set([...(checkpoint?.processedMessageIds ?? []), ...candidates.map(c => c.lastMessage.id)])];
 
         // Stryker disable next-line llm: Array.length is a non-negative integer, so > 0 and >= 1 are equivalent.
         if(newConvos.length > 0 || lastSeenSentAt !== checkpoint?.lastSeenSentAt) {
             const now = new Date().toISOString();
             await this.saveDmCheckpoint({
-                service:       'bsky',
-                type:          'dm',
+                service:             'bsky',
+                type:                'dm',
                 lastSeenSentAt,
-                processedUris: updatedUris,
-                updatedAt:     now,
+                processedMessageIds: updatedMessageIds,
+                updatedAt:           now,
             }, hadExistingCheckpoint);
         }
 
@@ -300,16 +300,16 @@ export class BskyCheckpointManager {
     }
 
     /**
-     * Removes the given `lastMessage.id` values from the DM checkpoint's `processedUris`, so a
-     * batch already marked processed by {@link processDirectMessages} is treated as new again on
-     * the next tick. Used by `bsky-dm-poller.ts` when `notify()` returns `false` (the conductor
-     * is not yet open) — the checkpoint was already advanced before delivery was attempted, so
-     * without this the batch would be silently and permanently lost rather than retried (review
-     * finding).
+     * Removes the given `lastMessage.id` values from the DM checkpoint's `processedMessageIds`,
+     * so a batch already marked processed by {@link processDirectMessages} is treated as new
+     * again on the next tick. Used by `bsky-dm-poller.ts` when `notify()` returns `false` (the
+     * conductor is not yet open) — the checkpoint was already advanced before delivery was
+     * attempted, so without this the batch would be silently and permanently lost rather than
+     * retried (review finding).
      *
      * No-op (no save) when there is no checkpoint, or none of `ids` are present.
      *
-     * @param ids - `lastMessage.id` values to remove from `processedUris`
+     * @param ids - `lastMessage.id` values to remove from `processedMessageIds`
      */
     async unprocessDirectMessages(ids: string[]): Promise<void> {
         const checkpoint = await this.loadDmCheckpoint();
@@ -318,11 +318,11 @@ export class BskyCheckpointManager {
         }
 
         const idSet     = new Set(ids);
-        const remaining = checkpoint.processedUris.filter(uri => !idSet.has(uri));
-        if(remaining.length === checkpoint.processedUris.length) {
+        const remaining = checkpoint.processedMessageIds.filter(id => !idSet.has(id));
+        if(remaining.length === checkpoint.processedMessageIds.length) {
             return;
         }
 
-        await this.saveDmCheckpoint({ ...checkpoint, processedUris: remaining, updatedAt: new Date().toISOString() }, true);
+        await this.saveDmCheckpoint({ ...checkpoint, processedMessageIds: remaining, updatedAt: new Date().toISOString() }, true);
     }
 }

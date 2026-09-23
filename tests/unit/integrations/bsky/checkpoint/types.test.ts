@@ -125,11 +125,11 @@ describe('bskyNotificationCheckpointSchema', () => {
 
 describe('bskyDmCheckpointSchema', () => {
     const VALID_DM_CHECKPOINT = {
-        service:        'bsky',
-        type:           'dm',
-        lastSeenSentAt: '2026-03-07T12:00:00.000Z',
-        processedUris:  ['3juj3x2qmuf2z'],
-        updatedAt:      '2026-03-07T12:00:01.000Z',
+        service:             'bsky',
+        type:                'dm',
+        lastSeenSentAt:      '2026-03-07T12:00:00.000Z',
+        processedMessageIds: ['3juj3x2qmuf2z'],
+        updatedAt:           '2026-03-07T12:00:01.000Z',
     };
 
     test('accepts valid dm checkpoint', () => {
@@ -143,12 +143,31 @@ describe('bskyDmCheckpointSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    test('accepts dm checkpoint with empty processedUris', () => {
+    test('accepts dm checkpoint with empty processedMessageIds', () => {
         const result = bskyDmCheckpointSchema.safeParse({
             ...VALID_DM_CHECKPOINT,
-            processedUris: [],
+            processedMessageIds: [],
         });
         expect(result.success).toBe(true);
+    });
+
+    test('decodes legacy processedUris into canonical processedMessageIds', () => {
+        const { processedMessageIds: _, ...legacy } = VALID_DM_CHECKPOINT;
+        const result = bskyDmCheckpointSchema.safeParse({ ...legacy, processedUris: ['legacy-id'] });
+        expect(result).toMatchObject({ success: true, data: { processedMessageIds: ['legacy-id'] } });
+        if(result.success) {
+            expect(result.data).not.toHaveProperty('processedUris');
+        }
+    });
+
+    test('prefers canonical processedMessageIds when both persisted fields occur', () => {
+        const result = bskyDmCheckpointSchema.safeParse({ ...VALID_DM_CHECKPOINT, processedUris: ['legacy-id'] });
+        expect(result).toMatchObject({ success: true, data: { processedMessageIds: ['3juj3x2qmuf2z'] } });
+    });
+
+    test('rejects dm checkpoint without either processed-message field', () => {
+        const { processedMessageIds: _, ...missing } = VALID_DM_CHECKPOINT;
+        expect(bskyDmCheckpointSchema.safeParse(missing).success).toBe(false);
     });
 
     test('rejects wrong service literal', () => {

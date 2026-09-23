@@ -44,11 +44,11 @@ const NOTIF_CHECKPOINT: BskyNotificationCheckpoint = {
 };
 
 const DM_CHECKPOINT: BskyDmCheckpoint = {
-    service:        'bsky',
-    type:           'dm',
-    lastSeenSentAt: '2026-03-07T12:00:00.000Z',
-    processedUris:  ['msg-existing'],
-    updatedAt:      '2026-03-07T12:00:01.000Z',
+    service:             'bsky',
+    type:                'dm',
+    lastSeenSentAt:      '2026-03-07T12:00:00.000Z',
+    processedMessageIds: ['msg-existing'],
+    updatedAt:           '2026-03-07T12:00:01.000Z',
 };
 
 describe.concurrent('BskyCheckpointManager', () => {
@@ -538,26 +538,27 @@ describe.concurrent('BskyCheckpointManager', () => {
             expect(updateCall[1]).toEqual({ content: JSON.stringify(DM_CHECKPOINT) });
         });
 
-        test('applies FIFO eviction when processedUris exceeds MAX_PROCESSED_URIS', async () => {
-            const uris = Array.from({ length: MAX_PROCESSED_URIS + 100 }, (_, i) => `msg-${i}`);
-            const checkpoint: BskyDmCheckpoint = { ...DM_CHECKPOINT, processedUris: uris };
+        test('applies FIFO eviction when processedMessageIds exceeds MAX_PROCESSED_URIS', async () => {
+            const ids = Array.from({ length: MAX_PROCESSED_URIS + 100 }, (_, i) => `msg-${i}`);
+            const checkpoint: BskyDmCheckpoint = { ...DM_CHECKPOINT, processedMessageIds: ids };
             await manager.saveDmCheckpoint(checkpoint, false);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0][0] as { content: string };
-            const savedContent = JSON.parse(createCall.content) as { processedUris: string[] };
-            expect(savedContent.processedUris).toHaveLength(MAX_PROCESSED_URIS);
-            expect(savedContent.processedUris[0]).toBe('msg-100');
+            const savedContent = JSON.parse(createCall.content) as { processedMessageIds: string[] };
+            expect(savedContent.processedMessageIds).toHaveLength(MAX_PROCESSED_URIS);
+            expect(savedContent.processedMessageIds[0]).toBe('msg-100');
+            expect(savedContent).not.toHaveProperty('processedUris');
         });
 
-        test('does not evict when processedUris is exactly at MAX_PROCESSED_URIS', async () => {
-            const uris       = Array.from({ length: MAX_PROCESSED_URIS }, (_, i) => `msg-${i}`);
-            const checkpoint = { ...DM_CHECKPOINT, processedUris: uris };
+        test('does not evict when processedMessageIds is exactly at MAX_PROCESSED_URIS', async () => {
+            const ids        = Array.from({ length: MAX_PROCESSED_URIS }, (_, i) => `msg-${i}`);
+            const checkpoint = { ...DM_CHECKPOINT, processedMessageIds: ids };
             await manager.saveDmCheckpoint(checkpoint, false);
 
             const createCall   = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0][0] as { content: string };
-            const savedContent = JSON.parse(createCall.content) as { processedUris: string[] };
-            expect(savedContent.processedUris).toHaveLength(MAX_PROCESSED_URIS);
-            expect(savedContent.processedUris[0]).toBe('msg-0');
+            const savedContent = JSON.parse(createCall.content) as { processedMessageIds: string[] };
+            expect(savedContent.processedMessageIds).toHaveLength(MAX_PROCESSED_URIS);
+            expect(savedContent.processedMessageIds[0]).toBe('msg-0');
         });
 
         test('uses correct memory path', async () => {
@@ -614,13 +615,15 @@ describe.concurrent('BskyCheckpointManager', () => {
             expect(result.newConvos[0].id).toBe('convo-1');
             expect(result.totalFetched).toBe(1);
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0][0] as { content: string };
-            expect((JSON.parse(createCall.content) as BskyDmCheckpoint).processedUris).toEqual(['msg-1']);
+            const saved = JSON.parse(createCall.content) as BskyDmCheckpoint;
+            expect(saved.processedMessageIds).toEqual(['msg-1']);
+            expect(saved).not.toHaveProperty('processedUris');
         });
 
         test('a second poll with no activity returns nothing', async () => {
             mockBackend.get = mock(async () => makeItem(JSON.stringify({
                 ...DM_CHECKPOINT,
-                processedUris: ['msg-1'],
+                processedMessageIds: ['msg-1'],
             })));
             const convos = [makeConvo('convo-1', { lastMessageId: 'msg-1' })];
             const result = await manager.processDirectMessages(convos);
@@ -687,15 +690,16 @@ describe.concurrent('BskyCheckpointManager', () => {
             expect(result.lastSeenSentAt).toBeUndefined();
         });
 
-        test('saves checkpoint with processedUris accumulated from existing', async () => {
+        test('saves checkpoint with processedMessageIds accumulated from existing', async () => {
             mockBackend.get = mock(async () => makeItem(JSON.stringify(DM_CHECKPOINT)));
             const convos = [makeConvo('convo-1', { lastMessageId: 'msg-new' })];
             await manager.processDirectMessages(convos);
 
             const updateCall = (mockBackend.update as ReturnType<typeof mock>).mock.calls[0] as [string, { content: string }];
-            const saved = JSON.parse(updateCall[1].content) as { processedUris: string[] };
-            expect(saved.processedUris).toContain('msg-existing');
-            expect(saved.processedUris).toContain('msg-new');
+            const saved = JSON.parse(updateCall[1].content) as { processedMessageIds: string[] };
+            expect(saved.processedMessageIds).toContain('msg-existing');
+            expect(saved.processedMessageIds).toContain('msg-new');
+            expect(saved).not.toHaveProperty('processedUris');
         });
 
         test('stamps a fresh updatedAt over the stored checkpoint updatedAt', async () => {
@@ -711,15 +715,15 @@ describe.concurrent('BskyCheckpointManager', () => {
 
         test('processed message ids FIFO-evict at MAX_PROCESSED_URIS', async () => {
             const uris = Array.from({ length: MAX_PROCESSED_URIS }, (_, i) => `msg-${i}`);
-            mockBackend.get = mock(async () => makeItem(JSON.stringify({ ...DM_CHECKPOINT, processedUris: uris })));
+            mockBackend.get = mock(async () => makeItem(JSON.stringify({ ...DM_CHECKPOINT, processedMessageIds: uris })));
             const convos = [makeConvo('convo-new', { lastMessageId: 'msg-brand-new' })];
             await manager.processDirectMessages(convos);
 
             const updateCall = (mockBackend.update as ReturnType<typeof mock>).mock.calls[0] as [string, { content: string }];
-            const saved = JSON.parse(updateCall[1].content) as { processedUris: string[] };
-            expect(saved.processedUris).toHaveLength(MAX_PROCESSED_URIS);
-            expect(saved.processedUris).not.toContain('msg-0');
-            expect(saved.processedUris).toContain('msg-brand-new');
+            const saved = JSON.parse(updateCall[1].content) as { processedMessageIds: string[] };
+            expect(saved.processedMessageIds).toHaveLength(MAX_PROCESSED_URIS);
+            expect(saved.processedMessageIds).not.toContain('msg-0');
+            expect(saved.processedMessageIds).toContain('msg-brand-new');
         });
 
         test('returns hadExistingCheckpoint=false when no checkpoint exists', async () => {
@@ -751,8 +755,8 @@ describe.concurrent('BskyCheckpointManager', () => {
         test('skips the save when a candidate is already processed and lastSeenSentAt is unchanged', async () => {
             mockBackend.get = mock(async () => makeItem(JSON.stringify({
                 ...DM_CHECKPOINT,
-                processedUris:  ['msg-1'],
-                lastSeenSentAt: NOW,
+                processedMessageIds: ['msg-1'],
+                lastSeenSentAt:      NOW,
             })));
             const convos = [makeConvo('convo-1', { lastMessageId: 'msg-1', sentAt: NOW })];
             const result = await manager.processDirectMessages(convos);
@@ -764,8 +768,8 @@ describe.concurrent('BskyCheckpointManager', () => {
         test('still saves when lastSeenSentAt advances even with zero new convos', async () => {
             mockBackend.get = mock(async () => makeItem(JSON.stringify({
                 ...DM_CHECKPOINT,
-                processedUris:  ['msg-1'],
-                lastSeenSentAt: '2020-01-01T00:00:00.000Z',
+                processedMessageIds: ['msg-1'],
+                lastSeenSentAt:      '2020-01-01T00:00:00.000Z',
             })));
             const convos = [makeConvo('convo-1', { lastMessageId: 'msg-1', sentAt: NOW })];
             await manager.processDirectMessages(convos);
@@ -779,23 +783,23 @@ describe.concurrent('BskyCheckpointManager', () => {
     // -----------------------------------------------------------------------
 
     describe('unprocessDirectMessages()', () => {
-        test('removes the given ids from processedUris and saves', async () => {
+        test('removes the given ids from processedMessageIds and saves', async () => {
             mockBackend.get = mock(async () => makeItem(JSON.stringify({
                 ...DM_CHECKPOINT,
-                processedUris: ['a', 'b', 'c'],
+                processedMessageIds: ['a', 'b', 'c'],
             })));
 
             await manager.unprocessDirectMessages(['b']);
 
             const updateCall = (mockBackend.update as ReturnType<typeof mock>).mock.calls[0] as [string, { content: string }];
-            const saved = JSON.parse(updateCall[1].content) as { processedUris: string[] };
-            expect(saved.processedUris).toEqual(['a', 'c']);
+            const saved = JSON.parse(updateCall[1].content) as { processedMessageIds: string[] };
+            expect(saved.processedMessageIds).toEqual(['a', 'c']);
         });
 
         test('stamps a fresh updatedAt over the stored checkpoint updatedAt', async () => {
             mockBackend.get = mock(async () => makeItem(JSON.stringify({
                 ...DM_CHECKPOINT,
-                processedUris: ['a', 'b', 'c'],
+                processedMessageIds: ['a', 'b', 'c'],
             })));
 
             await manager.unprocessDirectMessages(['b']);
@@ -815,7 +819,7 @@ describe.concurrent('BskyCheckpointManager', () => {
         test('is a no-op when none of the ids are present in processedUris', async () => {
             mockBackend.get = mock(async () => makeItem(JSON.stringify({
                 ...DM_CHECKPOINT,
-                processedUris: ['a', 'b'],
+                processedMessageIds: ['a', 'b'],
             })));
 
             await manager.unprocessDirectMessages(['z']);
@@ -907,7 +911,7 @@ describe.concurrent('BskyCheckpointManager', () => {
         });
 
         test('unprocessDirectMessages waits for the updated checkpoint to persist', async () => {
-            mockBackend.get = mock(async () => makeItem(JSON.stringify({ ...DM_CHECKPOINT, processedUris: ['keep', 'remove'] })));
+            mockBackend.get = mock(async () => makeItem(JSON.stringify({ ...DM_CHECKPOINT, processedMessageIds: ['keep', 'remove'] })));
             expect(await isPendingUntilWrite('update', () => manager.unprocessDirectMessages(['remove']))).toBeTrue();
         });
     });

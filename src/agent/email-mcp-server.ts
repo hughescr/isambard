@@ -12,7 +12,7 @@ import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthG
 import { EmailFolder } from '@/config';
 import { EmailProcessingError } from '@/errors';
 // eslint-disable-next-line boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { searchDraftsByReviewState, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta } from '@/integrations/email';
+import { draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatMailboxMessageRef, mailboxMessageRefSchema, searchDraftsByReviewState, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
@@ -26,34 +26,22 @@ function formatAddressForDisplay(addr: { name?: string, address: string }): stri
     return addr.name ? `${addr.name} <${addr.address}>` : addr.address;
 }
 
-// Regex for Mailbox:UID format — e.g., "CleanInbox:42", "Sent Mail:7", "INBOX.Sub:15"
-// Allows any non-empty mailbox name (including spaces, dots, slashes) followed by colon and digits.
-const MAILBOX_UID_REGEX = /^.+:\d+$/;
+/** Mailboxes accessible directly by the agent without admin review. */
+const ACCESSIBLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive]);
 
-// Regex for Drafts:UID format — used for draft management tools
-const DRAFTS_UID_REGEX = /^Drafts:\d+$/;
+/** Mailboxes readable by getEmailContent (also includes Drafts and Sent Mail). */
+const READABLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive, EmailFolder.Drafts, EmailFolder.Sent]);
 
-/**
- * Mailboxes accessible directly by the agent without admin review.
- */
-const ACCESSIBLE_MAILBOXES: ReadonlySet<string> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive]);
+function isEmailFolder(folder: string): folder is EmailFolder {
+    return Object.values(EmailFolder).includes(folder as EmailFolder);
+}
 
-/**
- * Mailboxes readable by getEmailContent (superset of ACCESSIBLE_MAILBOXES: also includes Drafts and Sent Mail).
- */
-const READABLE_MAILBOXES: ReadonlySet<string> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive, EmailFolder.Drafts, EmailFolder.Sent]);
+function hasAccessibleMailbox(folder: string): boolean {
+    return isEmailFolder(folder) && ACCESSIBLE_MAILBOXES.has(folder);
+}
 
-/**
- * Parse a Mailbox:UID string into its mailbox name and numeric UID.
- * Assumes the string has already been validated against MAILBOX_UID_REGEX.
- */
-function parseMailboxUid(message: string): { mailboxName: string, uid: number } {
-    // Stryker disable next-line llm: a one-character needle cannot match beyond length - 1, so the explicit fromIndex is equivalent.
-    const colonIdx = message.lastIndexOf(':');
-    const mailboxName = message.slice(0, colonIdx);
-    // Stryker disable next-line llm, NumberLiteralValue: the validated digit-only suffix makes parseFloat, global parseInt, trim, and radix 0 equivalent here.
-    const uid = Number.parseInt(message.slice(colonIdx + 1), 10);
-    return { mailboxName, uid };
+function hasReadableMailbox(folder: string): boolean {
+    return isEmailFolder(folder) && READABLE_MAILBOXES.has(folder);
 }
 
 /** Reply-all always goes through admin review, including its Cc recipients. */
@@ -70,11 +58,7 @@ function replyApprovalOptions(
     };
 }
 
-export interface RestrictedMailboxNotification {
-    mailboxName: string
-    uid:         number
-    reference:   string
-}
+export type RestrictedMailboxNotification = MailboxMessageRef;
 
 interface EmailMCPServerOptions {
     /** Optional callback to send an admin notification (e.g., Discord channel message) */
@@ -306,13 +290,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
     }
 
     /**
-     * Load addresses and resolve the from address for the given identity.
+     * Load addresses and resolve the from address for the given sender profile.
      * Returns `{ ok: true, from }` on success, or `{ ok: false, error }` if no address is configured.
      */
-    async function resolveFromAddress(identity: 'formal' | 'informal'): Promise<{ ok: true, from: { address: string, name?: string } } | { ok: false, error: CallToolResult }> {
+    async function resolveFromAddress(senderProfile: EmailSenderProfile): Promise<{ ok: true, from: { address: string, name?: string } } | { ok: false, error: CallToolResult }> {
         await loadAddresses();
-        // Stryker disable next-line llm: identity is the exhaustive formal/informal union, so the inverted ternary selects the same address.
-        const from = identity === 'informal' ? informalAddress : formalAddress;
+        // Stryker disable next-line llm: senderProfile is the exhaustive formal/informal union, so the inverted ternary selects the same address.
+        const from = senderProfile === 'informal' ? informalAddress : formalAddress;
         if(!from) {
             return {
                 ok:    false,
@@ -412,43 +396,43 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 'getEmailContent',
                 'Fetch the full content of an email by UID. Marks the email as read.',
                 {
-                    message: z.string().regex(MAILBOX_UID_REGEX, 'Must be in MailboxName:UID format (e.g., CleanInbox:42)').describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
+                    message: mailboxMessageRefSchema.describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
                 },
 
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
                     withToolErrorHandling('getEmailContent',
 
                         async (args): Promise<CallToolResult> => {
-                            const { mailboxName, uid } = parseMailboxUid(args.message);
+                            const { folder, uid } = args.message;
 
                             // Access control: CleanInbox, Archive, Drafts, and Sent Mail are directly readable
-                            if(!READABLE_MAILBOXES.has(mailboxName)) {
+                            if(!hasReadableMailbox(folder)) {
                                 // Send admin notification (fire-and-forget)
                                 if(sendAdminNotification) {
                                     try {
-                                        await sendAdminNotification({ mailboxName, uid, reference: args.message });
+                                        await sendAdminNotification(args.message);
                                     } catch (error) {
                                         logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send restricted mailbox notification' });
                                     }
                                 }
                                 return {
-                                    content: [{ type: 'text' as const, text: `Access to ${mailboxName} requires admin review. A notification has been sent to #admin.` }],
+                                    content: [{ type: 'text' as const, text: `Access to ${folder} requires admin review. A notification has been sent to #admin.` }],
                                     isError: true,
                                 };
                             }
 
-                            const email = await wildDuckClient.getFullMessage(mailboxName, uid);
+                            const email = await wildDuckClient.getFullMessage(folder, uid);
                             if(!email) {
                                 return {
-                                    content: [{ type: 'text' as const, text: `Email ${args.message} not found.` }],
+                                    content: [{ type: 'text' as const, text: `Email ${formatMailboxMessageRef(args.message)} not found.` }],
                                     isError: true,
                                 };
                             }
-                            await wildDuckClient.updateMessageFlags(mailboxName, uid, { addFlags: [String.raw`\Seen`] });
+                            await wildDuckClient.updateMessageFlags(folder, uid, { addFlags: [String.raw`\Seen`] });
 
                             // Lazy-fetch and save attachments using WildDuck's mailbox and UID identity.
                             // Stryker disable next-line llm: getFullMessage normalizes attachmentMeta to an array, which is always truthy.
-                            const attachmentLines = await saveEmailAttachments(wildDuckClient, mailboxName, uid, email.attachmentMeta);
+                            const attachmentLines = await saveEmailAttachments(wildDuckClient, folder, uid, email.attachmentMeta);
 
                             const toList = email.to.map(addr => formatAddressForDisplay(addr)).join(', ');
                             const lines = ([
@@ -471,21 +455,21 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 'archiveEmail',
                 'Move an email from CleanInbox to Archive.',
                 {
-                    message: z.string().regex(MAILBOX_UID_REGEX, 'Must be in MailboxName:UID format (e.g., CleanInbox:42)').describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
+                    message: mailboxMessageRefSchema.describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
                 },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
                     withToolErrorHandling('archiveEmail', async (args): Promise<CallToolResult> => {
-                        const { mailboxName, uid } = parseMailboxUid(args.message);
+                        const { folder, uid } = args.message;
 
                         // Access control: only CleanInbox and Archive are directly accessible
-                        if(!ACCESSIBLE_MAILBOXES.has(mailboxName)) {
+                        if(!hasAccessibleMailbox(folder)) {
                             return {
-                                content: [{ type: 'text' as const, text: `Access denied: cannot archive messages in ${mailboxName}. Restricted mailboxes require admin review.` }],
+                                content: [{ type: 'text' as const, text: `Access denied: cannot archive messages in ${folder}. Restricted mailboxes require admin review.` }],
                                 isError: true,
                             };
                         }
 
-                        await wildDuckClient.moveMessage(mailboxName, uid, EmailFolder.Archive);
+                        await wildDuckClient.moveMessage(folder, uid, EmailFolder.Archive);
                         return mcpTextResult(`Email UID ${uid} archived successfully.`);
                     })),
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
@@ -561,15 +545,15 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 {
                     to: z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)])
                         .describe('Recipient email: plain address string or {name, email_address} object, or array of either'),
-                    subject:     z.string().describe('Email subject'),
-                    body:        z.string().describe('Email body text'),
-                    identity:    z.enum(['formal', 'informal']).default('formal').describe('From identity: formal or informal'),
-                    attachments: z.array(z.string()).optional().describe('File paths to attach'),
+                    subject:       z.string().describe('Email subject'),
+                    body:          z.string().describe('Email body text'),
+                    senderProfile: emailSenderProfileSchema.default('formal').describe('Sender profile for the From address: formal or informal'),
+                    attachments:   z.array(z.string()).optional().describe('File paths to attach'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
                     withToolErrorHandling('sendEmail', async (args): Promise<CallToolResult> => {
-                        // Resolve from address based on identity (loads addresses lazily)
-                        const fromResult = await resolveFromAddress(args.identity);
+                        // Resolve from address based on sender profile (loads addresses lazily)
+                        const fromResult = await resolveFromAddress(args.senderProfile);
                         if(!fromResult.ok) {
                             return fromResult.error;
                         }
@@ -615,38 +599,38 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 'replyToEmail',
                 'Reply to an existing email. If recipient is on the allowlist, sends immediately. Otherwise, saves to Drafts for admin approval.',
                 {
-                    message:     z.string().regex(MAILBOX_UID_REGEX, 'Must be in MailboxName:UID format (e.g., CleanInbox:42)').describe('The email reference in Mailbox:UID format to reply to'),
-                    body:        z.string().describe('Reply body text'),
-                    mode:        z.enum(['reply', 'replyAll']).describe('Reply mode: reply to sender only, or reply-all'),
-                    identity:    z.enum(['formal', 'informal']).default('formal').describe('From identity: formal or informal'),
-                    attachments: z.array(z.string()).optional().describe('File paths to attach'),
+                    message:       mailboxMessageRefSchema.describe('The email reference in Mailbox:UID format to reply to'),
+                    body:          z.string().describe('Reply body text'),
+                    mode:          z.enum(['reply', 'replyAll']).describe('Reply mode: reply to sender only, or reply-all'),
+                    senderProfile: emailSenderProfileSchema.default('formal').describe('Sender profile for the From address: formal or informal'),
+                    attachments:   z.array(z.string()).optional().describe('File paths to attach'),
                 },
 
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
                     withToolErrorHandling('replyToEmail',
                         async (args): Promise<CallToolResult> => {
-                        // Resolve from address based on identity (loads addresses lazily)
-                            const fromResult = await resolveFromAddress(args.identity);
+                        // Resolve from address based on sender profile (loads addresses lazily)
+                            const fromResult = await resolveFromAddress(args.senderProfile);
                             if(!fromResult.ok) {
                                 return fromResult.error;
                             }
                             const from = fromResult.from;
 
-                            const { mailboxName, uid: originalUid } = parseMailboxUid(args.message);
+                            const { folder, uid: originalUid } = args.message;
 
                             // Access control: only CleanInbox and Archive are directly accessible
-                            if(!ACCESSIBLE_MAILBOXES.has(mailboxName)) {
+                            if(!hasAccessibleMailbox(folder)) {
                                 return {
-                                    content: [{ type: 'text' as const, text: `Access denied: cannot reply to messages in ${mailboxName}. Restricted mailboxes require admin review.` }],
+                                    content: [{ type: 'text' as const, text: `Access denied: cannot reply to messages in ${folder}. Restricted mailboxes require admin review.` }],
                                     isError: true,
                                 };
                             }
 
                             // Fetch original message from WildDuck to get pre-parsed sender address fields
-                            const original = await wildDuckClient.getMessage(mailboxName, originalUid);
+                            const original = await wildDuckClient.getMessage(folder, originalUid);
                             if(!original) {
                                 return {
-                                    content: [{ type: 'text' as const, text: `Cannot reply: message '${args.message}' not found.` }],
+                                    content: [{ type: 'text' as const, text: `Cannot reply: message '${formatMailboxMessageRef(args.message)}' not found.` }],
                                     isError: true,
                                 };
                             }
@@ -659,10 +643,10 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             const rateLimitWarning = buildRateLimitWarning();
 
                             // Resolve WildDuck mailbox ID for the reference object
-                            const mailboxWildDuckId = wildDuckClient.getMailboxId(mailboxName);
+                            const mailboxWildDuckId = wildDuckClient.getMailboxId(folder);
                             if(!mailboxWildDuckId) {
                                 return {
-                                    content: [{ type: 'text' as const, text: `Cannot reply: mailbox '${mailboxName}' not found in WildDuck. Reconnect or try again.` }],
+                                    content: [{ type: 'text' as const, text: `Cannot reply: mailbox '${folder}' not found in WildDuck. Reconnect or try again.` }],
                                     isError: true,
                                 };
                             }
@@ -697,13 +681,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 'deleteDraft',
                 'Delete a draft email. Only drafts in the Drafts folder can be deleted this way.',
                 {
-                    message: z.string().regex(DRAFTS_UID_REGEX, 'Must be in Drafts:UID format (e.g., Drafts:42)').describe('The draft to delete, in Drafts:UID format'),
+                    message: draftsMailboxMessageRefSchema.describe('The draft to delete, in Drafts:UID format'),
                 },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
                     withToolErrorHandling('deleteDraft', async (args): Promise<CallToolResult> => {
-                        const { uid } = parseMailboxUid(args.message);
+                        const { uid } = args.message;
                         await wildDuckClient.deleteMessage(EmailFolder.Drafts, uid);
-                        return mcpTextResult(`Draft ${args.message} deleted.`);
+                        return mcpTextResult(`Draft ${formatMailboxMessageRef(args.message)} deleted.`);
                     })),
                 { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } }
             ),
@@ -712,29 +696,29 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 'amendAndResubmitDraft',
                 'Amend a rejected draft email and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it (replacing the old draft atomically). A new approval request will be posted to the admin channel.',
                 {
-                    message:  z.string().regex(DRAFTS_UID_REGEX, 'Must be in Drafts:UID format (e.g., Drafts:42)').describe('The rejected draft to amend, in Drafts:UID format'),
-                    subject:  z.string().optional().describe('New subject line (leave blank to keep original)'),
-                    body:     z.string().optional().describe('New plain text body (leave blank to keep original)'),
-                    to:       z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)]).optional().describe('New To address(es) (leave blank to keep original)'),
-                    identity: z.enum(['formal', 'informal']).optional().describe('Email identity to use (leave blank to keep original)'),
+                    message:       draftsMailboxMessageRefSchema.describe('The rejected draft to amend, in Drafts:UID format'),
+                    subject:       z.string().optional().describe('New subject line (leave blank to keep original)'),
+                    body:          z.string().optional().describe('New plain text body (leave blank to keep original)'),
+                    to:            z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)]).optional().describe('New To address(es) (leave blank to keep original)'),
+                    senderProfile: emailSenderProfileSchema.optional().describe('Sender profile for the From address: formal or informal'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
                     withToolErrorHandling('amendAndResubmitDraft', async (args): Promise<CallToolResult> => {
-                        // Resolve from address based on identity (loads addresses lazily)
-                        const fromResult = await resolveFromAddress(args.identity ?? 'formal');
+                        // Resolve from address based on sender profile (loads addresses lazily)
+                        const fromResult = await resolveFromAddress(args.senderProfile ?? 'formal');
                         if(!fromResult.ok) {
                             return fromResult.error;
                         }
                         const from = fromResult.from;
 
-                        // Parse UID from 'Drafts:42'
-                        const { uid } = parseMailboxUid(args.message);
+                        // Drafts-only schema has already decoded the message UID.
+                        const { uid } = args.message;
 
                         // Fetch original draft
                         const original = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
                         if(!original) {
                             return {
-                                content: [{ type: 'text' as const, text: `Draft ${args.message} not found.` }],
+                                content: [{ type: 'text' as const, text: `Draft ${formatMailboxMessageRef(args.message)} not found.` }],
                                 isError: true,
                             };
                         }

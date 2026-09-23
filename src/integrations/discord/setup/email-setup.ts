@@ -18,6 +18,7 @@ import {
     buildUnsafeAlert,
     buildRestrictedAccessEmbed,
     EmailFolder,
+    formatMailboxMessageRef,
     WildDuckClient,
     OutboundApprovalHandler,
     type ProcessEmailCallbacks
@@ -350,8 +351,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // see EmailSetupResult.createEmailMcpServerInstance — from the exact same closed-over
     // dependencies; emailMcpServer below is simply the first invocation.
     const createEmailMcpServerInstance = (): McpServerConfig => createEmailMCPServer({
-        sendAdminNotification: async ({ mailboxName, uid, reference }) => {
-            const { embed, actionRow } = buildRestrictedAccessEmbed(mailboxName, uid, reference);
+        sendAdminNotification: async (reference) => {
+            const { embed, actionRow } = buildRestrictedAccessEmbed(reference.folder, reference.uid, formatMailboxMessageRef(reference));
             await sendToAdminChannel(
                 client,
                 emailConfig.adminDiscordChannelId,

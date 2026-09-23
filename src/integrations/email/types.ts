@@ -30,13 +30,52 @@ export const classifierVerdictSchema = z.discriminatedUnion('verdict', [
 ]);
 export type ClassifierVerdict = z.infer<typeof classifierVerdictSchema>;
 
-// Email identity mode for From header
-export const EmailIdentity = {
-    Formal:   'formal',
-    Informal: 'informal',
-} as const;
-// eslint-disable-next-line @typescript-eslint/no-redeclare -- intentional const+type enum pattern
-export type EmailIdentity = typeof EmailIdentity[keyof typeof EmailIdentity];
+/** Sender profile selecting the From address for email tools. */
+export const emailSenderProfileSchema = z.enum(['formal', 'informal']);
+export type EmailSenderProfile = z.infer<typeof emailSenderProfileSchema>;
+
+/** A WildDuck mailbox-folder and positive numeric message UID. */
+export interface MailboxMessageRef {
+    folder: string
+    uid:    number
+}
+
+/** Parses a formatted WildDuck `Folder:uid` message reference. */
+export function parseMailboxMessageRef(raw: string): MailboxMessageRef | undefined {
+    const delimiter = raw.lastIndexOf(':');
+    if(delimiter <= 0) {
+        return undefined;
+    }
+
+    const folder = raw.slice(0, delimiter);
+    const uid    = Number(raw.slice(delimiter + 1));
+    if(!folder || /[\r\n]/.test(folder) || !Number.isSafeInteger(uid) || uid <= 0) {
+        return undefined;
+    }
+
+    return { folder, uid };
+}
+
+/** Formats a mailbox message reference for WildDuck's string wire format. */
+export function formatMailboxMessageRef(ref: MailboxMessageRef): string {
+    return `${ref.folder}:${ref.uid}`;
+}
+
+/** Decodes a valid formatted WildDuck mailbox message reference into its parts. */
+export const mailboxMessageRefSchema = z.string().transform((raw, context): MailboxMessageRef => {
+    const reference = parseMailboxMessageRef(raw);
+    if(reference) {
+        return reference;
+    }
+    context.addIssue({ code: 'custom', message: 'Must be in Folder:UID format with a positive safe integer UID' });
+    return z.NEVER;
+});
+
+/** Decodes a Drafts-only formatted mailbox message reference. */
+export const draftsMailboxMessageRefSchema = mailboxMessageRefSchema.refine(
+    reference => reference.folder === 'Drafts',
+    'Must be in Drafts:UID format (e.g., Drafts:42)'
+);
 
 // Fetched email attachment data
 export interface AttachmentData {

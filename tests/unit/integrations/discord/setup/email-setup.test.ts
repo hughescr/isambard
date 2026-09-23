@@ -87,13 +87,14 @@ const MINIMAL_EMAIL_CONFIG = {
 };
 
 interface RegisteredTool {
-    handler: (...args: unknown[]) => Promise<{ content: unknown[], isError?: boolean }>
+    handler:     (...args: unknown[]) => Promise<{ content: unknown[], isError?: boolean }>
+    inputSchema: { parseAsync: (args: unknown) => Promise<unknown> }
 }
 
-function getToolHandler(result: Awaited<ReturnType<typeof setupEmail>>, toolName: string): RegisteredTool['handler'] {
-    return ((result.emailMcpServer as unknown as { instance: { _registeredTools: Record<string, RegisteredTool> } }).instance
-        ._registeredTools[toolName]
-        .handler);
+function getToolHandler(result: Awaited<ReturnType<typeof setupEmail>>, toolName: string): (args: unknown) => Promise<{ content: unknown[], isError?: boolean }> {
+    const registered = (result.emailMcpServer as unknown as { instance: { _registeredTools: Record<string, RegisteredTool> } }).instance
+        ._registeredTools[toolName];
+    return async (args: unknown) => registered.handler(await registered.inputSchema.parseAsync(args));
 }
 
 describe('setupEmail — isSendableChannel type guard', () => {
@@ -399,7 +400,7 @@ describe('setupEmail — createEmailMcpServerInstance', () => {
         const result = await setupEmail(options);
 
         const response = await getToolHandler(result, 'sendEmail')({
-            to: 'recipient@example.com', subject: 'Rate limit', body: 'body', identity: 'formal',
+            to: 'recipient@example.com', subject: 'Rate limit', body: 'body', senderProfile: 'formal',
         });
 
         expect((response.content[0] as { text: string }).text).toBe('Sent successfully. Warning: send rate limit reached (0 tokens remaining).');

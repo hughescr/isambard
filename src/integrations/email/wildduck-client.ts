@@ -2,7 +2,7 @@ import { logger } from '@hughescr/logger';
 import { convert } from 'html-to-text';
 import { EmailFolder } from '@/config';
 import { WildDuckError, WildDuckAuthError } from '@/errors';
-import type { EmailMetadata, EmailAddress, EmailHeaders, VerificationResults } from '@/integrations/email/types';
+import { formatMailboxMessageRef, parseMailboxMessageRef, type EmailMetadata, type EmailAddress, type EmailHeaders, type VerificationResults } from '@/integrations/email/types';
 
 export { WildDuckError, WildDuckAuthError } from '@/errors';
 
@@ -350,13 +350,10 @@ export class WildDuckClient {
             query:   { keyword },
             mailbox: mailboxPath,
         });
-        const uids = results.map((result) => {
-            // Stryker disable next-line llm: lastIndexOf defaults to the final index, so spelling out length - 1 is equivalent.
-            const colonIdx = result.message.lastIndexOf(':');
-            // Stryker disable next-line llm, NumberLiteralValue: lastIndexOf cannot return below -1; parseInt aliases Number.parseInt; slice and substring agree here; either non-positive sentinel is filtered.
-            return colonIdx === -1 ? 0 : Number.parseInt(result.message.slice(colonIdx + 1), 10);
+        return results.flatMap((result) => {
+            const reference = parseMailboxMessageRef(result.message);
+            return reference ? [reference.uid] : [];
         });
-        return uids.filter(uid => uid > 0);
     }
 
     /**
@@ -610,7 +607,10 @@ export class WildDuckClient {
 
     private mapSearchResult(result: SearchResultEntry): WildDuckSearchResult {
         const folderName = this.mailboxMap.get(result.mailbox) ?? result.mailbox;
-        const message    = `${folderName}:${String(result.id)}`;
+        const uid        = typeof result.id === 'number' || /^\d+$/.test(result.id)
+            ? Number(result.id)
+            : Number.NaN;
+        const message    = formatMailboxMessageRef({ folder: folderName, uid });
 
         const from = result.from.name
             ? `${result.from.name} <${result.from.address ?? ''}>`

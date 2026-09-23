@@ -8,27 +8,27 @@ import type { CalendarEvent, CalendarTimeRange } from './types';
  *
  * @param events - Calendar events to format
  * @param now - Current time reference
- * @param timezone - IANA timezone string (e.g., 'America/Los_Angeles')
+ * @param displayTimezone - IANA zone the agenda is rendered in (Izzy's local zone for perch context, the viewer's for a DM)
  * @returns Formatted calendar context string
  */
 export function formatCalendarContext(
-    events:   CalendarEvent[],
-    now:      Date,
-    timezone: string
+    events:          CalendarEvent[],
+    now:             Date,
+    displayTimezone: string
 ): string {
     // Stryker disable next-line llm: an array length is a non-negative integer, so `<= 0` and `=== 0` select the same inputs.
     if(events.length === 0) {
         return '';
     }
 
-    const nowDT      = DateTime.fromJSDate(now, { zone: timezone });
+    const nowDT      = DateTime.fromJSDate(now, { zone: displayTimezone });
     const todayStart = nowDT.startOf('day');
 
     // Group events by day
     const dayGroups = new Map<string, CalendarEvent[]>();
 
     for(const event of events) {
-        const dayKey   = displayDay(event.time, timezone);
+        const dayKey   = displayDay(event.time, displayTimezone);
         const existing = dayGroups.get(dayKey) ?? [];
         existing.push(event);
         dayGroups.set(dayKey, existing);
@@ -40,16 +40,16 @@ export function formatCalendarContext(
     const sections: string[] = ['## Calendar'];
 
     for(const [dayKey, dayEvents] of sortedDays) {
-        const dayDT    = DateTime.fromISO(dayKey, { zone: timezone });
+        const dayDT    = DateTime.fromISO(dayKey, { zone: displayTimezone });
         const dayLabel = formatDayLabel(dayDT, todayStart);
 
         sections.push(`### ${dayLabel}`);
 
         // Sort events: all-day first, then by start time
-        const sorted = dayEvents.toSorted((a, b) => dayOrderMs(a.time, timezone) - dayOrderMs(b.time, timezone));
+        const sorted = dayEvents.toSorted((a, b) => dayOrderMs(a.time, displayTimezone) - dayOrderMs(b.time, displayTimezone));
 
         for(const event of sorted) {
-            sections.push(formatEventLine(event, timezone));
+            sections.push(formatEventLine(event, displayTimezone));
         }
     }
 
@@ -111,7 +111,7 @@ function buildTimeSuffix(time: Extract<CalendarTimeRange, { kind: 'timed' }>, di
     return ` (${parts.join(' / ')})`;
 }
 
-function formatEventLine(event: CalendarEvent, izzyTimezone: string): string {
+function formatEventLine(event: CalendarEvent, displayTimezone: string): string {
     let line: string;
 
     switch(event.time.kind) {
@@ -121,14 +121,14 @@ function formatEventLine(event: CalendarEvent, izzyTimezone: string): string {
         }
         case 'floating': {
             // A floating time has no native zone, so there is no suffix: it is shown in (and means) the display zone.
-            const { startMs, endMs } = resolveToInstant(event.time, izzyTimezone);
-            line = `- ${formatTimeRange(startMs, endMs, izzyTimezone)}: ${event.summary}`;
+            const { startMs, endMs } = resolveToInstant(event.time, displayTimezone);
+            line = `- ${formatTimeRange(startMs, endMs, displayTimezone)}: ${event.summary}`;
             break;
         }
         case 'timed': {
-            const izzyRange = formatTimeRange(event.time.start.getTime(), event.time.end.getTime(), izzyTimezone);
-            const suffix = buildTimeSuffix(event.time, izzyTimezone);
-            line = `- ${izzyRange}${suffix}: ${event.summary}`;
+            const displayRange = formatTimeRange(event.time.start.getTime(), event.time.end.getTime(), displayTimezone);
+            const suffix = buildTimeSuffix(event.time, displayTimezone);
+            line = `- ${displayRange}${suffix}: ${event.summary}`;
             break;
         }
     }

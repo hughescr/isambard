@@ -33,7 +33,7 @@ interface RegisteredTool {
     inputSchema: {
         shape:          Record<string, unknown>
         safeParseAsync: (args: unknown) => Promise<
-            { success: true } | { success: false, error: { issues: { path: PropertyKey[], message: string }[] } }
+            { success: true, data: unknown } | { success: false, error: { issues: { path: PropertyKey[], message: string }[] } }
         >
     }
     annotations: Record<string, boolean>
@@ -91,9 +91,16 @@ describe('createEmailMCPServer', () => {
         resetMockFs();
     });
 
-    // Helper to get tool handler from server instance
-    const getToolHandler = (server: ReturnType<typeof createEmailMCPServer>, toolName: string): ((...args: unknown[]) => Promise<CallToolResult>) => {
-        return (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName].handler;
+    // Exercise handlers with the same transformed input shape that MCP supplies at runtime.
+    const getToolHandler = (server: ReturnType<typeof createEmailMCPServer>, toolName: string): ((args: unknown) => Promise<CallToolResult>) => {
+        const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
+        return async (args: unknown): Promise<CallToolResult> => {
+            const parsed = await registeredTool.inputSchema.safeParseAsync(args);
+            if(!parsed.success) {
+                throw new Error(parsed.error.issues.map(issue => issue.message).join('; '));
+            }
+            return registeredTool.handler(parsed.data);
+        };
     };
 
     const firstMockCall = <TArgs extends readonly unknown[]>(calls: readonly TArgs[]): TArgs | undefined => calls.at(0);
@@ -169,11 +176,11 @@ describe('createEmailMCPServer', () => {
         });
 
         test.each([
-            ['getEmailContent', { message: 'CleanInbox:42' }, { message: ':42' }, 'MailboxName:UID'],
-            ['archiveEmail', { message: 'CleanInbox:42' }, { message: 'CleanInbox:42x' }, 'MailboxName:UID'],
-            ['replyToEmail', { message: 'CleanInbox:42', body: 'reply', mode: 'reply', identity: 'formal' }, { message: 'CleanInbox:42x', body: 'reply', mode: 'reply', identity: 'formal' }, 'MailboxName:UID'],
+            ['getEmailContent', { message: 'CleanInbox:42' }, { message: ':42' }, 'Folder:UID'],
+            ['archiveEmail', { message: 'CleanInbox:42' }, { message: 'CleanInbox:42x' }, 'Folder:UID'],
+            ['replyToEmail', { message: 'CleanInbox:42', body: 'reply', mode: 'reply', senderProfile: 'formal' }, { message: 'CleanInbox:42x', body: 'reply', mode: 'reply', senderProfile: 'formal' }, 'Folder:UID'],
             ['deleteDraft', { message: 'Drafts:42' }, { message: 'NotDrafts:42' }, 'Drafts:UID'],
-            ['amendAndResubmitDraft', { message: 'Drafts:42' }, { message: 'Drafts:42x' }, 'Drafts:UID'],
+            ['amendAndResubmitDraft', { message: 'Drafts:42' }, { message: 'Drafts:42x' }, 'Folder:UID'],
         ])('%s validates mailbox references with a useful schema error', async (toolName, valid, invalid, format) => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
             const schema = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName].inputSchema;
@@ -186,13 +193,23 @@ describe('createEmailMCPServer', () => {
             }
         });
 
+        test('exposes senderProfile without the legacy identity tool parameter', () => {
+            const registered = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools;
+            for(const name of ['sendEmail', 'replyToEmail', 'amendAndResubmitDraft']) {
+                const shape = registered[name].inputSchema.shape;
+                expect(shape).toHaveProperty('senderProfile');
+                expect(shape).not.toHaveProperty('identity');
+                expect((shape.senderProfile as { description?: string }).description).toBe('Sender profile for the From address: formal or informal');
+            }
+        });
+
         test('rejects missing fields in a structured recipient', async () => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
             const schema = (server.instance as unknown as RegisteredToolInstance)._registeredTools.sendEmail.inputSchema;
             const validResult = await schema.safeParseAsync({
-                to: { name: 'Alice', email_address: 'alice@example.com' }, subject: 'Hello', body: 'Hi', identity: 'formal',
+                to: { name: 'Alice', email_address: 'alice@example.com' }, subject: 'Hello', body: 'Hi', senderProfile: 'formal',
             });
-            const invalidResult = await schema.safeParseAsync({ to: { unknown: 'alice@example.com' }, subject: 'Hello', body: 'Hi', identity: 'formal' });
+            const invalidResult = await schema.safeParseAsync({ to: { unknown: 'alice@example.com' }, subject: 'Hello', body: 'Hi', senderProfile: 'formal' });
             expect(validResult.success).toBe(true);
             expect(invalidResult.success).toBe(false);
         });
@@ -563,9 +580,8 @@ describe('createEmailMCPServer', () => {
 
             const callArg = mockSendAdminNotification.mock.calls[0]?.[0] as RestrictedMailboxNotification;
             expect(callArg).toBeDefined();
-            expect(callArg.mailboxName).toBe('Quarantine');
+            expect(callArg.folder).toBe('Quarantine');
             expect(callArg.uid).toBe(42);
-            expect(callArg.reference).toBe('Quarantine:42');
         });
 
         test('should handle missing email (getFullMessage returns null) gracefully', async () => {
@@ -1977,11 +1993,11 @@ describe('createEmailMCPServer', () => {
             const handler = getToolHandler(server, 'sendEmail');
 
             const result = await handler({
-                to:          'alice@example.com',
-                subject:     'Files',
-                body:        'See attached',
-                identity:    'formal',
-                attachments: ['/tmp/first.txt', '/tmp/second.bin'],
+                to:            'alice@example.com',
+                subject:       'Files',
+                body:          'See attached',
+                senderProfile: 'formal',
+                attachments:   ['/tmp/first.txt', '/tmp/second.bin'],
             });
 
             expect(result.isError).toBeUndefined();
@@ -2008,8 +2024,11 @@ describe('createEmailMCPServer', () => {
             const handler = getToolHandler(server, 'sendEmail');
 
             const result = await handler({
-                to:          'alice@example.com', subject:     'Files', body:        'Attached', identity:    'formal',
-                attachments: Object.keys(expected).map(ext => `/tmp/file.${ext}`),
+                to:            'alice@example.com',
+                subject:       'Files',
+                body:          'Attached',
+                senderProfile: 'formal',
+                attachments:   Object.keys(expected).map(ext => `/tmp/file.${ext}`),
             });
 
             expect(result.isError).toBeUndefined();
@@ -2027,7 +2046,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('Sent successfully');
@@ -2045,7 +2064,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            await handler({ to: 'alice@example.com', subject: 'Test Subject', body: 'Test Body', identity: 'formal' });
+            await handler({ to: 'alice@example.com', subject: 'Test Subject', body: 'Test Body', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(_folder).toBe('Drafts');
@@ -2064,7 +2083,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            await handler({ to: 'alice@example.com', subject: 'Test Subject', body: 'Test Body', identity: 'formal' });
+            await handler({ to: 'alice@example.com', subject: 'Test Subject', body: 'Test Body', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.flags).toBeUndefined();
@@ -2079,7 +2098,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.from as { address: string }).address).toBe('formal@example.com');
@@ -2095,7 +2114,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'informal' });
+            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'informal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.from as { address: string }).address).toBe('informal@example.com');
@@ -2111,7 +2130,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            await handler({ to: { name: 'Craig', email_address: 'craig@rungie.com' }, subject: 'Hi', body: 'Hello', identity: 'formal' });
+            await handler({ to: { name: 'Craig', email_address: 'craig@rungie.com' }, subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.to).toEqual([{ name: 'Craig', address: 'craig@rungie.com' }]);
@@ -2126,7 +2145,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            await handler({ to: 'craig@rungie.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            await handler({ to: 'craig@rungie.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.to).toEqual([{ address: 'craig@rungie.com' }]);
@@ -2142,10 +2161,10 @@ describe('createEmailMCPServer', () => {
             const handler = getToolHandler(server, 'sendEmail');
 
             await handler({
-                to:       [{ name: 'Craig', email_address: 'craig@rungie.com' }, 'other@example.com'],
-                subject:  'Hi',
-                body:     'Hello',
-                identity: 'formal',
+                to:            [{ name: 'Craig', email_address: 'craig@rungie.com' }, 'other@example.com'],
+                subject:       'Hi',
+                body:          'Hello',
+                senderProfile: 'formal',
             });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
@@ -2165,7 +2184,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: { name: 'Craig', email_address: 'craig@rungie.com' }, subject: 'Hi', body: 'Hello', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: { name: 'Craig', email_address: 'craig@rungie.com' }, subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('Sent successfully');
@@ -2182,7 +2201,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: 'bob@example.com', subject: 'Test', body: 'Body', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: 'bob@example.com', subject: 'Test', body: 'Body', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('pending admin approval');
@@ -2202,14 +2221,14 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            await handler({ to: 'bob@example.com', subject: 'Test', body: 'Body', identity: 'formal' });
+            await handler({ to: 'bob@example.com', subject: 'Test', body: 'Body', senderProfile: 'formal' });
 
             expect(mockSendApprovalRequest).toHaveBeenCalledWith('bob@example.com', 'Test', 99, undefined);
         });
 
         test('without an allowlist, the uploaded draft requires approval', async () => {
             const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, sendApprovalRequest: mockSendApprovalRequest });
-            const result = await getToolHandler(server, 'sendEmail')({ to: 'bob@example.com', subject: 'Test', body: 'Body', identity: 'formal' });
+            const result = await getToolHandler(server, 'sendEmail')({ to: 'bob@example.com', subject: 'Test', body: 'Body', senderProfile: 'formal' });
             expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 99).');
             expect(mockSubmitMessage).not.toHaveBeenCalled();
             expect(mockSendApprovalRequest).toHaveBeenCalledWith('bob@example.com', 'Test', 99, undefined);
@@ -2226,7 +2245,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('Sent successfully');
@@ -2245,7 +2264,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('pending admin approval');
@@ -2261,7 +2280,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('Sent successfully');
@@ -2280,7 +2299,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', identity: 'formal' });
+            await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             expect(mockSendApprovalRequest).toHaveBeenCalledWith('alice@example.com, bob@example.com', 'Hi', 99, undefined);
         });
@@ -2297,7 +2316,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('send rate limit reached');
@@ -2315,7 +2334,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('WildDuck upload failed');
@@ -2335,7 +2354,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('failed to notify admin');
@@ -2361,7 +2380,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', identity: 'formal' });
+            await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', senderProfile: 'formal' });
 
             expect(mockLogger.warn).toHaveBeenCalledWith({
                 error: 'transient outbox failure', msg: 'Failed to send outbound approval request',
@@ -2384,7 +2403,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', senderProfile: 'formal' });
 
             expect(getText(result)).toContain('check pending drafts manually');
             expect(getText(result)).toContain('send rate limit reached');
@@ -2402,7 +2421,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', senderProfile: 'formal' });
 
             expect(getText(result)).toContain('pending admin approval');
             expect(getText(result)).toContain('send rate limit reached');
@@ -2417,7 +2436,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            await handler({ to: 'target@example.com', subject: 'Hi', body: 'Body', identity: 'formal' });
+            await handler({ to: 'target@example.com', subject: 'Hi', body: 'Body', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             // metaData.to is no longer stored — to is part of the message itself
@@ -2435,7 +2454,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             // When limit is NOT reached, result text should not contain warning
             const text = getText(result);
@@ -2457,11 +2476,11 @@ describe('createEmailMCPServer', () => {
             const handler = getToolHandler(server, 'sendEmail');
 
             // First call — getUserAddresses fails, addressesLoaded stays false
-            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
             expect(mockGetUserAddresses).toHaveBeenCalledTimes(1);
 
             // Second call — getUserAddresses should be called AGAIN (not skipped)
-            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
             expect(mockGetUserAddresses).toHaveBeenCalledTimes(2);
             expect(mockLogger.warn).toHaveBeenCalledWith({
                 err: expect.any(Error),
@@ -2479,11 +2498,11 @@ describe('createEmailMCPServer', () => {
             const handler = getToolHandler(server, 'sendEmail');
 
             // First call — getUserAddresses succeeds, addressesLoaded becomes true
-            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
             expect(mockGetUserAddresses).toHaveBeenCalledTimes(1);
 
             // Second call — getUserAddresses should NOT be called again (addressesLoaded = true)
-            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
             expect(mockGetUserAddresses).toHaveBeenCalledTimes(1);
         });
 
@@ -2492,12 +2511,12 @@ describe('createEmailMCPServer', () => {
             const toolDef = (server.instance as unknown as RegisteredToolInstance)._registeredTools.sendEmail;
 
             const valid = await toolDef.inputSchema.safeParseAsync({
-                to: ['alice@example.com'], subject: 'Hi', body: 'Hello', identity: 'formal',
+                to: ['alice@example.com'], subject: 'Hi', body: 'Hello', senderProfile: 'formal',
             });
             expect(valid.success).toBe(true);
 
             const result = await toolDef.inputSchema.safeParseAsync({
-                to: [], subject: 'Hi', body: 'Hello', identity: 'formal',
+                to: [], subject: 'Hi', body: 'Hello', senderProfile: 'formal',
             });
             expect(result.success).toBe(false);
             if(!result.success) {
@@ -2558,7 +2577,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'Quarantine:7', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'Quarantine:7', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('Access denied');
@@ -2575,7 +2594,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'Junk:3', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'Junk:3', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('Access denied');
@@ -2590,7 +2609,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'Drafts:2', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'Drafts:2', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('Access denied');
@@ -2605,7 +2624,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
         });
@@ -2617,7 +2636,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'Archive:8', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'Archive:8', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(mockGetMessage).toHaveBeenCalledWith('Archive', 8);
@@ -2631,7 +2650,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'My reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'My reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('Reply sent');
@@ -2646,7 +2665,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.reference as Record<string, unknown> | undefined)?.action).toBe('reply');
@@ -2660,7 +2679,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.reference as Record<string, unknown> | undefined)?.action).toBe('replyAll');
@@ -2673,7 +2692,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.flags).toBeUndefined();
@@ -2686,7 +2705,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.draft).toBe(true);
@@ -2699,7 +2718,7 @@ describe('createEmailMCPServer', () => {
             mockFsPromises.readFile.mockImplementation(async () => Buffer.from('reply file') as unknown as string);
             const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, sendApprovalRequest: requestApproval });
             await getToolHandler(server, 'replyToEmail')({
-                message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal', attachments: ['/tmp/reply.txt'],
+                message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal', attachments: ['/tmp/reply.txt'],
             });
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.subject).toBe('Re: Re: Hello');
@@ -2713,7 +2732,7 @@ describe('createEmailMCPServer', () => {
             mockAllowlist.isAllowed = mock(() => false);
             const requestApproval = mock(async () => {});
             const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, sendApprovalRequest: requestApproval });
-            const result = await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result = await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
             expect(result.isError).toBeUndefined();
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.subject).toBe('Re: ');
@@ -2724,7 +2743,7 @@ describe('createEmailMCPServer', () => {
         test('a plain reply without an allowlist remains pending approval', async () => {
             const requestApproval = mock(async () => {});
             const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, sendApprovalRequest: requestApproval });
-            const result = await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result = await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
             expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 88).');
             expect(mockSubmitMessage).not.toHaveBeenCalled();
             expect(requestApproval).toHaveBeenCalledWith('alice@example.com', 'Re: Re: Hello', 88, undefined);
@@ -2737,7 +2756,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'informal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'informal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.from as { address: string }).address).toBe('informal@example.com');
@@ -2755,7 +2774,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             // In plain reply mode, cc should be undefined (not extracted from original.cc)
             expect(mockSendApprovalRequestReply).toHaveBeenCalledWith(
@@ -2773,7 +2792,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(mockGetMailboxId).toHaveBeenCalledWith('CleanInbox');
         });
@@ -2788,7 +2807,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.reference as Record<string, unknown> | undefined)?.mailbox).toBe('mbx-clean-resolved');
@@ -2803,7 +2822,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('pending admin approval');
@@ -2823,7 +2842,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('getMessage failed');
@@ -2840,7 +2859,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('not found');
@@ -2857,7 +2876,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('send rate limit reached');
@@ -2873,7 +2892,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             // When limit is NOT reached, result text should not contain warning
             const text = getText(result);
@@ -2889,7 +2908,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             // metaData.to is no longer stored — to is part of the message itself
@@ -2911,7 +2930,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             // Should succeed using the pre-parsed replyTo.address
             expect(result.isError).toBeUndefined();
@@ -2933,7 +2952,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             // from.address is 'alice@example.com'
             expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('email', 'alice@example.com');
@@ -2955,7 +2974,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             // Should have been submitted (isAllowed returned true for john@example.com)
             expect(result.isError).toBeUndefined();
@@ -2973,7 +2992,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('not found in WildDuck');
@@ -2990,7 +3009,7 @@ describe('createEmailMCPServer', () => {
             // Use a fresh server so addressesLoaded starts false
             const handler = getToolHandler(server, 'sendEmail');
 
-            const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', identity: 'formal' });
+            const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('no sender address');
@@ -3006,7 +3025,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('no sender address');
@@ -3060,7 +3079,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', senderProfile: 'formal' });
 
             expect(result.isError).toBeUndefined();
             // Should NOT have submitted directly even though allowlist returns true
@@ -3082,7 +3101,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', senderProfile: 'formal' });
 
             // sendApprovalRequest is called with (to, subject, uid, cc) — cc extracted from original.cc
             expect(mockSendApprovalRequestReplyAll).toHaveBeenCalledWith(primaryTo, subject, uid, ['bob@example.com']);
@@ -3093,7 +3112,7 @@ describe('createEmailMCPServer', () => {
             const server = createEmailMCPServer({
                 wildDuckClient: mockWildDuckReplyAll, allowlist: mockAllowlistReplyAll, sendApprovalRequest: mockSendApprovalRequestReplyAll,
             });
-            await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
+            await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', senderProfile: 'formal' });
             expect(mockSendApprovalRequestReplyAll).toHaveBeenCalledWith('alice@example.com', 'Re: Group Discussion', 88, []);
         });
 
@@ -3105,7 +3124,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', identity: 'formal' });
+            await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessageReplyAll.mock.calls[0] as [string, Record<string, unknown>];
             // cc should NOT be in the upload payload — WildDuck derives it from the reference
@@ -3204,7 +3223,7 @@ describe('createEmailMCPServer', () => {
         test('amend schema accepts multiple recipients and either identity', async () => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
             const schema = (server.instance as unknown as RegisteredToolInstance)._registeredTools.amendAndResubmitDraft.inputSchema;
-            const validResults = await Promise.all(['formal', 'informal'].map(identity => schema.safeParseAsync({ message: 'Drafts:42', identity, to: ['one@example.com', 'two@example.com'] })));
+            const validResults = await Promise.all(['formal', 'informal'].map(senderProfile => schema.safeParseAsync({ message: 'Drafts:42', senderProfile, to: ['one@example.com', 'two@example.com'] })));
             const invalidResult = await schema.safeParseAsync({ message: 'Drafts:42', to: [] });
             expect(validResults.every(result => result.success)).toBe(true);
             expect(invalidResult.success).toBe(false);
@@ -3372,6 +3391,7 @@ describe('createEmailMCPServer', () => {
             const result: CallToolResult = await handler({ message: 'Drafts:99' });
 
             expect(result.isError).toBe(true);
+            expect(getText(result)).toContain('Drafts:99');
             expect(getText(result)).toContain('not found');
         });
 
@@ -3421,7 +3441,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
-            await handler({ message: 'Drafts:42', identity: 'formal' });
+            await handler({ message: 'Drafts:42', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.from as { address: string }).address).toBe('formal@example.com');
@@ -3435,7 +3455,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
-            await handler({ message: 'Drafts:42', identity: 'informal' });
+            await handler({ message: 'Drafts:42', senderProfile: 'informal' });
 
             const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.from as { address: string }).address).toBe('informal@example.com');
@@ -3467,7 +3487,7 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
-            const result: CallToolResult = await handler({ message: 'Drafts:42', identity: 'formal' });
+            const result: CallToolResult = await handler({ message: 'Drafts:42', senderProfile: 'formal' });
 
             expect(result.isError).toBe(true);
             expect(getText(result)).toContain('no sender address configured');
@@ -3696,10 +3716,10 @@ describe('createEmailMCPServer', () => {
             const allowlist = { isAllowed: mock(() => true) } as unknown as PersonAllowlist;
             const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: client, allowlist }), 'sendEmail');
             let settled = false;
-            const first = handler({ to: 'a@example.com', subject: 'A', body: 'A', identity: 'formal' }).finally(() => {
+            const first = handler({ to: 'a@example.com', subject: 'A', body: 'A', senderProfile: 'formal' }).finally(() => {
                 settled = true;
             });
-            const second = handler({ to: 'b@example.com', subject: 'B', body: 'B', identity: 'formal' });
+            const second = handler({ to: 'b@example.com', subject: 'B', body: 'B', senderProfile: 'formal' });
             try {
                 await Bun.sleep(0);
                 expect(client.uploadMessage).not.toHaveBeenCalled();
@@ -3758,7 +3778,7 @@ describe('createEmailMCPServer', () => {
                 uploadMessage:    mock(() => Promise.resolve(10)),
                 getMessage:       mock(() => Promise.resolve(null)),
             } as unknown as WildDuckClient;
-            await getToolHandler(createEmailMCPServer({ wildDuckClient: client }), 'sendEmail')({ to: 'a@example.com', subject: 'A', body: 'A', identity: 'formal', attachments: ['/tmp/one.txt'] });
+            await getToolHandler(createEmailMCPServer({ wildDuckClient: client }), 'sendEmail')({ to: 'a@example.com', subject: 'A', body: 'A', senderProfile: 'formal', attachments: ['/tmp/one.txt'] });
             expect(client.uploadMessage).toHaveBeenCalledWith('Drafts', expect.objectContaining({
                 attachments: [{
                     filename:    'one.txt',
@@ -3774,7 +3794,7 @@ describe('createEmailMCPServer', () => {
                 getUserAddresses: mock(() => Promise.resolve([{ address: 'me@example.com', tags: ['formal'] }])),
                 getMessage:       mock(() => Promise.resolve(null)),
             } as unknown as WildDuckClient;
-            const missing = await getToolHandler(createEmailMCPServer({ wildDuckClient: client }), 'replyToEmail')({ message: 'Archive:987', body: 'x', mode: 'reply', identity: 'formal' });
+            const missing = await getToolHandler(createEmailMCPServer({ wildDuckClient: client }), 'replyToEmail')({ message: 'Archive:987', body: 'x', mode: 'reply', senderProfile: 'formal' });
             expect(getText(missing)).toBe("Cannot reply: message 'Archive:987' not found.");
         });
 
@@ -3790,7 +3810,7 @@ describe('createEmailMCPServer', () => {
                 submitMessage:    mock(() => Promise.resolve()),
             } as unknown as WildDuckClient;
             const allowlist = { isAllowed: mock(() => true) } as unknown as PersonAllowlist;
-            const result = await getToolHandler(createEmailMCPServer({ wildDuckClient: client, allowlist }), 'replyToEmail')({ message: 'CleanInbox:2', body: 'reply', mode: 'reply', identity: 'formal', attachments: ['/tmp/one.txt'] });
+            const result = await getToolHandler(createEmailMCPServer({ wildDuckClient: client, allowlist }), 'replyToEmail')({ message: 'CleanInbox:2', body: 'reply', mode: 'reply', senderProfile: 'formal', attachments: ['/tmp/one.txt'] });
             expect(getText(result)).toBe('Reply sent to sender@example.com.');
             expect(uploadMessage).toHaveBeenCalledWith('Drafts', expect.objectContaining({
                 attachments: [{

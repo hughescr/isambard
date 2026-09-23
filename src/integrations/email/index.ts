@@ -4,7 +4,11 @@ export {
     SPAM_CATEGORIES,
     UNSAFE_CATEGORIES,
     classifierVerdictSchema,
-    EmailIdentity
+    draftsMailboxMessageRefSchema,
+    emailSenderProfileSchema,
+    formatMailboxMessageRef,
+    mailboxMessageRefSchema,
+    parseMailboxMessageRef
 } from './types';
 export type {
     ClassifierVerdict,
@@ -13,7 +17,9 @@ export type {
     EmailAddress,
     EmailHeaders,
     VerificationResults,
-    AuthCheckResult
+    AuthCheckResult,
+    EmailSenderProfile,
+    MailboxMessageRef
 } from './types';
 export { checkVerificationResults } from './auth-checker';
 export { CLASSIFIER_SYSTEM_PROMPT } from './classifier-prompt';

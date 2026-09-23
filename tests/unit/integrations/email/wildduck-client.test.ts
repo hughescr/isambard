@@ -2161,6 +2161,16 @@ describe('WildDuckClient', () => {
             await expect(client.searchByKeyword('CleanInbox', 'TestFlag')).resolves.toEqual([1]);
         });
 
+        test('includes a decimal string server ID as its numeric UID', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({
+                success: true,
+                results: [{ id: '42', mailbox: 'mbx-clean', from: {}, to: [], subject: 'String ID', date: '2025-01-01T10:00:00.000Z' }],
+            }));
+
+            await expect(client.searchByKeyword('CleanInbox', 'TestFlag')).resolves.toEqual([42]);
+        });
+
         test('splits on the last colon so a folder path containing a colon still yields its UID', async () => {
             const client = new WildDuckClient(CLIENT_OPTIONS);
             client.search = mock(async () => [{
@@ -2174,7 +2184,7 @@ describe('WildDuckClient', () => {
             await expect(client.searchByKeyword('Work:Projects', 'TestFlag')).resolves.toEqual([42]);
         });
 
-        test('parses the UID as an integer, never a fractional number', async () => {
+        test('rejects a fractional UID suffix', async () => {
             const client = new WildDuckClient(CLIENT_OPTIONS);
             client.search = mock(async () => [{
                 message: 'CleanInbox:7.5',
@@ -2186,8 +2196,7 @@ describe('WildDuckClient', () => {
 
             const uids = await client.searchByKeyword('CleanInbox', 'TestFlag');
 
-            expect(uids).toEqual([7]);
-            expect(uids.every(uid => Number.isInteger(uid))).toBe(true);
+            expect(uids).toEqual([]);
         });
 
         test('does not reinterpret a hexadecimal-looking server ID as a decimal UID', async () => {
