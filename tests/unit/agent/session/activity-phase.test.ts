@@ -21,18 +21,10 @@ describe('activityPhaseSchema', () => {
             expect(() => activityPhaseSchema.parse({ type: 'thinking', startedAt: AT })).not.toThrow();
         });
 
-        it('accepts every optional field present', () => {
-            expect(() => activityPhaseSchema.parse({
+        it('strips a stale generatedStatus/userMessage key: a phase carries no synopsis (it lives on LedgerTurn.synopsis)', () => {
+            expect(activityPhaseSchema.parse({
                 type: 'thinking', startedAt: AT, userMessage: 'hi', generatedStatus: 'Thinking…',
-            })).not.toThrow();
-        });
-
-        it('rejects a non-string userMessage', () => {
-            expect(() => activityPhaseSchema.parse({ type: 'thinking', startedAt: AT, userMessage: 42 })).toThrow();
-        });
-
-        it('rejects a non-string generatedStatus', () => {
-            expect(() => activityPhaseSchema.parse({ type: 'thinking', startedAt: AT, generatedStatus: 42 })).toThrow();
+            })).toStrictEqual({ type: 'thinking', startedAt: AT });
         });
 
         it('rejects a missing startedAt', () => {
@@ -49,10 +41,10 @@ describe('activityPhaseSchema', () => {
             expect(() => activityPhaseSchema.parse({ type: 'using_tool', toolName: 'Bash', startedAt: AT })).not.toThrow();
         });
 
-        it('accepts every optional field present', () => {
-            expect(() => activityPhaseSchema.parse({
+        it('strips a stale generatedStatus key from a using_tool phase', () => {
+            expect(activityPhaseSchema.parse({
                 type: 'using_tool', toolName: 'Bash', startedAt: AT, generatedStatus: 'Running…',
-            })).not.toThrow();
+            })).toStrictEqual({ type: 'using_tool', toolName: 'Bash', startedAt: AT });
         });
 
         it('rejects a missing toolName', () => {
@@ -73,8 +65,8 @@ describe('activityPhaseSchema', () => {
             expect(() => activityPhaseSchema.parse({ type: 'responding', startedAt: AT })).not.toThrow();
         });
 
-        it('accepts every optional field present', () => {
-            expect(() => activityPhaseSchema.parse({ type: 'responding', startedAt: AT, generatedStatus: 'Replying…' })).not.toThrow();
+        it('strips a stale generatedStatus key from a responding phase', () => {
+            expect(activityPhaseSchema.parse({ type: 'responding', startedAt: AT, generatedStatus: 'Replying…' })).toStrictEqual({ type: 'responding', startedAt: AT });
         });
 
         it('rejects a missing startedAt', () => {

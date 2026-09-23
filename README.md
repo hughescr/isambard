@@ -223,6 +223,9 @@ src/
 ├── index.ts                         # Application entry point with lifecycle management
 ├── agent/                           # Claude Agent SDK integration
 │   ├── session/                         # Long-lived conductor session core (conversation + perch)
+│   │   ├── turn-synopsis.ts                 # attachTurnSynopsis + SynopsisBudget: THE ONE turn synopsis producer (wired per session in app/sessions.ts)
+│   │   ├── synopsis-stream-handler.ts       # Per-turn stream handler: dispatches turn_synopsis into the session ledger
+│   │   └── synopsis-generator.ts            # Haiku turn synopsis generator, one per session (P14)
 │   ├── types.ts                        # Platform-agnostic message types (MessageContext, PlatformImage)
 │   ├── context-builder.ts              # Memory context loading and user message prefix assembly
 │   ├── activity-logger.ts              # Cross-platform activity auto-logging
@@ -301,12 +304,9 @@ src/
 │   │   │   ├── index.ts                    # Barrel: the module's named exports
 │   │   │   ├── types.ts                    # PresencePhase types (idle, thinking, responding, tool-use)
 │   │   │   ├── manager.ts                  # PresenceManager: debouncing and rate limiting
-│   │   │   ├── presence-view.ts            # composePresence: the ledger -> presence-line projection + PresenceThrottle
-│   │   │   ├── turn-synopsis.ts            # attachTurnSynopsis: THE ONE place a synopsis handler is attached to a turn
-│   │   │   ├── stream-event-handler.ts     # Stream event handler for presence with synopsis generation
-│   │   │   ├── status-generator-active.ts  # Status text for active phases
-│   │   │   ├── status-generator-idle.ts    # LLM-powered idle status text
-│   │   │   └── status-generator-dynamic.ts # Dynamic status with context awareness
+│   │   │   ├── presence-view.ts            # composePresence: the ledger -> presence-line projection (renders the turn synopsis) + PresenceThrottle
+│   │   │   ├── status-generator-active.ts  # Static status labels for active phases
+│   │   │   └── status-generator-idle.ts    # LLM-powered idle status text
 │   │   ├── message-history/         # Message search and caching for context
 │   │   │   ├── types.ts             # Search types (DiscordSearchResult, SearchParams)
 │   │   │   ├── snowflake.ts         # Discord snowflake ID utilities

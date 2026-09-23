@@ -2,7 +2,7 @@
  * Presence composed from ledgers.
  *
  * A pure composer over the conversation and perch session ledgers that renders design doc
- * section 8's presence text: `((💬🦉){1,2}|💤) • 2 🔬 1 🪾 1 ⌚ • <haiku digest>`. The prefix —
+ * section 8's presence text: `((💬🦉){1,2}|💤) • 2 🔬 1 🪾 1 ⌚ • <turn synopsis or status>`. The prefix —
  * session indicators, task/workflow/monitor counts (zeros omitted), and a compacting marker —
  * is a fixed prefix that is NEVER truncated; the digest fills the remaining budget of Discord's
  * 128-code-unit custom-status limit, cut at a word boundary and dropped when fewer than 12
@@ -62,6 +62,10 @@ export interface PresenceView {
     readonly phase:      PresencePhase
     /** Which role's phase won, or `null` when idle. */
     readonly activeRole: SessionRole | null
+    /** The winning turn's `LedgerTurn.synopsis`, when it has one (never borrowed from the losing session's turn). */
+    readonly synopsis?:  string
+    /** The winning turn's id, or `undefined` when idle: presence-setup's synopsis-arrival bypass keys on it. */
+    readonly turnId?:    string
 }
 
 /** Counts tasks by `kind` across every ledger, rendered in {@link TASK_KIND_EMOJI} order, zeros omitted. */
@@ -147,8 +151,10 @@ export function composePresence(ledgers: readonly Ledger[], perchPaused = false)
     const perchPhase = phaseOfLedger(perch);
     const activeRole: SessionRole | null = resolveActiveRole(conversationPhase, perchPhase);
     const phase: PresencePhase = conversationPhase ?? perchPhase ?? { type: 'idle', since: IDLE_SINCE_SENTINEL };
+    // Idle means both turns are null, so the conversation branch covers it too.
+    const winningTurn = activeRole === 'perch' ? turnOf(perch) : turnOf(conversation);
 
-    return { live, prefix, compacting, phase, activeRole };
+    return { live, prefix, compacting, phase, activeRole, synopsis: winningTurn?.synopsis, turnId: winningTurn?.id };
 }
 
 /**

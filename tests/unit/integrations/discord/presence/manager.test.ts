@@ -121,6 +121,15 @@ describe('PresenceManager', () => {
 
             expect(mockClient.user.setActivity.mock.calls).toEqual([[thinkingActivity], [respondingActivity]]);
         });
+
+        it('an active view carrying a turn synopsis renders the synopsis, with the activity type still from the active generator', async () => {
+            mockActiveGenerator.generate.mockImplementation(() => ({ name: 'Static label', type: ActivityType.Watching }));
+            const manager = createManager();
+
+            await manager.applyView({ ...activeView, synopsis: 'Chasing the thread' });
+
+            expect(mockClient.user.setActivity.mock.calls).toEqual([[{ name: '💬 • 1 🪾 • Chasing the thread', type: ActivityType.Watching }]]);
+        });
     });
 
     describe('applyView - idle transitions', () => {

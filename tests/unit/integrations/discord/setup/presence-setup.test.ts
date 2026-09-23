@@ -5,7 +5,8 @@
  * Covers:
  * - getPreviousStatus forwarding: verifies the callback is passed to createIdleStatusGenerator
  *   so the anti-rut block in status-generator-idle.ts fires on the live path.
- * - createDynamicGenerator: the injectable per-ledger dynamic-status-generator factory (P14).
+ * - The turn synopsis: rendered from `PresenceView.synopsis` (the synopsis-arrival throttle
+ *   bypass, keyed on the winning (role, turnId)), never produced here (#39).
  */
 import { describe, test, expect, mock, spyOn, beforeEach, afterEach, jest } from 'bun:test';
 import { ActivityType, type Client } from 'discord.js';
@@ -88,7 +89,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
             getPreviousStatus,
@@ -105,7 +106,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
             // No getPreviousStatus
@@ -114,212 +115,43 @@ describe('setupConductorPresence', () => {
         expect(capturedIdleDeps?.getPreviousStatus).toBeUndefined();
     });
 
-    describe('attachSynopsis (one synopsis attachment per (ledger, conductor) pair)', () => {
-        function makeConductor() {
-            return { subscribeTurn: mock(() => mock(() => undefined)) };
-        }
+    describe('presence renders the turn synopsis but never produces it (#39)', () => {
+        test('the presence barrel no longer exports the synopsis producer or its generator', () => {
+            expect('attachTurnSynopsis' in presenceModule).toBe(false);
+            expect('createDynamicStatusGenerator' in presenceModule).toBe(false);
+        });
 
-        test('attaches once per session, pairing each ledger with ITS OWN conductor and dynamic-status generator', () => {
-            const conversation = makeConversationLedger();
-            const perch = createLedgerStore('perch', { logger: { error: mock() } });
-            const convConductor = makeConductor();
-            const perchConductor = makeConductor();
-            const generators = [
-                { generateSynopsis: mock(async () => null), generateCatchUpSynopsis: mock(async () => null) },
-                { generateSynopsis: mock(async () => null), generateCatchUpSynopsis: mock(async () => null) },
-            ];
-            let created = -1;
-            const createDynamicGenerator = mock(() => {
-                created += 1;
-                return generators[created];
-            });
-            const attachSynopsis = mock(() => mock(() => undefined));
-            const throttle = throttleAlways();
-
+        test('the setup result is exactly the presence manager and the ledger unsubscribe', () => {
             const result = setupConductorPresence({
                 identityContext:  'Test identity',
                 presenceConfig:   MINIMAL_PRESENCE_CONFIG,
                 readyClient:      makeMockClient(),
-                sessions:         [{ ledger: conversation, conductor: convConductor }, { ledger: perch, conductor: perchConductor }],
-                throttle,
-                getRecentContext: () => Promise.resolve(undefined),
-                createDynamicGenerator,
-                attachSynopsis,
-            });
-
-            expect(attachSynopsis).toHaveBeenCalledTimes(2);
-            expect(attachSynopsis).toHaveBeenNthCalledWith(1, expect.objectContaining({
-                conductor: convConductor, ledgerStore: conversation, throttle, dynamicStatusGenerator: result.dynamicStatusGenerators[0],
-            }));
-            // The P14 cross-session defect this pins: the perch ledger must get generators[1].
-            expect(attachSynopsis).toHaveBeenNthCalledWith(2, expect.objectContaining({
-                conductor: perchConductor, ledgerStore: perch, throttle, dynamicStatusGenerator: result.dynamicStatusGenerators[1],
-            }));
-            expect(result.dynamicStatusGenerators[1]).not.toBe(result.dynamicStatusGenerators[0]);
-        });
-
-        test('forwards onThinkingContentUpdate to every attachment', () => {
-            const conversation = makeConversationLedger();
-            const onThinkingContentUpdate = mock(() => undefined);
-            const attachSynopsis = mock(() => mock(() => undefined));
-
-            setupConductorPresence({
-                identityContext:  'Test identity',
-                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
-                readyClient:      makeMockClient(),
-                sessions:         [{ ledger: conversation, conductor: makeConductor() }],
+                ledgers:          [makeConversationLedger()],
                 throttle:         throttleAlways(),
                 getRecentContext: () => Promise.resolve(undefined),
-                onThinkingContentUpdate,
-                attachSynopsis,
             });
 
-            expect(attachSynopsis).toHaveBeenCalledWith(expect.objectContaining({ onThinkingContentUpdate }));
+            expect(Object.keys(result).toSorted((a, b) => a.localeCompare(b))).toEqual(['presenceManager', 'unsubscribeLedgers']);
         });
 
-        test('a session with no conductor of its own attaches nothing', () => {
+        test('unsubscribeLedgers stops every ledger from reaching the presence manager', () => {
             const conversation = makeConversationLedger();
             const perch = createLedgerStore('perch', { logger: { error: mock() } });
-            const attachSynopsis = mock(() => mock(() => undefined));
-
-            setupConductorPresence({
-                identityContext:  'Test identity',
-                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
-                readyClient:      makeMockClient(),
-                sessions:         [{ ledger: conversation, conductor: makeConductor() }, { ledger: perch }],
-                throttle:         throttleAlways(),
-                getRecentContext: () => Promise.resolve(undefined),
-                attachSynopsis,
-            });
-
-            expect(attachSynopsis).toHaveBeenCalledTimes(1);
-        });
-
-        test('no conductors at all attaches nothing', () => {
-            const conversation = makeConversationLedger();
-            const attachSynopsis = mock(() => mock(() => undefined));
-
-            setupConductorPresence({
-                identityContext:  'Test identity',
-                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
-                readyClient:      makeMockClient(),
-                sessions:         [{ ledger: conversation }],
-                throttle:         throttleAlways(),
-                getRecentContext: () => Promise.resolve(undefined),
-                attachSynopsis,
-            });
-
-            expect(attachSynopsis).not.toHaveBeenCalled();
-        });
-
-        test('unsubscribeLedgers runs every detach alongside the ledger unsubscribes', () => {
-            const conversation = makeConversationLedger();
-            const perch = createLedgerStore('perch', { logger: { error: mock() } });
-            const detaches = [mock(() => undefined), mock(() => undefined)];
-            let detachIndex = -1;
-            const attachSynopsis = mock(() => {
-                detachIndex += 1;
-                return detaches[detachIndex];
-            });
-
             const { unsubscribeLedgers } = setupConductorPresence({
                 identityContext:  'Test identity',
                 presenceConfig:   MINIMAL_PRESENCE_CONFIG,
                 readyClient:      makeMockClient(),
-                sessions:         [{ ledger: conversation, conductor: makeConductor() }, { ledger: perch, conductor: makeConductor() }],
+                ledgers:          [conversation, perch],
                 throttle:         throttleAlways(),
                 getRecentContext: () => Promise.resolve(undefined),
-                attachSynopsis,
             });
+            mockPresenceManager.applyView.mockClear();
 
             unsubscribeLedgers();
+            conversation.dispatch({ type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(1) }, at: new Date(1) });
+            perch.dispatch({ type: 'turn_submitted', envelope: { id: 'perch-1', kind: 'perch', queuedAt: new Date(1) }, at: new Date(1) });
 
-            expect(detaches[0]).toHaveBeenCalledTimes(1);
-            expect(detaches[1]).toHaveBeenCalledTimes(1);
-        });
-    });
-
-    describe('createDynamicGenerator (P14: per-ledger instances)', () => {
-        test('is called exactly once per ledger, with the identityContext, when two ledgers are supplied', () => {
-            const conversation = makeConversationLedger();
-            const perch = createLedgerStore('perch', { logger: { error: mock() } });
-            const createDynamicGenerator = mock(() => ({
-                generateSynopsis:        mock(async () => null),
-                generateCatchUpSynopsis: mock(async () => null),
-            }));
-
-            setupConductorPresence({
-                identityContext:  'Test identity',
-                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
-                readyClient:      makeMockClient(),
-                sessions:         [{ ledger: conversation }, { ledger: perch }],
-                throttle:         throttleAlways(),
-                getRecentContext: () => Promise.resolve(undefined),
-                createDynamicGenerator,
-            });
-
-            expect(createDynamicGenerator).toHaveBeenCalledTimes(2);
-            expect(createDynamicGenerator).toHaveBeenNthCalledWith(1, { identityContext: 'Test identity' });
-            expect(createDynamicGenerator).toHaveBeenNthCalledWith(2, { identityContext: 'Test identity' });
-        });
-
-        test('is called exactly once when a single ledger is supplied', () => {
-            const conversation = makeConversationLedger();
-            const createDynamicGenerator = mock(() => ({
-                generateSynopsis:        mock(async () => null),
-                generateCatchUpSynopsis: mock(async () => null),
-            }));
-
-            setupConductorPresence({
-                identityContext:  'Test identity',
-                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
-                readyClient:      makeMockClient(),
-                sessions:         [{ ledger: conversation }],
-                throttle:         throttleAlways(),
-                getRecentContext: () => Promise.resolve(undefined),
-                createDynamicGenerator,
-            });
-
-            expect(createDynamicGenerator).toHaveBeenCalledTimes(1);
-        });
-
-        test('returns one generator instance per ledger, in ledger order', () => {
-            const conversation = makeConversationLedger();
-            const perch = createLedgerStore('perch', { logger: { error: mock() } });
-            const conversationGenerator = { generateSynopsis: mock(async () => null), generateCatchUpSynopsis: mock(async () => null) };
-            const perchGenerator = { generateSynopsis: mock(async () => null), generateCatchUpSynopsis: mock(async () => null) };
-            const createDynamicGenerator = mock()
-                .mockReturnValueOnce(conversationGenerator)
-                .mockReturnValueOnce(perchGenerator);
-
-            const result = setupConductorPresence({
-                identityContext:  'Test identity',
-                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
-                readyClient:      makeMockClient(),
-                sessions:         [{ ledger: conversation }, { ledger: perch }],
-                throttle:         throttleAlways(),
-                getRecentContext: () => Promise.resolve(undefined),
-                createDynamicGenerator,
-            });
-
-            expect(result.dynamicStatusGenerators).toEqual([conversationGenerator, perchGenerator]);
-        });
-
-        test('defaults to the real createDynamicStatusGenerator factory when omitted', () => {
-            const conversation = makeConversationLedger();
-
-            const result = setupConductorPresence({
-                identityContext:  'Test identity',
-                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
-                readyClient:      makeMockClient(),
-                sessions:         [{ ledger: conversation }],
-                throttle:         throttleAlways(),
-                getRecentContext: () => Promise.resolve(undefined),
-                // No createDynamicGenerator override
-            });
-
-            expect(result.dynamicStatusGenerators).toHaveLength(1);
-            expect(typeof result.dynamicStatusGenerators[0]?.generateSynopsis).toBe('function');
+            expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
         });
     });
 
@@ -330,7 +162,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -346,7 +178,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -368,7 +200,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -386,7 +218,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -406,7 +238,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -422,7 +254,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
             isPerchPaused:    () => true,
@@ -440,7 +272,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
             isPerchPaused:    () => paused,
@@ -464,7 +296,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
             isPerchPaused:    () => paused,
@@ -486,7 +318,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -503,7 +335,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -527,7 +359,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -542,51 +374,46 @@ describe('setupConductorPresence', () => {
         conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(0) });
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
 
-        // The turn's own id is needed to target the phase_synopsis event at it.
+        // The turn's own id is needed to target the turn_synopsis event at it.
         const turnId = conversation.get().turn?.id;
         expect(typeof turnId).toBe('string');
 
-        // The synopsis resolves for that exact (still-open) phase — must be applied despite the
+        // The synopsis resolves for that exact (still-open) turn — must be applied despite the
         // throttle never allowing an update.
-        conversation.dispatch({
-            type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'writing a reply', at: new Date(1),
-        });
+        conversation.dispatch({ type: 'turn_synopsis', turnId: turnId!, text: 'writing a reply', at: new Date(1) });
 
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
         const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
-        expect(view.phase).toMatchObject({ type: 'responding', generatedStatus: 'writing a reply' });
+        expect(view.synopsis).toBe('writing a reply');
 
         // The bypass still opens a fresh window: what it applied IS now what Discord shows, so
         // the very next ledger tick must not be entitled to re-send it (defect 3a — two
         // "Updated Discord presence" lines 1 ms apart in the 2026-09-08 production log).
         expect(throttle.record).toHaveBeenCalledTimes(1);
 
-        // A later, DIFFERENT digest for the same phase also bypasses the throttle: digests are
-        // already rate-limited at generation time (the stream handler only starts one when the
-        // throttle window is open), and every one that resolves is the freshest description of
-        // what Izzy is doing — holding it back for a window that a placeholder already spent is
-        // exactly what left Discord stuck on "Thinking..." in the first conductor-mode soak.
+        // A later, DIFFERENT synopsis for the same turn also bypasses the throttle: synopses are
+        // already rate-limited at generation time (each session's SynopsisBudget), and every one
+        // that resolves is the freshest description of what Izzy is doing — holding it back for a
+        // window that a placeholder already spent is exactly what left Discord stuck on
+        // "Thinking..." in the first conductor-mode soak.
         mockPresenceManager.applyView.mockClear();
-        conversation.dispatch({
-            type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'a later refinement', at: new Date(2),
-        });
+        throttle.record.mockClear();
+        conversation.dispatch({ type: 'turn_synopsis', turnId: turnId!, text: 'a later refinement', at: new Date(2) });
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
+        expect(throttle.record).toHaveBeenCalledTimes(1);
         const [refined] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
-        expect(refined.phase).toMatchObject({ type: 'responding', generatedStatus: 'a later refinement' });
+        expect(refined.synopsis).toBe('a later refinement');
 
-        // Re-dispatching the SAME digest text (the stream handler re-sends the pre-generated
-        // thinking synopsis on every thinking transition) is not a change and stays throttled.
+        // Re-dispatching the SAME synopsis text is a ledger no-op, so nothing is applied.
         mockPresenceManager.applyView.mockClear();
-        conversation.dispatch({
-            type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'a later refinement', at: new Date(3),
-        });
+        conversation.dispatch({ type: 'turn_synopsis', turnId: turnId!, text: 'a later refinement', at: new Date(3) });
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
     });
 
-    test('a real throttle recorded by the digest bypass suppresses the duplicate apply the next tick would otherwise make', () => {
+    test('a real throttle recorded by the synopsis bypass suppresses the duplicate apply the next tick would otherwise make', () => {
         // Defect 3a end-to-end, against the REAL throttle rather than a stubbed one: before the
         // fix the bypass never recorded, so the ledger tick that followed it (the next sdk_frame,
-        // carrying the very same digest) still satisfied planPresenceUpdate and re-applied
+        // carrying the very same synopsis) still satisfied planPresenceUpdate and re-applied
         // identical text — the pair of "Updated Discord presence" lines 1 ms apart in the log.
         const conversation = makeConversationLedger();
         let now = 0;
@@ -596,7 +423,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -612,9 +439,7 @@ describe('setupConductorPresence', () => {
 
         // The synopsis resolves a full window later: applied via the bypass.
         now = 33_000;
-        conversation.dispatch({
-            type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'writing a reply', at: new Date(now),
-        });
+        conversation.dispatch({ type: 'turn_synopsis', turnId: turnId!, text: 'writing a reply', at: new Date(now) });
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
 
         // 1 ms later the next frame of the same phase re-composes identical text. The window the
@@ -624,7 +449,7 @@ describe('setupConductorPresence', () => {
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
     });
 
-    test('a digest carried across a phase flip is not re-applied as "new" on the flip, but a fresher digest arriving after the flip is', () => {
+    test('a phase flip under an unchanged synopsis is an ordinary throttled event, and a fresher synopsis after the flip still bypasses', () => {
         const conversation = makeConversationLedger();
         const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
 
@@ -632,7 +457,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -640,27 +465,24 @@ describe('setupConductorPresence', () => {
             type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
         conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(0) });
-        const turnId = conversation.get().turn?.id;
-        conversation.dispatch({
-            type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'writing a reply', at: new Date(1),
-        });
+        conversation.dispatch({ type: 'turn_synopsis', turnId: 'env-1', text: 'writing a reply', at: new Date(1) });
         mockPresenceManager.applyView.mockClear();
 
-        // Phase flips to using_tool; the ledger carries 'writing a reply' along. Same digest text,
-        // new phase signature: an ordinary (throttled) event, not a digest arrival.
+        // Phase flips to using_tool; the synopsis lives on the turn and is unchanged, so this is
+        // not a synopsis arrival.
         conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: new Date(2) });
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
 
-        // A fresher digest resolves for the new phase: applied immediately.
-        conversation.dispatch({
-            type: 'phase_synopsis', turnId: turnId!, phaseType: 'using_tool', text: 'running the tests', at: new Date(3),
-        });
+        conversation.dispatch({ type: 'turn_synopsis', turnId: 'env-1', text: 'running the tests', at: new Date(3) });
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
         const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
-        expect(view.phase).toMatchObject({ type: 'using_tool', generatedStatus: 'running the tests' });
+        expect(view.phase).toMatchObject({ type: 'using_tool', toolName: 'Bash' });
+        expect(view.synopsis).toBe('running the tests');
     });
 
-    test('a fresher digest that arrives on the SAME tick as a phase flip is an ordinary throttled event, not a bypass', () => {
+    test('a new turn replacing the old one with no idle view in between is not mistaken for a synopsis arrival', () => {
+        // Kills a role-only signature: the new turn has no synopsis, which differs from the old
+        // turn's — but it is a different TURN, so its synopsis-less view is an ordinary event.
         const conversation = makeConversationLedger();
         const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
 
@@ -668,24 +490,49 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
             type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
-        conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(0) });
-        const turnId = conversation.get().turn?.id;
-        conversation.dispatch({
-            type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'writing a reply', at: new Date(1),
-        });
+        conversation.dispatch({ type: 'turn_synopsis', turnId: 'env-1', text: 'writing a reply', at: new Date(1) });
         mockPresenceManager.applyView.mockClear();
 
-        // New phase AND new digest in one event: the signature changed, so this is a new
-        // presence-worthy event that the throttle is entitled to hold.
-        conversation.dispatch({ type: 'phase_changed', phase: { type: 'thinking', startedAt: new Date(2), generatedStatus: 'now thinking' }, at: new Date(2) });
+        conversation.dispatch({
+            type: 'turn_submitted', envelope: { id: 'env-2', kind: 'discord', queuedAt: new Date(2), channelId: createChannelId('chan-1') }, at: new Date(2),
+        });
+
+        expect(conversation.get().turn?.id).toBe('env-2');
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
+    });
+
+    test('a synopsis for the session that is NOT winning presence never bypasses the throttle', () => {
+        const conversation = makeConversationLedger();
+        const perch = createLedgerStore('perch', { logger: { error: mock() } });
+        const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
+
+        setupConductorPresence({
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation, perch],
+            throttle,
+            getRecentContext: () => Promise.resolve(undefined),
+        });
+        conversation.dispatch({
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
+        });
+        perch.dispatch({ type: 'turn_submitted', envelope: { id: 'perch-1', kind: 'perch', queuedAt: new Date(0) }, at: new Date(0) });
+        mockPresenceManager.applyView.mockClear();
+        throttle.record.mockClear();
+
+        perch.dispatch({ type: 'turn_synopsis', turnId: 'perch-1', text: 'tidying notes', at: new Date(1) });
+
+        expect(perch.get().turn?.synopsis).toBe('tidying notes');
+        expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
+        expect(throttle.record).not.toHaveBeenCalled();
     });
 
     test('going idle is held for IDLE_SETTLE_MS: a turn opening inside the window cancels the idle apply entirely', () => {
@@ -694,7 +541,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -730,7 +577,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
             isPerchPaused:    () => true,
@@ -768,7 +615,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -796,7 +643,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -821,7 +668,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });
@@ -843,7 +690,7 @@ describe('setupConductorPresence', () => {
             identityContext:  'Test identity',
             presenceConfig:   MINIMAL_PRESENCE_CONFIG,
             readyClient:      makeMockClient(),
-            sessions:         [{ ledger: conversation }],
+            ledgers:          [conversation],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
         });

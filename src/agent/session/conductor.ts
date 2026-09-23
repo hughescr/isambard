@@ -157,8 +157,8 @@ const PENDING_PEER_QUEUE_MAX = 8;
 
 /**
  * The id a bare (envelope-less) notification turn is known by, in BOTH the conductor's
- * `currentTurn` and the ledger's turn. One expression so the two can never drift: presence
- * matches every `phase_synopsis` against the LEDGER's id, and a mismatch is a silent drop —
+ * `currentTurn` and the ledger's turn. One expression so the two can never drift: the ledger
+ * matches every `turn_synopsis` against the LEDGER's id, and a mismatch is a silent drop —
  * `turnIdFor` reporting the literal `'notification'` while the ledger held `notification-<ms>`
  * is exactly how spontaneous turns lost their synopsis before.
  * @param at The instant the turn opened
@@ -762,7 +762,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     /**
      * The id reported to `subscribeTurn`/`onTurnFrame` subscribers. Reads {@link ActiveTurn.id}
      * — never the kind — so a bare spontaneous turn reports the same `notification-<ms>` the
-     * ledger holds, rather than the literal `'notification'` that no `phase_synopsis` could ever
+     * ledger holds, rather than the literal `'notification'` that no `turn_synopsis` could ever
      * match.
      */
     function turnIdFor(turn: ActiveTurn | null): string {
@@ -1393,9 +1393,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 id: turnId, kind: 'notification', tracker: new StreamTracker(), escalationArmed: false,
             };
             // Dispatched here — still inside onFrame, BEFORE notifyTurnSubscribers — so the
-            // presence synopsis attachment (which opens a handler from the ledger's turn) is live
-            // for this turn's very first frame, and every `phase_synopsis` it dispatches carries
-            // the id `reducePhaseSynopsis` compares against. Do not move it after the notify.
+            // turn synopsis producer (which opens a handler from the ledger's turn) is live
+            // for this turn's very first frame, and every `turn_synopsis` it dispatches carries
+            // the id `reduceTurnSynopsis` compares against. Do not move it after the notify.
             ledgerStore.dispatch({ type: 'spontaneous_turn_opened', turnId, at });
             return;
         }

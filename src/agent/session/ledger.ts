@@ -25,7 +25,7 @@ const FINISHED_TASKS_CAP = 20;
 
 /** One in-flight turn: opened by `turn_submitted`, or spontaneously by an unsolicited assistant frame. */
 export interface LedgerTurn {
-    /** Stable id for this turn: the submitting envelope's `id`, or a synthesized id for a spontaneously-opened notification turn. Matched against a {@link LedgerEvent} `phase_synopsis`'s `turnId` so a stale synopsis (from a turn that has since ended) is dropped rather than misapplied to whatever turn is open now. */
+    /** Stable id for this turn: the submitting envelope's `id`, or a synthesized id for a spontaneously-opened notification turn. Matched against a {@link LedgerEvent} `turn_synopsis`'s `turnId` so a stale synopsis (from a turn that has since ended) is dropped rather than misapplied to whatever turn is open now. */
     id:            string
     kind:          EnvelopeKind
     startedAt:     Date
@@ -37,8 +37,15 @@ export interface LedgerTurn {
     phase:         ActivityPhase | null
     firstTokenAt?: Date
     interrupting:  boolean
-    /** The submitting envelope's {@link import('./types').Envelope.synopsisSeed} — header-free, capped content the Discord presence synopsis attachment (`presence/turn-synopsis.ts`) seeds its first Haiku generation from. Absent for a spontaneously-opened notification turn (no envelope exists) and for a seedless envelope. */
+    /** The submitting envelope's {@link import('./types').Envelope.synopsisSeed} — header-free, capped content the turn synopsis producer (`turn-synopsis.ts`) seeds its first Haiku generation from. Absent for a spontaneously-opened notification turn (no envelope exists) and for a seedless envelope. */
     seed?:         string
+    /**
+     * The turn synopsis: a one-line Haiku description of what this turn is doing, set by a
+     * matching `turn_synopsis` event (`turn-synopsis.ts`'s producer). It is a turn-level fact, so
+     * phase flips and compaction never touch it; a new turn starts without one. Read by Discord
+     * presence (the custom status) and by the OTHER session's ambient line ("working on …").
+     */
+    synopsis?:     string
 }
 
 /** The latest `task_progress` payload for a task, plus the final `usage` a `task_notification` carries. */
@@ -203,26 +210,23 @@ export type LedgerEvent
       | { type: 'phase_changed', phase: ActivityPhase | null, at: Date }
       /**
        * A bare spontaneous turn the conductor just opened (`conductor.ts`'s
-       * `beginSpontaneousTurn`), dispatched BEFORE it notifies turn subscribers so the presence
-       * synopsis attachment already has a handler — carrying the conductor's own turn id — by the
+       * `beginSpontaneousTurn`), dispatched BEFORE it notifies turn subscribers so the turn
+       * synopsis producer already has a handler — carrying the conductor's own turn id — by the
        * time the first frame arrives. The conductor is the sole minter of that id; `turnId` is
-       * what every later `phase_synopsis` for this turn must match. Ignored (ledger returned by
+       * what every later `turn_synopsis` for this turn must match. Ignored (ledger returned by
        * reference) when a turn is already open.
        */
       | { type: 'spontaneous_turn_opened', turnId: string, at: Date }
       /**
-       * A synopsis generated for the currently-open turn (`presence/stream-event-handler.ts`'s
-       * `createLedgerStreamEventHandler`). Applied as `turn.phase.generatedStatus` when `turnId`
-       * matches `turn.id`; dropped when it does not (design doc section 8) — a synopsis resolving
-       * after its turn ended must never overwrite an unrelated turn's status. `phaseType` records
-       * which phase it was generated FOR but is deliberately NOT a match condition: a digest
-       * describes the turn's recent activity as a whole, and tool calls flip
-       * thinking<->using_tool every few seconds while a Haiku generation takes about five, so
-       * matching on it dropped almost every digest in production (first conductor-mode soak,
-       * 2026-09-06). The digest then rides along every phase change within the turn (see
-       * `carryDigest`) until a fresher synopsis replaces it.
+       * A turn synopsis generated for the currently-open turn (`synopsis-stream-handler.ts`'s
+       * `createSynopsisStreamHandler`). Sets `turn.synopsis` when `turnId` matches `turn.id`, and
+       * is matched on `turnId` ONLY; dropped when it does not match (design doc section 8) — a
+       * synopsis resolving after its turn ended must never overwrite an unrelated turn's. It
+       * describes the turn's recent activity as a whole, so it lives on the turn: phase flips
+       * (thinking<->using_tool every few seconds, while a Haiku generation takes about five) and
+       * compaction never touch it, and it stays until a fresher synopsis replaces it.
        */
-      | { type: 'phase_synopsis', turnId: string, phaseType: ActivityPhase['type'], text: string, at: Date }
+      | { type: 'turn_synopsis', turnId: string, text: string, at: Date }
       /**
        * A quota reading from the usage-endpoint poller
        * ({@link import('./quota-poller').createQuotaPoller}), already normalised to
@@ -365,7 +369,7 @@ function reduceAssistantFrame(ledger: Ledger, frame: AssistantFrame, at: Date): 
     }
 
     const { turn } = ledger;
-    const phase = carryDigest(turn.phase, phaseFromFrame(frame, turn.phase, at));
+    const phase = phaseFromFrame(frame, turn.phase, at);
     const isFirstToken = turn.firstTokenAt === undefined;
     if(!isFirstToken && phase === turn.phase) {
         return ledger;
@@ -929,7 +933,7 @@ function applyPhaseToOpenTurn(ledger: Ledger, frame: SDKMessage, at: Date): Ledg
     if(ledger.turn === null) {
         return ledger;
     }
-    const phase = carryDigest(ledger.turn.phase, phaseFromFrame(frame, ledger.turn.phase, at));
+    const phase = phaseFromFrame(frame, ledger.turn.phase, at);
     if(phase === ledger.turn.phase) {
         return ledger;
     }
@@ -1071,43 +1075,21 @@ function reduceSessionOpened(ledger: Ledger, sessionId: string, at: Date): Ledge
     };
 }
 
-/**
- * Carries `prev`'s `generatedStatus` (the Haiku digest) onto a `next` phase that has none of its
- * own, so a phase flip within a turn (thinking -> using_tool -> thinking, every few seconds)
- * does not blank the presence text back to the static placeholder between digests. Returns
- * `next` by reference when there is nothing to carry (no `prev` digest, `next` already carries
- * one, or `next` is `null` = turn over), so callers' identity checks (`phase === turn.phase`)
- * keep working.
- */
-function carryDigest(prev: ActivityPhase | null, next: ActivityPhase | null): ActivityPhase | null {
-    if(next === null) {
-        return next;
-    }
-    const digest = prev?.generatedStatus;
-    if(digest === undefined) {
-        return next;
-    }
-    if(next.generatedStatus !== undefined) {
-        return next;
-    }
-    return { ...next, generatedStatus: digest };
-}
-
 function reducePhaseChanged(ledger: Ledger, phase: ActivityPhase | null): Ledger {
     if(ledger.turn === null) {
         return ledger;
     }
-    return { ...ledger, turn: { ...ledger.turn, phase: carryDigest(ledger.turn.phase, phase) } };
+    return { ...ledger, turn: { ...ledger.turn, phase } };
 }
 
 /**
- * Applies a `phase_synopsis` event's `text` as `turn.phase.generatedStatus` when the event's
- * `turnId` matches the currently open turn's `id` — otherwise the event is a stale synopsis (its
- * turn ended, or none is open yet) and is dropped, returning `ledger` unchanged by reference. A
- * matching turn with no phase yet gets a `thinking` placeholder phase carrying the digest. The event's `phaseType` is deliberately not compared (see the
- * `phase_synopsis` doc on {@link LedgerEvent}).
+ * Sets `turn.synopsis` from a `turn_synopsis` event when the event's `turnId` matches the
+ * currently open turn's `id`. Returns `ledger` unchanged by reference when the event is stale (its
+ * turn ended, or none is open yet) and when the text is what the turn already carries, so a
+ * repeated synopsis notifies no subscriber. The phase is never touched (see the `turn_synopsis`
+ * doc on {@link LedgerEvent}).
  */
-function reducePhaseSynopsis(ledger: Ledger, event: Extract<LedgerEvent, { type: 'phase_synopsis' }>): Ledger {
+function reduceTurnSynopsis(ledger: Ledger, event: Extract<LedgerEvent, { type: 'turn_synopsis' }>): Ledger {
     const { turn } = ledger;
     if(turn === null) {
         return ledger;
@@ -1115,15 +1097,10 @@ function reducePhaseSynopsis(ledger: Ledger, event: Extract<LedgerEvent, { type:
     if(turn.id !== event.turnId) {
         return ledger;
     }
-    if(turn.phase === null) {
-        // The turn is open but no SDK frame has set a phase yet — this is where the pre-generated
-        // thinking synopsis lands, because the conductor notifies turn subscribers (the stream
-        // handler that dispatches it) BEFORE it folds the same frame into this ledger. Seed the
-        // same 'thinking' placeholder the presence composer would synthesize for a phase-less
-        // turn, carrying the digest, so the first frame's phase (via carryDigest) keeps it.
-        return { ...ledger, turn: { ...turn, phase: { type: 'thinking', startedAt: event.at, generatedStatus: event.text } } };
+    if(turn.synopsis === event.text) {
+        return ledger;
     }
-    return { ...ledger, turn: { ...turn, phase: { ...turn.phase, generatedStatus: event.text } as ActivityPhase } };
+    return { ...ledger, turn: { ...turn, synopsis: event.text } };
 }
 
 /**
@@ -1177,8 +1154,8 @@ export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
         case 'spontaneous_turn_opened': {
             return reduceSpontaneousTurnOpened(ledger, event.turnId, event.at);
         }
-        case 'phase_synopsis': {
-            return reducePhaseSynopsis(ledger, event);
+        case 'turn_synopsis': {
+            return reduceTurnSynopsis(ledger, event);
         }
         case 'quota_polled': {
             return reduceQuota(ledger, event.quota, 'poll', event.at);

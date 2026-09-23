@@ -1,21 +1,16 @@
 import { logger } from '@hughescr/logger';
 import { ActivityType, type Client  } from 'discord.js';
 import {
-    attachTurnSynopsis,
     composePresence,
     createActiveStatusGenerator,
-    createDynamicStatusGenerator,
     createIdleStatusGenerator,
     planPresenceUpdate,
     PresenceManager,
     type PresenceThrottle,
     type PresenceView
 } from '../presence';
-import { IdentityCache, type Conductor, type ContextBuilder, type LedgerStore, type Signal } from '@/agent';
+import { IdentityCache, type ContextBuilder, type LedgerStore, type Signal } from '@/agent';
 import type { DiscordConfig } from '@/config';
-
-/** Return type of {@link createDynamicStatusGenerator} — one per session ledger (P14). */
-type DynamicStatusGenerator = ReturnType<typeof createDynamicStatusGenerator>;
 
 /**
  * How long a freshly-idle composed view must persist before it is applied. A follow-up message
@@ -26,45 +21,12 @@ type DynamicStatusGenerator = ReturnType<typeof createDynamicStatusGenerator>;
  */
 export const IDLE_SETTLE_MS = 1500;
 
-/** The view phase's ledger-overlaid synopsis, when it carries one (`idle` has none). */
-function digestOf(view: PresenceView): string | undefined {
-    return 'generatedStatus' in view.phase ? view.phase.generatedStatus : undefined;
-}
-
-/**
- * One session presence composes from: its ledger and, when the session has a live conductor, that
- * conductor. Passing the two TOGETHER is the point — a ledger paired with another session's
- * conductor would subscribe to one session's frames while dispatching `phase_synopsis` events
- * carrying the other's turn ids, which `reducePhaseSynopsis`'s exact-id guard drops in silence
- * (the very bug `turn-synopsis.ts` exists to fix), and would hand that session another session's
- * per-instance status generator (the P14 cross-session abort/cooldown defect). Two index-aligned
- * arrays could express that mistake; this shape cannot.
- */
-export interface ConductorPresenceSession {
-    /** The session ledger to compose presence from. */
-    ledger:     LedgerStore
-    /**
-     * The conductor that writes {@link ledger}. Present entries get one {@link attachTurnSynopsis}
-     * attachment, which is what gives EVERY turn kind — not just a human Discord message — a Haiku
-     * synopsis overlaid on presence. Omitted (a ledger with no live conductor) attaches nothing,
-     * and that ledger still contributes to the composed view.
-     */
-    conductor?: Pick<Conductor, 'subscribeTurn'>
-}
-
 /** Result of {@link setupConductorPresence}. */
 export interface ConductorPresenceSetupResult {
     /** Presence manager for Discord status updates. */
-    presenceManager:         PresenceManager
-    /** Stops mirroring every session's ledger into `presenceManager`, and detaches every synopsis attachment. */
-    unsubscribeLedgers:      () => void
-    /**
-     * One dynamic-status-generator instance per entry in the `sessions` param, in the same order
-     * (conventionally `[conversation, perch]`) — each with its own cooldown/cache/in-flight state
-     * (P14). Callers wire the entry for a given session's turns (e.g. the conversation entry into
-     * `createConductorProcessor`'s own `dynamicStatusGenerator` dep).
-     */
-    dynamicStatusGenerators: DynamicStatusGenerator[]
+    presenceManager:    PresenceManager
+    /** Stops mirroring every session's ledger into `presenceManager`. */
+    unsubscribeLedgers: () => void
 }
 
 /**
@@ -77,64 +39,50 @@ export interface ConductorPresenceSetupResult {
  * The composition/throttle DECISION lives entirely in `presence-view.ts`'s pure
  * `composePresence`/`planPresenceUpdate` (already measured at 100% mutation coverage on their
  * own); this function's own body is just the plumbing that calls them and applies the result.
+ *
+ * It renders the turn synopsis (`PresenceView.synopsis`) but never produces one: the producer is
+ * the session core's `attachTurnSynopsis`, wired per session by `src/app/sessions.ts`.
  * @param params Construction inputs (status generators, identity cache, live-signals/task-context
- * callbacks), plus the sessions to compose from and the shared `PresenceThrottle` instance.
+ * callbacks), plus the ledgers to compose from and the display `PresenceThrottle` instance.
  * @returns See {@link ConductorPresenceSetupResult}.
  */
 export function setupConductorPresence(params: {
-    identityContext:          string
-    presenceConfig:           NonNullable<DiscordConfig['presence']>
-    readyClient:              Client
+    identityContext:         string
+    presenceConfig:          NonNullable<DiscordConfig['presence']>
+    readyClient:             Client
     /**
-     * The sessions to compose from, each pairing a ledger with its OWN conductor — conventionally
-     * `[conversation, perch]` (P12: perch's own real conductor ledger, when present; design doc
-     * section 8: conversation wins when both are live). See {@link ConductorPresenceSession} for
-     * why the pair travels as one object rather than as two index-aligned arrays.
+     * The session ledgers to compose from — conventionally `[conversation, perch]` (P12: perch's
+     * own real conductor ledger, when present; design doc section 8: conversation wins when both
+     * are live).
      */
-    sessions:                 readonly ConductorPresenceSession[]
-    /** The one process-wide throttle shared with the ledger-sink stream handler (P11). */
-    throttle:                 PresenceThrottle
-    /** Forwarded verbatim to every synopsis attachment (see `bot.ts`'s last-thinking-content ring buffer). */
-    onThinkingContentUpdate?: (content: string) => void
-    /** Test seam: the synopsis attachment factory, defaulting to the real {@link attachTurnSynopsis}. */
-    attachSynopsis?:          typeof attachTurnSynopsis
-    /**
-     * P14: injectable dynamic-status-generator factory, defaulting to the real
-     * {@link createDynamicStatusGenerator}. Called once PER SESSION (in `sessions` order) so each
-     * session gets its own cooldown/cache/in-flight-controller instance — a single shared
-     * instance let one session's Haiku call abort the other's and let one session's cooldown gate
-     * the other's synopsis (status-generator-dynamic.ts now keeps that state in the closure
-     * returned by this factory, not at module scope). See {@link ConductorPresenceSetupResult.dynamicStatusGenerators}.
-     */
-    createDynamicGenerator?:  typeof createDynamicStatusGenerator
-    getTaskContext?:          () => Promise<string | undefined>
-    getRecentContext:         () => Promise<string | undefined>
-    contextBuilder?:          ContextBuilder
-    getLastThinkingContent?:  () => string | undefined
+    ledgers:                 readonly LedgerStore[]
+    /** The display rate limit only: turn synopsis generation has its own per-session `SynopsisBudget`. */
+    throttle:                PresenceThrottle
+    getTaskContext?:         () => Promise<string | undefined>
+    getRecentContext:        () => Promise<string | undefined>
+    contextBuilder?:         ContextBuilder
+    getLastThinkingContent?: () => string | undefined
     /** Pre-built write-through identity cache. When provided, replaces the inline loader. */
-    identityCache?:           IdentityCache
+    identityCache?:          IdentityCache
     /** Optional live-signals snapshot callback. */
-    getLiveSignals?:          () => Promise<Signal[]>
+    getLiveSignals?:         () => Promise<Signal[]>
     /** Getter for the last idle status text (anti-rut). */
-    getPreviousStatus?:       () => string | undefined
+    getPreviousStatus?:      () => string | undefined
     /** Setter for persisting the last idle status text (anti-rut). */
-    setPreviousStatus?:       (text: string) => void
+    setPreviousStatus?:      (text: string) => void
     /**
      * Optional composed perch-pause predicate: `tick()` re-reads it on every compose (never
      * cached), so a pause taken or cleared mid-run is reflected on the very next ledger event —
      * rendered as a `⏸ perch` marker in the composed prefix (see `composePresence`'s own doc).
      */
-    isPerchPaused?:           () => boolean
+    isPerchPaused?:          () => boolean
 }): ConductorPresenceSetupResult {
     const {
         identityContext,
         presenceConfig,
         readyClient,
-        sessions,
+        ledgers,
         throttle,
-        onThinkingContentUpdate,
-        attachSynopsis = attachTurnSynopsis,
-        createDynamicGenerator = createDynamicStatusGenerator,
         getTaskContext,
         getRecentContext,
         contextBuilder,
@@ -145,35 +93,6 @@ export function setupConductorPresence(params: {
         setPreviousStatus,
         isPerchPaused,
     } = params;
-
-    // P14: one generator instance per session — see ConductorPresenceSession's own doc for why
-    // sharing one instance across sessions is a defect, not an optimisation. Attaching it to the
-    // session object here is what keeps a session's ledger, conductor and generator together from
-    // this point on: nothing below indexes one collection with another's position.
-    const attachedSessions = sessions.map(session => ({
-        ...session,
-        dynamicStatusGenerator: createDynamicGenerator({ identityContext }),
-    }));
-    const ledgers: readonly LedgerStore[] = attachedSessions.map(session => session.ledger);
-    const dynamicStatusGenerators: DynamicStatusGenerator[] = attachedSessions.map(session => session.dynamicStatusGenerator);
-
-    // The ONE place a presence synopsis handler is attached (see presence/turn-synopsis.ts):
-    // once per session, so every turn kind that session opens — human, bare notification, task
-    // wake, peer, catch-up, perch, wrapup, continuation — gets a Haiku digest instead of the ledger's
-    // bare base phase.
-    const detachSynopses = attachedSessions.flatMap(({ ledger, conductor, dynamicStatusGenerator }) => {
-        if(conductor === undefined) {
-            return [];
-        }
-        return [attachSynopsis({
-            conductor,
-            ledgerStore: ledger,
-            throttle,
-            dynamicStatusGenerator,
-            logger,
-            onThinkingContentUpdate,
-        })];
-    });
 
     const activeStatusGenerator = createActiveStatusGenerator({
         activityType: ActivityType.Custom,
@@ -215,26 +134,31 @@ export function setupConductorPresence(params: {
 
     presenceManager.start();
 
-    // P11 fix: the ledger-sink stream handler (stream-event-handler.ts) peeks `throttle` to decide
-    // whether generating a synopsis is worth it, then dispatches `phase_synopsis` once it resolves
-    // (design doc section 8) — but that generation is an LLM call, so it can never resolve within
-    // the same synchronous tick as the sdk_frame that started it. Left to `planPresenceUpdate`
-    // alone, whichever tick happens to apply first (the digest-less base phase, or an even earlier
-    // phase still holding the window) consumes the whole 12s window, and the digest — once it
-    // finally resolves — is then either a whole window late or dropped outright for a turn shorter
-    // than the window (see the P11 review finding this fixes). `lastSeenSignature`/
-    // `lastSeenDigest` remember the (role, phaseType) and digest text of the most recently
-    // COMPOSED non-idle view — whether or not it was actually applied — reset at every idle view
-    // (a turn boundary). A tick where that exact phase's digest text CHANGES (absent -> present,
-    // or one digest -> a fresher one) is a REFINEMENT of whatever is already on screen for it (or
+    // P11 fix, keyed on the turn since #39: the session core's turn synopsis producer dispatches
+    // `turn_synopsis` once a Haiku generation resolves (design doc section 8) — an LLM call, so it
+    // can never resolve within the same synchronous tick as the sdk_frame that started it. Left to
+    // `planPresenceUpdate` alone, whichever tick happens to apply first (the synopsis-less static
+    // label, or an earlier phase still holding the window) consumes the whole 12s window, and the
+    // synopsis — once it finally resolves — is then either a whole window late or dropped outright
+    // for a turn shorter than the window (see the P11 review finding this fixes).
+    // `lastSeenSignature`/`lastSeenSynopsis` remember the (role, turnId) and synopsis text of the
+    // most recently COMPOSED non-idle view — whether or not it was actually applied — reset at
+    // every idle view. A tick where the SAME winning turn's synopsis CHANGES (absent -> present, or
+    // one synopsis -> a fresher one) is a REFINEMENT of whatever is already on screen for it (or
     // would have been, throttle permitting), not a new presence-worthy event: apply it directly,
     // bypassing the throttle, so the window a placeholder already spent (or is still holding)
-    // doesn't also swallow the synopsis it was generated for. Digests are already rate-limited at
-    // generation time (the stream handler starts one only while the throttle window is open), so
-    // this cannot flood Discord. A digest the ledger merely CARRIED across a phase flip (same text,
-    // new signature) is not a change and takes the ordinary throttled path.
+    // doesn't also swallow the synopsis it was generated for. A synopsis lives on the turn, so a
+    // phase flip never changes it and always takes the ordinary throttled path; a synopsis from
+    // the session that is NOT winning never reaches the view at all.
+    //
+    // The bypass is therefore the one deliberate exception to "at most one non-idle update per
+    // throttle window". Its bound comes from the producer: each session's `SynopsisBudget` lets
+    // at most one generation START per 12 s, and its generator's cancel-and-replace aborts any
+    // call still in flight when the next starts, so one session's synopses ARRIVE at most twice in
+    // any 12 s span (two consecutive arrivals can sit close together; the third is ≥ 12 s after
+    // the first). A bypass also records the throttle, so the ordinary path stays held after it.
     let lastSeenSignature: string | null = null;
-    let lastSeenDigest: string | undefined;
+    let lastSeenSynopsis: string | undefined;
 
     /** Applies `view` via the presence manager. */
     function apply(view: PresenceView): void {
@@ -259,11 +183,10 @@ export function setupConductorPresence(params: {
      */
     function tick(settleIdle = true): void {
         const view = composePresence(ledgers.map(store => store.get()), isPerchPaused?.() ?? false);
-        const digest = digestOf(view);
 
         if(view.phase.type === 'idle') {
             lastSeenSignature = null;
-            lastSeenDigest = undefined;
+            lastSeenSynopsis = undefined;
             if(settleIdle) {
                 idleSettleTimer ??= setTimeout(applyIdleIfStillIdle, IDLE_SETTLE_MS);
             } else {
@@ -276,20 +199,21 @@ export function setupConductorPresence(params: {
             clearTimeout(idleSettleTimer);
             idleSettleTimer = null;
         }
-        const signature = `${view.activeRole}:${view.phase.type}`;
-        // (An idle view has a null signature AND no digest, so the two-clause form below cannot
-        // misfire on idle -> idle: both digests are undefined there.)
-        const digestJustArrived = signature === lastSeenSignature && digest !== lastSeenDigest;
+        // Keyed on the winning turn, not its phase: a new turn (even straight after another, with
+        // no idle view in between) starts a new signature, so its first synopsis-less view is not
+        // mistaken for a refinement of the previous turn's.
+        const signature = `${view.activeRole}:${view.turnId}`;
+        const synopsisJustArrived = signature === lastSeenSignature && view.synopsis !== lastSeenSynopsis;
 
         lastSeenSignature = signature;
-        lastSeenDigest = digest;
+        lastSeenSynopsis = view.synopsis;
 
-        if(digestJustArrived) {
+        if(synopsisJustArrived) {
             // Record as well as apply: what went out IS now what Discord shows, so the ticks that
-            // follow (the same phase re-composed by the next sdk_frame, carrying the same digest)
+            // follow (the same turn re-composed by the next sdk_frame, carrying the same synopsis)
             // must be held by a fresh window rather than sailing through planPresenceUpdate and
             // re-sending identical text — two "Updated Discord presence" lines 1 ms apart in the
-            // 2026-09-08 production log. The bypass's own intent is unchanged: a fresh digest
+            // 2026-09-08 production log. The bypass's own intent is unchanged: a fresh synopsis
             // still never waits for the window, it just opens one.
             throttle.record();
             apply(view);
@@ -306,11 +230,9 @@ export function setupConductorPresence(params: {
 
     return {
         presenceManager,
-        dynamicStatusGenerators,
         unsubscribeLedgers: (): void => {
-            // Stryker disable next-line llm: ledger and synopsis teardown callbacks are independent, so swapping the two groups has no observable effect.
-            for(const unsubscribe of [...unsubscribes, ...detachSynopses]) {
-                // Stryker disable next-line llm: every concatenated element is a required function return value and therefore cannot be nullish.
+            for(const unsubscribe of unsubscribes) {
+                // Stryker disable next-line llm: every element is a required function return value and therefore cannot be nullish.
                 unsubscribe();
             }
             // Stryker disable next-line llm: idleSettleTimer is Timeout | null and never undefined, so != null and !== null are equivalent.

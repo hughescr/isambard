@@ -894,6 +894,14 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     // (top of this function) and mcpSharedDeps (above), and before createDiscordBot so the bot
     // can open it itself once the guild cache and channel registry exist (P9/P10). P13b: the
     // conductor is the only path now — the one-shot legacy agent it used to sit beside is gone.
+    //
+    // #39: the last thinking content either session's turn synopsis producer saw (last writer
+    // wins), for the idle Discord status generator's context. Both conductor factories feed it;
+    // the bot only reads it.
+    let lastThinkingContent: string | undefined;
+    const setLastThinkingContent = (content: string): void => {
+        lastThinkingContent = content;
+    };
     let conversationConductor: Conductor | undefined;
     let conversationLedgerStore: LedgerStore | undefined;
     let conversationContextPolicy: ContextPolicy | undefined;
@@ -930,22 +938,23 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         };
 
         const builtConductor = await createConversationConductor({
-            config:              config.session,
-            queryFn:             query,
-            mcpShared:           mcpSharedDeps,
-            emailServerFactory:  emailSetup?.createEmailMcpServerInstance,
+            config:                  config.session,
+            queryFn:                 query,
+            mcpShared:               mcpSharedDeps,
+            emailServerFactory:      emailSetup?.createEmailMcpServerInstance,
             plugins,
-            contextBuilder:      contextLayer.contextBuilder,
+            contextBuilder:          contextLayer.contextBuilder,
             healthRegistry,
-            identityCache:       identityCacheSlot.cache,
-            taskListReader:      conversationTaskListReader,
-            journal:             conversationJournal,
-            resumeStore:         conversationResumeStore,
-            channelListProvider: conversationChannelListProvider,
-            clock:               systemClock,
+            identityCache:           identityCacheSlot.cache,
+            taskListReader:          conversationTaskListReader,
+            journal:                 conversationJournal,
+            resumeStore:             conversationResumeStore,
+            channelListProvider:     conversationChannelListProvider,
+            clock:                   systemClock,
             logger,
             ambience,
-            crossVendorRoutes:   gateway.enabled,
+            crossVendorRoutes:       gateway.enabled,
+            onThinkingContentUpdate: setLastThinkingContent,
         });
         function getConversationSessionId(): string | undefined {
             return builtConductor.conductor.status().sessionId;
@@ -983,20 +992,21 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         };
 
         const builtPerchConductor = await createPerchConductor({
-            config:             config.session,
-            queryFn:            query,
-            mcpShared:          mcpSharedDeps,
-            emailServerFactory: emailSetup?.createEmailMcpServerInstance,
+            config:                  config.session,
+            queryFn:                 query,
+            mcpShared:               mcpSharedDeps,
+            emailServerFactory:      emailSetup?.createEmailMcpServerInstance,
             plugins,
-            contextBuilder:     contextLayer.contextBuilder,
-            identityCache:      identityCacheSlot.cache,
-            taskListReader:     perchTaskListReader,
-            journal:            perchJournal,
-            resumeStore:        perchResumeStore,
-            clock:              systemClock,
+            contextBuilder:          contextLayer.contextBuilder,
+            identityCache:           identityCacheSlot.cache,
+            taskListReader:          perchTaskListReader,
+            journal:                 perchJournal,
+            resumeStore:             perchResumeStore,
+            clock:                   systemClock,
             logger,
             ambience,
-            crossVendorRoutes:  gateway.enabled,
+            crossVendorRoutes:       gateway.enabled,
+            onThinkingContentUpdate: setLastThinkingContent,
         });
         function getPerchSessionId(): string | undefined {
             return builtPerchConductor.conductor.status().sessionId;
@@ -1082,6 +1092,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         // five-hour window pauses perch through the machinery that already exists (scheduler.ts's
         // skip and presence's `⏸ perch` marker), and self-clears when that window resets.
         isPerchPaused:            () => costCeiling.isPaused() || quotaNotes.isPaused(),
+        getLastThinkingContent:   () => lastThinkingContent,
         // Q5 / B1: the shared notification bridge's notify function — a safe no-op until
         // notificationBridge.attachConductor() has run (above). Q6-Q8 wire the actual
         // notification sources; this package only threads the seam through.

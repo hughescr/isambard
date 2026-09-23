@@ -123,10 +123,22 @@ describe('composeAmbientLines: the other-session line', () => {
         expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: working']);
     });
 
-    it('appends the phase digest when the ledger carries a generated synopsis', () => {
-        const other = ledger('conversation', { turn: turn({ phase: { type: 'thinking', startedAt: NOW, generatedStatus: 'drafting the reply' } }) });
+    it('appends the turn synopsis the other ledger\'s turn carries', () => {
+        const other = ledger('conversation', { turn: turn({ phase: { type: 'using_tool', toolName: 'Bash', startedAt: NOW }, synopsis: 'drafting the note' }) });
 
-        expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: thinking, working on drafting the reply']);
+        expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: using Bash, working on drafting the note']);
+    });
+
+    it('adds no `working on` clause when the other turn has no synopsis', () => {
+        const other = ledger('conversation', { turn: turn({ phase: { type: 'using_tool', toolName: 'Bash', startedAt: NOW } }) });
+
+        expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: using Bash']);
+    });
+
+    it('reads the synopsis of a turn with no phase yet as `working, working on …`', () => {
+        const other = ledger('conversation', { turn: turn({ synopsis: 'reading the brief' }) });
+
+        expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: working, working on reading the brief']);
     });
 
     it('renders `compacting` for an open turn while the ledger is compacting, whatever its phase', () => {
@@ -135,8 +147,8 @@ describe('composeAmbientLines: the other-session line', () => {
         expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: compacting']);
     });
 
-    it('keeps the phase digest alongside `compacting`', () => {
-        const other = ledger('conversation', { turn: turn({ phase: { type: 'thinking', startedAt: NOW, generatedStatus: 'drafting the reply' } }), compaction: 'compacting' });
+    it('keeps the turn synopsis alongside `compacting`', () => {
+        const other = ledger('conversation', { turn: turn({ phase: { type: 'thinking', startedAt: NOW }, synopsis: 'drafting the reply' }), compaction: 'compacting' });
 
         expect(compose({ self: ledger('perch'), other })).toEqual(['Conversation: compacting, working on drafting the reply']);
     });
@@ -173,9 +185,9 @@ describe('composeAmbientLines: the other-session line', () => {
         expect(compose({ other })).toEqual(['Perch: idle, 2 tasks running']);
     });
 
-    it('orders the parts as activity, digest, then task counts', () => {
+    it('orders the parts as activity, synopsis, then task counts', () => {
         const other = ledger('conversation', {
-            turn:  turn({ phase: { type: 'responding', startedAt: NOW, generatedStatus: 'summarising' } }),
+            turn:  turn({ phase: { type: 'responding', startedAt: NOW }, synopsis: 'summarising' }),
             tasks: [task({ kind: 'workflow' })],
         });
 

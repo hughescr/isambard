@@ -6,9 +6,9 @@
  * existing debounce/withdraw/interrupt contract at message-coordinator.ts is preserved
  * unmodified), and maps the settled `TurnResult` back onto `ProcessResult` — a REAL
  * `StreamTracker`, subscribed to just this turn's frames via `conductor.subscribeTurn`, so an
- * interrupted turn's partial work is captured. It wires NO presence synopsis handler: that moved
- * to `presence/turn-synopsis.ts`, attached once per (ledger, conductor) pair inside
- * `setupConductorPresence`, so every turn kind gets one — not only a human Discord envelope.
+ * interrupted turn's partial work is captured. It wires NO turn synopsis handler: that lives in
+ * the session core (`src/agent/session/turn-synopsis.ts`), attached once per session by
+ * `src/app/sessions.ts`, so every turn kind gets one — not only a human Discord envelope.
  * The coordinator's own continuation-context handling
  * (message-coordinator.ts) turns that captured progress into a `ContinuationContext` on the NEXT
  * processor call; this module renders its `partialWork` into a `[RESUME NOTE]` block (via

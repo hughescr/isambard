@@ -4,8 +4,9 @@
  * Presence is modelled as a `PresenceView` composed from the conversation and perch session
  * ledgers (`presence-view.ts`: `composePresence`, rendered by `renderPresenceText`) and applied
  * to Discord by `PresenceManager.applyView`. This module owns the value types that model
- * shares: the `PresencePhase` state union, the `SynopsisContext` handed to the LLM status
- * generator, `StatusUpdate`, the tool status/description maps, and the presence config.
+ * shares: the `PresencePhase` state union, `StatusUpdate`, the tool status map, and the presence
+ * config. (The turn synopsis's `SynopsisContext` and tool descriptions live in the session core,
+ * `src/agent/session/synopsis-generator.ts`.)
  */
 
 import type { ActivitiesOptions } from 'discord.js';
@@ -32,35 +33,6 @@ import type { ActivityPhase } from '@/agent';
 export type PresencePhase
     = | ActivityPhase
       | { type: 'idle', since: Date };
-
-// ============================================================================
-// Synopsis Context - For LLM status generation
-// ============================================================================
-
-/**
- * Context provided to the LLM for generating dynamic status synopses.
- * Used when generating contextual presence status messages.
- */
-export interface SynopsisContext {
-    /** The current phase type */
-    phase:            'thinking' | 'using_tool' | 'responding'
-    /** The user's original message being processed */
-    userMessage:      string
-    /** The name of the tool being used (only for 'using_tool' phase) */
-    toolName?:        string
-    /** The tool's arguments (redacted for sensitive data) */
-    toolInput?:       unknown
-    /** Human-readable description of what the tool does */
-    toolDescription?: string
-    /** Recent response text Izzy has been composing; its tail is the "Reply so far" line */
-    accumulatedText?: string
-    /** Content from thinking blocks (truncated to 500 chars) */
-    thinkingContent?: string
-    /** Recent tool calls (last 3 tools, most recent first) */
-    recentToolCalls?: string[]
-    /** AI-generated progress summary from a running subagent */
-    subagentSummary?: string
-}
 
 // ============================================================================
 // Status Update - What to show users
@@ -92,51 +64,6 @@ export const ToolStatusMap: Record<string, string> = {
     mcp__memory__search:          'Searching memories...',
     // Future tools can be added here
 };
-
-/**
- * Maps tool names to human-readable descriptions of what the tool does.
- * Used to provide context to the LLM when generating dynamic status synopses.
- */
-export const ToolDescriptions: Record<string, string> = {
-    mcp__memory__view:            'Reading from memory storage',
-    mcp__memory__search:          'Searching through memories',
-    mcp__memory__storeSelf:       'Storing self-knowledge',
-    mcp__memory__storeUserMemory: 'Recording user preferences',
-    mcp__memory__logEvent:        'Logging an event',
-    mcp__discord__searchMessages: 'Searching Discord history',
-    Read:                         'Reading a file',
-    Glob:                         'Finding files by pattern',
-    Grep:                         'Searching file contents',
-    WebSearch:                    'Searching the web',
-    WebFetch:                     'Fetching a webpage',
-    Bash:                         'Running a command',
-    Task:                         'Delegating to a sub-agent',
-    SendMessage:                  'Messaging a sub-agent',
-    ListAgents:                   'Checking on sub-agents',
-    Workflow:                     'Orchestrating a multi-agent workflow',
-    Monitor:                      'Watching for events',
-    ToolSearch:                   'Looking up a tool',
-};
-
-/**
- * Returns the human-readable description for a tool, or undefined if not found.
- *
- * @param toolName - The name of the tool to look up
- * @returns The tool's description, or undefined if the tool is not in the map
- *
- * @example
- * ```typescript
- * getToolDescription('Read'); // 'Reading a file'
- * getToolDescription('unknown_tool'); // undefined
- * getToolDescription(undefined); // undefined
- * ```
- */
-export function getToolDescription(toolName: string | undefined): string | undefined {
-    if(!toolName) {
-        return undefined;
-    }
-    return ToolDescriptions[toolName];
-}
 
 // ============================================================================
 // Configuration

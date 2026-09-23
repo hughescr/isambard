@@ -233,8 +233,9 @@ export class PresenceManager {
      * starting/finishing while otherwise idle) must reach Discord right away, not lag by up to
      * `idleRefreshIntervalMs`; the loop itself is never restarted, so the periodic cadence is
      * unaffected. Non-idle views stop the idle refresh loop and apply
-     * `renderPresenceText(view, digest)`, where `digest` is
-     * `activeStatusGenerator.generate(view.phase).name`.
+     * `renderPresenceText(view, digest)`, where `digest` is the winning turn's synopsis
+     * (`view.synopsis`) or, when it has none yet, `activeStatusGenerator.generate(view.phase).name`
+     * — a static label. The activity type always comes from the active generator.
      */
     async applyView(view: PresenceView): Promise<void> {
         this.currentView = view;
@@ -247,7 +248,7 @@ export class PresenceManager {
         this.stopIdleRefresh();
         // Stryker disable next-line llm: equivalent — currentView was just assigned this view and no intervening manager operation reassigns it, so view.phase and this.currentView.phase are the same object
         const generated = this.deps.activeStatusGenerator.generate(view.phase);
-        const text = renderPresenceText(view, generated.name);
+        const text = renderPresenceText(view, view.synopsis ?? generated.name);
         await this.applyPresenceUpdate({ name: text, type: generated.type });
     }
 

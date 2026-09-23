@@ -20,12 +20,11 @@ const createMockLogger = (): MockedLogger => ({
 
 describe('ActiveStatusGenerator', () => {
     describe.concurrent('generate', () => {
-        // Core phase behavior: fallback vs generatedStatus override
+        // Core phase behavior: every phase renders its static label (a turn synopsis, when there
+        // is one, replaces this in PresenceManager.applyView, never here)
         test.each([
-            { phase: { type: 'thinking', startedAt: new Date() }, expected: 'Thinking...', desc: 'thinking fallback' },
-            { phase: { type: 'responding', startedAt: new Date() }, expected: 'Responding...', desc: 'responding fallback' },
-            { phase: { type: 'thinking', startedAt: new Date(), generatedStatus: 'Deep thought...' }, expected: 'Deep thought...', desc: 'thinking override' },
-            { phase: { type: 'responding', startedAt: new Date(), generatedStatus: 'Composing...' }, expected: 'Composing...', desc: 'responding override' },
+            { phase: { type: 'thinking', startedAt: new Date() }, expected: 'Thinking...', desc: 'thinking label' },
+            { phase: { type: 'responding', startedAt: new Date() }, expected: 'Responding...', desc: 'responding label' },
             { phase: { type: 'idle', since: new Date() }, expected: 'Idle', desc: 'idle' },
         ] as const)('$desc -> "$expected"', ({ phase, expected }) => {
             const generator = createActiveStatusGenerator({
@@ -35,16 +34,15 @@ describe('ActiveStatusGenerator', () => {
             expect(generator.generate(phase as PresencePhase).name).toBe(expected);
         });
 
-        // Tool usage: generatedStatus, known tools, unknown tools
+        // Tool usage: known tools, unknown tools
         test.each([
-            { toolName: 'mcp__memory__view', generatedStatus: 'Custom status', expected: 'Custom status', desc: 'generatedStatus override' },
-            { toolName: 'mcp__memory__view', generatedStatus: undefined, expected: 'Remembering...', desc: 'memory view' },
-            { toolName: 'mcp__memory__storeSelf', generatedStatus: undefined, expected: 'Recording self-knowledge...', desc: 'storeSelf' },
-            { toolName: 'mcp__memory__storeUserMemory', generatedStatus: undefined, expected: 'Recording user memory...', desc: 'storeUserMemory' },
-            { toolName: 'mcp__memory__logEvent', generatedStatus: undefined, expected: 'Logging event...', desc: 'logEvent' },
-            { toolName: 'mcp__memory__search', generatedStatus: undefined, expected: 'Searching memories...', desc: 'search' },
-            { toolName: 'unknown_tool', generatedStatus: undefined, expected: 'Working...', desc: 'unknown tool fallback' },
-        ])('using_tool: $desc -> "$expected"', ({ toolName, generatedStatus, expected }) => {
+            { toolName: 'mcp__memory__view', expected: 'Remembering...', desc: 'memory view' },
+            { toolName: 'mcp__memory__storeSelf', expected: 'Recording self-knowledge...', desc: 'storeSelf' },
+            { toolName: 'mcp__memory__storeUserMemory', expected: 'Recording user memory...', desc: 'storeUserMemory' },
+            { toolName: 'mcp__memory__logEvent', expected: 'Logging event...', desc: 'logEvent' },
+            { toolName: 'mcp__memory__search', expected: 'Searching memories...', desc: 'search' },
+            { toolName: 'unknown_tool', expected: 'Working...', desc: 'unknown tool fallback' },
+        ])('using_tool: $desc -> "$expected"', ({ toolName, expected }) => {
             const generator = createActiveStatusGenerator({
                 logger:       createMockLogger(),
                 activityType: ActivityType.Custom,
@@ -53,7 +51,6 @@ describe('ActiveStatusGenerator', () => {
                 type:      'using_tool',
                 toolName,
                 startedAt: new Date(),
-                generatedStatus,
             };
             const result = generator.generate(phase);
             expect(result.name).toBe(expected);

@@ -1,14 +1,19 @@
 /**
- * Dynamic Status Generator
+ * Turn synopsis generator.
  *
- * Generates contextual Discord status synopses using Claude Haiku 4.5.
- * Provides evocative, phase-aware status messages based on current agent activity.
+ * Generates the turn synopsis — a one-line, first-person description of what the turn is doing —
+ * using Claude Haiku 4.5. It is session-core, not Discord: the synopsis lands on
+ * `LedgerTurn.synopsis`, where Discord presence renders it AND the other session's ambient line
+ * reads it as "working on …". The prompt still calls it Izzy's "status line", because that is
+ * the shape asked for (the 40-character ask).
+ *
+ * @module agent/session/synopsis-generator
  */
 
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
-import { getToolDescription, type SynopsisContext } from './types.js';
-import { generateTextWithSystemPrompt, SYNOPSIS_SEED_CAP } from '@/agent';
+import { generateTextWithSystemPrompt } from '../text-generator';
+import { SYNOPSIS_SEED_CAP } from './envelope';
 import { truncateToWordBoundary } from '@/utils';
 
 /**
@@ -17,12 +22,81 @@ import { truncateToWordBoundary } from '@/utils';
  * cache a bad shape that the next call's "## Previous status" section would then copy. This is
  * also the ceiling {@link truncateToWordBoundary} truncates a validated response down to.
  */
-export const HARD_MAX_STATUS_LENGTH = 80;
+export const SYNOPSIS_MAX_LENGTH = 80;
 
 /**
- * Interface for generating dynamic status synopses.
+ * Context provided to the LLM for generating a turn synopsis.
  */
-export interface DynamicStatusGenerator {
+export interface SynopsisContext {
+    /** The current phase type */
+    phase:            'thinking' | 'using_tool' | 'responding'
+    /** The user's original message being processed */
+    userMessage:      string
+    /** The name of the tool being used (only for 'using_tool' phase) */
+    toolName?:        string
+    /** The tool's arguments (redacted for sensitive data) */
+    toolInput?:       unknown
+    /** Human-readable description of what the tool does */
+    toolDescription?: string
+    /** Recent response text Izzy has been composing; its tail is the "Reply so far" line */
+    accumulatedText?: string
+    /** Content from thinking blocks (truncated to 500 chars) */
+    thinkingContent?: string
+    /** Recent tool calls (last 3 tools, most recent first) */
+    recentToolCalls?: string[]
+    /** AI-generated progress summary from a running subagent */
+    subagentSummary?: string
+}
+
+/**
+ * Maps tool names to human-readable descriptions of what the tool does.
+ * Used to give the LLM context when generating a turn synopsis.
+ */
+export const ToolDescriptions: Record<string, string> = {
+    mcp__memory__view:            'Reading from memory storage',
+    mcp__memory__search:          'Searching through memories',
+    mcp__memory__storeSelf:       'Storing self-knowledge',
+    mcp__memory__storeUserMemory: 'Recording user preferences',
+    mcp__memory__logEvent:        'Logging an event',
+    mcp__discord__searchMessages: 'Searching Discord history',
+    Read:                         'Reading a file',
+    Glob:                         'Finding files by pattern',
+    Grep:                         'Searching file contents',
+    WebSearch:                    'Searching the web',
+    WebFetch:                     'Fetching a webpage',
+    Bash:                         'Running a command',
+    Task:                         'Delegating to a sub-agent',
+    SendMessage:                  'Messaging a sub-agent',
+    ListAgents:                   'Checking on sub-agents',
+    Workflow:                     'Orchestrating a multi-agent workflow',
+    Monitor:                      'Watching for events',
+    ToolSearch:                   'Looking up a tool',
+};
+
+/**
+ * Returns the human-readable description for a tool, or undefined if not found.
+ *
+ * @param toolName - The name of the tool to look up
+ * @returns The tool's description, or undefined if the tool is not in the map
+ *
+ * @example
+ * ```typescript
+ * getToolDescription('Read'); // 'Reading a file'
+ * getToolDescription('unknown_tool'); // undefined
+ * getToolDescription(undefined); // undefined
+ * ```
+ */
+export function getToolDescription(toolName: string | undefined): string | undefined {
+    if(!toolName) {
+        return undefined;
+    }
+    return ToolDescriptions[toolName];
+}
+
+/**
+ * Interface for generating turn synopses.
+ */
+export interface SynopsisGenerator {
     /**
      * Generate a contextual status synopsis for the current activity.
      *
@@ -34,9 +108,9 @@ export interface DynamicStatusGenerator {
 }
 
 /**
- * Dependencies for creating a dynamic status generator.
+ * Dependencies for creating a turn synopsis generator.
  */
-interface DynamicStatusGeneratorDeps {
+interface SynopsisGeneratorDeps {
     /** Context about the assistant's identity for personalized status */
     identityContext: string
 }
@@ -59,8 +133,8 @@ const MAX_THINKING_CONTENT_LENGTH = 500;
 // P14: this used to be module-level state shared across every generator instance — a single
 // shared cooldown/cache/in-flight-controller let one session's Haiku call abort the other
 // session's in-flight call, and one session's cooldown gate the other's synopsis. It now lives in
-// the closure `createDynamicStatusGenerator` returns, so each instance (one per session, per
-// `presence-setup.ts`'s `setupConductorPresence`) keeps its own.
+// the closure `createSynopsisGenerator` returns, so each instance (one per session, built by
+// `src/app/sessions.ts` next to that session's conductor) keeps its own.
 const HAIKU_COOLDOWN_MS = 2000;
 
 /**
@@ -271,7 +345,7 @@ export function rejectSynopsis(text: string): string | null {
     if(text.includes('\n')) {
         return 'multiline';
     }
-    if(text.length > HARD_MAX_STATUS_LENGTH) {
+    if(text.length > SYNOPSIS_MAX_LENGTH) {
         return 'too_long';
     }
     if(META_OPENING_PATTERN.test(text)) {
@@ -351,7 +425,7 @@ async function executeWithCooldown(
             return null;
         }
 
-        const statusText = truncateToWordBoundary(candidate, HARD_MAX_STATUS_LENGTH);
+        const statusText = truncateToWordBoundary(candidate, SYNOPSIS_MAX_LENGTH);
 
         if(!statusText) {
             return null;
@@ -392,8 +466,8 @@ interface InstanceState {
 }
 
 /**
- * Creates a dynamic status generator that uses Claude Haiku to generate
- * contextual status messages.
+ * Creates a turn synopsis generator that uses Claude Haiku to generate
+ * contextual one-line synopses.
  *
  * The generator implements rate limiting (2 second cooldown measured from call completion)
  * to avoid excessive API calls during rapid status updates. P14: the cooldown/cache/in-flight
@@ -402,11 +476,11 @@ interface InstanceState {
  * each other's in-flight call or gate each other's cooldown.
  *
  * @param deps - Dependencies including identity context
- * @returns DynamicStatusGenerator instance
+ * @returns SynopsisGenerator instance
  *
  * @example
  * ```typescript
- * const generator = createDynamicStatusGenerator({
+ * const generator = createSynopsisGenerator({
  *   identityContext: 'I am Isambard, an AI assistant'
  * });
  *
@@ -417,9 +491,9 @@ interface InstanceState {
  * // Returns something like: "Pondering security patterns..."
  * ```
  */
-export function createDynamicStatusGenerator(
-    deps: DynamicStatusGeneratorDeps
-): DynamicStatusGenerator {
+export function createSynopsisGenerator(
+    deps: SynopsisGeneratorDeps
+): SynopsisGenerator {
     const { identityContext } = deps;
 
     // Built once per instance and sent as the array form with SYSTEM_PROMPT_DYNAMIC_BOUNDARY at
@@ -454,5 +528,3 @@ export function createDynamicStatusGenerator(
         },
     };
 }
-
-export { truncateToWordBoundary } from '@/utils';

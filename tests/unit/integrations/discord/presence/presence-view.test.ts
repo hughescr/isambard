@@ -26,6 +26,44 @@ function task(kind: string, id: string): Ledger['tasks'][number] {
 }
 
 describe('presence-view', () => {
+    describe('composePresence: the winning turn\'s synopsis and id', () => {
+        test('both live with different synopses: synopsis and turnId come from the conversation turn', () => {
+            const conversation: Ledger = { ...initialLedger('conversation'), turn: openTurn({ id: 'conv-1', synopsis: 'Replying to Craig' }) };
+            const perch: Ledger = { ...initialLedger('perch'), turn: openTurn({ id: 'perch-1', kind: 'perch', synopsis: 'Tidying notes' }) };
+
+            const view = composePresence([conversation, perch]);
+
+            expect(view.synopsis).toBe('Replying to Craig');
+            expect(view.turnId).toBe('conv-1');
+        });
+
+        test('conversation live without a synopsis: perch\'s synopsis is not borrowed', () => {
+            const conversation: Ledger = { ...initialLedger('conversation'), turn: openTurn({ id: 'conv-1' }) };
+            const perch: Ledger = { ...initialLedger('perch'), turn: openTurn({ id: 'perch-1', kind: 'perch', synopsis: 'Tidying notes' }) };
+
+            const view = composePresence([conversation, perch]);
+
+            expect(view.synopsis).toBeUndefined();
+            expect(view.turnId).toBe('conv-1');
+        });
+
+        test('perch only: perch\'s synopsis and turn id', () => {
+            const perch: Ledger = { ...initialLedger('perch'), turn: openTurn({ id: 'perch-1', kind: 'perch', synopsis: 'Tidying notes' }) };
+
+            const view = composePresence([initialLedger('conversation'), perch]);
+
+            expect(view.synopsis).toBe('Tidying notes');
+            expect(view.turnId).toBe('perch-1');
+        });
+
+        test('idle: no synopsis and no turn id', () => {
+            const view = composePresence([initialLedger('conversation'), initialLedger('perch')]);
+
+            expect(view.synopsis).toBeUndefined();
+            expect(view.turnId).toBeUndefined();
+        });
+    });
+
     describe('composePresence', () => {
         test('conversation turn only: live [conversation], prefix 💬', () => {
             const conversation: Ledger = { ...initialLedger('conversation'), turn: openTurn() };

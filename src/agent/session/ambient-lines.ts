@@ -5,8 +5,8 @@
  *
  * 1. **What the other session is doing** — `Perch: slot "reflection" until 15:00, working on
  *    drafting the note, 1 workflow running`, or `Conversation: idle since 14:02`. Composed from
- *    the OTHER role's ledger: its open turn, that turn's phase (and the LLM-generated phase
- *    digest riding on it), its running tasks, and — for a live perch slot turn — the slot fields
+ *    the OTHER role's ledger: its open turn, that turn's phase, that turn's synopsis (the
+ *    LLM-generated `LedgerTurn.synopsis`), its running tasks, and — for a live perch slot turn — the slot fields
  *    the perch envelope's {@link import('./types').EnvelopeMeta} put on `Ledger.perch`.
  * 2. **Vendor capacity** — a vendor-keyed JSON block under `Quota:`. Fresh utraque reports
  *    carry explicit lookup, observation, window, reset and balance fields. In SDK-only Anthropic
@@ -85,11 +85,6 @@ function formatStamp(when: Date, now: Date, timezone: string): string {
     return at.hasSame(today, 'day') ? at.toFormat('HH:mm') : at.toFormat('ccc HH:mm');
 }
 
-/** The phase digest (`generatedStatus`) when there is a phase and it carries one. */
-function phaseDigest(phase: ActivityPhase | null): string | undefined {
-    return phase?.generatedStatus;
-}
-
 /** One verb per {@link ActivityPhase} type, for a turn that is not a perch slot turn. */
 function phaseVerb(phase: ActivityPhase | null): string {
     if(phase === null) {
@@ -153,12 +148,12 @@ function taskClauses(tasks: readonly LedgerTask[]): string[] {
     return clauses;
 }
 
-/** `<Label>: <activity>[, working on <digest>][, <n> workflows running][, <n> tasks running]`. */
+/** `<Label>: <activity>[, working on <synopsis>][, <n> workflows running][, <n> tasks running]`. */
 function otherSessionLine(other: Ledger, now: Date, timezone: string): string {
-    const digest = phaseDigest(other.turn?.phase ?? null);
+    const synopsis = other.turn?.synopsis;
     const clauses = [
         describeActivity(other, now, timezone),
-        ...digest === undefined ? [] : [`working on ${digest}`],
+        ...synopsis === undefined ? [] : [`working on ${synopsis}`],
         ...taskClauses(other.tasks),
     ];
     return `${ROLE_LABEL[other.role]}: ${clauses.join(', ')}`;

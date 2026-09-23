@@ -13,8 +13,9 @@ import { FakeJournal } from '../../helpers/fake-journal';
 import { fakeQueryFn, type FakeQuery } from '../../helpers/fake-query';
 import { FakeResumeStore } from '../../helpers/fake-resume-store';
 import * as frames from '../../helpers/sdk-frames';
-import { mockLogger } from '../../setup';
-import { DEFAULT_STEP_PERCENT, createLedgerStore, formatTimeHeader, type ContextBuilder, type DiscordQueryEnvelope, type Envelope, type QueryEnvelope, type QuotaFetch, type QuotaFetchResponse, type TimeHeaderProvider } from '@/agent';
+import { mockGenerateTextWithSystemPrompt, mockLogger, originalGenerateTextWithSystemPrompt } from '../../setup';
+import { DEFAULT_STEP_PERCENT, createLedgerStore, formatTimeHeader, type AttachTurnSynopsisDeps, type ContextBuilder, type DiscordQueryEnvelope, type Envelope, type QueryEnvelope, type QuotaFetch, type QuotaFetchResponse, type TimeHeaderProvider } from '@/agent';
+import * as turnSynopsisModule from '@/agent/session/turn-synopsis';
 import type { JournalEntry } from '@/agent/session/types';
 import { createChannelId, createUserId, type UserId } from '@/agent/types';
 import * as mcpServersModule from '@/app/mcp-servers';
@@ -23,6 +24,18 @@ import { createConversationConductor, createPerchConductor, createSessionAmbienc
 import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
 
 type MCPServers = ReturnType<typeof mcpServersModule.createMcpServerInstances>;
+
+// #39: both factories attach the session core's turn synopsis producer. Stubbed for every test
+// here (each describe's own afterEach restoreAllMocks undoes it), so no test but the dedicated
+// wiring ones below starts Haiku work — stray async generations would leak mock-logger calls
+// into other files. The wiring describe re-spies, or restores the real one, per test.
+beforeEach(() => {
+    jest.spyOn(turnSynopsisModule, 'attachTurnSynopsis').mockReturnValue(() => undefined);
+});
+
+afterEach(() => {
+    jest.restoreAllMocks();
+});
 
 /**
  * Flushes enough microtask ticks for promise chains to settle — including a fresh boot bundle's
@@ -2715,5 +2728,113 @@ describe('ambient-line wiring on the conductors', () => {
         const sections = text.split('\n\n');
         expect(sections[2]?.startsWith('## Current Time\n- UTC: ')).toBe(true);
         expect(sections[2]).not.toContain('\n- Perch:');
+    });
+});
+
+describe('#39: each conductor factory wires its own turn synopsis producer', () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
+    });
+
+    /** Replaces the file-level stub with a capturing one; returns every deps object it was attached with. */
+    function captureAttachments(): AttachTurnSynopsisDeps[] {
+        const captured: AttachTurnSynopsisDeps[] = [];
+        jest.spyOn(turnSynopsisModule, 'attachTurnSynopsis').mockImplementation((deps: AttachTurnSynopsisDeps) => {
+            captured.push(deps);
+            return () => undefined;
+        });
+        return captured;
+    }
+
+    it('createConversationConductor attaches exactly once, to its own ledger and conductor, clock and thinking-content callback', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const captured = captureAttachments();
+        const onThinkingContentUpdate = jest.fn();
+
+        const result = await createConversationConductor({ ...h.params, onThinkingContentUpdate });
+
+        expect(captured).toHaveLength(1);
+        expect(captured[0]?.ledgerStore).toBe(result.ledgerStore);
+        expect(captured[0]?.clock).toBe(h.clock);
+        expect(captured[0]?.onThinkingContentUpdate).toBe(onThinkingContentUpdate);
+        // The inner conductor: the wrapper result.conductor shares its subscribeTurn.
+        expect(captured[0]?.conductor.subscribeTurn).toBe(result.conductor.subscribeTurn);
+    });
+
+    it('createPerchConductor attaches exactly once, to its own ledger and conductor, clock and thinking-content callback', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const captured = captureAttachments();
+        const onThinkingContentUpdate = jest.fn();
+
+        const result = await createPerchConductor({ ...h.params, onThinkingContentUpdate });
+
+        expect(captured).toHaveLength(1);
+        expect(captured[0]?.ledgerStore).toBe(result.ledgerStore);
+        expect(captured[0]?.conductor).toBe(result.conductor);
+        expect(captured[0]?.clock).toBe(h.clock);
+        expect(captured[0]?.onThinkingContentUpdate).toBe(onThinkingContentUpdate);
+    });
+
+    it('P14: the two sessions get distinct generator and budget instances', async () => {
+        const conversation = build();
+        const perch = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const captured = captureAttachments();
+
+        await createConversationConductor(conversation.params);
+        await createPerchConductor(perch.params);
+
+        expect(captured).toHaveLength(2);
+        expect(captured[0]?.generator).not.toBe(captured[1]?.generator);
+        expect(captured[0]?.budget).not.toBe(captured[1]?.budget);
+    });
+
+    it('the attached budget reads the session clock: spent at once, open again after 12 s of clock time', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const captured = captureAttachments();
+
+        await createConversationConductor(h.params);
+        const budget = captured[0].budget;
+
+        expect(budget.shouldGenerate()).toBe(true);
+        expect(budget.shouldGenerate()).toBe(false);
+        h.clock.advance(11_999);
+        expect(budget.shouldGenerate()).toBe(false);
+        h.clock.advance(1);
+        expect(budget.shouldGenerate()).toBe(true);
+    });
+
+    it('the attached generator speaks with the identity read at construction', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const captured = captureAttachments();
+        mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Chasing the thread');
+
+        await createConversationConductor(h.params);
+        const synopsis = await captured[0].generator.generateSynopsis({ phase: 'thinking', userMessage: 'what next' });
+
+        expect(synopsis).toBe('Chasing the thread');
+        const systemPrompt = mockGenerateTextWithSystemPrompt.mock.calls.at(-1)?.[0] as string[];
+        expect(systemPrompt[0]).toContain('I am Izzy');
+    });
+
+    it('end to end: a seeded turn on the conversation ledger gets its synopsis from the real producer', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        (turnSynopsisModule.attachTurnSynopsis as unknown as { mockRestore: () => void }).mockRestore();
+        mockGenerateTextWithSystemPrompt.mockResolvedValue('Chasing the thread');
+
+        const { ledgerStore } = await createConversationConductor(h.params);
+        ledgerStore.dispatch({
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), seed: 'find the bug' }, at: new Date(0),
+        });
+        await flush();
+
+        expect(ledgerStore.get().turn?.synopsis).toBe('Chasing the thread');
     });
 });

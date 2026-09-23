@@ -112,12 +112,12 @@ interface EnvelopeBase {
     images?:       PlatformImage[]
     createdAt:     Date
     /**
-     * Header-free, capped (see `SYNOPSIS_SEED_CAP` in ./envelope.ts) content for the Discord
-     * presence synopsis generator, carried onto `LedgerTurn.seed` via {@link EnvelopeMeta.seed}.
+     * Header-free, capped (see `SYNOPSIS_SEED_CAP` in ./envelope.ts) content for the turn
+     * synopsis generator, carried onto `LedgerTurn.seed` via {@link EnvelopeMeta.seed}.
      *
      * Deliberately NOT {@link text}: every stamped builder opens `text` with a `[KIND · stamp]`
      * header plus the time header plus the ambient quota lines, and the generator only reads the
-     * first `SYNOPSIS_SEED_CAP` characters of what it is given (`presence/status-generator-dynamic.ts`
+     * first `SYNOPSIS_SEED_CAP` characters of what it is given (`./synopsis-generator.ts`
      * imports that same constant from ./envelope.ts rather than declaring a second cap of its
      * own) — seeding from `text` would feed Haiku nothing but chrome. Absent for `boot` (opens no turn at all) and `compact` (the text is the literal
      * `/compact`, and presence already renders the compacting marker from `Ledger.compaction`).

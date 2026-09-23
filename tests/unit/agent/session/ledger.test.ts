@@ -302,7 +302,7 @@ describe('reduceLedger: sdk_frame assistant + latency', () => {
     });
 
     // The id is not decoration: it must be the very expression the conductor mints through
-    // `bareNotificationTurnId`, because presence matches every `phase_synopsis` against the
+    // `bareNotificationTurnId`, because the reducer matches every `turn_synopsis` against the
     // ledger's id and a mismatch is a silent drop — a bare `'notification'` here while the
     // conductor holds `notification-<ms>` is exactly how spontaneous turns lost their synopsis
     // before (see conductor.ts's `bareNotificationTurnId` doc comment).
@@ -341,14 +341,14 @@ describe('reduceLedger: spontaneous_turn_opened', () => {
         expect(ledger.turn?.phase).toEqual({ type: 'responding', startedAt: T2 });
     });
 
-    it('a phase_synopsis carrying that same id lands on the turn', () => {
+    it('a turn_synopsis carrying that same id lands on the turn', () => {
         const opened = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'spontaneous_turn_opened', turnId: 'notification-1000', at: T1 }));
 
         const ledger = reduceLedger(opened, frozenEvent({
-            type: 'phase_synopsis', turnId: 'notification-1000', phaseType: 'thinking', text: 'checking the inbox', at: T2,
+            type: 'turn_synopsis', turnId: 'notification-1000', text: 'checking the inbox', at: T2,
         }));
 
-        expect(ledger.turn?.phase).toEqual({ type: 'thinking', startedAt: T2, generatedStatus: 'checking the inbox' });
+        expect(ledger.turn?.synopsis).toBe('checking the inbox');
     });
 });
 
@@ -366,162 +366,125 @@ describe('reduceLedger: turn_submitted seed', () => {
     });
 });
 
-describe('reduceLedger: phase_synopsis', () => {
+describe('reduceLedger: turn_synopsis', () => {
     function openTurn(): Ledger {
         return reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T1 }));
     }
 
-    it('applies generatedStatus onto turn.phase when turnId and phaseType both match the current turn', () => {
-        const thinking = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 }));
-        expect(thinking.turn?.phase).toEqual({ type: 'responding', startedAt: T2 });
+    function synopsis(text: string, turnId = 'env-1', at = T2): LedgerEvent {
+        return frozenEvent({ type: 'turn_synopsis', turnId, text, at });
+    }
 
-        const ledger = reduceLedger(thinking, frozenEvent({
-            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T3,
-        }));
+    it('sets turn.synopsis on the matching turn and leaves turn.phase untouched (same reference)', () => {
+        const responding = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 }));
 
-        expect(ledger.turn?.phase).toEqual({ type: 'responding', startedAt: T2, generatedStatus: 'writing a reply' });
+        const ledger = reduceLedger(responding, synopsis('writing a reply', 'env-1', T3));
+
+        expect(ledger.turn?.synopsis).toBe('writing a reply');
+        expect(ledger.turn?.phase).toBe(responding.turn!.phase);
     });
 
-    it('drops the event (returns the same reference) when turnId does not match the current turn', () => {
-        // Regression coverage: dispatch an sdk_frame first (as the phaseType-mismatch test below
-        // does) so `turn.phase` is live and matches the event's `phaseType` — otherwise the earlier
-        // `turn.phase === null` guard returns first and the turnId check below it is never reached.
-        const thinking = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T2 }));
-        expect(thinking.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T2 });
-
-        const result = reduceLedger(thinking, frozenEvent({
-            type: 'phase_synopsis', turnId: 'stale-turn', phaseType: 'using_tool', text: 'irrelevant', at: T3,
-        }));
-
-        expect(result).toBe(thinking);
-    });
-
-    it('still applies the synopsis when the phase type moved on within the same turn: a digest describes the turn\'s recent activity, and tool calls flip thinking<->using_tool faster than Haiku resolves', () => {
+    it('drops a turn_synopsis whose turnId is stale (returns the same reference)', () => {
         const usingTool = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T2 }));
-        expect(usingTool.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T2 });
 
-        const result = reduceLedger(usingTool, frozenEvent({
-            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'reading the diff', at: T3,
-        }));
+        const result = reduceLedger(usingTool, synopsis('irrelevant', 'stale-turn', T3));
 
-        expect(result.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T2, generatedStatus: 'reading the diff' });
+        expect(result).toBe(usingTool);
     });
 
-    it('carries the digest across a phase change within the turn, until a fresh synopsis replaces it', () => {
-        const withDigest = reduceLedger(
-            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
-            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
-        );
-        expect(withDigest.turn?.phase).toEqual({ type: 'responding', startedAt: T2, generatedStatus: 'writing a reply' });
-
-        const flipped = reduceLedger(withDigest, frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T3 }));
-        expect(flipped.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T3, generatedStatus: 'writing a reply' });
-
-        const replaced = reduceLedger(flipped, frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'using_tool', text: 'running the tests', at: T3 }));
-        expect(replaced.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T3, generatedStatus: 'running the tests' });
-    });
-
-    it('does not carry the digest past the end of the turn: a result frame clears the phase entirely', () => {
-        const withDigest = reduceLedger(
-            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
-            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
-        );
-
-        const ended = reduceLedger(withDigest, frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess(), at: T3 }));
-
-        expect(ended.turn).toBeNull();
-    });
-
-    it('carries the digest onto a responding phase and from a thinking phase (every carrying kind, both directions)', () => {
-        const thinkingWithDigest = reduceLedger(
-            reduceLedger(openTurn(), frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T2 }, at: T2 })),
-            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'mulling it over', at: T2 })
-        );
-        expect(thinkingWithDigest.turn?.phase).toEqual({ type: 'thinking', startedAt: T2, generatedStatus: 'mulling it over' });
-
-        const responding = reduceLedger(thinkingWithDigest, frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T3 }));
-        expect(responding.turn?.phase).toEqual({ type: 'responding', startedAt: T3, generatedStatus: 'mulling it over' });
-
-        const usingTool = reduceLedger(responding, frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T3 }));
-        expect(usingTool.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T3, generatedStatus: 'mulling it over' });
-
-        const backToThinking = reduceLedger(usingTool, frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T3 }, at: T3 }));
-        expect(backToThinking.turn?.phase).toEqual({ type: 'thinking', startedAt: T3, generatedStatus: 'mulling it over' });
-    });
-
-    it('carries nothing onto the first phase of a turn that had no phase yet', () => {
-        const first = reduceLedger(openTurn(), frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T2 }, at: T2 }));
-
-        expect(first.turn?.phase).toEqual({ type: 'thinking', startedAt: T2 });
-    });
-
-    it('keeps a new phase\'s OWN digest rather than overwriting it with the carried one', () => {
-        const withDigest = reduceLedger(
-            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
-            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
-        );
-
-        const own = reduceLedger(withDigest, frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T3, generatedStatus: 'its own words' }, at: T3 }));
-
-        expect(own.turn?.phase).toEqual({ type: 'thinking', startedAt: T3, generatedStatus: 'its own words' });
-    });
-
-    it('a phase_changed to null clears the phase, digest included', () => {
-        const withDigest = reduceLedger(
-            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
-            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
-        );
-
-        const cleared = reduceLedger(withDigest, frozenEvent({ type: 'phase_changed', phase: null, at: T3 }));
-
-        expect(cleared.turn?.phase).toBeNull();
-    });
-
-    it('carries the digest across an explicit phase_changed event too', () => {
-        const withDigest = reduceLedger(
-            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
-            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
-        );
-
-        const changed = reduceLedger(withDigest, frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T3 }, at: T3 }));
-
-        expect(changed.turn?.phase).toEqual({ type: 'thinking', startedAt: T3, generatedStatus: 'writing a reply' });
-    });
-
-    it('drops the event (returns the same reference) when no turn is open', () => {
+    it('drops a turn_synopsis when no turn is open (returns the same reference)', () => {
         const ledger = initialLedger('conversation');
 
-        const result = reduceLedger(ledger, frozenEvent({
-            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'irrelevant', at: T1,
-        }));
-
-        expect(result).toBe(ledger);
+        expect(reduceLedger(ledger, synopsis('irrelevant', 'env-1', T1))).toBe(ledger);
     });
 
-    it('a synopsis arriving before the first frame seeds a thinking placeholder carrying it, which the first frame then keeps', () => {
-        // Production ordering: the conductor notifies turn subscribers (the stream handler, which
-        // dispatches the pre-generated thinking synopsis) before folding the frame into the
-        // ledger, so the synopsis reaches a turn whose phase is still null.
-        const ledger = openTurn();
+    it('returns the same reference when the same synopsis text arrives twice, so no subscriber is re-notified', () => {
+        const first = reduceLedger(openTurn(), synopsis('reading the diff'));
+
+        expect(reduceLedger(first, synopsis('reading the diff', 'env-1', T3))).toBe(first);
+    });
+
+    it('replaces the synopsis when a fresher text arrives for the same turn', () => {
+        const first = reduceLedger(openTurn(), synopsis('reading the diff'));
+
+        expect(reduceLedger(first, synopsis('running the tests', 'env-1', T3)).turn?.synopsis).toBe('running the tests');
+    });
+
+    it('keeps the synopsis across an sdk_frame phase flip, and the new phase carries no synopsis of its own', () => {
+        const withSynopsis = reduceLedger(openTurn(), synopsis('reading the diff'));
+
+        const flipped = reduceLedger(withSynopsis, frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T3 }));
+
+        expect(flipped.turn?.synopsis).toBe('reading the diff');
+        expect(flipped.turn?.phase).toStrictEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T3 });
+    });
+
+    it('keeps the synopsis across a non-assistant frame phase flip too', () => {
+        const withSynopsis = reduceLedger(
+            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T2 })),
+            synopsis('reading the diff')
+        );
+
+        const frame: SDKToolProgressMessage = {
+            type:                 'tool_progress',
+            tool_use_id:          'toolu_2',
+            tool_name:            'Read',
+            parent_tool_use_id:   null,
+            elapsed_time_seconds: 1,
+            uuid:                 'uuid-2' as SDKToolProgressMessage['uuid'],
+            session_id:           'sess-1',
+        };
+
+        const progressed = reduceLedger(withSynopsis, frozenEvent({ type: 'sdk_frame', frame, at: T3 }));
+
+        expect(progressed.turn?.phase).toStrictEqual({ type: 'using_tool', toolName: 'Read', startedAt: T3 });
+        expect(progressed.turn?.synopsis).toBe('reading the diff');
+    });
+
+    it('keeps the synopsis across a phase_changed event, which swaps only the phase', () => {
+        const withSynopsis = reduceLedger(openTurn(), synopsis('mulling it over'));
+
+        const changed = reduceLedger(withSynopsis, frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T3 }, at: T3 }));
+
+        expect(changed.turn?.phase).toStrictEqual({ type: 'thinking', startedAt: T3 });
+        expect(changed.turn?.synopsis).toBe('mulling it over');
+    });
+
+    it('a phase_changed to null clears the phase but not the synopsis', () => {
+        const withSynopsis = reduceLedger(openTurn(), synopsis('mulling it over'));
+
+        const cleared = reduceLedger(withSynopsis, frozenEvent({ type: 'phase_changed', phase: null, at: T3 }));
+
+        expect(cleared.turn?.phase).toBeNull();
+        expect(cleared.turn?.synopsis).toBe('mulling it over');
+    });
+
+    it('keeps the synopsis through an in-turn compaction (compaction_started then compaction_completed)', () => {
+        const withSynopsis = reduceLedger(openTurn(), synopsis('mulling it over'));
+
+        const compacting = reduceLedger(withSynopsis, frozenEvent({ type: 'compaction_started', trigger: 'auto', at: T3 }));
+        expect(compacting.turn?.synopsis).toBe('mulling it over');
+
+        const compacted = reduceLedger(compacting, frozenEvent({ type: 'compaction_completed', at: T3 }));
+        expect(compacted.turn?.synopsis).toBe('mulling it over');
+    });
+
+    it('a synopsis on a turn with no phase yet leaves the phase null (no placeholder phase)', () => {
+        const ledger = reduceLedger(openTurn(), synopsis('reading the brief'));
+
         expect(ledger.turn?.phase).toBeNull();
-
-        const seeded = reduceLedger(ledger, frozenEvent({
-            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'reading the brief', at: T2,
-        }));
-        expect(seeded.turn?.phase).toEqual({ type: 'thinking', startedAt: T2, generatedStatus: 'reading the brief' });
-
-        const firstFrame = reduceLedger(seeded, frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T3 }));
-        expect(firstFrame.turn?.phase).toEqual({ type: 'responding', startedAt: T3, generatedStatus: 'reading the brief' });
+        expect(ledger.turn?.synopsis).toBe('reading the brief');
     });
 
-    it('still drops a synopsis for a phase-less turn when the turnId does not match', () => {
-        const ledger = openTurn();
+    it('does not outlive its turn: after a result frame, the next turn starts with no synopsis', () => {
+        const withSynopsis = reduceLedger(openTurn(), synopsis('writing a reply'));
+        const ended = reduceLedger(withSynopsis, frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess(), at: T3 }));
+        expect(ended.turn).toBeNull();
 
-        const result = reduceLedger(ledger, frozenEvent({
-            type: 'phase_synopsis', turnId: 'someone-else', phaseType: 'thinking', text: 'irrelevant', at: T2,
-        }));
+        const next = reduceLedger(ended, frozenEvent({ type: 'turn_submitted', envelope: envelope({ id: 'env-2' }), at: T3 }));
 
-        expect(result).toBe(ledger);
+        expect(next.turn?.id).toBe('env-2');
+        expect(next.turn?.synopsis).toBeUndefined();
     });
 });
 

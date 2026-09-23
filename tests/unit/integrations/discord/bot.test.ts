@@ -610,9 +610,8 @@ describe('createDiscordBot', () => {
 
             const mockPresenceManager = { start: mock(() => undefined), stop: mock(() => undefined) };
             const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                presenceManager:         mockPresenceManager as unknown as PresenceManager,
-                unsubscribeLedgers:      mock(() => undefined),
-                dynamicStatusGenerators: [],
+                presenceManager:    mockPresenceManager as unknown as PresenceManager,
+                unsubscribeLedgers: mock(() => undefined),
             });
             spies.push(setupConductorPresenceSpy);
 
@@ -637,9 +636,8 @@ describe('createDiscordBot', () => {
             spies.push(
                 spyOn(clientModule, 'createDiscordClient').mockReturnValue(client),
                 spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:         { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers:      mock(() => undefined),
-                    dynamicStatusGenerators: [],
+                    presenceManager:    { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers: mock(() => undefined),
                 }),
                 spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params) => {
                     capturedParams = params;
@@ -665,57 +663,56 @@ describe('createDiscordBot', () => {
             expect(capturedParams).not.toHaveProperty('onThinkingContentUpdate');
         });
 
-        test('setupConductorPresence receives one session per ledger, each carrying its own conductor, plus onThinkingContentUpdate', async () => {
+        test('setupConductorPresence receives the conversation ledger alone, getLastThinkingContent from options, and no synopsis wiring', async () => {
             const client = makeMockClientForConductor();
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
             stubCoordinator();
 
             const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                presenceManager:         { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
-                unsubscribeLedgers:      mock(() => undefined),
-                dynamicStatusGenerators: [],
+                presenceManager:    { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
+                unsubscribeLedgers: mock(() => undefined),
             });
             spies.push(setupConductorPresenceSpy);
 
-            const conversationConductor = makeFakeConductor();
-            const deps = conductorDeps({ conversationConductor, ledgerStore: makeFakeLedgerStore() });
+            const ledgerStore = makeFakeLedgerStore();
+            const deps = conductorDeps({ ledgerStore });
+            const getLastThinkingContent = mock(() => 'last thought');
 
             createDiscordBot({
                 config:          presenceConfig(),
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
+                getLastThinkingContent,
                 ...deps,
             });
 
             await triggerReady(client);
 
-            const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { sessions?: readonly { ledger?: unknown, conductor?: unknown }[], onThinkingContentUpdate?: unknown } | undefined;
-            expect(call?.sessions).toHaveLength(1);
-            expect(call?.sessions?.[0]?.ledger).toBe(deps.ledgerStore);
-            expect(call?.sessions?.[0]?.conductor).toBe(conversationConductor);
-            expect(typeof call?.onThinkingContentUpdate).toBe('function');
+            const call = setupConductorPresenceSpy.mock.calls[0]?.[0];
+            expect(call.ledgers).toEqual([ledgerStore]);
+            expect(call.getLastThinkingContent).toBe(getLastThinkingContent);
+            expect(call).not.toHaveProperty('onThinkingContentUpdate');
+            expect(call).not.toHaveProperty('sessions');
         });
 
-        test('the sessions array pairs the perch ledger with the perch conductor exactly when a perch ledger is present', async () => {
+        test('setupConductorPresence receives the ledgers [conversation, perch] in that order when a perch ledger is present', async () => {
             const client = makeMockClientForConductor();
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
             stubCoordinator();
 
             const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                presenceManager:         { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
-                unsubscribeLedgers:      mock(() => undefined),
-                dynamicStatusGenerators: [],
+                presenceManager:    { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
+                unsubscribeLedgers: mock(() => undefined),
             });
             spies.push(setupConductorPresenceSpy);
 
-            const conversationConductor = makeFakeConductor();
-            const perchConductor = makeFakeConductor();
+            const ledgerStore = makeFakeLedgerStore();
+            const perchLedgerStore = makeFakeLedgerStore('perch-sess-1');
             const deps = conductorDeps({
-                conversationConductor,
-                ledgerStore:      makeFakeLedgerStore(),
-                perchConductor,
-                perchLedgerStore: makeFakeLedgerStore('perch-sess-1'),
-                perchJournal:     { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
+                ledgerStore,
+                perchConductor: makeFakeConductor(),
+                perchLedgerStore,
+                perchJournal:   { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
             });
 
             createDiscordBot({
@@ -727,13 +724,10 @@ describe('createDiscordBot', () => {
 
             await triggerReady(client);
 
-            const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { sessions?: readonly { ledger?: unknown, conductor?: unknown }[] } | undefined;
-            // Each pair travels as ONE object, so the perch ledger can never be handed the
-            // conversation conductor (or generator) by an index slip — see ConductorPresenceSession.
-            expect(call?.sessions).toEqual([
-                { ledger: deps.ledgerStore, conductor: conversationConductor },
-                { ledger: deps.perchLedgerStore, conductor: perchConductor },
-            ]);
+            const ledgers = setupConductorPresenceSpy.mock.calls[0]?.[0].ledgers;
+            expect(ledgers).toHaveLength(2);
+            expect(ledgers[0]).toBe(ledgerStore);
+            expect(ledgers[1]).toBe(perchLedgerStore);
         });
 
         test('should NOT create presence manager when identityContext is missing', async () => {
@@ -781,9 +775,8 @@ describe('createDiscordBot', () => {
                 }),
             };
             spies.push(spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                presenceManager:         mockPresenceManager as unknown as PresenceManager,
-                unsubscribeLedgers:      mock(() => undefined),
-                dynamicStatusGenerators: [],
+                presenceManager:    mockPresenceManager as unknown as PresenceManager,
+                unsubscribeLedgers: mock(() => undefined),
             }));
 
             const ledgerStore = makeFakeLedgerStore();
@@ -1075,7 +1068,6 @@ describe('createDiscordBot', () => {
                         ledgerPresenceUnsubscribed = true;
                         unsubscribe();
                     },
-                    dynamicStatusGenerators: [],
                 };
             }));
 
@@ -1261,7 +1253,7 @@ describe('createDiscordBot', () => {
                 warn,
                 spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockReturnValue({ stop: mock(() => { throw firstError; }) } as unknown as MessageCoordinator),
                 spyOn(ingressGateModule, 'createIngressGate').mockReturnValue({ admit: mock(() => 'pass'), open: mock(() => undefined), state: mock(() => 'buffering'), stop: failure('ingress gate') } as unknown as ReturnType<typeof ingressGateModule.createIngressGate>),
-                spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({ presenceManager: presence, unsubscribeLedgers: failure('ledger presence'), dynamicStatusGenerators: [] }),
+                spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({ presenceManager: presence, unsubscribeLedgers: failure('ledger presence') }),
                 spyOn(taskBoardSetupModule, 'setupTaskBoard').mockReturnValue({ stop: failure('task board') }),
                 spyOn(perchSetupModule, 'setupPerchDriverAndScheduler').mockReturnValue({ driver, scheduler }),
                 spyOn(DiscordRateLimiter.prototype, 'stop').mockImplementation(failure('rate limiter'))
@@ -1908,7 +1900,7 @@ describe('createDiscordBot', () => {
             const coordinator = { setProcessor: mock(() => undefined), stop: mock(() => stopFor('coordinator')) } as unknown as MessageCoordinator;
             const ingressGate = { admit: mock(() => 'pass'), open: mock(() => undefined), state: mock(() => 'buffering'), stop: mock(() => stopFor('ingress')) };
             const presenceManager = { start: mock(() => undefined), stop: mock(() => stopFor('presence')) } as unknown as PresenceManager;
-            const conductorPresence = { presenceManager, unsubscribeLedgers: mock(() => stopFor('ledgerPresence')), dynamicStatusGenerators: [] };
+            const conductorPresence = { presenceManager, unsubscribeLedgers: mock(() => stopFor('ledgerPresence')) };
             const taskBoard = { stop: mock(() => stopFor('taskBoard')) };
             const rateLimiterStop = mock(() => stopFor('rateLimiter'));
             spies.push(
@@ -2451,9 +2443,8 @@ describe('createDiscordBot', () => {
                 stubCoordinator();
 
                 const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers:      mock(() => undefined),
-                    dynamicStatusGenerators: [],
+                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers: mock(() => undefined),
                 });
                 spies.push(setupConductorPresenceSpy);
 
@@ -2471,8 +2462,7 @@ describe('createDiscordBot', () => {
                 await triggerReady(client);
 
                 expect(setupConductorPresenceSpy).toHaveBeenCalledTimes(1);
-                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { sessions?: readonly unknown[] } | undefined;
-                expect(call?.sessions).toHaveLength(2);
+                expect(setupConductorPresenceSpy.mock.calls[0]?.[0].ledgers).toEqual([ledgerStore, perchLedgerStore]);
             });
 
             test('does not set up presence when the conversation conductor never opened', async () => {
@@ -2505,9 +2495,8 @@ describe('createDiscordBot', () => {
                 stubCoordinator();
 
                 const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers:      mock(() => undefined),
-                    dynamicStatusGenerators: [],
+                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers: mock(() => undefined),
                 });
                 spies.push(setupConductorPresenceSpy);
 
@@ -2523,8 +2512,7 @@ describe('createDiscordBot', () => {
 
                 await triggerReady(client);
 
-                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { sessions?: readonly unknown[] } | undefined;
-                expect(call?.sessions).toHaveLength(1);
+                expect(setupConductorPresenceSpy.mock.calls[0]?.[0].ledgers).toEqual([ledgerStore]);
             });
 
             test('P14: calls setupConductorPresence with no botStateManager param — the legacy bridge no longer exists', async () => {
@@ -2533,9 +2521,8 @@ describe('createDiscordBot', () => {
                 stubCoordinator();
 
                 const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers:      mock(() => undefined),
-                    dynamicStatusGenerators: [],
+                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers: mock(() => undefined),
                 });
                 spies.push(setupConductorPresenceSpy);
 
@@ -2561,9 +2548,8 @@ describe('createDiscordBot', () => {
                 stubCoordinator();
 
                 const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers:      mock(() => undefined),
-                    dynamicStatusGenerators: [],
+                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers: mock(() => undefined),
                 });
                 spies.push(setupConductorPresenceSpy);
 
@@ -2592,9 +2578,8 @@ describe('createDiscordBot', () => {
                 stubCoordinator();
 
                 const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers:      mock(() => undefined),
-                    dynamicStatusGenerators: [],
+                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers: mock(() => undefined),
                 });
                 spies.push(setupConductorPresenceSpy);
 
@@ -2624,9 +2609,8 @@ describe('createDiscordBot', () => {
 
                 const unsubscribeLedgers = mock(() => undefined);
                 spies.push(spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:         { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
+                    presenceManager: { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
                     unsubscribeLedgers,
-                    dynamicStatusGenerators: [],
                 }));
 
                 const ledgerStore = makeFakeLedgerStore();
@@ -2656,9 +2640,8 @@ describe('createDiscordBot', () => {
                             getRecentContext = params.getRecentContext;
                             presenceParams = params;
                             return {
-                                presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
-                                unsubscribeLedgers:      mock(() => undefined),
-                                dynamicStatusGenerators: [],
+                                presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
+                                unsubscribeLedgers: mock(() => undefined),
                             };
                         }),
                         spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: { addRecentMessage?: (content: string, author: 'user' | 'izzy') => void }) => {
@@ -2729,12 +2712,11 @@ describe('createDiscordBot', () => {
                     expect(context?.split('\n')).toHaveLength(10);
                 });
 
-                test('preserves thinking text and prior status through presence callbacks', async () => {
+                test('preserves prior status through presence callbacks, and holds no thinking buffer of its own (src/index.ts does)', async () => {
                     const { getPresenceParams } = await setUp();
                     const params = getPresenceParams()!;
-                    expect(params.getLastThinkingContent?.()).toBeUndefined();
-                    params.onThinkingContentUpdate?.('working through the backlog');
-                    expect(params.getLastThinkingContent?.()).toBe('working through the backlog');
+                    expect(params.getLastThinkingContent).toBeUndefined();
+                    expect(params.onThinkingContentUpdate).toBeUndefined();
                     expect(params.getPreviousStatus?.()).toBeUndefined();
                     params.setPreviousStatus?.('waiting for the next turn');
                     expect(params.getPreviousStatus?.()).toBe('waiting for the next turn');

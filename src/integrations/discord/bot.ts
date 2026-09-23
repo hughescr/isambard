@@ -24,7 +24,7 @@ import { channelListProvider, resolveNames as resolveEnvelopeNames, toEnvelopeIn
 import type { EmailSetupResult } from './setup/email-setup';
 import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
 import { setupPerchDriverAndScheduler } from './setup/perch-setup';
-import { setupConductorPresence, type ConductorPresenceSession } from './setup/presence-setup';
+import { setupConductorPresence } from './setup/presence-setup';
 import { createWakeTurnDelivery } from './setup/wake-delivery';
 import { setupTaskBoard } from './task-board/setup';
 import { createUserId, type ChannelId } from './types';
@@ -238,6 +238,13 @@ export interface DiscordBotOptions {
      * (`setupPerchDriverAndScheduler`).
      */
     isPerchPaused?: () => boolean
+
+    /**
+     * The most recent thinking content either session's turn synopsis producer saw (last writer
+     * wins), for the idle status generator's context. The buffer lives in `src/index.ts`, which
+     * feeds it from both conductor factories' `onThinkingContentUpdate`.
+     */
+    getLastThinkingContent?: () => string | undefined
 
     /**
      * Optional Q5/B1 shared notification bridge `notify` function (see
@@ -533,9 +540,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     let unsubscribeLedgerPresence: (() => void) | undefined;
     // Torn down (if the live task board was ever set up) on stop().
     let stopTaskBoard: (() => void) | undefined;
-    // P11: the ONE process-wide throttle shared by presence-setup's conductor branch and the
-    // ledger-sink stream handler wired per turn by conductor-processor.ts (design doc section 8:
-    // "at most one non-idle presence update per 12s"). Built once, only in conductor mode.
+    // P11: the ONE process-wide presence DISPLAY throttle (design doc section 8: "at most one
+    // non-idle presence update per 12s", with the synopsis-arrival bypass as its one documented
+    // exception — see presence-setup.ts). It limits display only: turn synopsis generation has
+    // its own per-session `SynopsisBudget` in the session core. Built once, only in conductor mode.
     const presenceThrottle = ledgerStore
         ? createPresenceThrottle(config.presence?.updateThrottleMs, () => Date.now())
         : undefined;
@@ -602,15 +610,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             recentMessages.shift();
         }
     };
-
-    // Track last thinking content for context-aware idle status generation
-    let lastThinkingContent: string | undefined;
-
-    const setLastThinkingContent = (content: string): void => {
-        lastThinkingContent = content;
-    };
-
-    const getLastThinkingContent = (): string | undefined => lastThinkingContent;
 
     // Recent-tools ring buffer for LiveSignals aggregator
     const MAX_RECENT_TOOLS = 10;
@@ -757,24 +756,17 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // contributing nothing rather than something wrong). When `ledgerStore` itself is absent (no
     // conductor configured at all — e.g. a minimal test setup), both ring buffers simply see no
     // activity; there is no fallback source to subscribe to instead.
-    function buildConductorSessions(): readonly ConductorPresenceSession[] | undefined {
+    //
+    // The same `[conversation, perch]` ledgers are what presence composes from. Presence no
+    // longer needs the conductors: the turn synopsis producer is paired with each conductor and
+    // ledger structurally, in `src/app/sessions.ts`, which builds all three together.
+    function buildConductorLedgers(): readonly LedgerStore[] | undefined {
         if(!ledgerStore) {
             return undefined;
         }
-        return perchLedgerStore
-            ? [{ ledger: ledgerStore, conductor: conversationConductor }, { ledger: perchLedgerStore, conductor: perchConductor }]
-            : [{ ledger: ledgerStore, conductor: conversationConductor }];
+        return perchLedgerStore ? [ledgerStore, perchLedgerStore] : [ledgerStore];
     }
-    /**
-     * The sessions presence composes from: each ledger carried TOGETHER with the conductor that
-     * writes it, so no pairing can drift (see `ConductorPresenceSession`'s own doc for what a
-     * mis-pairing would silently break). `conductor` is left possibly-`undefined` rather than
-     * asserting `conversationConductor!`: `setupConductorPresence` attaches nothing for a session
-     * with no conductor, and that ledger still composes.
-     */
-    const conductorSessions: readonly ConductorPresenceSession[] | undefined = buildConductorSessions();
-    /** Just the ledgers of {@link conductorSessions}, for the consumers that compose from ledgers alone (ring buffers, task board). Derived, never rebuilt, so it cannot fall out of step with the sessions above. */
-    const conductorLedgers: readonly LedgerStore[] | undefined = conductorSessions?.map(session => session.ledger);
+    const conductorLedgers: readonly LedgerStore[] | undefined = buildConductorLedgers();
     let unsubscribeToolTracking: () => void = () => undefined;
     let unsubscribeChannelTracking: () => void = () => undefined;
     if(conductorLedgers) {
@@ -1019,9 +1011,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
             function configurePresence(): void {
                 // Setup presence manager once the conductor has actually opened (open() SUCCEEDED, not
-                // merely requested). Presence setup now also OWNS synopsis attachment for every turn
-                // (presence/turn-synopsis.ts, one attachment per (ledger, conductor) pair) — the
-                // message processor wires none, so nothing here feeds it any more. There is no
+                // merely requested). Presence only renders: the turn synopsis it shows is produced
+                // by the session core (`src/agent/session/turn-synopsis.ts`, wired per session in
+                // `src/app/sessions.ts`), whether or not presence is ever set up. There is no
                 // fallback presence path (P13b removed the one-shot agent; P14 removed the legacy
                 // state-machine bridged `setupPresence`): a conductor that never opens simply runs
                 // with no presence at all.
@@ -1035,24 +1027,23 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     // exactly what that composition does.
                     const conductorPresence = setupConductorPresence({
                         identityContext,
-                        presenceConfig:          config.presence,
+                        presenceConfig:         config.presence,
                         readyClient,
-                        getTaskContext:          () => taskListReader.buildTaskListSummary(),
+                        getTaskContext:         () => taskListReader.buildTaskListSummary(),
                         getRecentContext,
                         contextBuilder,
-                        getLastThinkingContent,
+                        getLastThinkingContent: options.getLastThinkingContent,
                         identityCache,
-                        getLiveSignals:          liveSignals ? () => liveSignals.snapshot() : undefined,
+                        getLiveSignals:         liveSignals ? () => liveSignals.snapshot() : undefined,
                         getPreviousStatus,
                         setPreviousStatus,
-                        sessions:                conductorSessions!,
-                        throttle:                presenceThrottle,
-                        onThinkingContentUpdate: setLastThinkingContent,
+                        ledgers:                conductorLedgers!,
+                        throttle:               presenceThrottle,
                         // Q3/B4: only forward the predicate when perch is actually enabled — the
                         // `⏸ perch` marker asserts a pause that has a subject; with perch off, no
                         // scheduler was ever going to run, so nothing is paused regardless of what
                         // isPerchPaused() reports (finding: the marker rendered even with perch off).
-                        isPerchPaused:           options.perchConfig?.enabled ? options.isPerchPaused : undefined,
+                        isPerchPaused:          options.perchConfig?.enabled ? options.isPerchPaused : undefined,
                     });
                     presenceManager = conductorPresence.presenceManager;
                     unsubscribeLedgerPresence = conductorPresence.unsubscribeLedgers;

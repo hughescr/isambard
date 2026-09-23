@@ -33,7 +33,7 @@ const MEDIUM_PROMPT = `You are generating a first-person inner thought for Izzy 
 You just received: "How do I implement authentication with JWT?"
 What thought flashes through your mind? Output ONLY the raw status text.`;
 
-// Realistic long prompt matching the actual SYSTEM_PROMPT template from status-generator-dynamic.ts
+// Realistic long prompt matching the actual SYSTEM_PROMPT template from src/agent/session/synopsis-generator.ts
 // with a sample identityContext substituted in (~2000 chars total)
 const LONG_PROMPT = `You are generating a first-person inner thought for Izzy (Isambard) as a brief Discord status (max 40 characters).
 

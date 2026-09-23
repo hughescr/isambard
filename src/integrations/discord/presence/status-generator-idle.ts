@@ -291,7 +291,8 @@ export function createIdleStatusGenerator(
      * An empty generation (the deadline firing, an abort, or a model that returned nothing) must
      * never be applied: composing it produced a status that was all prefix and no thought. Instead
      * the last status this generator produced keeps standing — the same "refuse it rather than
-     * cache it" stance {@link import('./status-generator-dynamic').rejectSynopsis} takes for a
+     * cache it" stance the session core's turn synopsis generator (`rejectSynopsis` in
+     * `src/agent/session/synopsis-generator.ts`) takes for a
      * response it would not want to show, reached here by keeping the previous value rather than
      * by returning null (this generator has no caller-side skip to return into: it must produce an
      * activity every time).

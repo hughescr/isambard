@@ -198,7 +198,7 @@ describe('IdleStatusGenerator', () => {
          * A generation that comes back empty (the 15s default deadline firing on a slow boot-time
          * Haiku call was the observed cause) used to be composed and applied verbatim, so Discord
          * showed a prefix with nothing after it. An empty generation now keeps the last good status
-         * instead, and says so — mirroring `status-generator-dynamic.ts`'s own refusal to cache a
+         * instead, and says so — mirroring the session core's `synopsis-generator.ts`'s own refusal to cache a
          * response it would not want to show.
          */
         describe('empty generation', () => {

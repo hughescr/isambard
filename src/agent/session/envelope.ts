@@ -35,12 +35,9 @@ function joinSections(sections: (string | undefined)[]): string {
 
 /**
  * How many characters of {@link Envelope.synopsisSeed} are kept — and, via this export, the ONE
- * cap on the Discord synopsis generator's "Question being answered" section too
- * (`src/integrations/discord/presence/status-generator-dynamic.ts` imports this rather than
- * declaring its own). Anything past it would be carried around and then thrown away.
- *
- * It lives in the agent layer, not the Discord one, because the agent layer may not import from
- * `src/integrations/**` while the reverse is allowed.
+ * cap on the turn synopsis generator's "Question being answered" section too
+ * (`./synopsis-generator.ts` imports this rather than declaring its own). Anything past it would
+ * be carried around and then thrown away.
  */
 export const SYNOPSIS_SEED_CAP = 200;
 

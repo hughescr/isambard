@@ -1,91 +1,10 @@
 import { describe, test, expect } from 'bun:test';
-import {
-    getToolDescription,
-    ToolDescriptions,
-    ToolStatusMap
-} from '@/integrations/discord/presence/types';
+import { ToolDescriptions } from '@/agent/session/synopsis-generator';
+import { ToolStatusMap } from '@/integrations/discord/presence/types';
 
+// ToolDescriptions and getToolDescription moved to the session core with the turn synopsis
+// generator (#39); their own tests live in tests/unit/agent/session/synopsis-generator.test.ts.
 describe.concurrent('types.ts', () => {
-    describe('ToolDescriptions', () => {
-        test('should contain descriptions for all memory tools', () => {
-            expect(ToolDescriptions.mcp__memory__view).toBe('Reading from memory storage');
-            expect(ToolDescriptions.mcp__memory__search).toBe('Searching through memories');
-            expect(ToolDescriptions.mcp__memory__storeSelf).toBe('Storing self-knowledge');
-            expect(ToolDescriptions.mcp__memory__storeUserMemory).toBe('Recording user preferences');
-            expect(ToolDescriptions.mcp__memory__logEvent).toBe('Logging an event');
-        });
-
-        test('should contain description for Discord tools', () => {
-            expect(ToolDescriptions.mcp__discord__searchMessages).toBe('Searching Discord history');
-        });
-
-        test('should contain descriptions for file operation tools', () => {
-            expect(ToolDescriptions.Read).toBe('Reading a file');
-            expect(ToolDescriptions.Glob).toBe('Finding files by pattern');
-            expect(ToolDescriptions.Grep).toBe('Searching file contents');
-        });
-
-        test('should contain descriptions for web tools', () => {
-            expect(ToolDescriptions.WebSearch).toBe('Searching the web');
-            expect(ToolDescriptions.WebFetch).toBe('Fetching a webpage');
-        });
-
-        test('should contain descriptions for execution tools', () => {
-            expect(ToolDescriptions.Bash).toBe('Running a command');
-            expect(ToolDescriptions.Task).toBe('Delegating to a sub-agent');
-        });
-
-        test('should contain descriptions for delegation and orchestration tools', () => {
-            expect(ToolDescriptions.SendMessage).toBe('Messaging a sub-agent');
-            expect(ToolDescriptions.ListAgents).toBe('Checking on sub-agents');
-            expect(ToolDescriptions.Workflow).toBe('Orchestrating a multi-agent workflow');
-            expect(ToolDescriptions.Monitor).toBe('Watching for events');
-            expect(ToolDescriptions.ToolSearch).toBe('Looking up a tool');
-        });
-
-        test('should have the correct number of tool descriptions', () => {
-            expect(Object.keys(ToolDescriptions)).toHaveLength(18);
-        });
-    });
-
-    describe('getToolDescription', () => {
-        describe('when toolName is undefined', () => {
-            test('should return undefined', () => {
-                expect(getToolDescription(undefined)).toBeUndefined();
-            });
-        });
-
-        describe('when toolName is empty string', () => {
-            test('should return undefined', () => {
-                expect(getToolDescription('')).toBeUndefined();
-            });
-        });
-
-        describe('when toolName is a known tool', () => {
-            test('should return the description for Read', () => {
-                expect(getToolDescription('Read')).toBe('Reading a file');
-            });
-
-            test('should return the description for mcp__memory__view', () => {
-                expect(getToolDescription('mcp__memory__view')).toBe('Reading from memory storage');
-            });
-
-            test('should return the description for WebSearch', () => {
-                expect(getToolDescription('WebSearch')).toBe('Searching the web');
-            });
-        });
-
-        describe('when toolName is an unknown tool', () => {
-            test('should return undefined for unknown_tool', () => {
-                expect(getToolDescription('unknown_tool')).toBeUndefined();
-            });
-
-            test('should return undefined for a typo', () => {
-                expect(getToolDescription('mcp__memory__views')).toBeUndefined();
-            });
-        });
-    });
-
     describe('ToolStatusMap vs ToolDescriptions alignment', () => {
         test('should have ToolDescriptions entries for all memory tools in ToolStatusMap', () => {
             // All memory tools in ToolStatusMap should have descriptions
@@ -132,15 +51,11 @@ describe.concurrent('types.ts', () => {
 
         test('should provide meaningful status text in nullish coalescing chain (not empty string)', () => {
             // Simulate how ToolStatusMap is used in status-generator-active.ts
-            // const statusText = phase.generatedStatus ?? ToolStatusMap[phase.toolName] ?? 'Working...';
-
-            // When generatedStatus is undefined, use ToolStatusMap's value.
-            // The helper preserves the production chain's nullish behavior for typed optional inputs.
-            const resolveStatus = (generatedStatus: string | undefined, toolStatus: string | undefined): string =>
-                generatedStatus ?? toolStatus ?? 'Working...';
-            const statusForStoreUserMemory = resolveStatus(undefined, ToolStatusMap.mcp__memory__storeUserMemory);
-            const statusForLogEvent = resolveStatus(undefined, ToolStatusMap.mcp__memory__logEvent);
-            const statusForSearch = resolveStatus(undefined, ToolStatusMap.mcp__memory__search);
+            // const statusText = ToolStatusMap[phase.toolName] ?? 'Working...';
+            const resolveStatus = (toolStatus: string | undefined): string => toolStatus ?? 'Working...';
+            const statusForStoreUserMemory = resolveStatus(ToolStatusMap.mcp__memory__storeUserMemory);
+            const statusForLogEvent = resolveStatus(ToolStatusMap.mcp__memory__logEvent);
+            const statusForSearch = resolveStatus(ToolStatusMap.mcp__memory__search);
 
             // Verify the values are meaningful (not empty strings)
             // These assertions kill the StringLiteral mutants on lines 85, 86, 87

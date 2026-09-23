@@ -41,8 +41,9 @@ interface ActiveStatusGeneratorDeps {
  *
  * The generator maps presence phases to Discord status text using a simple switch statement.
  * For tool usage, it looks up the tool name in ToolStatusMap and falls back to "Working..."
- * for unknown tools. The result is the bare digest: `PresenceManager.applyView` renders it
- * after the composed presence prefix via `renderPresenceText`.
+ * for unknown tools. The result is a static label: `PresenceManager.applyView` renders it after
+ * the composed presence prefix via `renderPresenceText` whenever the winning turn has no
+ * synopsis yet (a turn synopsis, when present, replaces it).
  *
  * @param deps - Dependencies including logger and activity type
  * @returns ActiveStatusGenerator instance
@@ -78,17 +79,17 @@ export function createActiveStatusGenerator(
                 }
 
                 case 'thinking': {
-                    baseStatus = phase.generatedStatus ?? 'Thinking...';
+                    baseStatus = 'Thinking...';
                     break;
                 }
 
                 case 'using_tool': {
-                    baseStatus = phase.generatedStatus ?? ToolStatusMap[phase.toolName] ?? 'Working...';
+                    baseStatus = ToolStatusMap[phase.toolName] ?? 'Working...';
                     break;
                 }
 
                 case 'responding': {
-                    baseStatus = phase.generatedStatus ?? 'Responding...';
+                    baseStatus = 'Responding...';
                     break;
                 }
 

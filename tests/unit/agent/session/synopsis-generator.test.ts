@@ -1,20 +1,94 @@
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
-import { mockGenerateTextWithSystemPrompt, mockLogger, originalGenerateTextWithSystemPrompt } from '../../../../setup';
-import { SYNOPSIS_SEED_CAP } from '@/agent';
+import { mockGenerateTextWithSystemPrompt, mockLogger, originalGenerateTextWithSystemPrompt } from '../../../setup';
+import { SYNOPSIS_SEED_CAP } from '@/agent/session/envelope';
 import {
-    createDynamicStatusGenerator,
+    createSynopsisGenerator,
+    getToolDescription,
     rejectSynopsis,
-    truncateToWordBoundary,
-    HARD_MAX_STATUS_LENGTH
-} from '@/integrations/discord/presence/status-generator-dynamic';
-import type { SynopsisContext } from '@/integrations/discord/presence/types';
+    SYNOPSIS_MAX_LENGTH,
+    ToolDescriptions,
+    type SynopsisContext
+} from '@/agent/session/synopsis-generator';
+import { truncateToWordBoundary } from '@/utils';
 
 /**
  * The line every user prompt has to end with. Without an ask at the end, the `##` sections read
  * as a document to comment on and Haiku narrates the task instead of answering it.
  */
 const CLOSING_ASK = "Izzy's status line right now (first person, under 40 characters, nothing else):";
+
+describe('ToolDescriptions', () => {
+    it('should contain descriptions for all memory tools', () => {
+        expect(ToolDescriptions.mcp__memory__view).toBe('Reading from memory storage');
+        expect(ToolDescriptions.mcp__memory__search).toBe('Searching through memories');
+        expect(ToolDescriptions.mcp__memory__storeSelf).toBe('Storing self-knowledge');
+        expect(ToolDescriptions.mcp__memory__storeUserMemory).toBe('Recording user preferences');
+        expect(ToolDescriptions.mcp__memory__logEvent).toBe('Logging an event');
+    });
+
+    it('should contain description for Discord tools', () => {
+        expect(ToolDescriptions.mcp__discord__searchMessages).toBe('Searching Discord history');
+    });
+
+    it('should contain descriptions for file operation tools', () => {
+        expect(ToolDescriptions.Read).toBe('Reading a file');
+        expect(ToolDescriptions.Glob).toBe('Finding files by pattern');
+        expect(ToolDescriptions.Grep).toBe('Searching file contents');
+    });
+
+    it('should contain descriptions for web tools', () => {
+        expect(ToolDescriptions.WebSearch).toBe('Searching the web');
+        expect(ToolDescriptions.WebFetch).toBe('Fetching a webpage');
+    });
+
+    it('should contain descriptions for execution tools', () => {
+        expect(ToolDescriptions.Bash).toBe('Running a command');
+        expect(ToolDescriptions.Task).toBe('Delegating to a sub-agent');
+    });
+
+    it('should contain descriptions for delegation and orchestration tools', () => {
+        expect(ToolDescriptions.SendMessage).toBe('Messaging a sub-agent');
+        expect(ToolDescriptions.ListAgents).toBe('Checking on sub-agents');
+        expect(ToolDescriptions.Workflow).toBe('Orchestrating a multi-agent workflow');
+        expect(ToolDescriptions.Monitor).toBe('Watching for events');
+        expect(ToolDescriptions.ToolSearch).toBe('Looking up a tool');
+    });
+
+    it('should have the correct number of tool descriptions', () => {
+        expect(Object.keys(ToolDescriptions)).toHaveLength(18);
+    });
+});
+
+describe('getToolDescription', () => {
+    it('returns undefined when toolName is undefined', () => {
+        expect(getToolDescription(undefined)).toBeUndefined();
+    });
+
+    it('returns undefined when toolName is an empty string', () => {
+        expect(getToolDescription('')).toBeUndefined();
+    });
+
+    it('returns the description for Read', () => {
+        expect(getToolDescription('Read')).toBe('Reading a file');
+    });
+
+    it('returns the description for mcp__memory__view', () => {
+        expect(getToolDescription('mcp__memory__view')).toBe('Reading from memory storage');
+    });
+
+    it('returns the description for WebSearch', () => {
+        expect(getToolDescription('WebSearch')).toBe('Searching the web');
+    });
+
+    it('returns undefined for unknown_tool', () => {
+        expect(getToolDescription('unknown_tool')).toBeUndefined();
+    });
+
+    it('returns undefined for a typo of a known tool', () => {
+        expect(getToolDescription('mcp__memory__views')).toBeUndefined();
+    });
+});
 
 describe('truncateToWordBoundary', () => {
     describe('text within maxLength', () => {
@@ -106,9 +180,9 @@ describe('truncateToWordBoundary', () => {
         });
     });
 
-    describe('HARD_MAX_STATUS_LENGTH constant', () => {
+    describe('SYNOPSIS_MAX_LENGTH constant', () => {
         it('should be 80', () => {
-            expect(HARD_MAX_STATUS_LENGTH).toBe(80);
+            expect(SYNOPSIS_MAX_LENGTH).toBe(80);
         });
     });
 });
@@ -148,7 +222,7 @@ describe('rejectSynopsis', () => {
         it('should reject multiline BEFORE any other reason', () => {
             // Straight from the production log: also meta, also over 80 chars. `multiline` wins.
             const text = "I need to capture what's actually happening in this moment for Izzy.\n\nContext: Craig asked";
-            expect(text.length).toBeGreaterThan(HARD_MAX_STATUS_LENGTH);
+            expect(text.length).toBeGreaterThan(SYNOPSIS_MAX_LENGTH);
             expect(rejectSynopsis(text)).toBe('multiline');
         });
     });
@@ -169,7 +243,7 @@ describe('rejectSynopsis', () => {
         it('should reject on length BEFORE the meta check', () => {
             // Straight from the production log: also meta. `too_long` is checked first.
             const text = "Looking at what's happening here: Craig is asking me to take another pass at the prompt";
-            expect(text.length).toBeGreaterThan(HARD_MAX_STATUS_LENGTH);
+            expect(text.length).toBeGreaterThan(SYNOPSIS_MAX_LENGTH);
             expect(rejectSynopsis(text)).toBe('too_long');
         });
     });
@@ -188,7 +262,7 @@ describe('rejectSynopsis', () => {
             'Context: Craig asked about the cite',
             'Reading the context you handed me',
         ])('should reject the narration %s', (text) => {
-            expect(text.length).toBeLessThanOrEqual(HARD_MAX_STATUS_LENGTH);
+            expect(text.length).toBeLessThanOrEqual(SYNOPSIS_MAX_LENGTH);
             expect(rejectSynopsis(text)).toBe('meta');
         });
 
@@ -229,7 +303,7 @@ describe('rejectSynopsis', () => {
     });
 });
 
-describe('DynamicStatusGenerator', () => {
+describe('SynopsisGenerator', () => {
     beforeEach(() => {
         mockGenerateTextWithSystemPrompt.mockReset();
         mockGenerateTextWithSystemPrompt.mockResolvedValue('Pondering deeply...');
@@ -243,7 +317,7 @@ describe('DynamicStatusGenerator', () => {
             // Logger mocks may have been corrupted by another test modifying the logger object
             // This is a known issue with context-builder-loading.test.ts
         }
-        // P14: cooldown/cache/in-flight state now lives per-instance (createDynamicStatusGenerator's
+        // P14: cooldown/cache/in-flight state now lives per-instance (createSynopsisGenerator's
         // own closure), so a fresh `generator` per test — the existing pattern throughout this file —
         // already gives test isolation with no module-level reset needed.
     });
@@ -278,7 +352,7 @@ describe('DynamicStatusGenerator', () => {
                     },
                 ],
             ])('should %s', async (_name, identityContext, assertSystem) => {
-                const generator = createDynamicStatusGenerator({ identityContext });
+                const generator = createSynopsisGenerator({ identityContext });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
 
@@ -287,7 +361,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should describe every labelled section the user prompt can carry', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -304,7 +378,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should describe the "Doing right now" section exactly as the user prompt builds it', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -315,7 +389,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should tell the model the previous status is there to be varied from', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -326,7 +400,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should forbid third person, filler and meta-commentary, and end with the output rule', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -341,7 +415,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should show good and bad output examples, after the Never list and before the output rule', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -372,7 +446,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should keep the instructions out of the user prompt (system and user are sent separately)', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Identity 9x7z',
                 });
 
@@ -384,7 +458,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should send the system prompt as the [text, SYSTEM_PROMPT_DYNAMIC_BOUNDARY] array form for prompt caching', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Identity 9x7z',
                 });
 
@@ -401,7 +475,7 @@ describe('DynamicStatusGenerator', () => {
                 const baseTime = 2_000_000;
                 setSystemTime(new Date(baseTime));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Identity 9x7z',
                 });
 
@@ -416,7 +490,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('prompt construction - user prompt: whole document', () => {
             it('should emit every section, in order, separated by blank lines', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -461,7 +535,7 @@ describe('DynamicStatusGenerator', () => {
                 const baseTime = 3_000_000;
                 setSystemTime(new Date(baseTime));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -494,7 +568,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should emit only the "Doing right now" section when nothing else is present', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -510,7 +584,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should keep sections in the fixed order even when the middle ones are missing', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -546,7 +620,7 @@ describe('DynamicStatusGenerator', () => {
             // Without a question at the end, the sections read as a document to comment on, and
             // Haiku answers with narration ("Looking at what's happening here: Craig is...").
             it.each<SynopsisContext['phase']>(['thinking', 'using_tool', 'responding'])('should end the %s user prompt with the ask', async (phase) => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -570,7 +644,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('prompt construction - "Question being answered" section', () => {
             it('should include the user message under its own heading', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -590,7 +664,7 @@ describe('DynamicStatusGenerator', () => {
             // `LedgerTurn.seed`, so a divergent local cap here would be silently unreachable —
             // raising it to give Haiku more context would change nothing at all.
             it('should truncate the user message to the first SYNOPSIS_SEED_CAP characters', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -608,7 +682,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should omit the section entirely when the user message is empty', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -626,7 +700,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('prompt construction - "Most recent thinking" section', () => {
             it('should include the thinking content under its own heading', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -643,7 +717,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should keep the LAST 500 characters of thinking content, not the first', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -667,7 +741,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should include short thinking content untouched', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -685,7 +759,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should omit the section when thinkingContent is undefined', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -701,7 +775,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should omit the section when thinkingContent is an empty string', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -718,7 +792,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should include the newest thinking in the using_tool phase', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -736,7 +810,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should include the newest thinking in the responding phase', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -756,7 +830,7 @@ describe('DynamicStatusGenerator', () => {
         describe('prompt construction - "Doing right now" section', () => {
             it('should label the turn\'s very first thinking synopsis as just-received', async () => {
                 // Built from the user message alone: no thinking has streamed and no tool has run.
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -767,7 +841,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should label a thinking phase that already has thinking content as mid-turn', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -779,7 +853,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should label a thinking phase that already has tool history as mid-turn', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -791,7 +865,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should treat an empty recentToolCalls array as no tool history yet', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -802,7 +876,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should label the using_tool phase', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -813,7 +887,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should label the responding phase', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -824,7 +898,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should include the tool description and arguments for using_tool', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -859,7 +933,7 @@ describe('DynamicStatusGenerator', () => {
                     'Tool: unknown tool\n',
                 ],
             ])('should %s', async (_name, toolName, expected) => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -876,7 +950,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should show "(no input)" when the tool input is undefined', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -893,7 +967,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should show "(no input)" when the tool input is null', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -911,7 +985,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should truncate long tool input to 200 characters plus an ellipsis', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -931,7 +1005,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should NOT emit Tool or Arguments lines outside the using_tool phase', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -952,7 +1026,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('prompt construction - "Reply so far" line', () => {
             it('should keep the LAST 150 characters of accumulated text, not the first', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -972,7 +1046,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should include short accumulated text untouched', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -989,7 +1063,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should omit the line when there is no accumulated text', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1005,7 +1079,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should omit the line when the accumulated text is an empty string', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1022,7 +1096,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should include the line in the using_tool phase, after the Arguments line', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1041,7 +1115,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should include the line in the thinking phase', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1060,7 +1134,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('prompt construction - "Recent tools" section', () => {
             it('should render each tool through its human-readable description, joined with ", " in the order given (newest first)', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1077,7 +1151,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should fall back to the raw tool name for a tool with no known description', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1094,7 +1168,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should omit the section when recentToolCalls is undefined', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1111,7 +1185,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should omit the section when recentToolCalls is empty', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1129,7 +1203,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should emit a single recent tool without a separator', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1149,7 +1223,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('prompt construction - "Background work" section', () => {
             it('should include the subagent summary under its own heading', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1166,7 +1240,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should omit the section when there is no subagent summary', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1182,7 +1256,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should omit the section when the subagent summary is an empty string', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1203,7 +1277,7 @@ describe('DynamicStatusGenerator', () => {
             // The system prompt tells the model to make each thought different from the last, so
             // it has to actually be shown the last one.
             it('should omit the section on the first call, when there is nothing shown yet', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1217,7 +1291,7 @@ describe('DynamicStatusGenerator', () => {
                 const baseTime = 4_000_000;
                 setSystemTime(new Date(baseTime));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1235,8 +1309,8 @@ describe('DynamicStatusGenerator', () => {
                 const baseTime = 5_000_000;
                 setSystemTime(new Date(baseTime));
 
-                const first = createDynamicStatusGenerator({ identityContext: 'Test identity' });
-                const second = createDynamicStatusGenerator({ identityContext: 'Test identity' });
+                const first = createSynopsisGenerator({ identityContext: 'Test identity' });
+                const second = createSynopsisGenerator({ identityContext: 'Test identity' });
 
                 mockGenerateTextWithSystemPrompt.mockResolvedValue('Only the first instance saw this 9x7z');
                 await first.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -1250,26 +1324,26 @@ describe('DynamicStatusGenerator', () => {
         });
 
         describe('output handling', () => {
-            it('should keep a response of exactly HARD_MAX_STATUS_LENGTH (80) characters', async () => {
+            it('should keep a response of exactly SYNOPSIS_MAX_LENGTH (80) characters', async () => {
                 const text = `Wondering whether the cite holds up 9x7z${'.'.repeat(40)}`;
-                expect(text).toHaveLength(HARD_MAX_STATUS_LENGTH);
+                expect(text).toHaveLength(SYNOPSIS_MAX_LENGTH);
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
                 const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
 
                 expect(result).toBe(text);
-                expect(result!.length).toBeLessThanOrEqual(HARD_MAX_STATUS_LENGTH);
+                expect(result!.length).toBeLessThanOrEqual(SYNOPSIS_MAX_LENGTH);
             });
 
             it.each<[string, string, number | undefined]>([
                 [
                     'reject a response one character over the cap instead of truncating it',
                     `Wondering whether the cite holds up 9x7z${'.'.repeat(41)}`,
-                    HARD_MAX_STATUS_LENGTH + 1,
+                    SYNOPSIS_MAX_LENGTH + 1,
                 ],
                 ['reject a multiline response', 'Rereading the plan 9x7z\nContext: the repair', undefined],
                 ['reject a narration of the task', "I need to capture what's happening 9x7z", undefined],
@@ -1280,7 +1354,7 @@ describe('DynamicStatusGenerator', () => {
                 }
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1295,7 +1369,7 @@ describe('DynamicStatusGenerator', () => {
             ])('should strip one pair of surrounding %s double quotes', async (_label, quoted) => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(quoted));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1314,7 +1388,7 @@ describe('DynamicStatusGenerator', () => {
             ])('should %s', async (_name, text) => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1326,7 +1400,7 @@ describe('DynamicStatusGenerator', () => {
             it('should strip the quotes BEFORE validating, so a quoted narration is still rejected', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('"I need to capture what\'s happening 9x7z"'));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1339,7 +1413,7 @@ describe('DynamicStatusGenerator', () => {
                 const baseTime = 6_000_000;
                 setSystemTime(new Date(baseTime));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1367,7 +1441,7 @@ describe('DynamicStatusGenerator', () => {
             it('should trim whitespace from output', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('  Pondering...  '));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1390,7 +1464,7 @@ describe('DynamicStatusGenerator', () => {
                     Promise.reject(new Error('API error'))
                 );
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1409,7 +1483,7 @@ describe('DynamicStatusGenerator', () => {
                     Promise.reject(new Error('API error'))
                 );
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1429,7 +1503,7 @@ describe('DynamicStatusGenerator', () => {
                     Promise.reject(new Error('API error'))
                 );
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1446,7 +1520,7 @@ describe('DynamicStatusGenerator', () => {
             it('should return null on empty response', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(''));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1463,7 +1537,7 @@ describe('DynamicStatusGenerator', () => {
             it('should return null on whitespace-only response', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('   '));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1480,7 +1554,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('cooldown', () => {
             it('should throttle rapid calls within 2 second cooldown', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1501,7 +1575,7 @@ describe('DynamicStatusGenerator', () => {
             it('should use cached status when within cooldown', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('First status'));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1524,7 +1598,7 @@ describe('DynamicStatusGenerator', () => {
                 const baseTime = 2_000_000;
                 setSystemTime(new Date(baseTime));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1548,7 +1622,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should make real API call when within cooldown window but cache is null', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1572,7 +1646,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should verify cache is updated and used on subsequent cooldown calls', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1603,7 +1677,7 @@ describe('DynamicStatusGenerator', () => {
                 const baseTime = 1_000_000;
                 setSystemTime(new Date(baseTime));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1658,7 +1732,7 @@ describe('DynamicStatusGenerator', () => {
                 );
                 mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Second call wins');
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1689,7 +1763,7 @@ describe('DynamicStatusGenerator', () => {
                 });
                 mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Fresh call');
 
-                const generator = createDynamicStatusGenerator({ identityContext: 'Test identity' });
+                const generator = createSynopsisGenerator({ identityContext: 'Test identity' });
                 const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
                 const stale = generator.generateSynopsis(context);
                 expect(await generator.generateSynopsis(context)).toBe('Fresh call');
@@ -1712,7 +1786,7 @@ describe('DynamicStatusGenerator', () => {
                 );
                 mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Fresh call');
 
-                const generator = createDynamicStatusGenerator({ identityContext: 'Test identity' });
+                const generator = createSynopsisGenerator({ identityContext: 'Test identity' });
                 const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
                 const stale = generator.generateSynopsis(context);
 
@@ -1742,7 +1816,7 @@ describe('DynamicStatusGenerator', () => {
                 );
                 mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('third');
 
-                const generator = createDynamicStatusGenerator({ identityContext: 'Test identity' });
+                const generator = createSynopsisGenerator({ identityContext: 'Test identity' });
                 const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
                 const first = generator.generateSynopsis(context);
                 const second = generator.generateSynopsis(context);
@@ -1767,7 +1841,7 @@ describe('DynamicStatusGenerator', () => {
                     }
                 );
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1786,7 +1860,7 @@ describe('DynamicStatusGenerator', () => {
             it('should clear inFlightController after call completes so next call starts fresh', async () => {
                 // After a call completes successfully, the inFlightController should be null.
                 // A subsequent call within cooldown (with cache) should return cache, NOT null.
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1809,7 +1883,7 @@ describe('DynamicStatusGenerator', () => {
                 const baseTime = 1_000_000;
                 setSystemTime(new Date(baseTime));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1852,7 +1926,7 @@ describe('DynamicStatusGenerator', () => {
             // suite, we skip assertions if the mock has been corrupted.
 
             it('should log debug before generating synopsis', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1873,7 +1947,7 @@ describe('DynamicStatusGenerator', () => {
             it('should log info on successful generation', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Pondering code...'));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1897,7 +1971,7 @@ describe('DynamicStatusGenerator', () => {
                     Promise.reject(testError)
                 );
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1918,7 +1992,7 @@ describe('DynamicStatusGenerator', () => {
             it('should log warn with the rejected text and reason when a response is refused', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('  "Izzy is deep in the config 9x7z"  '));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1937,7 +2011,7 @@ describe('DynamicStatusGenerator', () => {
             it('should not log warn when the response is accepted', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Rereading the repair plan 9x7z'));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1959,7 +2033,7 @@ describe('DynamicStatusGenerator', () => {
                 );
                 mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Second call wins');
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -1981,7 +2055,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should log debug when call is within cooldown', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -2004,7 +2078,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should not log info when using cached/cooldown status', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -2028,7 +2102,7 @@ describe('DynamicStatusGenerator', () => {
             it('should handle thinking phase correctly', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Pondering the question...'));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -2045,7 +2119,7 @@ describe('DynamicStatusGenerator', () => {
             it('should handle using_tool phase correctly', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Consulting memories...'));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -2063,7 +2137,7 @@ describe('DynamicStatusGenerator', () => {
             it('should handle responding phase correctly', async () => {
                 mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Crafting a response...'));
 
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -2080,10 +2154,10 @@ describe('DynamicStatusGenerator', () => {
 
         describe('multiple generators (P14: per-instance cooldown/cache/in-flight state)', () => {
             it('does NOT share cooldown state across generators — a second instance is not gated by the first\'s cooldown', async () => {
-                const generator1 = createDynamicStatusGenerator({
+                const generator1 = createSynopsisGenerator({
                     identityContext: 'Identity 1',
                 });
-                const generator2 = createDynamicStatusGenerator({
+                const generator2 = createSynopsisGenerator({
                     identityContext: 'Identity 2',
                 });
 
@@ -2103,10 +2177,10 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('does NOT share cache across generators — a second instance never returns the first\'s cached status', async () => {
-                const generator1 = createDynamicStatusGenerator({
+                const generator1 = createSynopsisGenerator({
                     identityContext: 'Identity 1',
                 });
-                const generator2 = createDynamicStatusGenerator({
+                const generator2 = createSynopsisGenerator({
                     identityContext: 'Identity 2',
                 });
 
@@ -2125,10 +2199,10 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('instance B\'s call does not abort instance A\'s STILL-IN-FLIGHT AbortController', async () => {
-                const generator1 = createDynamicStatusGenerator({
+                const generator1 = createSynopsisGenerator({
                     identityContext: 'Identity 1',
                 });
-                const generator2 = createDynamicStatusGenerator({
+                const generator2 = createSynopsisGenerator({
                     identityContext: 'Identity 2',
                 });
 
@@ -2179,7 +2253,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('formatToolInputSummary edge cases', () => {
             it('should handle circular references gracefully', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -2201,7 +2275,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should handle BigInt gracefully', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -2219,7 +2293,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should handle short JSON input without truncation', async () => {
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 
@@ -2242,7 +2316,7 @@ describe('DynamicStatusGenerator', () => {
             it('should include exactly 200-char JSON without truncation (boundary test)', async () => {
                 // This test kills the mutant that changes <= to < at line 124
                 // MAX_TOOL_INPUT_LENGTH is 200, so a 200-char JSON should NOT be truncated
-                const generator = createDynamicStatusGenerator({
+                const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
                 });
 

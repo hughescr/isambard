@@ -107,6 +107,16 @@ export {
 
 export { InputQueue } from './input-queue';
 
+export {
+    attachTurnSynopsis,
+    createSynopsisBudget,
+    SYNOPSIS_BUDGET_MS,
+    type AttachTurnSynopsisDeps,
+    type SynopsisBudget
+} from './turn-synopsis';
+
+export { createSynopsisGenerator, type SynopsisContext, type SynopsisGenerator } from './synopsis-generator';
+
 export { createInterruptFlag, type InterruptFlag } from './interrupt-flag';
 
 export {

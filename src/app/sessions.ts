@@ -30,6 +30,7 @@ import type { HookCallbackMatcher, HookEvent, McpServerConfig, Options, SdkPlugi
 import type { Logger } from '@hughescr/logger';
 import { createMcpServerInstances, type McpSharedDeps } from './mcp-servers';
 import {
+    attachTurnSynopsis,
     buildSessionQueryOptions,
     buildSessionSystemPrompt,
     buildSubagentSystemPrompt,
@@ -46,6 +47,8 @@ import {
     createPeerMessageHooks,
     createQuotaPoller,
     createSessionLifecycleHooks,
+    createSynopsisBudget,
+    createSynopsisGenerator,
     createTaskLaunchHooks,
     createTaskLaunchRegistry,
     createTaskTrackingHooks,
@@ -174,6 +177,37 @@ async function loadBootRecovery(
         logger.warn({ err }, `${roleLabel} boot-bundle recovery read failed; continuing with an empty recovery section`);
         return { lostTasks: [], undelivered: [], taskLaunches: [] };
     }
+}
+
+/**
+ * #39 / P14: wires one session's turn synopsis producer — the session core's
+ * `attachTurnSynopsis` — to the conductor and ledger this module just built for that session,
+ * with that session's OWN generator and `SynopsisBudget` (never shared with the other session:
+ * a shared generator let one session's Haiku call abort the other's, and a shared budget would
+ * let a busy session starve the other's "working on …" line). Wired here, at construction and
+ * before `open()`, so the synopsis the OTHER session reads in its ambient line never depends on
+ * Discord presence being configured. Fire-and-forget for process lifetime, like the compaction
+ * tuner beside it: no conductor-scoped ledgerStore subscription has a disposal path today.
+ *
+ * The generator takes the identity read at construction; like before the move, it is not
+ * rebuilt when the identity changes.
+ */
+function attachSessionTurnSynopsis(params: {
+    conductor:                Pick<Conductor, 'subscribeTurn'>
+    ledgerStore:              LedgerStore
+    identity:                 string
+    clock:                    Clock
+    onThinkingContentUpdate?: (content: string) => void
+}): void {
+    const { conductor, ledgerStore, identity, clock, onThinkingContentUpdate } = params;
+    attachTurnSynopsis({
+        conductor,
+        ledgerStore,
+        generator: createSynopsisGenerator({ identityContext: identity }),
+        budget:    createSynopsisBudget({ now: () => clock.now() }),
+        clock,
+        onThinkingContentUpdate,
+    });
 }
 
 /** Dependencies for {@link createSessionAmbience}. */
@@ -326,6 +360,9 @@ export interface CreateConversationConductorParams {
      * `ambience.timeHeaderFor(role)` — the bare `formatTimeHeader(config.timezone)` otherwise.
      */
     ambience?:           SessionAmbience
+
+    /** Fed every turn's accumulated thinking content by this session's turn synopsis producer (the idle Discord status's context buffer in `src/index.ts`). */
+    onThinkingContentUpdate?: (content: string) => void
 }
 
 /** What {@link createConversationConductor} returns. */
@@ -373,6 +410,7 @@ export async function createConversationConductor(params: CreateConversationCond
     const {
         config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, healthRegistry,
         identityCache, taskListReader, journal, resumeStore, channelListProvider, clock, logger, ambience, crossVendorRoutes,
+        onThinkingContentUpdate,
     } = params;
 
     // Session-peers block 4: every time header this role produces — here (the peer-message hook)
@@ -694,6 +732,8 @@ export async function createConversationConductor(params: CreateConversationCond
         logger,
     });
 
+    attachSessionTurnSynopsis({ conductor: innerConductor, ledgerStore, identity, clock, onThinkingContentUpdate });
+
     return {
         conductor, ledgerStore, contextPolicy, compactionTelemetry, bootLostTasks, setWakeTurnDelivery,
     };
@@ -724,6 +764,9 @@ export interface CreatePerchConductorParams {
      * `ambience.timeHeaderFor(role)` — the bare `formatTimeHeader(config.timezone)` otherwise.
      */
     ambience?:           SessionAmbience
+
+    /** See {@link CreateConversationConductorParams.onThinkingContentUpdate}. */
+    onThinkingContentUpdate?: (content: string) => void
 }
 
 /** What {@link createPerchConductor} returns. */
@@ -786,6 +829,7 @@ export interface PerchConductorResult {
 export async function createPerchConductor(params: CreatePerchConductorParams): Promise<PerchConductorResult> {
     const {
         config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, identityCache, taskListReader, journal, resumeStore, clock, logger, ambience, crossVendorRoutes,
+        onThinkingContentUpdate,
     } = params;
 
     // Session-peers block 4: see createConversationConductor's identical provider comment.
@@ -1026,6 +1070,8 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         clock,
         logger,
     });
+
+    attachSessionTurnSynopsis({ conductor, ledgerStore, identity, clock, onThinkingContentUpdate });
 
     return {
         conductor, ledgerStore, compactionTelemetry, setWakeTurnDelivery, slotHooks,

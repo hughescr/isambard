@@ -18,6 +18,9 @@ import type { AssistantFrame, TextBlock, ToolUseBlock } from '../stream-extracto
  * - using_tool: Bot is executing a specific tool (memory search, file read, etc.)
  * - responding: Bot is generating and sending the response text
  *
+ * A phase carries no Haiku synopsis: that is a turn-level fact, held on `LedgerTurn.synopsis`, so a
+ * phase flip or a compaction never touches it.
+ *
  * A context compaction is deliberately NOT a phase: `Ledger.compaction` is the single
  * "compacting" authority, and presence renders it as a marker alongside whatever phase is open.
  *
@@ -26,21 +29,19 @@ import type { AssistantFrame, TextBlock, ToolUseBlock } from '../stream-extracto
  * const thinkingPhase: ActivityPhase = {
  *   type: 'thinking',
  *   startedAt: new Date(),
- *   userMessage: 'What is the weather?'
  * };
  *
  * const toolPhase: ActivityPhase = {
  *   type: 'using_tool',
  *   toolName: 'memory_tool',
  *   startedAt: new Date(),
- *   generatedStatus: 'Searching memories...'
  * };
  * ```
  */
 export type ActivityPhase
-    = | { type: 'thinking', startedAt: Date, userMessage?: string, generatedStatus?: string }
-      | { type: 'using_tool', toolName: string, startedAt: Date, generatedStatus?: string }
-      | { type: 'responding', startedAt: Date, generatedStatus?: string };
+    = | { type: 'thinking', startedAt: Date }
+      | { type: 'using_tool', toolName: string, startedAt: Date }
+      | { type: 'responding', startedAt: Date };
 
 /**
  * Zod schema for validating activity phases.
@@ -48,21 +49,17 @@ export type ActivityPhase
  */
 export const activityPhaseSchema = z.discriminatedUnion('type', [
     z.object({
-        type:            z.literal('thinking'),
-        startedAt:       z.date(),
-        userMessage:     z.string().optional(),
-        generatedStatus: z.string().optional(),
+        type:      z.literal('thinking'),
+        startedAt: z.date(),
     }),
     z.object({
-        type:            z.literal('using_tool'),
-        toolName:        z.string(),
-        startedAt:       z.date(),
-        generatedStatus: z.string().optional(),
+        type:      z.literal('using_tool'),
+        toolName:  z.string(),
+        startedAt: z.date(),
     }),
     z.object({
-        type:            z.literal('responding'),
-        startedAt:       z.date(),
-        generatedStatus: z.string().optional(),
+        type:      z.literal('responding'),
+        startedAt: z.date(),
     }),
 ]);
 
@@ -146,12 +143,12 @@ function phaseFromTaskProgress(frame: TaskProgressFrame, prev: ActivityPhase | n
  *   `stream_event` -> `prev`
  * - `tool_progress` -> `using_tool` named after `tool_name`; same-name returns `prev`
  * - `system`/`task_progress` WITH `summary` -> `responding` if `prev` is `responding`,
- *   else `thinking` (matches `stream-event-handler.ts`'s subagent-summary collapse); WITHOUT
+ *   else `thinking` (matches `synopsis-stream-handler.ts`'s subagent-summary collapse); WITHOUT
  *   `summary` -> `prev`
  * - every other frame -> `prev`
  *
- * `stream-event-handler.ts` (the delta-based `AgentStreamEvent` consumer) is untouched by this
- * function and stays that way until P11/P14.
+ * `synopsis-stream-handler.ts` (the delta-based `AgentStreamEvent` consumer) tracks its own
+ * phase only to choose synopsis context; it never writes a phase.
  */
 export function phaseFromFrame(frame: SDKMessage, prev: ActivityPhase | null, at: Date): ActivityPhase | null {
     if(frame.type === 'result') {
