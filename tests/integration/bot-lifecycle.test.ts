@@ -360,7 +360,7 @@ describe('Bot Lifecycle Integration', () => {
 
     describe('Perch conductor component wiring (P12, P13b: the only path)', () => {
         const mockPerchConfig = {
-            enabled: true, timezone: 'UTC', intervalMinutes: 60, jitterMinutes: 15, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2,
+            enabled: true, timezone: 'UTC', intervalMinutes: 60, jitterMinutes: 15, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2,
         };
 
         function fakeConductor(sessionId: string): Conductor {
@@ -488,7 +488,7 @@ describe('Bot Lifecycle Integration', () => {
             expect(botOptions.perchJournal).toBe(perchJournal);
         });
 
-        it('passes a working isCostPaused function into createDiscordBot (Q3 / B4)', async () => {
+        it('passes a working isPerchPaused function into createDiscordBot (Q3 / B4)', async () => {
             const mockClient = {} as DynamoDBClient;
             const mockDocClient = { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient;
             const mockContextBuilder = {} as ContextBuilder;
@@ -521,9 +521,9 @@ describe('Bot Lifecycle Integration', () => {
 
             await createApp();
 
-            const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
-            expect(typeof botOptions.isCostPaused).toBe('function');
-            expect(botOptions.isCostPaused!()).toBe(false);
+            const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as { isPerchPaused?: () => boolean };
+            expect(typeof botOptions.isPerchPaused).toBe('function');
+            expect(botOptions.isPerchPaused!()).toBe(false);
         });
 
         it('passes a working notify function into createDiscordBot, reaching the real conductor once attached (Q5 / B1)', async () => {

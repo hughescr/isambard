@@ -163,11 +163,11 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
      * next turn the conductor runs once the slot turn ends.
      */
     function armWrapUpTimer(now: Date, endsAt: Date): void {
-        const fireAt = endsAt.getTime() - config.wrapUpTimeoutMinutes * 60_000;
+        const fireAt = endsAt.getTime() - config.wrapUpLeadMinutes * 60_000;
         const delayMs = Math.max(0, fireAt - now.getTime());
         wrapUpTimer = clock.setTimer(() => {
             wrapUpTimer = undefined;
-            const envelope = buildPerchWrapUpEnvelope({ now: new Date(clock.now()), leadMinutes: config.wrapUpTimeoutMinutes });
+            const envelope = buildPerchWrapUpEnvelope({ now: new Date(clock.now()), leadMinutes: config.wrapUpLeadMinutes });
             conductor.submit(envelope, { priority: 'human' }).catch((err: unknown) => {
                 logger.error({ err }, 'Failed to submit perch wrap-up envelope');
             });
@@ -185,7 +185,7 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
      */
     function armInterruptTimer(now: Date, endsAt: Date): void {
         const fireAt = endsAt.getTime() + interruptGraceMinutes * 60_000;
-        // Stryker disable next-line NumberLiteralValue: maxSessionMinutes and interruptGraceMinutes are schema-validated positive integers, so the floor is unreachable
+        // Stryker disable next-line NumberLiteralValue: slotWindowMinutes and interruptGraceMinutes are schema-validated positive integers, so the floor is unreachable
         const delayMs = Math.max(0, fireAt - now.getTime());
         interruptTimer = clock.setTimer(() => {
             interruptTimer = undefined;
@@ -203,7 +203,7 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
         clearTimers();
         slotRunning = false;
         slotEnvelopeId = undefined;
-        logActivity('perch-end', 'Perch session completed');
+        logActivity('perch-end', 'Perch slot completed');
         // Before the pending-trigger branch below: a host deferring work to the slot boundary
         // (the identity-driven system-prompt reopen) must be told the slot is over BEFORE the
         // next one is started, or its "no slot is open" test would read the new slot instead.
@@ -241,7 +241,7 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
         // slot during the window (when contextBuilder awaits) between slotRunning flipping true and
         // this envelope actually existing.
         slotEnvelopeId = envelope.id;
-        logActivity('perch-start', `Perch session started (slot: ${slot})`);
+        logActivity('perch-start', `Perch slot started (slot: ${slot})`);
 
         try {
             await conductor.submit(envelope, { priority: 'other' });
@@ -261,7 +261,7 @@ export function createPerchDriver(deps: PerchDriverDeps): PerchDriver {
         slotHooks?.onSlotStart();
 
         const now = new Date(clock.now());
-        const endsAt = computeSlotEndsAt(now, config.maxSessionMinutes);
+        const endsAt = computeSlotEndsAt(now, config.slotWindowMinutes);
 
         armWrapUpTimer(now, endsAt);
         armInterruptTimer(now, endsAt);

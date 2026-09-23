@@ -743,8 +743,8 @@ export interface PerchConductorResult {
     setWakeTurnDelivery: (fn: (envelope: DeliverableEnvelope, result: TurnResult) => Promise<void>) => void
     /**
      * The perch driver's slot-boundary callbacks, to be handed to `createPerchDriver` (via
-     * `bot.ts` / `perch-setup.ts`). They exist so an identity change can wait: the perch session
-     * runs in time-boxed slots, and closing it mid-slot would abort the very turn the slot is for,
+     * `bot.ts` / `perch-setup.ts`). They exist so an identity change can wait: the long-lived
+     * perch SDK session runs time-boxed slots, and closing it mid-slot would abort the slot turn,
      * so a prompt refresh is held until `onSlotEnd` and applied between slots.
      */
     slotHooks:           PerchSlotHooks

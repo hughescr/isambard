@@ -66,8 +66,8 @@ describe('configuration schema boundaries', () => {
             timezone:              'UTC',
             intervalMinutes:       60,
             jitterMinutes:         15,
-            maxSessionMinutes:     45,
-            wrapUpTimeoutMinutes:  5,
+            slotWindowMinutes:     45,
+            wrapUpLeadMinutes:     5,
             interruptGraceMinutes: 2,
         });
     });

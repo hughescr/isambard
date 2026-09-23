@@ -36,12 +36,12 @@ export interface PerchSchedulerDeps {
     /** Callback when perch should start */
     onPerchTrigger:       (slot: PerchSlot) => void
     /**
-     * Optional Q3/B4 daily cost ceiling predicate: when it returns true, a scheduled trigger
-     * skips `onPerchTrigger` without stopping the reschedule loop, so the pause self-clears at
-     * local midnight with no restart. Discord's own turns are never gated by this — only perch's
-     * scheduled trigger path checks it.
+     * Optional predicate composed from the daily cost ceiling and quota window: when it returns
+     * true, a scheduled trigger skips `onPerchTrigger` without stopping the reschedule loop, so
+     * either pause self-clears at its own boundary with no restart. Discord's own turns are never
+     * gated by this — only perch's scheduled trigger path checks it.
      */
-    isCostPaused?:        () => boolean
+    isPerchPaused?:       () => boolean
 }
 
 /**
@@ -129,9 +129,9 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             return;
         }
 
-        // Stryker disable next-line llm: deps.isCostPaused is an optional function only (never a non-function falsy value), so `?.()` and `&& ...()` are equivalent for every reachable value
-        if(deps.isCostPaused?.()) {
-            logger.debug('Perch trigger skipped - cost ceiling reached');
+        // Stryker disable next-line llm: deps.isPerchPaused is an optional function only (never a non-function falsy value), so `?.()` and `&& ...()` are equivalent for every reachable value
+        if(deps.isPerchPaused?.()) {
+            logger.debug('Perch trigger skipped - perch paused');
             scheduleNextTrigger();
             return;
         }

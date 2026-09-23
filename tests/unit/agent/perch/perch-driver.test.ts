@@ -106,8 +106,8 @@ function createMockActivityLogger(): ActivityLogger {
 }
 
 // Distinct minute values so ArithmeticOperator mutants (endsAt +/- lead, +/- grace) cannot
-// survive: wrapUpTimeoutMinutes (3) and interruptGraceMinutes (7) are both different from each
-// other and from maxSessionMinutes (20).
+// survive: wrapUpLeadMinutes (3) and interruptGraceMinutes (7) are both different from each
+// other and from slotWindowMinutes (20).
 const MAX_SESSION_MINUTES = 20;
 const WRAP_UP_TIMEOUT_MINUTES = 3;
 const INTERRUPT_GRACE_MINUTES = 7;
@@ -119,8 +119,8 @@ function makeConfig(overrides: Partial<PerchConfig> = {}): PerchConfig {
         timezone:              'America/Los_Angeles',
         intervalMinutes:       60,
         jitterMinutes:         15,
-        maxSessionMinutes:     MAX_SESSION_MINUTES,
-        wrapUpTimeoutMinutes:  WRAP_UP_TIMEOUT_MINUTES,
+        slotWindowMinutes:     MAX_SESSION_MINUTES,
+        wrapUpLeadMinutes:     WRAP_UP_TIMEOUT_MINUTES,
         interruptGraceMinutes: INTERRUPT_GRACE_MINUTES,
         ...overrides,
     };
@@ -168,7 +168,7 @@ describe('createPerchDriver', () => {
         expect(options.priority).toBe('other');
         expect(activityLogger.log).toHaveBeenCalledWith({
             type:    'perch-start',
-            summary: 'Perch session started (slot: afternoon)',
+            summary: 'Perch slot started (slot: afternoon)',
         });
         expect(envelope.text.endsWith('Deliberate breadth protects against attractor-capture, and convergence rarely notices itself from the inside.')).toBe(true);
     });
@@ -191,7 +191,7 @@ describe('createPerchDriver', () => {
         expect(conductor.submissions[0].envelope.text).toContain('- Perch: idle');
     });
 
-    test('submits the wrap-up envelope exactly at endsAt - wrapUpTimeoutMinutes while the slot turn is still running, at priority \'human\'', async () => {
+    test('submits the wrap-up envelope exactly at endsAt - wrapUpLeadMinutes while the slot turn is still running, at priority \'human\'', async () => {
         const driver = createPerchDriver(deps);
         driver.runSlot('afternoon');
 
@@ -213,7 +213,7 @@ describe('createPerchDriver', () => {
     });
 
     test('submits the wrap-up immediately when its lead time exceeds the configured session duration', () => {
-        deps = { ...deps, config: makeConfig({ maxSessionMinutes: 1, wrapUpTimeoutMinutes: 2 }) };
+        deps = { ...deps, config: makeConfig({ slotWindowMinutes: 1, wrapUpLeadMinutes: 2 }) };
         const driver = createPerchDriver(deps);
 
         driver.runSlot('afternoon');
@@ -227,7 +227,7 @@ describe('createPerchDriver', () => {
         // The Clock port hands the delay straight to setTimeout, and both Bun and Node treat a
         // negative delay as a contract violation (Bun emits TimeoutNegativeWarning on stderr and
         // re-clamps to 1ms), so the driver must clamp an overdue wrap-up to 0 itself.
-        deps = { ...deps, config: makeConfig({ maxSessionMinutes: 1, wrapUpTimeoutMinutes: 2 }) };
+        deps = { ...deps, config: makeConfig({ slotWindowMinutes: 1, wrapUpLeadMinutes: 2 }) };
         const setTimer = jest.spyOn(clock, 'setTimer');
         const driver = createPerchDriver(deps);
 
@@ -409,7 +409,7 @@ describe('createPerchDriver', () => {
 
         expect(activityLogger.log).toHaveBeenCalledWith({
             type:    'perch-end',
-            summary: 'Perch session completed',
+            summary: 'Perch slot completed',
         });
     });
 

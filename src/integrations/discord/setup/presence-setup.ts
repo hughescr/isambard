@@ -120,11 +120,11 @@ export function setupConductorPresence(params: {
     /** Setter for persisting the last idle status text (anti-rut). */
     setPreviousStatus?:       (text: string) => void
     /**
-     * Optional Q3/B4 daily cost ceiling predicate: `tick()` re-reads it on every compose (never
+     * Optional composed perch-pause predicate: `tick()` re-reads it on every compose (never
      * cached), so a pause taken or cleared mid-run is reflected on the very next ledger event —
      * rendered as a `⏸ perch` marker in the composed prefix (see `composePresence`'s own doc).
      */
-    isCostPaused?:            () => boolean
+    isPerchPaused?:           () => boolean
 }): ConductorPresenceSetupResult {
     const {
         identityContext,
@@ -143,7 +143,7 @@ export function setupConductorPresence(params: {
         getLiveSignals,
         getPreviousStatus,
         setPreviousStatus,
-        isCostPaused,
+        isPerchPaused,
     } = params;
 
     // P14: one generator instance per session — see ConductorPresenceSession's own doc for why
@@ -203,11 +203,12 @@ export function setupConductorPresence(params: {
         idleStatusGenerator,
         logger,
         // Q3/B4: recompose fresh on every idle refresh tick (the periodic timer, not only a
-        // ledger-driven applyView) so the `⏸ perch` marker clearing at local midnight — a
-        // wall-clock event with no ledger notification behind it — is visible on the very next
-        // tick instead of lingering on whatever prefix was last composed by a ledger event.
+        // ledger-driven applyView) so the `⏸ perch` marker clears when either pause cause resets:
+        // the daily cost ceiling at local midnight or the quota window at its own rollover. These
+        // wall-clock events have no ledger notification, so the very next tick must replace the
+        // prefix last composed by a ledger event.
         recomposeIdlePrefix: () => {
-            const view = composePresence(ledgers.map(store => store.get()), isCostPaused?.() ?? false);
+            const view = composePresence(ledgers.map(store => store.get()), isPerchPaused?.() ?? false);
             return { prefix: view.prefix, compacting: view.compacting };
         },
     });
@@ -245,7 +246,7 @@ export function setupConductorPresence(params: {
     /** Fires {@link IDLE_SETTLE_MS} after a view first composed idle: applies the CURRENT view only if it is still idle. */
     function applyIdleIfStillIdle(): void {
         idleSettleTimer = null;
-        const view = composePresence(ledgers.map(store => store.get()), isCostPaused?.() ?? false);
+        const view = composePresence(ledgers.map(store => store.get()), isPerchPaused?.() ?? false);
         if(view.phase.type === 'idle' && planPresenceUpdate(view, throttle) !== null) {
             apply(view);
         }
@@ -257,7 +258,7 @@ export function setupConductorPresence(params: {
      * `settleIdle` is false — the one synchronous setup tick applies its idle view at once.
      */
     function tick(settleIdle = true): void {
-        const view = composePresence(ledgers.map(store => store.get()), isCostPaused?.() ?? false);
+        const view = composePresence(ledgers.map(store => store.get()), isPerchPaused?.() ?? false);
         const digest = digestOf(view);
 
         if(view.phase.type === 'idle') {

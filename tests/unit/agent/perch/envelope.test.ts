@@ -10,7 +10,7 @@ const timezone = 'America/Los_Angeles';
 const timeHeader = '## Current Time\n- Izzy: 2026-09-04T14:07:00 America/Los_Angeles (Friday afternoon)';
 
 describe('computeSlotEndsAt', () => {
-    test('adds maxSessionMinutes (in ms) to the trigger time', () => {
+    test('adds slotWindowMinutes (in ms) to the trigger time', () => {
         const endsAt = computeSlotEndsAt(now, 45);
         expect(endsAt).toEqual(new Date(now.getTime() + 45 * 60_000));
     });

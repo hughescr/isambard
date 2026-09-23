@@ -39,12 +39,12 @@ export interface PresenceManagerDeps {
     /**
      * Q3/B4: optional recompose hook consulted on every idle refresh (the periodic timer AND the
      * immediate refresh `applyView` triggers), not only when a fresh view arrives via `applyView`.
-     * Part of the composed prefix (e.g. the `⏸ perch` cost-ceiling marker) can change from wall-
-     * clock time alone — the ceiling clears at local midnight with no ledger event — so without
-     * this, the idle refresh loop would keep rendering whatever prefix was cached at the last
-     * `applyView` call until the next ledger-driven one, which may never come while idle. When
-     * omitted, the refresh loop keeps rendering the prefix and compacting marker of the last idle
-     * view passed to `applyView`.
+     * Part of the composed prefix (e.g. the `⏸ perch` pause marker) can change from wall-clock
+     * time alone: the daily cost ceiling clears at local midnight, and a quota-window pause clears
+     * when its window rolls over, neither with a ledger event. Without this, the idle refresh loop
+     * would keep rendering whatever prefix was cached at the last `applyView` call until the next
+     * ledger-driven one, which may never come while idle. When omitted, the refresh loop keeps
+     * rendering the prefix and compacting marker of the last idle view passed to `applyView`.
      */
     recomposeIdlePrefix?:  () => { prefix: string, compacting: boolean }
     /** Logger instance */
@@ -170,9 +170,9 @@ export class PresenceManager {
         }
 
         // Q3/B4: recompose the prefix/compacting fresh on every refresh (not only when a new view
-        // arrives via applyView) so a wall-clock-driven change — the cost-ceiling marker clearing
-        // at local midnight, with no ledger event to trigger a fresh applyView — is picked up by
-        // the very next periodic tick instead of lingering indefinitely.
+        // arrives via applyView) so a wall-clock-driven pause change — the daily cost ceiling
+        // clearing at local midnight or a quota window rolling over, neither with a fresh
+        // applyView — is picked up by the very next periodic tick instead of lingering indefinitely.
         const recomposed = this.deps.recomposeIdlePrefix?.();
         if(recomposed) {
             this.currentView = { ...this.currentView, prefix: recomposed.prefix, compacting: recomposed.compacting };

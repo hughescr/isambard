@@ -227,10 +227,10 @@ export interface DiscordBotOptions {
     discordCapability?: DiscordCapability
 
     /**
-     * Optional Q3/B4 daily cost ceiling predicate. Forwarded into the perch setup path
+     * Optional composed perch-pause predicate. Forwarded into the perch setup path
      * (`setupPerchDriverAndScheduler`).
      */
-    isCostPaused?: () => boolean
+    isPerchPaused?: () => boolean
 
     /**
      * Optional Q5/B1 shared notification bridge `notify` function (see
@@ -1044,8 +1044,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         // Q3/B4: only forward the predicate when perch is actually enabled — the
                         // `⏸ perch` marker asserts a pause that has a subject; with perch off, no
                         // scheduler was ever going to run, so nothing is paused regardless of what
-                        // isCostPaused() reports (finding: the marker rendered even with perch off).
-                        isCostPaused:            options.perchConfig?.enabled ? options.isCostPaused : undefined,
+                        // isPerchPaused() reports (finding: the marker rendered even with perch off).
+                        isPerchPaused:           options.perchConfig?.enabled ? options.isPerchPaused : undefined,
                     });
                     presenceManager = conductorPresence.presenceManager;
                     unsubscribeLedgerPresence = conductorPresence.unsubscribeLedgers;
@@ -1097,19 +1097,19 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 // Create the perch driver+scheduler once the perch conductor has successfully opened.
                 if(perchConductorOpened && perchConductor && options.perchConfig?.enabled) {
                     const perchSetup = setupPerchDriverAndScheduler({
-                        conductor:    perchConductor,
-                        perchConfig:  options.perchConfig,
+                        conductor:     perchConductor,
+                        perchConfig:   options.perchConfig,
                         clock,
                         contextBuilder,
                         activityLogger,
                         channelRegistry,
                         responseRouter,
-                        client:       readyClient,
+                        client:        readyClient,
                         rateLimiter,
                         discordCapability,
-                        isCostPaused: options.isCostPaused,
-                        timeHeader:   options.perchTimeHeader,
-                        slotHooks:    options.perchSlotHooks,
+                        isPerchPaused: options.isPerchPaused,
+                        timeHeader:    options.perchTimeHeader,
+                        slotHooks:     options.perchSlotHooks,
                     });
                     perchDriver = perchSetup.driver;
                     perchScheduler = perchSetup.scheduler;

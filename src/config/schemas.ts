@@ -216,10 +216,14 @@ export const perchConfigSchema = z.object({
     intervalMinutes:       z.number().int().positive().default(60),
     /** Jitter range in minutes (default: 15) */
     jitterMinutes:         z.number().int().nonnegative().default(15),
-    /** Maximum session duration in minutes (default: 45) */
-    maxSessionMinutes:     z.number().int().positive().default(45),
-    /** Maximum duration for wrap-up session in minutes (default: 5) */
-    wrapUpTimeoutMinutes:  z.number().int().positive().default(5),
+    /** Scheduled slot duration in minutes (default: 45) */
+    slotWindowMinutes:     z.number().int().positive().optional(),
+    /** @deprecated Use slotWindowMinutes instead. */
+    maxSessionMinutes:     z.number().int().positive().optional(),
+    /** Lead time before a slot ends for its wrap-up turn, in minutes (default: 5) */
+    wrapUpLeadMinutes:     z.number().int().positive().optional(),
+    /** @deprecated Use wrapUpLeadMinutes instead. */
+    wrapUpTimeoutMinutes:  z.number().int().positive().optional(),
     /** Grace period after a slot's endsAt before the driver interrupts a still-running slot turn, in minutes (default: 2) */
     interruptGraceMinutes: z.number().int().positive().default(2),
     /** Test mode configuration for manual testing */
@@ -229,7 +233,12 @@ export const perchConfigSchema = z.object({
         /** Force a specific slot instead of calculating from time */
         forceSlot:        z.enum(['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night']).optional(),
     }).optional(),
-}).optional();
+// eslint-disable-next-line sonarjs/deprecation -- This transform is the sole compatibility boundary that consumes the deprecated aliases.
+}).transform(({ maxSessionMinutes, wrapUpTimeoutMinutes, slotWindowMinutes, wrapUpLeadMinutes, ...config }) => ({
+    ...config,
+    slotWindowMinutes: slotWindowMinutes ?? maxSessionMinutes ?? 45,
+    wrapUpLeadMinutes: wrapUpLeadMinutes ?? wrapUpTimeoutMinutes ?? 5,
+})).optional();
 
 // Reconciliation config schemas - canonical definitions (re-exported by src/storage/memory-tool/reconciliation/types.ts)
 

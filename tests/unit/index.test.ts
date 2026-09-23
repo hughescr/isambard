@@ -88,8 +88,8 @@ const defaultPerchConfig = {
     timezone:              'UTC',
     intervalMinutes:       60,
     jitterMinutes:         15,
-    maxSessionMinutes:     45,
-    wrapUpTimeoutMinutes:  5,
+    slotWindowMinutes:     45,
+    wrapUpLeadMinutes:     5,
     interruptGraceMinutes: 2,
 };
 
@@ -922,7 +922,7 @@ describe('createApp', () => {
             return { type: 'tick', rssBytes: 0, at: new Date() };
         }
 
-        test('passes a working isCostPaused function into createDiscordBot, initially false', async () => {
+        test('passes a working isPerchPaused function into createDiscordBot, initially false', async () => {
             wireHappyPath(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
@@ -935,12 +935,12 @@ describe('createApp', () => {
             const { createApp } = staticIndexModule;
             await createApp();
 
-            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
-            expect(typeof botOptions.isCostPaused).toBe('function');
-            expect(botOptions.isCostPaused!()).toBe(false);
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isPerchPaused?: () => boolean };
+            expect(typeof botOptions.isPerchPaused).toBe('function');
+            expect(botOptions.isPerchPaused!()).toBe(false);
         });
 
-        test('a conversation ledger event crossing dailyCostCeilingUsd pauses isCostPaused()', async () => {
+        test('a conversation ledger event crossing dailyCostCeilingUsd pauses isPerchPaused()', async () => {
             wireHappyPath(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const conversationLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
@@ -954,7 +954,7 @@ describe('createApp', () => {
             const { createApp } = staticIndexModule;
             await createApp();
 
-            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isPerchPaused?: () => boolean };
             // The very first record() for a store baselines rather than booking its prior spend
             // (cost-ceiling.ts's own doc) — emit a $0 baseline event first, matching production
             // (the ledger starts at $0 when the ceiling subscribes at boot), then the delta that
@@ -962,10 +962,10 @@ describe('createApp', () => {
             conversationLedgerStore.emit({ ...initialLedger('conversation'), cost: { cumulativeUsd: 0, lastTurnUsd: 0 } }, tickEvent());
             conversationLedgerStore.emit({ ...initialLedger('conversation'), cost: { cumulativeUsd: 2, lastTurnUsd: 0 } }, tickEvent());
 
-            expect(botOptions.isCostPaused!()).toBe(true);
+            expect(botOptions.isPerchPaused!()).toBe(true);
         });
 
-        test('a perch ledger event crossing dailyCostCeilingUsd also pauses isCostPaused() — the shared ceiling folds both stores', async () => {
+        test('a perch ledger event crossing dailyCostCeilingUsd also pauses isPerchPaused() — the shared ceiling folds both stores', async () => {
             wireHappyPath(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const perchLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
@@ -982,14 +982,14 @@ describe('createApp', () => {
             const { createApp } = staticIndexModule;
             await createApp();
 
-            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isPerchPaused?: () => boolean };
             perchLedgerStore.emit({ ...initialLedger('perch'), cost: { cumulativeUsd: 0, lastTurnUsd: 0 } }, tickEvent());
             perchLedgerStore.emit({ ...initialLedger('perch'), cost: { cumulativeUsd: 2, lastTurnUsd: 0 } }, tickEvent());
 
-            expect(botOptions.isCostPaused!()).toBe(true);
+            expect(botOptions.isPerchPaused!()).toBe(true);
         });
 
-        test('dailyCostCeilingUsd left undefined: isCostPaused() stays false regardless of ledger spend', async () => {
+        test('dailyCostCeilingUsd left undefined: isPerchPaused() stays false regardless of ledger spend', async () => {
             wireHappyPath(spies);
             const conversationLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
@@ -1003,10 +1003,10 @@ describe('createApp', () => {
             const { createApp } = staticIndexModule;
             await createApp();
 
-            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isPerchPaused?: () => boolean };
             conversationLedgerStore.emit({ ...initialLedger('conversation'), cost: { cumulativeUsd: 1000, lastTurnUsd: 0 } }, tickEvent());
 
-            expect(botOptions.isCostPaused!()).toBe(false);
+            expect(botOptions.isPerchPaused!()).toBe(false);
         });
 
         test('restores a previously-persisted paused snapshot from the conversation journal at boot, before any ledger event', async () => {
@@ -1036,8 +1036,8 @@ describe('createApp', () => {
             const { createApp } = staticIndexModule;
             await createApp();
 
-            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
-            expect(botOptions.isCostPaused!()).toBe(true);
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isPerchPaused?: () => boolean };
+            expect(botOptions.isPerchPaused!()).toBe(true);
         });
 
         test('a boot-time journal read failure is logged and tolerated, never blocking startup', async () => {
@@ -1058,7 +1058,7 @@ describe('createApp', () => {
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.any(String));
         });
 
-        // Session-peers block 5: the quota ceiling rides the SAME isCostPaused predicate, so the
+        // Session-peers block 5: the quota ceiling rides the SAME isPerchPaused predicate, so the
         // perch scheduler's skip and presence's paused marker need no new plumbing.
         describe('Quota ceiling (session-peers block 5)', () => {
             const RESETS_AT = new Date('2026-09-09T22:30:00.000Z');
@@ -1068,7 +1068,7 @@ describe('createApp', () => {
                 return { ...initialLedger(role), quota: { fiveHour: { utilization, resetsAt: RESETS_AT }, source: 'headers', at: new Date('2026-09-09T20:00:00.000Z') } };
             }
 
-            test('a five-hour window at agent.quota.perchPauseAtPercent pauses isCostPaused(), with no daily cost ceiling configured at all', async () => {
+            test('a five-hour window at agent.quota.perchPauseAtPercent pauses isPerchPaused(), with no daily cost ceiling configured at all', async () => {
                 wireHappyPath(spies, { dailyCostCeilingUsd: undefined, timezone: 'UTC' });
                 const conversationLedgerStore = fakeLedgerStoreWithEmit();
                 const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
@@ -1082,12 +1082,12 @@ describe('createApp', () => {
                 const { createApp } = staticIndexModule;
                 await createApp();
 
-                const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+                const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isPerchPaused?: () => boolean };
                 conversationLedgerStore.emit(ledgerAtFiveHour('conversation', 89), tickEvent());
-                expect(botOptions.isCostPaused!()).toBe(false);
+                expect(botOptions.isPerchPaused!()).toBe(false);
 
                 conversationLedgerStore.emit(ledgerAtFiveHour('conversation', 90), tickEvent());
-                expect(botOptions.isCostPaused!()).toBe(true);
+                expect(botOptions.isPerchPaused!()).toBe(true);
             });
 
             test('the perch ledger feeds the same quota ceiling', async () => {
@@ -1107,10 +1107,10 @@ describe('createApp', () => {
                 const { createApp } = staticIndexModule;
                 await createApp();
 
-                const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+                const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isPerchPaused?: () => boolean };
                 perchLedgerStore.emit(ledgerAtFiveHour('perch', 95), tickEvent());
 
-                expect(botOptions.isCostPaused!()).toBe(true);
+                expect(botOptions.isPerchPaused!()).toBe(true);
             });
 
             test('configures Anthropic quota as SDK-only without sending OAuth to the provider report', async () => {

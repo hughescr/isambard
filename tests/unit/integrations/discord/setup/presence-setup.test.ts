@@ -398,7 +398,7 @@ describe('setupConductorPresence', () => {
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
     });
 
-    test('isCostPaused omitted: composed prefix carries no pause marker (Q3 / B4)', () => {
+    test('isPerchPaused omitted: composed prefix carries no pause marker (Q3 / B4)', () => {
         const conversation = makeConversationLedger();
 
         setupConductorPresence({
@@ -414,7 +414,7 @@ describe('setupConductorPresence', () => {
         expect(view.prefix).not.toContain('⏸');
     });
 
-    test('isCostPaused() true is composed into the prefix as the ⏸ perch marker (Q3 / B4)', () => {
+    test('isPerchPaused() true is composed into the prefix as the ⏸ perch marker (Q3 / B4)', () => {
         const conversation = makeConversationLedger();
 
         setupConductorPresence({
@@ -424,14 +424,14 @@ describe('setupConductorPresence', () => {
             sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
-            isCostPaused:     () => true,
+            isPerchPaused:    () => true,
         });
 
         const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
         expect(view.prefix).toBe('💤 • ⏸ perch');
     });
 
-    test('isCostPaused is re-read on every tick, not only at setup (Q3 / B4)', () => {
+    test('isPerchPaused is re-read on every tick, not only at setup (Q3 / B4)', () => {
         const conversation = makeConversationLedger();
         let paused = false;
 
@@ -442,7 +442,7 @@ describe('setupConductorPresence', () => {
             sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
-            isCostPaused:     () => paused,
+            isPerchPaused:    () => paused,
         });
         mockPresenceManager.applyView.mockClear();
 
@@ -455,7 +455,7 @@ describe('setupConductorPresence', () => {
         expect(view.prefix).toContain('⏸ perch');
     });
 
-    test('wires PresenceManager with a recomposeIdlePrefix that re-reads isCostPaused() at call time, not just at setup (Q3/B4 midnight-clear staleness)', () => {
+    test('wires PresenceManager with a recomposeIdlePrefix that re-reads isPerchPaused() at call time, not just at setup (Q3/B4 midnight-clear staleness)', () => {
         const conversation = makeConversationLedger();
         let paused = true;
 
@@ -466,19 +466,19 @@ describe('setupConductorPresence', () => {
             sessions:         [{ ledger: conversation }],
             throttle:         throttleAlways(),
             getRecentContext: () => Promise.resolve(undefined),
-            isCostPaused:     () => paused,
+            isPerchPaused:    () => paused,
         });
 
         expect(capturedPresenceManagerDeps?.recomposeIdlePrefix?.().prefix).toContain('⏸ perch');
 
         // The idle refresh loop calls this on its own periodic timer, independent of any ledger
-        // event — a midnight clear (isCostPaused() flipping false with no ledger activity) must
+        // event — a midnight clear (isPerchPaused() flipping false with no ledger activity) must
         // be visible the very next time it is called.
         paused = false;
         expect(capturedPresenceManagerDeps?.recomposeIdlePrefix?.().prefix).not.toContain('⏸');
     });
 
-    test('recomposeIdlePrefix with isCostPaused omitted carries no pause marker (Q3/B4)', () => {
+    test('recomposeIdlePrefix with isPerchPaused omitted carries no pause marker (Q3/B4)', () => {
         const conversation = makeConversationLedger();
 
         setupConductorPresence({
@@ -732,7 +732,7 @@ describe('setupConductorPresence', () => {
             sessions:         [{ ledger: conversation }],
             throttle,
             getRecentContext: () => Promise.resolve(undefined),
-            isCostPaused:     () => true,
+            isPerchPaused:    () => true,
         });
         throttle.record.mockClear();
         conversation.dispatch({
@@ -760,7 +760,7 @@ describe('setupConductorPresence', () => {
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
     });
 
-    test('a delayed idle apply uses the unpaused default when isCostPaused is omitted', () => {
+    test('a delayed idle apply uses the unpaused default when isPerchPaused is omitted', () => {
         const conversation = makeConversationLedger();
         const throttle = throttleAlways();
         setupConductorPresence({

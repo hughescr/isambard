@@ -107,10 +107,10 @@ export interface PerchConfig {
     intervalMinutes:        number
     /** @deprecated No longer used - cron-parser's H option provides full 0-59 minute range for jitter */
     jitterMinutes:          number
-    /** Maximum session duration in minutes (default: 45) */
-    maxSessionMinutes:      number
-    /** Maximum duration for wrap-up session in minutes (default: 5) */
-    wrapUpTimeoutMinutes:   number
+    /** Scheduled slot duration in minutes (default: 45) */
+    slotWindowMinutes:      number
+    /** Lead time before a slot ends for its wrap-up turn, in minutes (default: 5) */
+    wrapUpLeadMinutes:      number
     /**
      * Grace period after a slot's `endsAt` before the perch driver interrupts a still-running
      * slot turn, in minutes (default: 2, see `perchConfigSchema`/`loadConfig` in `@/config`).

@@ -27,8 +27,8 @@ interface SetupPerchDriverParams {
     rateLimiter:        DiscordRateLimiter
     /** Optional capability facade for outbox fallback when Discord is offline. */
     discordCapability?: DiscordCapability
-    /** Optional Q3/B4 daily cost ceiling predicate, forwarded to {@link createPerchScheduler}'s deps unchanged. */
-    isCostPaused?:      () => boolean
+    /** Optional composed perch-pause predicate, forwarded to {@link createPerchScheduler}'s deps unchanged. */
+    isPerchPaused?:     () => boolean
     /** Session-peers block 4: forwarded to {@link createPerchDriver} unchanged — see its own `PerchDriverDeps.timeHeader` doc. */
     timeHeader?:        TimeHeaderProvider
     /** Slot-boundary callbacks, forwarded to {@link createPerchDriver} unchanged — see `PerchSlotHooks`. Supplied by `createPerchConductor`, so an identity-driven system-prompt reopen waits for the open slot to end. */
@@ -120,7 +120,7 @@ export function setupPerchDriverAndScheduler(params: SetupPerchDriverParams): {
     driver:    PerchDriver
     scheduler: PerchScheduler
 } {
-    const { conductor, perchConfig, clock, contextBuilder, activityLogger, channelRegistry, responseRouter, client, rateLimiter, discordCapability, isCostPaused, timeHeader, slotHooks } = params;
+    const { conductor, perchConfig, clock, contextBuilder, activityLogger, channelRegistry, responseRouter, client, rateLimiter, discordCapability, isPerchPaused, timeHeader, slotHooks } = params;
 
     const getCurrentLocalHour = (): number => DateTime.now().setZone(perchConfig.timezone).hour;
 
@@ -147,7 +147,7 @@ export function setupPerchDriverAndScheduler(params: SetupPerchDriverParams): {
         onPerchTrigger: (slot) => {
             driver.runSlot(slot);
         },
-        isCostPaused,
+        isPerchPaused,
     });
 
     scheduler.start();

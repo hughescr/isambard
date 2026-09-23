@@ -112,11 +112,11 @@ conductor, pointed at the perch conductor instead.
 
 ## Wrap-Up and Timeout
 
-Perch sessions have a maximum duration (`maxSessionMinutes`, default 45), measured from the slot
+Perch slots have a maximum duration (`slotWindowMinutes`, default 45), measured from the slot
 trigger, not from any per-message activity. `perch-driver.ts` arms two timers off the slot's
-`endsAt = trigger + maxSessionMinutes`:
+`endsAt = trigger + slotWindowMinutes`:
 
-1. **Wrap-up timer** (`endsAt - wrapUpTimeoutMinutes`, default 5 minutes before the end): submits
+1. **Wrap-up timer** (`endsAt - wrapUpLeadMinutes`, default 5 minutes before the end): submits
    a `[WRAP-UP · perch slot ends in N min]` envelope (`buildPerchWrapUpEnvelope`) at
    `priority: 'human'` — the highest priority, so it is the very next turn the conductor runs once
    the current slot turn ends, ahead of any queued perch-channel message or the next slot's own
@@ -147,10 +147,10 @@ interface PerchConfig {
   jitterMinutes: number;      // Default: 15
 
   /** Max slot turn duration, measured from the trigger time */
-  maxSessionMinutes: number;  // Default: 45
+  slotWindowMinutes: number;  // Default: 45
 
   /** How long before endsAt the wrap-up nudge envelope is submitted */
-  wrapUpTimeoutMinutes: number; // Default: 5
+  wrapUpLeadMinutes: number; // Default: 5
 
   /** Grace period after endsAt before an overrunning slot turn is interrupted */
   interruptGraceMinutes?: number; // Default: 2
@@ -225,7 +225,7 @@ a Discord turn is a turn submitted to the conversation conductor.
 
 - **`scheduler.ts`**: Cron-based scheduling
   - `createPerchScheduler()`: Factory for scheduler (optional `getCurrentLocalHour` for testing,
-    optional `isCostPaused` predicate)
+    optional `isPerchPaused` predicate)
   - `triggerNow()`: Immediately trigger a perch check
   - `triggerTestPerch()`: Trigger a test perch, cycling through `TEST_SLOTS` (all slots except `wikipedia`)
   - Uses `cron-parser` with `H * * * *` pattern
@@ -267,8 +267,8 @@ const scheduler = createPerchScheduler({
     timezone: 'America/Los_Angeles',
     intervalMinutes: 60,
     jitterMinutes: 15, // deprecated, unused
-    maxSessionMinutes: 45,
-    wrapUpTimeoutMinutes: 5,
+    slotWindowMinutes: 45,
+    wrapUpLeadMinutes: 5,
     interruptGraceMinutes: 2,
   },
   onPerchTrigger: slot => driver.runSlot(slot),
@@ -299,7 +299,7 @@ console.log(state.pendingSlot);  // 'pre-dawn', etc.
   reports true, correct slot resolved on the next trigger
 - **Driver-level deferral**: `runSlot` returns `'deferred'` while a slot turn is already running,
   and starts a fresh turn for the current slot once the running one settles
-- **Wrap-up/interrupt timers**: `armWrapUpTimer` fires at `endsAt - wrapUpTimeoutMinutes`,
+- **Wrap-up/interrupt timers**: `armWrapUpTimer` fires at `endsAt - wrapUpLeadMinutes`,
   `armInterruptTimer` fires at `endsAt + interruptGraceMinutes` and interrupts only when
   `conductor.status().turn` still matches the slot's own envelope id
 - **Scheduling**: Mock cron-parser to control trigger timing
@@ -339,6 +339,6 @@ outside the conductor's own turn queue — no duplicated timeout/elapsed-time bo
 separate mode machine to keep in sync, and no race between "which state owns the session right
 now."
 
-The maximum-duration timeout (`maxSessionMinutes`) is measured from the slot's own trigger time,
+The maximum-duration timeout (`slotWindowMinutes`) is measured from the slot's own trigger time,
 not from any per-message activity — a perch-channel message queued behind a slot turn does not
 pause or extend that turn's clock.

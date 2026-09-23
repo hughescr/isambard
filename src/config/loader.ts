@@ -99,7 +99,7 @@ export function loadConfig(resources: SstResources = Resource): Config {
                 timezone:              resolveTimezone(),
                 intervalMinutes:       60,
                 jitterMinutes:         15,
-                maxSessionMinutes:     45,
+                slotWindowMinutes:     45,
                 interruptGraceMinutes: env.get('PERCH_INTERRUPT_GRACE_MINUTES').default('2').asIntPositive(),
                 testMode:              env.get('PERCH_TEST_MODE_TRIGGER_ON_STARTUP').default('false').asBool()
                     ? {

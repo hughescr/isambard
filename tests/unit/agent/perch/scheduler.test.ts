@@ -27,12 +27,12 @@ describe('PerchScheduler', () => {
         mockLogger = createMockLogger();
         mockOnPerchTrigger = mock(() => undefined);
         config = {
-            enabled:              true,
-            timezone:             'America/Los_Angeles',
-            intervalMinutes:      60,
-            jitterMinutes:        15,
-            maxSessionMinutes:    45,
-            wrapUpTimeoutMinutes: 5,
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            slotWindowMinutes: 45,
+            wrapUpLeadMinutes: 5,
         };
     });
 
@@ -837,39 +837,41 @@ describe('PerchScheduler', () => {
         });
     });
 
-    describe('cost ceiling pause (Q3 / B4)', () => {
-        test('skips onPerchTrigger but still reschedules when isCostPaused() is true', () => {
+    describe('perch pause (Q3 / B4)', () => {
+        test('skips onPerchTrigger but still reschedules when isPerchPaused() is true', () => {
             const deps: PerchSchedulerDeps = {
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
-                isCostPaused:   () => true,
+                isPerchPaused:  () => true,
             };
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
 
-            const ceilingSkipCalls = (): number => (mockLogger.debug as Mock<Logger['debug']>).mock.calls
-                .filter(call => call[0] === 'Perch trigger skipped - cost ceiling reached').length;
+            const perchPauseSkipCalls = (): number => (mockLogger.debug as Mock<Logger['debug']>).mock.calls
+                .filter(call => call[0] === 'Perch trigger skipped - perch paused').length;
 
             jest.advanceTimersByTime(3_600_000); // first scheduled tick
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();
-            expect(ceilingSkipCalls()).toBe(1);
+            expect(perchPauseSkipCalls()).toBe(1);
+            expect((mockLogger.debug as Mock<Logger['debug']>).mock.calls
+                .some(call => call[0] === 'Perch trigger skipped - cost ceiling reached')).toBe(false);
 
             // Still reschedules: a second tick fires the trigger again (still paused).
             jest.advanceTimersByTime(3_600_000);
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();
-            expect(ceilingSkipCalls()).toBe(2);
+            expect(perchPauseSkipCalls()).toBe(2);
 
             scheduler.stop();
         });
 
-        test('triggers normally when isCostPaused() is false', () => {
+        test('triggers normally when isPerchPaused() is false', () => {
             const deps: PerchSchedulerDeps = {
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
-                isCostPaused:   () => false,
+                isPerchPaused:  () => false,
             };
 
             const scheduler = createPerchScheduler(deps);
@@ -881,7 +883,7 @@ describe('PerchScheduler', () => {
             scheduler.stop();
         });
 
-        test('triggers normally when isCostPaused is omitted', () => {
+        test('triggers normally when isPerchPaused is omitted', () => {
             const deps: PerchSchedulerDeps = {
                 logger:         mockLogger,
                 config,
@@ -897,13 +899,13 @@ describe('PerchScheduler', () => {
             scheduler.stop();
         });
 
-        test('isCostPaused() toggling false/true/false across successive ticks is honored every tick, never permanently paused', () => {
+        test('isPerchPaused() toggling false/true/false across successive ticks is honored every tick, never permanently paused', () => {
             let paused = false;
             const deps: PerchSchedulerDeps = {
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
-                isCostPaused:   () => paused,
+                isPerchPaused:  () => paused,
             };
 
             const scheduler = createPerchScheduler(deps);

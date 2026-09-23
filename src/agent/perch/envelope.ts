@@ -49,9 +49,9 @@ function suggestionLevelToNumber(level: SuggestionLevel | undefined): number {
     }
 }
 
-/** Computes a slot's `endsAt`: `maxSessionMinutes` after the trigger that started it. */
-export function computeSlotEndsAt(trigger: Date, maxSessionMinutes: number): Date {
-    return new Date(trigger.getTime() + maxSessionMinutes * 60_000);
+/** Computes a slot's `endsAt`: `slotWindowMinutes` after the trigger that started it. */
+export function computeSlotEndsAt(trigger: Date, slotWindowMinutes: number): Date {
+    return new Date(trigger.getTime() + slotWindowMinutes * 60_000);
 }
 
 /** Inputs to {@link buildPerchSlotEnvelope}. */

@@ -38,8 +38,8 @@ const PERCH_CONFIG: PerchConfig = {
     timezone:              'America/Los_Angeles',
     intervalMinutes:       60,
     jitterMinutes:         15,
-    maxSessionMinutes:     20,
-    wrapUpTimeoutMinutes:  3,
+    slotWindowMinutes:     20,
+    wrapUpLeadMinutes:     3,
     interruptGraceMinutes: 7,
 };
 

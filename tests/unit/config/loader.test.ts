@@ -535,7 +535,7 @@ describe('loadConfig - Perch Config', () => {
         expect(config.perch?.timezone).toBe(resolveTimezone());
         expect(config.perch?.intervalMinutes).toBe(60);
         expect(config.perch?.jitterMinutes).toBe(15);
-        expect(config.perch?.maxSessionMinutes).toBe(45);
+        expect(config.perch?.slotWindowMinutes).toBe(45);
         expect(config.perch?.testMode).toBeUndefined();
     });
 

@@ -1272,7 +1272,7 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:           { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                 client, channelRegistry, identityContext:  'Test identity',
-                perchConfig:      { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5 },
+                perchConfig:      { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5 },
                 questionRegistry: { stop: failure('question registry') } as unknown as DiscordBotOptions['questionRegistry'],
                 ...deps,
             });
@@ -2284,7 +2284,7 @@ describe('createDiscordBot', () => {
 
         describe('P11: ledger-driven ring buffers', () => {
             const minimalPerchConfig = {
-                enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5,
+                enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5,
             };
 
             /** Spies on `agentModule.LiveSignals`'s constructor and captures the `getRecentTools`/`getRecentChannels` closures it was built with. */
@@ -2555,7 +2555,7 @@ describe('createDiscordBot', () => {
                 expect(call).not.toHaveProperty('botStateManager');
             });
 
-            test('forwards options.isCostPaused to setupConductorPresence by identity when perch is enabled (Q3 / B4)', async () => {
+            test('forwards options.isPerchPaused to setupConductorPresence by identity when perch is enabled (Q3 / B4)', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
@@ -2569,24 +2569,24 @@ describe('createDiscordBot', () => {
 
                 const ledgerStore = makeFakeLedgerStore();
                 const deps = conductorDeps({ ledgerStore });
-                const isCostPaused = (): boolean => true;
+                const isPerchPaused = (): boolean => true;
 
                 createDiscordBot({
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
                     identityContext: 'Test identity',
-                    perchConfig:     { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2 },
-                    isCostPaused,
+                    perchConfig:     { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
+                    isPerchPaused,
                     ...deps,
                 });
 
                 await triggerReady(client);
 
-                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { isCostPaused?: unknown } | undefined;
-                expect(call?.isCostPaused).toBe(isCostPaused);
+                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { isPerchPaused?: unknown } | undefined;
+                expect(call?.isPerchPaused).toBe(isPerchPaused);
             });
 
-            test('does NOT forward options.isCostPaused to setupConductorPresence when perch is disabled — nothing is actually paused (Q3 / B4)', async () => {
+            test('does NOT forward options.isPerchPaused to setupConductorPresence when perch is disabled — nothing is actually paused (Q3 / B4)', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
@@ -2600,21 +2600,21 @@ describe('createDiscordBot', () => {
 
                 const ledgerStore = makeFakeLedgerStore();
                 const deps = conductorDeps({ ledgerStore });
-                const isCostPaused = (): boolean => true;
+                const isPerchPaused = (): boolean => true;
 
                 createDiscordBot({
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
                     identityContext: 'Test identity',
-                    perchConfig:     { enabled: false, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2 },
-                    isCostPaused,
+                    perchConfig:     { enabled: false, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
+                    isPerchPaused,
                     ...deps,
                 });
 
                 await triggerReady(client);
 
-                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { isCostPaused?: unknown } | undefined;
-                expect(call?.isCostPaused).toBeUndefined();
+                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { isPerchPaused?: unknown } | undefined;
+                expect(call?.isPerchPaused).toBeUndefined();
             });
 
             test('unsubscribeLedgers is called during stop()', async () => {
@@ -2762,7 +2762,7 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          { ...mockConfig, taskBoard: { enabled: true, editIntervalMs: 250, refreshIntervalMs: 750 } },
                     channelRegistry: mockChannelRegistry,
-                    perchConfig:     { enabled: true, timezone: 'Pacific/Auckland', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2 },
+                    perchConfig:     { enabled: true, timezone: 'Pacific/Auckland', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
                     ...deps,
                 });
 
@@ -2934,7 +2934,7 @@ describe('createDiscordBot', () => {
 
         describe('Perch conductor (P12)', () => {
             const minimalPerchConfig = {
-                enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2,
+                enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2,
             };
 
             function fakePerchDriver() {
@@ -3004,7 +3004,7 @@ describe('createDiscordBot', () => {
                 expect(driverArgs?.conductor).toBe(perchConductor);
             });
 
-            test('forwards options.isCostPaused to setupPerchDriverAndScheduler by identity (Q3 / B4)', async () => {
+            test('forwards options.isPerchPaused to setupPerchDriverAndScheduler by identity (Q3 / B4)', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
@@ -3012,23 +3012,23 @@ describe('createDiscordBot', () => {
 
                 const perchConductor = makeFakeConductor();
                 const deps = conductorDeps({ perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) } });
-                const isCostPaused = (): boolean => true;
+                const isPerchPaused = (): boolean => true;
 
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
                     perchConfig:     minimalPerchConfig,
-                    isCostPaused,
+                    isPerchPaused,
                     ...deps,
                 });
 
                 await triggerReady(client);
 
-                const driverArgs = setupPerchDriverAndSchedulerSpy.mock.calls[0]?.[0] as { isCostPaused?: unknown } | undefined;
-                expect(driverArgs?.isCostPaused).toBe(isCostPaused);
+                const driverArgs = setupPerchDriverAndSchedulerSpy.mock.calls[0]?.[0] as { isPerchPaused?: unknown } | undefined;
+                expect(driverArgs?.isPerchPaused).toBe(isPerchPaused);
             });
 
-            test('leaves isCostPaused undefined for setupPerchDriverAndScheduler when options.isCostPaused is omitted', async () => {
+            test('leaves isPerchPaused undefined for setupPerchDriverAndScheduler when options.isPerchPaused is omitted', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
@@ -3046,8 +3046,8 @@ describe('createDiscordBot', () => {
 
                 await triggerReady(client);
 
-                const driverArgs = setupPerchDriverAndSchedulerSpy.mock.calls[0]?.[0] as { isCostPaused?: unknown } | undefined;
-                expect(driverArgs?.isCostPaused).toBeUndefined();
+                const driverArgs = setupPerchDriverAndSchedulerSpy.mock.calls[0]?.[0] as { isPerchPaused?: unknown } | undefined;
+                expect(driverArgs?.isPerchPaused).toBeUndefined();
             });
 
             test('a successfully-opened perch conductor excludes the well-known perch-time channel from the conversation replay boot sequence', async () => {
@@ -3451,7 +3451,7 @@ describe('createDiscordBot', () => {
                 });
 
                 createDiscordBot({
-                    config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2 }, setPerchWakeTurnDelivery, ...deps,
+                    config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 }, setPerchWakeTurnDelivery, ...deps,
                 });
                 await triggerReady(client);
 
@@ -3510,7 +3510,7 @@ describe('createDiscordBot', () => {
                 });
 
                 createDiscordBot({
-                    config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2 }, ...deps,
+                    config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 }, ...deps,
                 });
 
                 await expect(triggerReady(client)).resolves.toBeUndefined();
@@ -5021,7 +5021,7 @@ describe('createDiscordBot', () => {
                 client,
                 channelRegistry,
                 inboxManager: { loadUnread: mock(async () => undefined), getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })) } as unknown as InboxManager,
-                perchConfig:  { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5 },
+                perchConfig:  { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5 },
                 ...conductorDeps({ perchConductor: makeFakeConductor(), perchLedgerStore: makeFakeLedgerStore('perch'), perchJournal: { append: mock(() => undefined), flush: mock(async () => undefined), readSince: mock(async () => []) } }),
             });
 

@@ -1036,7 +1036,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
     // Session-peers block 5: the same shared-subscription quota block 4 renders on every time
     // header, read actively — accumulate-only notes at config.agent.quota.notifyAtPercents and on
-    // a window reset (quota-notes.ts), plus the perch ceiling ORed into isCostPaused below. Both
+    // a window reset (quota-notes.ts), plus the perch ceiling ORed into isPerchPaused below. Both
     // ledgers feed the one instance: they carry the same reading a turn apart, and quota-notes
     // tracks each window's peak precisely so the staler of the two can never undo the fresher.
     const quotaNotes = createQuotaNotes({
@@ -1079,12 +1079,12 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         activityLogger,
         healthRegistry,
         discordCapability,
-        // Q3 / B4: daily cost ceiling predicate — reaches only the conductor-mode perch scheduler
-        // and presence composer (bot.ts); Discord's own turns are never gated by this. Session-
-        // peers block 5 ORs the quota ceiling into the same predicate, so a nearly-spent five-hour
-        // window pauses perch through the machinery that already exists (scheduler.ts's skip and
-        // presence's `⏸ perch` marker), and self-clears when that window resets.
-        isCostPaused:             () => costCeiling.isPaused() || quotaNotes.isPaused(),
+        // Q3 / B4: composed perch-pause predicate — reaches only the conductor-mode perch
+        // scheduler and presence composer (bot.ts); Discord's own turns are never gated by this.
+        // Session-peers block 5 ORs the quota ceiling into the same predicate, so a nearly-spent
+        // five-hour window pauses perch through the machinery that already exists (scheduler.ts's
+        // skip and presence's `⏸ perch` marker), and self-clears when that window resets.
+        isPerchPaused:            () => costCeiling.isPaused() || quotaNotes.isPaused(),
         // Q5 / B1: the shared notification bridge's notify function — a safe no-op until
         // notificationBridge.attachConductor() has run (above). Q6-Q8 wire the actual
         // notification sources; this package only threads the seam through.

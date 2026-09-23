@@ -31,7 +31,7 @@
  *
  * {@link QuotaNotes.isPaused} is the perch ceiling: true once the five-hour window's peak reaches
  * `perchPauseAtPercent`. The composition root ORs it with the daily cost ceiling's own
- * `isPaused()` into the single `isCostPaused` predicate `scheduler.ts` already consults and
+ * `isPaused()` into the single `isPerchPaused` predicate `scheduler.ts` already consults and
  * presence already renders `⏸ perch` from, so no new plumbing reaches perch. Like
  * `cost-ceiling.ts`'s `ceilingUsd`, an omitted `perchPauseAtPercent` disables the ceiling
  * outright, and the pause self-clears when the window rolls over — no restart.

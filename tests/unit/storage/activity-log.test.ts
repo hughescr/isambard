@@ -112,7 +112,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should use text/plain contentType', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'perch-start', summary: 'Perch session started' };
+            const entry: ActivityLogEntry = { type: 'perch-start', summary: 'Perch slot started' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
@@ -184,7 +184,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should produce exactly {auto-logged, type} tags when entry.tags is undefined', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'perch-end', summary: 'Perch session completed' };
+            const entry: ActivityLogEntry = { type: 'perch-end', summary: 'Perch slot completed' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
@@ -195,7 +195,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should produce exactly {auto-logged, type} tags when entry.tags is empty array', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'perch-start', summary: 'Perch session started', tags: [] };
+            const entry: ActivityLogEntry = { type: 'perch-start', summary: 'Perch slot started', tags: [] };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
