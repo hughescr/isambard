@@ -8,8 +8,30 @@ import type { PresencePhase, PresenceConfig } from '@/integrations/discord/prese
 // Typed mock shapes that expose both real interface and bun mock methods
 type MockWithCalls = ReturnType<typeof mock> & { mock: { calls: unknown[][] } };
 interface MockedClient { user: { setActivity: MockWithCalls } }
-interface MockedActiveGenerator { generate: MockWithCalls, formatStatus: MockWithCalls }
+interface MockedActiveGenerator { generate: MockWithCalls }
 interface MockedIdleGenerator { generate: MockWithCalls }
+
+const idleView: PresenceView = {
+    live:       [],
+    prefix:     '💤 • 1 🪾',
+    compacting: false,
+    phase:      { type: 'idle', since: new Date(0) },
+    activeRole: null,
+};
+
+const activeView: PresenceView = {
+    live:       ['conversation'],
+    prefix:     '💬 • 1 🪾',
+    compacting: false,
+    phase:      { type: 'thinking', startedAt: new Date(0) },
+    activeRole: 'conversation',
+};
+
+/** Same prefix as {@link activeView}, different phase — so the default mock generator renders a different digest. */
+const respondingView: PresenceView = { ...activeView, phase: { type: 'responding', startedAt: new Date(0) } };
+
+const thinkingActivity = { name: '💬 • 1 🪾 • Status for thinking', type: ActivityType.Custom };
+const respondingActivity = { name: '💬 • 1 🪾 • Status for responding', type: ActivityType.Custom };
 
 describe('PresenceManager', () => {
     let mockClient: MockedClient;
@@ -18,11 +40,28 @@ describe('PresenceManager', () => {
     let mockLogger: PresenceManagerDeps['logger'];
     let config: PresenceConfig;
 
+    function createManager(overrides: Partial<PresenceManagerDeps> = {}): PresenceManager {
+        return new PresenceManager({
+            discordClient:         mockClient as unknown as Client,
+            activeStatusGenerator: mockActiveGenerator,
+            idleStatusGenerator:   mockIdleGenerator,
+            config,
+            logger:                mockLogger,
+            ...overrides,
+        });
+    }
+
+    /** Lets a fired interval callback's refresh (generate → retry wrapper → setActivity) settle. */
+    async function drainTicks(): Promise<void> {
+        for(let i = 0; i < 10; i++) {
+            // eslint-disable-next-line no-await-in-loop -- each turn must land one microtask tick later than the last (a chain, not a parallel batch)
+            await Promise.resolve();
+        }
+    }
+
     beforeEach(() => {
         jest.useFakeTimers();
         jest.clearAllTimers();
-        // Set to 1000ms (not 0) to avoid rate limit check failing on first update
-        // (lastActiveUpdateTime initializes to 0, so Date.now() must be >= updateThrottleMs)
         jest.setSystemTime(1000);
 
         mockClient = {
@@ -34,10 +73,6 @@ describe('PresenceManager', () => {
         mockActiveGenerator = {
             generate: mock((phase: PresencePhase) => ({
                 name: `Status for ${phase.type}`,
-                type: ActivityType.Custom,
-            })),
-            formatStatus: mock((status: string) => ({
-                name: status,
                 type: ActivityType.Custom,
             })),
         };
@@ -63,151 +98,64 @@ describe('PresenceManager', () => {
     });
 
     afterEach(() => {
+        jest.clearAllTimers();
         jest.useRealTimers();
     });
 
-    describe('updatePhase - immediate updates (no internal throttling)', () => {
-        it('should update presence immediately for first active phase', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+    describe('applyView - active views apply immediately (no internal throttling)', () => {
+        it('an active view calls setActivity once with the prefix-rendered digest', async () => {
+            const manager = createManager();
 
-            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
-            await manager.updatePhase(phase);
+            await manager.applyView(activeView);
 
-            // Should update immediately (leading-edge)
-            expect(mockActiveGenerator.generate).toHaveBeenCalledWith(phase, 'none');
+            expect(mockActiveGenerator.generate).toHaveBeenCalledWith(activeView.phase);
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith(thinkingActivity);
         });
 
-        it('should apply all updates immediately (throttling handled upstream)', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+        it('consecutive active views with different text each reach Discord straight away', async () => {
+            const manager = createManager();
 
-            // First update - goes through
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            await manager.applyView(activeView);
+            await manager.applyView(respondingView);
 
-            // Second update immediately after - also goes through (no throttle in PresenceManager)
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
-
-            // No throttle skip should be logged (throttling is upstream)
-            expect(mockLogger.debug).not.toHaveBeenCalledWith(
-                expect.objectContaining({ throttleMs: 100 }),
-                'Skipping presence update due to throttle cooldown'
-            );
-        });
-
-        it('should apply updates regardless of timing (no internal throttle)', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // First update
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
-
-            // Advance time (not needed anymore, but kept for test clarity)
-            jest.advanceTimersByTime(101);
-
-            // Second update - goes through (throttling is upstream)
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
+            expect(mockClient.user.setActivity.mock.calls).toEqual([[thinkingActivity], [respondingActivity]]);
         });
     });
 
-    describe('updatePhase - idle transitions', () => {
-        it('should transition to idle immediately', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+    describe('applyView - idle transitions', () => {
+        it('an idle view after an active view generates the idle line and applies it immediately', async () => {
+            const manager = createManager();
 
-            // First active update
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            await manager.applyView(activeView);
+            await manager.applyView(idleView);
 
-            // Immediately transition to idle - always applies
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-
-            // Idle update should have happened
-            expect(mockIdleGenerator.generate).toHaveBeenCalled();
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
+            expect(mockIdleGenerator.generate.mock.calls).toEqual([[{ prefix: '💤 • 1 🪾', compacting: false }]]);
+            expect(mockClient.user.setActivity.mock.calls).toEqual([
+                [thinkingActivity],
+                [{ name: '💤 Dozing peacefully', type: ActivityType.Custom }],
+            ]);
         });
 
-        it('should start idle refresh loop when transitioning to idle', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+        it('an idle view registers exactly one refresh timer', async () => {
+            const manager = createManager();
 
-            await manager.updatePhase({ type: 'idle', since: new Date() });
+            await manager.applyView(idleView);
 
-            // Should have called idle generator
-            expect(mockIdleGenerator.generate).toHaveBeenCalled();
-            expect(mockClient.user.setActivity).toHaveBeenCalled();
+            expect(jest.getTimerCount()).toBe(1);
         });
 
-        it('defers idle refresh while a non-idle presence display mode is active', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-            manager.transitionPresenceDisplayMode('perching');
+        it('an active view after an idle view clears the refresh timer and no further idle generation happens', async () => {
+            const manager = createManager();
 
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-
-            expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
-            expect(mockClient.user.setActivity).not.toHaveBeenCalled();
-        });
-
-        it('should stop idle refresh when transitioning from idle', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Go idle first
-            await manager.updatePhase({ type: 'idle', since: new Date() });
+            await manager.applyView(idleView);
             const idleCallCount = mockIdleGenerator.generate.mock.calls.length;
 
-            // Advance past throttle so active update will apply
-            jest.advanceTimersByTime(101);
+            await manager.applyView(activeView);
 
-            // Transition to active
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-
-            // Wait for what would be an idle refresh interval
+            expect(jest.getTimerCount()).toBe(0);
             jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
-            await Promise.resolve();
-
-            // Idle generator should not have been called again
+            await drainTicks();
             expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCount);
         });
     });
@@ -219,36 +167,24 @@ describe('PresenceManager', () => {
         // that would change nothing.
         it('skips the Discord call when the same name and type are applied twice', async () => {
             mockActiveGenerator.generate = mock(() => ({ name: 'Same status', type: ActivityType.Custom }));
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            const manager = createManager();
 
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+            await manager.applyView(activeView);
+            await manager.applyView(respondingView);
 
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
             expect(mockLogger.debug).toHaveBeenCalledWith(
-                { activity: { name: 'Same status', type: ActivityType.Custom } },
+                { activity: { name: '💬 • 1 🪾 • Same status', type: ActivityType.Custom } },
                 'Presence unchanged, skipping update'
             );
         });
 
         it('applies again when the name differs', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            const manager = createManager();
 
             // The default generator names the status after the phase, so these differ.
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+            await manager.applyView(activeView);
+            await manager.applyView(respondingView);
 
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
             expect(mockLogger.debug).not.toHaveBeenCalledWith(expect.anything(), 'Presence unchanged, skipping update');
@@ -257,19 +193,16 @@ describe('PresenceManager', () => {
         it('applies again when only the activity type differs', async () => {
             let type: ActivityType = ActivityType.Custom;
             mockActiveGenerator.generate = mock(() => ({ name: 'Same status', type }));
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            const manager = createManager();
 
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.applyView(activeView);
             type = ActivityType.Playing;
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+            await manager.applyView(respondingView);
 
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
+            expect(mockClient.user.setActivity.mock.calls).toEqual([
+                [{ name: '💬 • 1 🪾 • Same status', type: ActivityType.Custom }],
+                [{ name: '💬 • 1 🪾 • Same status', type: ActivityType.Playing }],
+            ]);
         });
 
         it('re-sends an identical activity after a failed apply (a failure is never remembered)', async () => {
@@ -285,16 +218,10 @@ describe('PresenceManager', () => {
                 },
             };
             mockActiveGenerator.generate = mock(() => ({ name: 'Same status', type: ActivityType.Custom }));
-            const manager = new PresenceManager({
-                discordClient:         flakyClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            const manager = createManager({ discordClient: flakyClient as unknown as Client });
 
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+            await manager.applyView(activeView);
+            await manager.applyView(respondingView);
 
             expect(flakyClient.user.setActivity).toHaveBeenCalledTimes(2);
         });
@@ -305,34 +232,21 @@ describe('PresenceManager', () => {
             // as applied, or the first real apply after READY would be deduped into oblivion.
             const lateReadyClient: { user: MockedClient['user'] | null } = { user: null };
             mockActiveGenerator.generate = mock(() => ({ name: 'Same status', type: ActivityType.Custom }));
-            const manager = new PresenceManager({
-                discordClient:         lateReadyClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            const manager = createManager({ discordClient: lateReadyClient as unknown as Client });
 
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.applyView(activeView);
 
             lateReadyClient.user = mockClient.user;
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+            await manager.applyView(respondingView);
 
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
-            expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: 'Same status', type: ActivityType.Custom });
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: '💬 • 1 🪾 • Same status', type: ActivityType.Custom });
         });
 
         it('does not log a successful apply when there was no user to apply it to', async () => {
-            const lateReadyClient = { user: null };
-            const manager = new PresenceManager({
-                discordClient:         lateReadyClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            const manager = createManager({ discordClient: { user: null } as unknown as Client });
 
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.applyView(activeView);
 
             expect(mockLogger.info).not.toHaveBeenCalledWith(expect.anything(), 'Updated Discord presence');
         });
@@ -341,50 +255,34 @@ describe('PresenceManager', () => {
             // The idle refresh loop doubles as a presence keep-alive: Discord drops a bot's
             // activity on a fresh IDENTIFY, and nothing re-applies presence on reconnect, so an
             // idle re-push must reach Discord even though the generated line is identical.
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            const manager = createManager();
 
-            await manager.updatePhase({ type: 'idle', since: new Date() });
+            await manager.applyView(idleView);
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
 
             jest.advanceTimersByTime(config.idleRefreshIntervalMs);
-            await Promise.resolve();
-            await Promise.resolve();
+            await drainTicks();
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
 
             jest.advanceTimersByTime(config.idleRefreshIntervalMs);
-            await Promise.resolve();
-            await Promise.resolve();
+            await drainTicks();
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(3);
 
             expect(mockLogger.debug).not.toHaveBeenCalledWith(expect.anything(), 'Presence unchanged, skipping update');
         });
 
         it('records the forced idle apply, so an identical active apply straight after is still deduped', async () => {
-            mockActiveGenerator.generate = mock(() => ({ name: '💤 Dozing peacefully', type: ActivityType.Custom }));
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            // The idle line happens to be word-for-word the text the next active view renders.
+            mockIdleGenerator.generate = mock(async () => thinkingActivity);
+            const manager = createManager();
 
-            await manager.updatePhase({ type: 'idle', since: new Date() });
+            await manager.applyView(idleView);
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
 
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.applyView(activeView);
 
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                { activity: { name: '💤 Dozing peacefully', type: ActivityType.Custom } },
-                'Presence unchanged, skipping update'
-            );
+            expect(mockLogger.debug).toHaveBeenCalledWith({ activity: thinkingActivity }, 'Presence unchanged, skipping update');
         });
     });
 
@@ -397,67 +295,38 @@ describe('PresenceManager', () => {
                     }),
                 },
             } as unknown as Client;
-
-            const manager = new PresenceManager({
-                discordClient:         errorClient,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            const manager = createManager({ discordClient: errorClient });
 
             // Should not throw (errors are caught internally)
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.applyView(activeView);
 
-            expect(mockLogger.error).toHaveBeenCalled();
+            expect(mockLogger.error).toHaveBeenCalledWith(
+                { error: expect.any(Error), activity: thinkingActivity },
+                'Failed to update Discord presence'
+            );
         });
 
         it('should not retry setActivity for permanent (non-network) errors', async () => {
-            // This test verifies that the retry configuration is properly integrated
-            // by confirming that permanent errors (non-network/non-transient) result
-            // in exactly 1 attempt with no retries.
-            //
-            // This indirectly validates that:
-            // 1. The retry wrapper is being called with the correct config (maxAttempts: 2)
-            // 2. The error classifier correctly identifies permanent vs. transient errors
-            // 3. Permanent errors short-circuit the retry logic
-            //
-            // This test kills the mutant on lines 148-149:
-            // { policy: { maxAttempts: 2 } }
-            //
-            // If the retry config were incorrectly set (maxAttempts: 1), transient errors
-            // would not retry at all. If set to maxAttempts: 3, transient errors would
-            // retry too many times. By verifying permanent errors result in exactly 1 call,
-            // we confirm the retry wrapper is integrated correctly.
-
+            // Permanent (non-network) errors short-circuit the retry wrapper: exactly one attempt.
+            // Together with the transient-error test below, this pins `{ policy: { maxAttempts: 2 } }`.
             let callCount = 0;
             const retryClient = {
                 user: {
                     setActivity: mock(() => {
                         callCount++;
                         // Throw permanent error (not a network error code)
-                        // This will NOT be retried regardless of maxAttempts
                         throw new Error('Invalid activity type');
                     }),
                 },
             } as unknown as Client;
+            const manager = createManager({ discordClient: retryClient });
 
-            const manager = new PresenceManager({
-                discordClient:         retryClient,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Update phase - permanent error should NOT retry
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.applyView(activeView);
 
             // Should have been called exactly 1 time (no retries for permanent errors)
             expect(callCount).toBe(1);
             expect(retryClient.user!.setActivity).toHaveBeenCalledTimes(1);
 
-            // Should have logged error
             expect(mockLogger.error).toHaveBeenCalledWith(
                 expect.objectContaining({ error: expect.any(Error), activity: expect.any(Object) }),
                 'Failed to update Discord presence'
@@ -465,21 +334,13 @@ describe('PresenceManager', () => {
         });
 
         it('should retry setActivity for transient (network) errors', async () => {
-            // This test verifies that transient errors (network errors)
-            // properly trigger retry logic according to the maxAttempts configuration.
-            //
-            // This validates that:
-            // 1. The retry wrapper is called with maxAttempts: 2
-            // 2. The error classifier correctly identifies transient errors (ECONNRESET, ETIMEDOUT, ECONNREFUSED)
-            // 3. Transient errors trigger exactly 1 retry (2 total attempts)
+            // Transient (network) errors retry according to maxAttempts: 2 → exactly 2 attempts.
 
             // Restore original retry implementation but inject instant sleep for fast test execution
             mockWithDiscordRetry.mockImplementation(async <T>(
                 operation: () => Promise<T>,
                 _options?: unknown
             ): Promise<T> => {
-                // Call real implementation but inject instant sleep
-
                 const options = _options as Record<string, unknown> & { deps?: Record<string, unknown> };
                 return originalWithDiscordRetry(operation, {
                     ...options,
@@ -497,23 +358,14 @@ describe('PresenceManager', () => {
                 user: {
                     setActivity: mock(() => {
                         callCount++;
-                        // Throw network error (ECONNRESET is a transient error code)
-                        // This will be retried according to maxAttempts config
+                        // ECONNRESET is a transient error code, retried per maxAttempts
                         throw networkError;
                     }),
                 },
             } as unknown as Client;
+            const manager = createManager({ discordClient: retryClient });
 
-            const manager = new PresenceManager({
-                discordClient:         retryClient,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Update phase - transient error should retry
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.applyView(activeView);
 
             // Restore mock behavior for other tests
             mockWithDiscordRetry.mockReset();
@@ -523,7 +375,6 @@ describe('PresenceManager', () => {
             expect(callCount).toBe(2);
             expect(retryClient.user!.setActivity).toHaveBeenCalledTimes(2);
 
-            // Should have logged error
             expect(mockLogger.error).toHaveBeenCalledWith(
                 expect.objectContaining({ error: expect.any(Error), activity: expect.any(Object) }),
                 'Failed to update Discord presence'
@@ -531,594 +382,140 @@ describe('PresenceManager', () => {
         });
     });
 
-    describe('immediate updates - no internal throttle boundaries', () => {
-        it('should apply all updates immediately (throttling moved to BotStateManager)', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // First update (at t=1000 from beforeEach)
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
-
-            // Advance system time to just before old throttle would expire
-            jest.setSystemTime(1099); // 1000 + 99 = 1099
-
-            // Second update - goes through immediately (no throttle in PresenceManager)
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
-
-            // No throttle skip should be logged
-            expect(mockLogger.debug).not.toHaveBeenCalledWith(
-                expect.objectContaining({ throttleMs: 100 }),
-                'Skipping presence update due to throttle cooldown'
-            );
-        });
-
-        it('should allow immediate consecutive updates (no internal throttle)', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // At t=1000, first update
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
-
-            // Immediately (no time advance) try second update - goes through
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-
-            // Both updates should have been applied
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
-
-            // No throttle logging (throttling is upstream in BotStateManager)
-            expect(mockLogger.debug).not.toHaveBeenCalledWith(
-                expect.objectContaining({ timeSinceLastUpdate: expect.anything(), throttleMs: 100 }),
-                'Skipping presence update due to throttle cooldown'
-            );
-        });
-    });
-
     describe('state transition matrix', () => {
-        it('should handle null→idle transition (first phase is idle)', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+        it('null→idle: a first idle view starts the refresh and applies the idle line', async () => {
+            const manager = createManager();
 
-            // First phase is idle - wasIdle should be false (currentPhase is null)
-            await manager.updatePhase({ type: 'idle', since: new Date() });
+            await manager.applyView(idleView);
 
-            // Should start idle refresh
-            expect(mockIdleGenerator.generate).toHaveBeenCalled();
-            expect(mockClient.user.setActivity).toHaveBeenCalled();
+            expect(mockActiveGenerator.generate).not.toHaveBeenCalled();
+            expect(mockIdleGenerator.generate).toHaveBeenCalledTimes(1);
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: '💤 Dozing peacefully', type: ActivityType.Custom });
         });
 
-        it('should handle null→active transition (first phase is active)', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+        it('null→active: a first active view uses only the active generator', async () => {
+            const manager = createManager();
 
-            // First phase is active - should update immediately
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.applyView(activeView);
 
-            // Should use active generator
-            expect(mockActiveGenerator.generate).toHaveBeenCalled();
+            expect(mockActiveGenerator.generate).toHaveBeenCalledTimes(1);
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            expect(jest.getTimerCount()).toBe(0);
         });
 
-        it('should handle idle→idle transition (no state change)', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+        it('idle→idle: a second idle view refreshes once more on the same loop, without a second setInterval or any clearInterval', async () => {
+            const setIntervalSpy = spyOn(globalThis, 'setInterval');
+            const clearIntervalSpy = spyOn(globalThis, 'clearInterval');
+            const manager = createManager();
 
-            // Go idle first
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const firstIdleCallCount = mockIdleGenerator.generate.mock.calls.length;
-            const firstSetActivityCount = mockClient.user.setActivity.mock.calls.length;
+            await manager.applyView(idleView);
+            await manager.applyView(idleView);
 
-            // Advance time
-            jest.advanceTimersByTime(150);
-            await Promise.resolve();
-
-            // Go idle again - startIdleRefresh should be skipped (already running)
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-
-            // Should not call generate again (no new start)
-            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(firstIdleCallCount);
-            expect(mockClient.user.setActivity.mock.calls).toHaveLength(firstSetActivityCount);
+            expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+            expect(clearIntervalSpy).not.toHaveBeenCalled();
+            expect(mockIdleGenerator.generate).toHaveBeenCalledTimes(2);
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
+            setIntervalSpy.mockRestore();
+            clearIntervalSpy.mockRestore();
         });
 
-        it('should handle active→active transition with throttle', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+        it('active→active: consecutive active views never touch the idle generator or timers', async () => {
+            const manager = createManager();
 
-            // First active phase - updates immediately
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            await manager.applyView(activeView);
+            await manager.applyView(respondingView);
 
-            // Wait past throttle cooldown
-            jest.advanceTimersByTime(101);
-
-            // Second active phase - should go through
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
+            expect(jest.getTimerCount()).toBe(0);
         });
     });
 
     describe('timer guard verification', () => {
-        it('should only start idle refresh once when transitioning to idle multiple times', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+        it('repeated idle views register exactly one setInterval and log one refresh start', async () => {
+            const setIntervalSpy = spyOn(globalThis, 'setInterval');
+            const manager = createManager();
 
-            // First idle transition
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const firstIdleCount = mockIdleGenerator.generate.mock.calls.length;
+            await manager.applyView(idleView);
+            await manager.applyView(idleView);
+            await manager.applyView({ ...idleView, prefix: '💤 • 2 🪾' });
 
-            // Try to go idle again (should be no-op due to idleRefreshInterval guard)
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-
-            // Should not have called generate again
-            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(firstIdleCount);
+            expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+            expect(jest.getTimerCount()).toBe(1);
+            const startedLogs = (mockLogger.debug as MockWithCalls).mock.calls.filter(call => call.at(-1) === 'Started idle status refresh');
+            expect(startedLogs).toHaveLength(1);
+            setIntervalSpy.mockRestore();
         });
 
-        it('should properly stop idle refresh when transitioning from idle', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Start idle
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const initialIdleCount = mockIdleGenerator.generate.mock.calls.length;
-
-            // Advance past throttle so active update applies
-            jest.advanceTimersByTime(101);
-
-            // Transition to active
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-
-            // Wait for what would be an idle refresh interval
-            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
-            await Promise.resolve();
-
-            // Idle generator should not have been called again
-            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(initialIdleCount);
-        });
-
-        it('should handle stop when interval is null (no error)', async () => {
+        it('idle→active calls clearInterval exactly once and leaves no timer', async () => {
             const clearIntervalSpy = spyOn(globalThis, 'clearInterval');
+            const manager = createManager();
 
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            await manager.applyView(idleView);
+            await manager.applyView(activeView);
+
+            expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
+            expect(jest.getTimerCount()).toBe(0);
+            clearIntervalSpy.mockRestore();
+        });
+
+        it('should handle stop when interval is null (no error)', () => {
+            const clearIntervalSpy = spyOn(globalThis, 'clearInterval');
+            const manager = createManager();
 
             // Stop without ever starting idle - should not throw
-            manager.stop();
+            expect(() => manager.stop()).not.toThrow();
 
             // Verify clearInterval was NOT called (no interval existed to clear)
             expect(clearIntervalSpy).not.toHaveBeenCalled();
-
-            // Also verify no idle refresh occurred
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
 
             clearIntervalSpy.mockRestore();
         });
 
         it('should run idle refresh on interval', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+            const manager = createManager();
 
             // Start idle - first refresh happens immediately
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const initialCount = mockIdleGenerator.generate.mock.calls.length;
-            expect(initialCount).toBe(1);
+            await manager.applyView(idleView);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(1);
 
             // Wait for one interval - second refresh should happen
             jest.advanceTimersByTime(config.idleRefreshIntervalMs);
-            await Promise.resolve();
-            await Promise.resolve(); // Extra tick for async
-
-            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(initialCount + 1);
+            await drainTicks();
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(2);
 
             // Wait for another interval - third refresh
             jest.advanceTimersByTime(config.idleRefreshIntervalMs);
-            await Promise.resolve();
-            await Promise.resolve();
-
-            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(initialCount + 2);
+            await drainTicks();
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(3);
+            expect(mockIdleGenerator.generate).toHaveBeenLastCalledWith({ prefix: '💤 • 1 🪾', compacting: false });
         });
     });
 
     describe('assignment mutations', () => {
-        it('should properly track currentPhase for state transitions', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
+        it('active→idle→active: the loop the idle view started is stopped by the next active view', async () => {
+            const manager = createManager();
 
-            // Go active first
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.applyView(activeView);
+            await manager.applyView(idleView);
+            expect(mockIdleGenerator.generate).toHaveBeenCalledTimes(1);
 
-            // Advance past throttle
-            jest.advanceTimersByTime(101);
-
-            // Go idle - this should trigger startIdleRefresh because wasIdle=false, nowIdle=true
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-
-            // Should have started idle refresh
-            expect(mockIdleGenerator.generate).toHaveBeenCalled();
-
-            // Advance past throttle
-            jest.advanceTimersByTime(101);
-
-            // Now go active again - should trigger stopIdleRefresh because wasIdle=true, nowIdle=false
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-
+            await manager.applyView(respondingView);
             const idleCountAfterActive = mockIdleGenerator.generate.mock.calls.length;
 
             // Wait for what would be idle refresh
             jest.advanceTimersByTime(config.idleRefreshIntervalMs);
-            await Promise.resolve();
+            await drainTicks();
 
             // No new idle refreshes should have occurred
             expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCountAfterActive);
-        });
-    });
-
-    describe('idle→idle duplicate transition', () => {
-        it('should skip idle refresh when already idle and updatePhase(idle) called again', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // First idle transition
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const firstIdleCallCount = mockIdleGenerator.generate.mock.calls.length;
-
-            // Second idle transition (duplicate) - should be skipped
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-
-            // Should not have triggered another idle refresh
-            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(firstIdleCallCount);
-
-            // Verify log message
-            expect(mockLogger.debug).toHaveBeenCalledWith('Already idle, skipping duplicate idle transition');
-        });
-    });
-
-    describe('transitionPresenceDisplayMode state transitions', () => {
-        it('should handle transition from none to processing_message mode with active phase', async () => {
-            // The real generator prefixes the status with the mode's emoji (getPresencePrefix in
-            // status-generator-active.ts), so the re-render produces DIFFERENT text — model that
-            // here, otherwise the manager's identical-activity dedupe (correctly) skips it.
-            mockActiveGenerator.generate = mock((phase: PresencePhase, mode: string) => ({
-                name: `Status for ${phase.type} (${mode})`,
-                type: ActivityType.Custom,
-            }));
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Go to active phase
-            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-            const initialCallCount = mockClient.user.setActivity.mock.calls.length;
-
-            // Transition to processing_message mode
-            manager.transitionPresenceDisplayMode('processing_message');
-            await Promise.resolve();
-
-            // Should update status with new mode
-            expect(mockClient.user.setActivity.mock.calls).toHaveLength(initialCallCount + 1);
-            expect(mockActiveGenerator.generate).toHaveBeenCalledWith(
-                expect.objectContaining({ type: 'responding' }),
-                'processing_message'
-            );
-        });
-
-        it('should NOT generate status when transitioning modes without a current phase', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // At startup (null currentPhase), transition to processing_message
-            manager.transitionPresenceDisplayMode('processing_message');
-            await Promise.resolve();
-            await Promise.resolve();
-
-            // Should NOT have generated any status — there is no phase to re-render with a prefix
-            expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
-            expect(mockActiveGenerator.generate).not.toHaveBeenCalled();
-        });
-
-        it('should NOT generate active status when transitioning to none mode (the subsequent updatePhase(idle) handles it)', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Go to active phase in processing_message mode
-            manager.transitionPresenceDisplayMode('processing_message');
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-
-            // Clear mock calls to track only the transition
-            mockActiveGenerator.generate.mockClear();
-            mockClient.user.setActivity.mockClear();
-
-            // Transition to 'none' mode
-            manager.transitionPresenceDisplayMode('none');
-            await Promise.resolve();
-
-            // Should NOT have called activeStatusGenerator.generate (mode === 'none' is skipped)
-            expect(mockActiveGenerator.generate).not.toHaveBeenCalled();
-        });
-
-        it('should NOT generate active status when transitioning to a non-none mode while currently idle', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Go idle first.
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            mockActiveGenerator.generate.mockClear();
-
-            // Transition to a non-'none' mode while still idle: `currentPhase` is truthy AND
-            // `mode !== 'none'`, so only the `currentPhase.type !== 'idle'` conjunct prevents
-            // an (incorrect) active-status render over an idle phase.
-            manager.transitionPresenceDisplayMode('perching');
-            await Promise.resolve();
-
-            expect(mockActiveGenerator.generate).not.toHaveBeenCalled();
-        });
-
-        it('should handle mode transition logging', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Transition modes
-            manager.transitionPresenceDisplayMode('perching');
-            await Promise.resolve();
-
-            // Should log mode transition
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                { mode: 'perching', previousMode: 'none' },
-                'Setting presence display mode'
-            );
-        });
-
-        it('should NOT refresh idle status when transitioning to none, regardless of the previous mode', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Start in perching mode
-            manager.transitionPresenceDisplayMode('perching');
-
-            // Go idle
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const idleCallCountBefore = mockIdleGenerator.generate.mock.calls.length;
-
-            // Transition to 'none' from perching — no catch-up bridge exists any more to trigger
-            // an immediate refresh, so this is purely a no-op mode change.
-            manager.transitionPresenceDisplayMode('none');
-            await Promise.resolve();
-            await Promise.resolve();
-
-            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCountBefore);
-        });
-
-        it('should NOT refresh idle status when transitioning from processing_message to none (mode is not none is a no-op path either way)', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Start in processing_message mode
-            manager.transitionPresenceDisplayMode('processing_message');
-
-            // Go idle
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const idleCallCountBefore = mockIdleGenerator.generate.mock.calls.length;
-
-            // Transition to processing_message again (NOT 'none')
-            manager.transitionPresenceDisplayMode('processing_message');
-            await Promise.resolve();
-            await Promise.resolve();
-
-            // Should NOT trigger refreshIdleStatus (mode is not 'none')
-            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCountBefore);
-        });
-    });
-
-    describe('idle refresh stops on active mode entry via transitionPresenceDisplayMode', () => {
-        it('should stop idle refresh when entering perching mode', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Go idle — starts idle refresh loop
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const idleCallCount = mockIdleGenerator.generate.mock.calls.length;
-
-            // Enter perching mode — should stop idle refresh
-            manager.transitionPresenceDisplayMode('perching');
-
-            // Advance past idle refresh interval
-            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
-            await Promise.resolve();
-            await Promise.resolve();
-
-            // No new idle refreshes should have occurred
-            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCount);
-        });
-
-        it('should stop idle refresh when entering processing_message mode', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Go idle — starts idle refresh loop
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const idleCallCount = mockIdleGenerator.generate.mock.calls.length;
-
-            // Enter processing_message mode — should stop idle refresh
-            manager.transitionPresenceDisplayMode('processing_message');
-
-            // Advance past idle refresh interval
-            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
-            await Promise.resolve();
-            await Promise.resolve();
-
-            // No new idle refreshes should have occurred
-            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCount);
-        });
-
-        it('should not error when entering perching mode without prior idle refresh', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Go active first (no idle refresh running)
-            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-
-            // Enter perching mode — stopIdleRefresh is idempotent, should not error
-            manager.transitionPresenceDisplayMode('perching');
-
-            // No errors should have been logged
-            expect(mockLogger.error).not.toHaveBeenCalled();
-        });
-
-        it('should NOT stop idle refresh when transitioning to none mode', async () => {
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            // Go idle — starts idle refresh loop
-            await manager.updatePhase({ type: 'idle', since: new Date() });
-            const idleCallCount = mockIdleGenerator.generate.mock.calls.length;
-
-            // Transition to 'none' — should NOT stop idle refresh (it's the idle mode)
-            manager.transitionPresenceDisplayMode('none');
-
-            // Advance past idle refresh interval
-            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
-            await Promise.resolve();
-            await Promise.resolve();
-
-            // Idle refresh should have fired again (loop still running)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBeGreaterThan(idleCallCount);
+            expect(mockClient.user.setActivity).toHaveBeenLastCalledWith(respondingActivity);
         });
     });
 
     describe('applyView (P11)', () => {
-        const idleView: PresenceView = {
-            live:       [],
-            prefix:     '💤 • 1 🪾',
-            compacting: false,
-            phase:      { type: 'idle', since: new Date(0) },
-            activeRole: null,
-        };
-
-        const activeView: PresenceView = {
-            live:       ['conversation'],
-            prefix:     '💬 • 1 🪾',
-            compacting: false,
-            phase:      { type: 'thinking', startedAt: new Date(0) },
-            activeRole: 'conversation',
-        };
-
         it('idle view starts the idle refresh and passes { prefix, compacting } to idleStatusGenerator.generate', async () => {
             const manager = new PresenceManager({
                 discordClient:         mockClient as unknown as Client,
@@ -1168,7 +565,7 @@ describe('PresenceManager', () => {
 
             await manager.applyView(activeView);
 
-            // activeStatusGenerator.generate is called with the phase only (no display mode / no emoji prefix)
+            // activeStatusGenerator.generate is called with the view's phase only
             expect(mockActiveGenerator.generate).toHaveBeenCalledWith(activeView.phase);
             expect(mockClient.user.setActivity).toHaveBeenCalledWith({
                 name: '💬 • 1 🪾 • Status for thinking',
@@ -1232,6 +629,15 @@ describe('PresenceManager', () => {
             expect(mockIdleGenerator.generate).toHaveBeenLastCalledWith({ prefix: '💤', compacting: false });
         });
 
+        it('recomposeIdlePrefix also supplies the compacting marker the idle refresh renders with', async () => {
+            const manager = createManager({ recomposeIdlePrefix: () => ({ prefix: '💤 • recomposed', compacting: true }) });
+
+            await manager.applyView(idleView);
+
+            expect(mockIdleGenerator.generate.mock.calls).toEqual([[{ prefix: '💤 • recomposed', compacting: true }]]);
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: '💤 Dozing peacefully', type: ActivityType.Custom });
+        });
+
         it('isolates recomposed state and stale-result checks from generator input mutation', async () => {
             const recomposed = { prefix: '💤 • stable', compacting: false };
             mockIdleGenerator.generate = mock(async (options) => {
@@ -1258,7 +664,7 @@ describe('PresenceManager', () => {
             });
         });
 
-        it('without recomposeIdlePrefix, periodic idle refresh keeps rendering the last composed prefix (legacy behaviour unchanged)', async () => {
+        it('without recomposeIdlePrefix, periodic idle refresh keeps rendering the last composed prefix', async () => {
             const manager = new PresenceManager({
                 discordClient:         mockClient as unknown as Client,
                 activeStatusGenerator: mockActiveGenerator,
@@ -1363,38 +769,6 @@ describe('PresenceManager', () => {
             await Promise.resolve();
         });
 
-        it('discards a legacy idle generation when the display mode changes before it resolves', async () => {
-            let resolveIdle!: (value: ActivitiesOptions) => void;
-            mockIdleGenerator.generate = mock(() => new Promise<ActivitiesOptions>((resolve) => {
-                resolveIdle = resolve;
-            }));
-            const manager = new PresenceManager({
-                discordClient:         mockClient as unknown as Client,
-                activeStatusGenerator: mockActiveGenerator,
-                idleStatusGenerator:   mockIdleGenerator,
-                config,
-                logger:                mockLogger,
-            });
-
-            void manager.updatePhase({ type: 'idle', since: new Date(0) });
-            await Promise.resolve();
-            manager.transitionPresenceDisplayMode('processing_message');
-            (mockClient.user.setActivity as ReturnType<typeof mock>).mockClear();
-            resolveIdle({ name: 'stale legacy idle', type: ActivityType.Custom });
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-
-            expect(mockClient.user.setActivity).not.toHaveBeenCalled();
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                { modeAtStart: 'none', currentMode: 'processing_message' },
-                'Discarding stale idle status (mode changed during generation)'
-            );
-        });
-
         it('discards an idle status whose generation was still in flight when an active view arrived (interrupt-then-new-turn gap)', async () => {
             const idleGeneratePromises: { resolve: (value: ActivitiesOptions) => void }[] = [];
             mockIdleGenerator.generate = mock(() => new Promise<ActivitiesOptions>((resolve) => {
@@ -1469,22 +843,6 @@ describe('PresenceManager', () => {
         });
     });
     describe('applyView awaits the presence work it triggers (dropped-await guards)', () => {
-        const idleView: PresenceView = {
-            live:       [],
-            prefix:     '💤 • 1 🪾',
-            compacting: false,
-            phase:      { type: 'idle', since: new Date(0) },
-            activeRole: null,
-        };
-
-        const activeView: PresenceView = {
-            live:       ['conversation'],
-            prefix:     '💬 • 1 🪾',
-            compacting: false,
-            phase:      { type: 'thinking', startedAt: new Date(0) },
-            activeRole: 'conversation',
-        };
-
         // A dropped `await` cannot change WHAT applyView does, only WHEN its promise settles, so
         // the observable here is the promise's pending state: hold the downstream Discord write
         // (or the Haiku generation feeding it) open, drain every microtask a mutant could have

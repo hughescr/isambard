@@ -1,9 +1,7 @@
 /**
  * The within-turn activity phase, and the pure `phaseFromFrame` mapping from raw SDK frames to
- * that phase. Moved from `src/integrations/discord/state/types.ts` (plan amendment A1 / P4):
- * this module is the sole owner of {@link ActivityPhase}, {@link activityPhaseSchema} and
- * {@link isActivityPhase}. `src/integrations/discord/state/types.ts` re-exports them for
- * backwards compatibility.
+ * that phase. This module is the sole owner of {@link ActivityPhase}, {@link activityPhaseSchema},
+ * {@link isActivityPhase} and {@link phaseFromFrame}; there is no re-export shim anywhere else.
  *
  * @module agent/session/activity-phase
  */

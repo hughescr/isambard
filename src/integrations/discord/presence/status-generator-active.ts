@@ -6,7 +6,7 @@
  */
 
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
-import { type PresencePhase, type PresenceDisplayMode, ToolStatusMap  } from './types.js';
+import { type PresencePhase, ToolStatusMap  } from './types.js';
 
 /**
  * Interface for generating status text based on current activity phase.
@@ -17,20 +17,9 @@ export interface ActiveStatusGenerator {
    * This is fast and synchronous - uses pre-defined mappings.
    *
    * @param phase - Current presence phase
-   * @param presenceDisplayMode - Current presence display mode for prefix generation
    * @returns Discord activity configuration
    */
-    generate(phase: PresencePhase, presenceDisplayMode?: PresenceDisplayMode): ActivitiesOptions
-
-    /**
-     * Format a status text with the appropriate presence display mode prefix.
-     * Use this when you have a pre-generated status text (e.g., from LLM).
-     *
-     * @param statusText - The status text to format
-     * @param presenceDisplayMode - Current presence display mode for prefix generation
-     * @returns Discord activity configuration
-     */
-    formatStatus(statusText: string, presenceDisplayMode?: PresenceDisplayMode): ActivitiesOptions
+    generate(phase: PresencePhase): ActivitiesOptions
 }
 
 /**
@@ -48,40 +37,12 @@ interface ActiveStatusGeneratorDeps {
 }
 
 /**
- * Returns the emoji prefix for the given presence display mode.
- *
- * @param presenceDisplayMode - Current presence display mode
- * @returns Emoji prefix string (with trailing space if applicable)
- */
-function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined): string {
-    // Switch case emojis are tested in test file
-    switch(presenceDisplayMode) {
-        case undefined:
-        case 'none': {
-            return '';
-        }
-        case 'processing_message': {
-            return '💬 ';
-        }
-        case 'perching': {
-            return '🦉 ';
-        }
-        default: {
-            return '';
-        }
-    }
-}
-
-/**
  * Creates an active status generator.
  *
  * The generator maps presence phases to Discord status text using a simple switch statement.
  * For tool usage, it looks up the tool name in ToolStatusMap and falls back to "Working..."
- * for unknown tools.
- *
- * When presence display mode is provided, adds appropriate emoji prefixes:
- * - processing_message: 💬
- * - perching: 🦉
+ * for unknown tools. The result is the bare digest: `PresenceManager.applyView` renders it
+ * after the composed presence prefix via `renderPresenceText`.
  *
  * @param deps - Dependencies including logger and activity type
  * @returns ActiveStatusGenerator instance
@@ -95,12 +56,6 @@ function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined)
  *
  * const activity = generator.generate({ type: 'thinking', startedAt: new Date() });
  * // Returns: { name: 'Thinking...', type: ActivityType.Custom }
- *
- * const activityWithPrefix = generator.generate(
- *   { type: 'thinking', startedAt: new Date() },
- *   'processing_message'
- * );
- * // Returns: { name: '💬 Thinking...', type: ActivityType.Custom }
  * ```
  */
 export function createActiveStatusGenerator(
@@ -109,10 +64,9 @@ export function createActiveStatusGenerator(
     const { logger, activityType } = deps;
 
     return {
-        generate(phase: PresencePhase, presenceDisplayMode?: PresenceDisplayMode): ActivitiesOptions {
-            logger.debug({ phase, presenceDisplayMode }, 'Generating active status');
+        generate(phase: PresencePhase): ActivitiesOptions {
+            logger.debug({ phase }, 'Generating active status');
 
-            const prefix = getPresencePrefix(presenceDisplayMode);
             let baseStatus: string;
 
             switch(phase.type) {
@@ -151,12 +105,7 @@ export function createActiveStatusGenerator(
                 }
             }
 
-            return { name: `${prefix}${baseStatus}`, type: activityType };
-        },
-
-        formatStatus(statusText: string, presenceDisplayMode?: PresenceDisplayMode): ActivitiesOptions {
-            const prefix = getPresencePrefix(presenceDisplayMode);
-            return { name: `${prefix}${statusText}`, type: activityType };
+            return { name: baseStatus, type: activityType };
         },
     };
 }

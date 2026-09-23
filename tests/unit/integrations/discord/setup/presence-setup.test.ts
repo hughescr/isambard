@@ -1,6 +1,6 @@
 /**
- * Tests for presence-setup.ts (setupConductorPresence — the sole surviving setup function; the
- * legacy oneshot `setupPresence` bridge was retired in P14).
+ * Tests for presence-setup.ts (setupConductorPresence — the only presence setup function; it
+ * drives the presence manager solely through applyView and recomposeIdlePrefix).
  *
  * Covers:
  * - getPreviousStatus forwarding: verifies the callback is passed to createIdleStatusGenerator
@@ -53,8 +53,7 @@ describe('setupConductorPresence', () => {
                 return mockPresenceManager as unknown as PresenceManager;
             }),
             spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate:     mock(() => ({ name: 'Active', type: ActivityType.Custom })),
-                formatStatus: mock((s: string) => ({ name: s, type: ActivityType.Custom })),
+                generate: mock(() => ({ name: 'Active', type: ActivityType.Custom })),
             }),
             spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: IdleStatusGeneratorDeps) => {
                 capturedIdleDeps = deps;
@@ -495,9 +494,8 @@ describe('setupConductorPresence', () => {
     });
 
     test('return shape carries only unsubscribeLedgers — no legacy bridge unsubscribe handles', () => {
-        // The legacy `setupPresence` bridge (deleted in P14) returned
-        // `unsubscribeModeTransition`/`unsubscribeActivityPhase`; `setupConductorPresence` never
-        // did and still does not.
+        // The retired P14 oneshot bridge returned `unsubscribeModeTransition` /
+        // `unsubscribeActivityPhase` handles; `setupConductorPresence` never did and still does not.
         const conversation = makeConversationLedger();
 
         const result = setupConductorPresence({

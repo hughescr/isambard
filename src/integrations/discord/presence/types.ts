@@ -1,8 +1,11 @@
 /**
  * Domain types for Discord presence management
  *
- * This module defines the core domain concepts for managing Discord bot presence,
- * including status phases, activity updates, and configuration.
+ * Presence is modelled as a `PresenceView` composed from the conversation and perch session
+ * ledgers (`presence-view.ts`: `composePresence`, rendered by `renderPresenceText`) and applied
+ * to Discord by `PresenceManager.applyView`. This module owns the value types that model
+ * shares: the `PresencePhase` state union, the `SynopsisContext` handed to the LLM status
+ * generator, `StatusUpdate`, the tool status/description maps, and the presence config.
  */
 
 import type { ActivitiesOptions } from 'discord.js';
@@ -29,31 +32,6 @@ import type { ActivityPhase } from '@/agent';
 export type PresencePhase
     = | ActivityPhase
       | { type: 'idle', since: Date };
-
-// ============================================================================
-// Presence Display Mode - For status prefix generation
-// ============================================================================
-
-/**
- * Presence display mode state for presence status prefix generation.
- *
- * ## Design Rationale
- *
- * PresenceManager uses simple enum values to:
- * - Generate status emoji prefixes (💬, 🦉)
- * - Map directly to status text templates
- * - Avoid complex conditional logic in status generation
- *
- * ## Discord Status Mapping
- *
- * Maps to emoji prefixes shown in Discord status:
- * - `'none'`: No special prefix (normal operation)
- * - `'processing_message'`: 💬 prefix (normal message handling)
- * - `'perching'`: 🦉 prefix (autonomous perch time)
- *
- * @see bot.ts for the composition-root wiring that sets this mode
- */
-export type PresenceDisplayMode = 'none' | 'processing_message' | 'perching';
 
 // ============================================================================
 // Synopsis Context - For LLM status generation

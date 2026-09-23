@@ -3,16 +3,13 @@ import {
     guildIdSchema,
     channelIdSchema,
     userIdSchema,
-    messageIdSchema,
     discordMessageContextSchema,
     createGuildId,
     createChannelId,
     createUserId,
-    createMessageId,
     isGuildId,
     isChannelId,
     isUserId,
-    isMessageId,
     type GuildId,
     type ChannelId,
     type UserId
@@ -22,7 +19,6 @@ const idSchemas = [
     ['GuildId', guildIdSchema, '123456789012345678', 12_345, createGuildId, isGuildId],
     ['ChannelId', channelIdSchema, '987654321098765432', 98_765, createChannelId, isChannelId],
     ['UserId', userIdSchema, '111222333444555666', 11_122, createUserId, isUserId],
-    ['MessageId', messageIdSchema, '1234567890123456789', 99_999, createMessageId, isMessageId],
 ] as const;
 
 describe.concurrent('branded ID schemas', () => {
@@ -42,16 +38,6 @@ describe.concurrent('branded ID schemas', () => {
     test.each(idSchemas)('%s schema should reject non-string values', (_name, schema, _validId, invalidNumber) => {
         const result = schema.safeParse(invalidNumber);
         expect(result.success).toBe(false);
-    });
-});
-
-describe('messageIdSchema minimum length', () => {
-    test('accepts a 1-character string (the minimum boundary)', () => {
-        expect(messageIdSchema.safeParse('1').success).toBe(true);
-    });
-
-    test('rejects the empty string (below the minimum boundary)', () => {
-        expect(messageIdSchema.safeParse('').success).toBe(false);
     });
 });
 

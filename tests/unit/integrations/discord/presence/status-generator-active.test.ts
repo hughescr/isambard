@@ -74,76 +74,8 @@ describe('ActiveStatusGenerator', () => {
         });
     });
 
-    describe('presenceDisplayMode prefixes', () => {
-        test('undefined presenceDisplayMode -> no prefix', () => {
-            const generator = createActiveStatusGenerator({
-                logger:       createMockLogger(),
-                activityType: ActivityType.Custom,
-            });
-            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
-            const result = generator.generate(phase, undefined);
-            expect(result.name).toBe('Thinking...');
-            expect(result.name).not.toContain('📥');
-            expect(result.name).not.toContain('💬');
-        });
-
-        test('none presenceDisplayMode -> no prefix', () => {
-            const generator = createActiveStatusGenerator({
-                logger:       createMockLogger(),
-                activityType: ActivityType.Custom,
-            });
-            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
-            const result = generator.generate(phase, 'none');
-            expect(result.name).toBe('Thinking...');
-            expect(result.name).not.toContain('📥');
-            expect(result.name).not.toContain('💬');
-        });
-
-        test('processing_message mode -> 💬 prefix', () => {
-            const generator = createActiveStatusGenerator({
-                logger:       createMockLogger(),
-                activityType: ActivityType.Custom,
-            });
-            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
-            const result = generator.generate(phase, 'processing_message');
-            expect(result.name).toBe('💬 Thinking...');
-            expect(result.name).toStartWith('💬 ');
-        });
-
-        test('perching mode -> 🦉 prefix', () => {
-            const generator = createActiveStatusGenerator({
-                logger:       createMockLogger(),
-                activityType: ActivityType.Custom,
-            });
-            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
-            const result = generator.generate(phase, 'perching');
-            expect(result.name).toBe('🦉 Thinking...');
-            expect(result.name).toStartWith('🦉 ');
-        });
-
-        test('an unrecognised mode falls back to no prefix', () => {
-            const generator = createActiveStatusGenerator({
-                logger:       createMockLogger(),
-                activityType: ActivityType.Custom,
-            });
-            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
-
-            expect(generator.generate(phase, 'unrecognised' as never).name).toBe('Thinking...');
-        });
-
-        test('formatStatus preserves text while applying the selected prefix', () => {
-            const generator = createActiveStatusGenerator({
-                logger:       createMockLogger(),
-                activityType: ActivityType.Custom,
-            });
-
-            expect(generator.formatStatus('Checking messages', 'perching')).toEqual({ name: '🦉 Checking messages', type: ActivityType.Custom });
-            expect(generator.formatStatus('Checking messages', 'none')).toEqual({ name: 'Checking messages', type: ActivityType.Custom });
-        });
-    });
-
     describe('logging behavior', () => {
-        test('should log debug with phase object and message string', () => {
+        test('logs exactly { phase } and the fixed message when generating an active status', () => {
             const mockLogger = createMockLogger();
             const generator = createActiveStatusGenerator({
                 logger:       mockLogger,
@@ -153,18 +85,10 @@ describe('ActiveStatusGenerator', () => {
             const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
             generator.generate(phase);
 
-            // Kill ObjectLiteral mutant on line 71 col 26 - verify first arg is object with phase property
-            expect(mockLogger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({ phase }),
-                expect.any(String)
-            );
-
-            // Kill StringLiteral mutant on line 71 col 37 - verify second arg is the specific string
-            const debugCalls = mockLogger.debug.mock.calls;
-            expect(debugCalls.length).toBeGreaterThan(0);
-            const lastCall = debugCalls[debugCalls.length - 1];
-            expect(lastCall[1]).toBe('Generating active status');
-            expect(lastCall[1]).not.toBe('');
+            expect(mockLogger.debug.mock.calls).toEqual([[{ phase }, 'Generating active status']]);
+            // toEqual treats an undefined-valued key as absent, so pin the key set explicitly: the
+            // payload carries the phase and nothing else (no display-mode field).
+            expect(Object.keys(mockLogger.debug.mock.calls[0]?.[0] as object)).toEqual(['phase']);
         });
 
         test('should log warn with specific string when called with idle phase', () => {

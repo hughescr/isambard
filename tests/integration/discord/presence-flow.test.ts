@@ -1,18 +1,21 @@
 /**
  * Integration tests for Discord presence flow.
  *
- * Tests the complete flow of presence updates during message processing,
- * using real components (not mocks) except for Discord client and Anthropic API.
+ * Drives `PresenceManager.applyView` with composed `PresenceView`s through the real active and
+ * idle status generators and the real `renderPresenceText`; only the Discord client and the
+ * Anthropic text generation are mocked.
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { ActivityType, type Client  } from 'discord.js';
 import { mockGenerateText, mockGenerateTextWithSystemPrompt, originalGenerateText, originalGenerateTextWithSystemPrompt } from '../../setup';
 import { PresenceManager } from '@/integrations/discord/presence/manager';
+import type { PresenceView } from '@/integrations/discord/presence/presence-view';
 import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
 
 describe('Discord Presence Flow (Integration)', () => {
+    let setActivity: ReturnType<typeof mock>;
     let mockDiscordClient: Client;
 
     beforeEach(() => {
@@ -22,12 +25,8 @@ describe('Discord Presence Flow (Integration)', () => {
         mockGenerateTextWithSystemPrompt.mockReset();
         mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Contemplating digital dreams'));
 
-        // Mock Discord client
-        mockDiscordClient = {
-            user: {
-                setPresence: mock(async () => undefined),
-            },
-        } as unknown as Client;
+        setActivity = mock(() => undefined);
+        mockDiscordClient = { user: { setActivity } } as unknown as Client;
     });
 
     afterEach(() => {
@@ -39,7 +38,7 @@ describe('Discord Presence Flow (Integration)', () => {
         mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
     });
 
-    it('should transition to idle after timeout', async () => {
+    it('renders an active view through the real active generator, then an idle view through the real idle generator', async () => {
         const logger = {
             debug: mock(() => undefined),
             info:  mock(() => undefined),
@@ -47,7 +46,6 @@ describe('Discord Presence Flow (Integration)', () => {
             error: mock(() => undefined),
         };
 
-        // Create status generators
         const activeStatusGenerator = createActiveStatusGenerator({
             activityType: ActivityType.Custom,
             logger,
@@ -59,12 +57,11 @@ describe('Discord Presence Flow (Integration)', () => {
             identityContext: () => Promise.resolve('Test Bot'),
         });
 
-        // Create presence manager with SHORT idle timeout for testing
         const presenceManager = new PresenceManager({
             discordClient: mockDiscordClient,
             config:        {
                 updateThrottleMs:      50,
-                idleTimeoutMs:         200, // Very short for testing
+                idleTimeoutMs:         200,
                 idleRefreshIntervalMs: 5000,
             },
             activeStatusGenerator,
@@ -74,28 +71,34 @@ describe('Discord Presence Flow (Integration)', () => {
 
         presenceManager.start();
 
-        // Update to thinking phase
-        await presenceManager.updatePhase({
-            type:      'thinking',
-            startedAt: new Date(),
-        });
+        const thinkingView: PresenceView = {
+            live:       ['conversation'],
+            prefix:     '💬',
+            compacting: false,
+            phase:      { type: 'thinking', startedAt: new Date() },
+            activeRole: 'conversation',
+        };
+        await presenceManager.applyView(thinkingView);
 
-        // Wait for idle timeout to trigger
-        jest.advanceTimersByTime(300);
-        await Promise.resolve();
+        expect(setActivity).toHaveBeenCalledTimes(1);
+        expect(setActivity).toHaveBeenCalledWith({ name: '💬 • Thinking...', type: ActivityType.Custom });
+        expect(mockGenerateTextWithSystemPrompt).not.toHaveBeenCalled();
 
-        // Simulate the idle timeout firing: transition to the idle phase. This starts
-        // the idle refresh loop, which drives the real idle status generator and so
-        // invokes the (mocked) Haiku text generator that produces the idle status text.
-        await presenceManager.updatePhase({
-            type:  'idle',
-            since: new Date(),
-        });
+        // Going idle starts the idle refresh loop, which drives the real idle status generator and
+        // so invokes the (mocked) Haiku text generator that writes the idle line.
+        const idleView: PresenceView = {
+            live:       [],
+            prefix:     '💤',
+            compacting: false,
+            phase:      { type: 'idle', since: new Date() },
+            activeRole: null,
+        };
+        await presenceManager.applyView(idleView);
 
-        // Transitioning to idle must exercise the idle status generation path.
         expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalled();
+        expect(setActivity).toHaveBeenCalledTimes(2);
+        expect(setActivity).toHaveBeenLastCalledWith({ name: '💤 • Contemplating digital dreams', type: ActivityType.Custom });
 
-        // Clean up
         presenceManager.stop();
     });
 });

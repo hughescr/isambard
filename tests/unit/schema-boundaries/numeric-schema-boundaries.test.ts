@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { channelIdSchema, userIdSchema } from '@/agent/types';
 import { calendarEntrySchema, calendarRegistryRecordSchema, calendarServerEntrySchema } from '@/integrations/caldav/calendar-registry/types';
 import { channelMetadataSchema } from '@/integrations/discord/channel-registry/types';
-import { discordMessageContextSchema, messageIdSchema } from '@/integrations/discord/types';
+import { discordMessageContextSchema } from '@/integrations/discord/types';
 import { outboxItemSchema } from '@/services/outbox/types';
 import { contactIdSchema, contactIdentifierSchema, contactSchema } from '@/storage/contacts/types';
 import { memoryToolItemSchema } from '@/storage/memory-tool/types';
@@ -28,7 +28,6 @@ describe('public numeric schema boundaries', () => {
     test.each([
         ['channelIdSchema', channelIdSchema, 'x'],
         ['userIdSchema', userIdSchema, 'x'],
-        ['messageIdSchema', messageIdSchema, 'x'],
         ['calendarEntry.calendarPath', calendarEntrySchema, { ...calendarEntry, calendarPath: 'x' }],
         ['calendarEntry.label', calendarEntrySchema, { ...calendarEntry, label: 'x' }],
         ['calendarServerEntry.description', calendarServerEntrySchema, { ...server, description: 'x' }],

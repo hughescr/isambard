@@ -9,16 +9,6 @@ export { channelIdSchema, type ChannelId, userIdSchema, type UserId, createChann
 export { guildIdSchema, type GuildId } from '@/config';
 
 /**
- * MessageId is a branded type representing a Discord message ID.
- */
-export const messageIdSchema = z
-    .string()
-    .min(1, 'MessageId cannot be empty')
-    .brand<'MessageId'>();
-
-type MessageId = z.infer<typeof messageIdSchema>;
-
-/**
  * Discord message context schema with Zod validation.
  * Represents the full context of a Discord message for processing.
  */
@@ -48,25 +38,9 @@ export function createGuildId(id: string): GuildId {
 }
 
 /**
- * Creates a validated MessageId from a string.
- * @throws {z.ZodError} If the message ID is invalid
- */
-export function createMessageId(id: string): MessageId {
-    return messageIdSchema.parse(id);
-}
-
-/**
  * Type guard to check if a value is a valid GuildId.
  */
 export function isGuildId(value: unknown): value is GuildId {
     const result = guildIdSchema.safeParse(value);
-    return result.success;
-}
-
-/**
- * Type guard to check if a value is a valid MessageId.
- */
-export function isMessageId(value: unknown): value is MessageId {
-    const result = messageIdSchema.safeParse(value);
     return result.success;
 }

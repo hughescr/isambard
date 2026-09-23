@@ -18,11 +18,10 @@
  */
 
 import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
-import { DateTime } from 'luxon';
 import { renderPresenceText, type PresenceView } from './presence-view.js';
 import type { ActiveStatusGenerator } from './status-generator-active.js';
 import type { IdleStatusGenerator } from './status-generator-idle.js';
-import type { PresenceConfig, PresencePhase, PresenceDisplayMode } from './types.js';
+import type { PresenceConfig } from './types.js';
 import { withDiscordRetry } from '@/integrations/discord/retry';
 
 /**
@@ -43,9 +42,9 @@ export interface PresenceManagerDeps {
      * Part of the composed prefix (e.g. the `⏸ perch` cost-ceiling marker) can change from wall-
      * clock time alone — the ceiling clears at local midnight with no ledger event — so without
      * this, the idle refresh loop would keep rendering whatever prefix was cached at the last
-     * `applyView` call until the next ledger-driven one, which may never come while idle. Omitted
-     * (the legacy `setupPresence` bridge, which never composes a `PresenceView` at all) leaves the
-     * cached prefix behaviour unchanged.
+     * `applyView` call until the next ledger-driven one, which may never come while idle. When
+     * omitted, the refresh loop keeps rendering the prefix and compacting marker of the last idle
+     * view passed to `applyView`.
      */
     recomposeIdlePrefix?:  () => { prefix: string, compacting: boolean }
     /** Logger instance */
@@ -62,7 +61,8 @@ export interface PresenceManagerDeps {
  * The manager coordinates all presence updates with:
  * - Immediate updates for all phases (conductor-mode throttling handled upstream by presence-setup.ts)
  * - Automatic idle status refresh on an interval
- * - State transitions between active and idle phases
+ * - Views composed from the session ledgers as its only input: an idle view starts (or
+ *   refreshes) the idle loop, a non-idle view stops it and applies the rendered active text
  * - Graceful error handling
  *
  * @example
@@ -76,25 +76,26 @@ export interface PresenceManagerDeps {
  * });
  *
  * manager.start();
- * await manager.updatePhase({ type: 'thinking', startedAt: new Date(), generatedStatus: 'Thinking...' });
- * // Update is applied immediately (throttling handled upstream)
+ * await manager.applyView(composePresence([conversationLedger, perchLedger]));
+ * // A live turn: applies renderPresenceText(view, digest) immediately (throttling handled upstream)
  *
- * await manager.updatePhase({ type: 'idle', since: new Date() });
- * // Starts idle refresh loop
+ * await manager.applyView(composePresence([conversationLedger, perchLedger]));
+ * // Neither session live: an idle view, which starts the idle refresh loop
  *
  * manager.stop();
  * // Cleans up all timers
  * ```
  */
 export class PresenceManager {
-    private currentPhase:        PresencePhase | null = null; // Start uninitialized
+    /**
+     * The last view {@link applyView} applied (`null` until the first one). While it is idle,
+     * every idle refresh replaces it with a copy carrying the `recomposeIdlePrefix` result, so the
+     * refresh loop and its stale-result checks always read the current composed prefix.
+     */
+    private currentView:         PresenceView | null = null;
     private idleRefreshInterval: NodeJS.Timeout | null = null;
     /** The idle generation currently in flight, keyed by the composed prefix it was started for, so concurrent refreshes for the same prefix share one Haiku call (see refreshIdleStatus). */
-    private inFlightIdleRefresh: { prefix: string | null, promise: Promise<void> } | null = null;
-    private presenceDisplayMode: PresenceDisplayMode = 'none'; // Track presence display mode for status prefixes
-    // P11: set only by applyView(), never by the oneshot updatePhase/transitionPresenceDisplayMode paths.
-    // Non-null means the idle refresh loop should render via the composed prefix, not the legacy '💤 ' default.
-    private composedIdle:        { prefix: string, compacting: boolean } | null = null;
+    private inFlightIdleRefresh: { prefix: string, promise: Promise<void> } | null = null;
     /**
      * The last activity Discord actually accepted (name + type), used to drop an update that
      * would change nothing — the composition upstream can legitimately produce the same text
@@ -160,78 +161,63 @@ export class PresenceManager {
     /**
      * Generate and apply idle status.
      *
-     * The interval callback may already be queued when a phase transition clears its
-     * timer, so check the current phase before starting another idle generation.
+     * The interval callback may already be queued when a non-idle view clears its timer, so
+     * check the current view before starting another idle generation.
      */
     private async refreshIdleStatus(): Promise<void> {
-        if(this.currentPhase?.type !== 'idle') {
+        if(this.currentView?.phase.type !== 'idle') {
             return; // No longer idle
         }
 
-        // Q3/B4: recompose the cached prefix/compacting fresh on every refresh (not only when a
-        // new view arrives via applyView) so a wall-clock-driven change — the cost-ceiling marker
-        // clearing at local midnight, with no ledger event to trigger a fresh applyView — is
-        // picked up by the very next periodic tick instead of lingering indefinitely.
+        // Q3/B4: recompose the prefix/compacting fresh on every refresh (not only when a new view
+        // arrives via applyView) so a wall-clock-driven change — the cost-ceiling marker clearing
+        // at local midnight, with no ledger event to trigger a fresh applyView — is picked up by
+        // the very next periodic tick instead of lingering indefinitely.
         const recomposed = this.deps.recomposeIdlePrefix?.();
         if(recomposed) {
-            this.composedIdle = { prefix: recomposed.prefix, compacting: recomposed.compacting };
+            this.currentView = { ...this.currentView, prefix: recomposed.prefix, compacting: recomposed.compacting };
         }
 
-        // Capture current mode/prefix at start to detect stale results
-        const modeAtStart = this.presenceDisplayMode;
-        const composedAtStart = this.composedIdle === null
-            ? null
-            : { prefix: this.composedIdle.prefix, compacting: this.composedIdle.compacting };
-        const prefixAtStart = composedAtStart?.prefix ?? null;
+        // Capture the composed prefix at start to detect stale results
+        const idleAtStart = { prefix: this.currentView.prefix, compacting: this.currentView.compacting };
 
         // Coalesce concurrent refreshes for the SAME prefix: at boot both sessions go idle a few
         // hundred ms apart, and each idle view calls in here while the first Haiku generation is
         // still in flight — a second generation for an identical prefix would only produce a
         // second, redundant Haiku call and presence update. A DIFFERENT prefix still starts its
         // own generation (the in-flight one then discards itself as stale below).
-        if(this.inFlightIdleRefresh !== null && this.inFlightIdleRefresh.prefix === prefixAtStart) {
+        if(this.inFlightIdleRefresh?.prefix === idleAtStart.prefix) {
             return this.inFlightIdleRefresh.promise;
         }
-        const promise = this.generateAndApplyIdle(modeAtStart, composedAtStart).finally(() => {
+        const promise = this.generateAndApplyIdle(idleAtStart).finally(() => {
             if(this.inFlightIdleRefresh?.promise === promise) {
                 this.inFlightIdleRefresh = null;
             }
         });
-        this.inFlightIdleRefresh = { prefix: prefixAtStart, promise };
+        this.inFlightIdleRefresh = { prefix: idleAtStart.prefix, promise };
         return promise;
     }
 
     /** The generate-then-apply half of {@link refreshIdleStatus}, split out so the in-flight coalescing above can hold its promise. */
-    private async generateAndApplyIdle(
-        modeAtStart: PresenceDisplayMode,
-        composedAtStart: { prefix: string, compacting: boolean } | null
-    ): Promise<void> {
-        // P11: once applyView() has composed a prefix, every idle refresh renders through it
-        // instead of the legacy bare '💤 ' default.
-        const activity = composedAtStart === null
-            ? await this.deps.idleStatusGenerator.generate()
-            : await this.deps.idleStatusGenerator.generate({
-                prefix: composedAtStart.prefix, compacting: composedAtStart.compacting,
-            });
+    private async generateAndApplyIdle(idleAtStart: { prefix: string, compacting: boolean }): Promise<void> {
+        // A fresh options object, so a generator that mutates its input cannot corrupt the
+        // captured prefix the stale check below compares against.
+        const activity = await this.deps.idleStatusGenerator.generate({
+            prefix: idleAtStart.prefix, compacting: idleAtStart.compacting,
+        });
 
-        // Either path: the session went busy while Haiku was writing an idle line (a follow-up
-        // message interrupting a turn goes idle for a few hundred ms before the next turn opens) —
+        // The session went busy while Haiku was writing an idle line (a follow-up message
+        // interrupting a turn goes idle for a few hundred ms before the next turn opens) —
         // applying it now would paint "💤" over an active status.
-        // Stryker disable next-line llm: equivalent — currentPhase is a PresencePhase object or null, so !this.currentPhase || … yields the same boolean as currentPhase?.type !== 'idle' for every reachable value (null gives undefined !== 'idle' → true either way)
-        if(this.currentPhase?.type !== 'idle') {
-            this.deps.logger.debug({ currentPhase: this.currentPhase?.type }, 'Discarding stale idle status (no longer idle)');
+        // Stryker disable next-line llm: equivalent — currentView is a PresenceView or null, so !this.currentView || … yields the same boolean as currentView?.phase.type !== 'idle' for every reachable value (null gives undefined !== 'idle' → true either way)
+        if(this.currentView?.phase.type !== 'idle') {
+            this.deps.logger.debug({ currentPhase: this.currentView?.phase.type }, 'Discarding stale idle status (no longer idle)');
             return;
         }
 
-        if(composedAtStart === null) {
-            // Legacy path: check if display mode changed while generating - if so, discard stale result
-            if(this.presenceDisplayMode !== modeAtStart) {
-                this.deps.logger.debug({ modeAtStart, currentMode: this.presenceDisplayMode }, 'Discarding stale idle status (mode changed during generation)');
-                return;
-            }
-        } else if(this.composedIdle?.prefix !== composedAtStart.prefix) {
-            // P11 path: check if the composed prefix changed while generating - if so, discard stale result
-            this.deps.logger.debug({ prefixAtStart: composedAtStart.prefix, currentPrefix: this.composedIdle?.prefix }, 'Discarding stale idle status (composed prefix changed during generation)');
+        // The composed prefix changed while generating - discard the stale result
+        if(this.currentView.prefix !== idleAtStart.prefix) {
+            this.deps.logger.debug({ prefixAtStart: idleAtStart.prefix, currentPrefix: this.currentView.prefix }, 'Discarding stale idle status (composed prefix changed during generation)');
             return;
         }
 
@@ -241,26 +227,25 @@ export class PresenceManager {
     }
 
     /**
-     * Applies a composed {@link PresenceView} (P11 conductor-mode presence): idle views store the
-     * composed prefix and either start the idle refresh loop (first idle) or, when it is already
-     * running, refresh immediately with the new prefix — an idle-to-idle prefix change (a
-     * background task starting/finishing while otherwise idle) must reach Discord right away, not
-     * lag by up to `idleRefreshIntervalMs`; the loop itself is never restarted, so the periodic
-     * cadence is unaffected. Non-idle views stop the idle refresh loop and apply
+     * Applies a composed {@link PresenceView} (P11 conductor-mode presence): idle views record the
+     * view and either start the idle refresh loop (first idle) or, when it is already running,
+     * refresh immediately with the new prefix — an idle-to-idle prefix change (a background task
+     * starting/finishing while otherwise idle) must reach Discord right away, not lag by up to
+     * `idleRefreshIntervalMs`; the loop itself is never restarted, so the periodic cadence is
+     * unaffected. Non-idle views stop the idle refresh loop and apply
      * `renderPresenceText(view, digest)`, where `digest` is
-     * `activeStatusGenerator.generate(view.phase).name` — no display mode, so no emoji prefix.
+     * `activeStatusGenerator.generate(view.phase).name`.
      */
     async applyView(view: PresenceView): Promise<void> {
-        this.currentPhase = view.phase;
+        this.currentView = view;
 
         if(view.phase.type === 'idle') {
-            this.composedIdle = { prefix: view.prefix, compacting: view.compacting };
             await (this.idleRefreshInterval ? this.refreshIdleStatus() : this.startIdleRefresh());
             return;
         }
 
         this.stopIdleRefresh();
-        // Stryker disable next-line llm: currentPhase was just assigned the production view phase and no intervening manager operation reassigns it
+        // Stryker disable next-line llm: equivalent — currentView was just assigned this view and no intervening manager operation reassigns it, so view.phase and this.currentView.phase are the same object
         const generated = this.deps.activeStatusGenerator.generate(view.phase);
         const text = renderPresenceText(view, generated.name);
         await this.applyPresenceUpdate({ name: text, type: generated.type });
@@ -298,92 +283,11 @@ export class PresenceManager {
     }
 
     /**
-     * Transition to a new presence display mode, managing status updates and idle refresh
-     * lifecycle.
-     *
-     * P14: conductor-mode presence flows exclusively through {@link applyView}, which never sets
-     * `presenceDisplayMode` — so no production code calls this method today, and
-     * `getPresencePrefix`'s 💬/🦉 prefixes (in `status-generator-active.ts`) never fire on this
-     * path in practice. Kept as public API (with its own test coverage) for a future non-`applyView`
-     * caller rather than deleted with the last one that used it.
-     *
-     * @param mode - Presence display mode state
-     */
-    transitionPresenceDisplayMode(mode: PresenceDisplayMode): void {
-        this.deps.logger.debug({ mode, previousMode: this.presenceDisplayMode }, 'Setting presence display mode');
-        this.presenceDisplayMode = mode;
-
-        if(mode !== 'none') {
-            this.stopIdleRefresh();
-        }
-
-        // For active phases, update immediately with the new mode prefix. Skip when
-        // transitioning to 'none' (idle) — the subsequent updatePhase(idle) handles it — and
-        // skip when there is no current phase at all (nothing to re-render with a prefix).
-        if(this.currentPhase && this.currentPhase.type !== 'idle' && mode !== 'none') {
-            // Stryker disable next-line llm: presenceDisplayMode was just assigned mode and no intervening manager operation reassigns it
-            const activity = this.deps.activeStatusGenerator.generate(this.currentPhase, mode);
-            void this.applyPresenceUpdate(activity);
-        }
-    }
-
-    /**
-     * Update presence based on current phase.
-     * Applies updates immediately (conductor-mode throttling handled upstream by presence-setup.ts).
-     *
-     * P14: no production caller today — conductor-mode presence flows exclusively through
-     * {@link applyView}, which folds this method's idle-refresh-lifecycle logic in directly
-     * (plus the composed-prefix handling `updatePhase` doesn't do). Kept as public API, with its
-     * own extensive test coverage of the idle refresh loop, for a caller outside the conductor
-     * composition (e.g. a bare phase-only presence source) rather than deleted with the last one.
-     *
-     * @param phase - Current activity phase
-     */
-    async updatePhase(phase: PresencePhase): Promise<void> {
-        const logPhase = phase.type === 'idle'
-            ? { ...phase, since: DateTime.fromJSDate(phase.since).toISO() }
-            : phase;
-        this.deps.logger.debug({ phase: logPhase }, 'Updating presence phase');
-
-        const wasIdle = this.currentPhase?.type === 'idle';
-        const nowIdle = phase.type === 'idle';
-
-        this.currentPhase = phase;
-
-        // Handle idle state transitions
-        // Transition TO idle: always immediate (bypasses cooldown)
-        if(nowIdle && !wasIdle) {
-            // If presence display mode is active, don't start idle refresh yet.
-            // The transitionPresenceDisplayMode('none') call will trigger idle refresh with correct mode.
-            // Stryker disable next-line llm: equivalent — presenceDisplayMode is the PresenceDisplayMode string union, so == and === against 'none' coincide for every reachable value
-            if(this.presenceDisplayMode === 'none') {
-                await this.startIdleRefresh();
-            }
-            return;
-        }
-
-        // Already idle and staying idle - don't restart the refresh loop
-        if(nowIdle && wasIdle) {
-            this.deps.logger.debug('Already idle, skipping duplicate idle transition');
-            return;
-        }
-
-        // Both idle cases returned above. Stopping is idempotent when this active phase did not
-        // follow idle, and clears a queued idle refresh when it did.
-        this.stopIdleRefresh();
-
-        // Handle active phases (conductor-mode throttling is done upstream by presence-setup.ts)
-        const activity = this.deps.activeStatusGenerator.generate(phase, this.presenceDisplayMode);
-        await this.applyPresenceUpdate(activity);
-    }
-
-    /**
-     * Start the presence manager (enables idle refresh if idle).
+     * Start the presence manager. Logs only: the idle refresh loop starts on the first idle
+     * {@link applyView}, not here.
      */
     start(): void {
         this.deps.logger.info('Starting presence manager');
-        // Don't start idle refresh here - wait for explicit phase transition
-        // The caller should call updatePhase() after determining if catch-up is needed
     }
 
     /**

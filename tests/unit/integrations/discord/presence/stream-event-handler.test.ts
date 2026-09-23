@@ -11,8 +11,8 @@ import type { DynamicStatusGenerator } from '../../../../../src/integrations/dis
 import { buildLedgerThinkingSynopsis, createLedgerStreamEventHandler, type CreateLedgerStreamEventHandlerDeps } from '../../../../../src/integrations/discord/presence/stream-event-handler.js';
 
 // Helper to wait for async promises to settle.
-// Three rounds drain the full async chain in updatePhaseWithSynopsis:
-// outer IIFE → await generateSynopsis continuation → await safeUpdatePhase continuation.
+// Three rounds drain the full async chain of a synopsis dispatch:
+// outer synopsis IIFE → await generateSynopsis continuation → ledger sink dispatch.
 const flushPromises = async (): Promise<void> => {
     await Promise.resolve();
     await Promise.resolve();

@@ -270,7 +270,7 @@ src/
 │   │   ├── bot.ts                   # Thin bot orchestrator with start/stop lifecycle
 │   │   ├── handlers.ts              # Event handlers (ready, error, messageCreate)
 │   │   ├── client.ts                # Discord.js client factory
-│   │   ├── types.ts                 # Branded types (GuildId, ChannelId, UserId, MessageId)
+│   │   ├── types.ts                 # Branded types (GuildId, ChannelId, UserId) and DiscordMessageContext schema
 │   │   ├── messages.ts              # Message splitting (2000-char Discord limit)
 │   │   ├── message-coordinator.ts   # MessageCoordinator: debounced message queue per channel
 │   │   ├── rate-limiter.ts          # DiscordRateLimiter: rate-limited Discord API calls

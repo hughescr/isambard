@@ -7,7 +7,6 @@
 
 export {
     type PresencePhase,
-    type PresenceDisplayMode,
     type SynopsisContext,
     type StatusUpdate,
     ToolStatusMap,
