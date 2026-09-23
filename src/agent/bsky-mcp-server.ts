@@ -3,7 +3,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult, mcpTextResult, withHealthGuard, withWriteHealthGuard, withToolErrorHandling } from './mcp-helpers';
-import type { BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem, BskyRejectionBackend, BskyDirectMessage } from '@/integrations/bsky';
+import { createAtUri, createCid, type BskyCheckpointManager, type BlueskyClient, type BskyConversation, type BskyFeedItem, type BskyRejectionBackend, type BskyDirectMessage, type BskyReplyInput, type BskyStrongRef } from '@/integrations/bsky';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 /** Shared pagination schema fields for feed tools that support checkpointing. */
@@ -51,13 +51,12 @@ function buildCheckpointedResponse(newItems: BskyFeedItem[], cursor: string | un
  */
 
 export interface BskyMCPServerOptions {
-    client:               BlueskyClient
-    checkpointManager?:   BskyCheckpointManager
-    rateLimiter?:         TokenBucketRateLimiter
-    allowlist?:           PersonAllowlist
-    rejectionBackend?:    BskyRejectionBackend
-    sendApprovalRequest?: (text: string, targetHandle: string, parentUri: string, parentCid: string,
-        rootUri?: string, rootCid?: string) => Promise<void>
+    client:                 BlueskyClient
+    checkpointManager?:     BskyCheckpointManager
+    rateLimiter?:           TokenBucketRateLimiter
+    allowlist?:             PersonAllowlist
+    rejectionBackend?:      BskyRejectionBackend
+    sendApprovalRequest?:   (text: string, targetHandle: string, reply: BskyReplyInput) => Promise<void>
     sendDMApprovalRequest?: (text: string, targetHandles: string[], convoId: string) => Promise<void>
     healthRegistry?:        ServiceHealthRegistry
     reconnectionLoop?:      ReconnectionLoop
@@ -273,7 +272,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         if(post.viewer?.like) {
                             return mcpTextResult('Post already liked');
                         }
-                        await client.likePost(args.uri, args.cid);
+                        await client.likePost({ uri: createAtUri(args.uri), cid: createCid(args.cid) });
                         return mcpTextResult('Post liked successfully');
                     })),
                 { annotations: { title: 'Like Post', readOnlyHint: false, destructiveHint: false, idempotentHint: true } }
@@ -333,23 +332,30 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'replyToPost',
                 'Reply to an existing Bluesky post. If the target author is on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.',
                 {
-                    text:      z.string().describe('The text content of the reply'),
-                    parentUri: z.string().describe('AT URI of the post to reply to'),
-                    parentCid: z.string().describe('CID of the post to reply to'),
-                    rootUri:   z.string().optional().describe('AT URI of the thread root post (auto-resolved from parent for nested replies; only needed to override)'),
-                    rootCid:   z.string().optional().describe('CID of the thread root post (auto-resolved from parent for nested replies; only needed to override)'),
+                    text:   z.string().describe('The text content of the reply'),
+                    parent: z.object({
+                        uri: z.string().describe('AT URI of the post to reply to'),
+                        cid: z.string().describe('CID of the post to reply to'),
+                    }).describe('The post being replied to'),
+                    root: z.object({
+                        uri: z.string().describe('AT URI of the thread root post'),
+                        cid: z.string().describe('CID of the thread root post'),
+                    }).optional().describe('The thread root post (auto-resolved from parent for nested replies; only needed to override)'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'bluesky', 'discord', options.reconnectionLoop,
                     withToolErrorHandling('replyToPost', async (args): Promise<CallToolResult> => {
                         // Fetch parent post to determine the target author and resolve thread root
-                        const parentPost   = await client.getPost(args.parentUri);
+                        const parentPost   = await client.getPost(args.parent.uri);
                         const targetHandle = parentPost.author.handle;
 
-                        // Auto-resolve root: both explicit args must be present to override auto-resolved root.
-                        // Treating them as an atomic pair prevents mixing a URI from args with a CID from replyRef.
-                        const hasExplicitRoot  = args.rootUri !== undefined && args.rootCid !== undefined;
-                        const resolvedRootUri  = hasExplicitRoot ? args.rootUri : parentPost.replyRef?.root.uri;
-                        const resolvedRootCid  = hasExplicitRoot ? args.rootCid : parentPost.replyRef?.root.cid;
+                        const parent: BskyStrongRef = { uri: createAtUri(args.parent.uri), cid: createCid(args.parent.cid) };
+
+                        // Auto-resolve root from the parent post's own thread when not explicitly overridden.
+                        const root: BskyStrongRef | undefined = args.root
+                            ? { uri: createAtUri(args.root.uri), cid: createCid(args.root.cid) }
+                            : parentPost.replyRef?.root;
+
+                        const reply: BskyReplyInput = { parent, root };
 
                         // Check if replying to own post (always allowed — threading own posts)
                         const isSelfReply = targetHandle === client.ownHandle;
@@ -360,7 +366,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
 
                         if(isAllowed) {
                         // Allowlisted — send immediately
-                            const result           = await client.replyToPost(args.text, args.parentUri, args.parentCid, resolvedRootUri, resolvedRootCid);
+                            const result           = await client.replyToPost(args.text, reply);
                             const rateLimitWarning = buildRateLimitWarning();
                             rateLimiter?.increment();
                             return mcpTextResult(`Reply sent successfully: ${result.uri}${rateLimitWarning}`);
@@ -370,7 +376,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         await client.validatePostText(args.text);
                         if(sendApprovalRequest) {
                             try {
-                                await sendApprovalRequest(args.text, targetHandle, args.parentUri, args.parentCid, resolvedRootUri, resolvedRootCid);
+                                await sendApprovalRequest(args.text, targetHandle, reply);
                                 return mcpTextResult(`Reply to ${targetHandle} requires approval. Approval request sent to admin.`);
                             } catch (error) {
                                 logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send bsky approval request' });

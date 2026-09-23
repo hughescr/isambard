@@ -2,7 +2,7 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator } from '@/agent';
-import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
+import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend, type BskyReplyInput } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
@@ -76,10 +76,7 @@ export interface MCPServersOptions {
     bskySendApprovalRequest?: (
         text:         string,
         targetHandle: string,
-        parentUri:    string,
-        parentCid:    string,
-        rootUri?:     string,
-        rootCid?:     string
+        reply:        BskyReplyInput
     ) => Promise<void>
 
     /**

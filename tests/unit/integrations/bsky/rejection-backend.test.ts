@@ -9,25 +9,52 @@ import {
 import * as loggerModule from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
 import { BskyRejectionBackend, type BskyRejectedReply, type BskyRejectedDM } from '@/integrations/bsky/rejection-backend';
+import { createAtUri, createCid } from '@/integrations/bsky/types';
 
 const REPLY_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const DM_UUID    = 'bbbbbbbb-1111-4222-8333-444444444444';
 
+const PARENT_URI = 'at://did:plc:test/app.bsky.feed.post/parent123';
+const PARENT_CID = 'bafyreparentcid';
+const ROOT_URI    = 'at://did:plc:test/app.bsky.feed.post/root456';
+const ROOT_CID    = 'bafyrerootcid';
+
+// Domain (in-memory) shape — the strong ref is a single nested BskyReplyInput.
 const REPLY_ITEM: BskyRejectedReply = {
     type:         'reply',
     uuid:         REPLY_UUID,
     text:         'Great post!',
     targetHandle: 'someone.bsky.social',
-    parentUri:    'at://did:plc:test/app.bsky.feed.post/parent123',
-    parentCid:    'bafyreparentcid',
+    reply:        { parent: { uri: createAtUri(PARENT_URI), cid: createCid(PARENT_CID) } },
     reason:       'Too generic',
     rejectedAt:   '2026-03-22T15:30:00.000Z',
 };
 
 const REPLY_ITEM_WITH_ROOT: BskyRejectedReply = {
     ...REPLY_ITEM,
-    rootUri: 'at://did:plc:test/app.bsky.feed.post/root456',
-    rootCid: 'bafyrerootcid',
+    reply: {
+        ...REPLY_ITEM.reply,
+        root: { uri: createAtUri(ROOT_URI), cid: createCid(ROOT_CID) },
+    },
+};
+
+// Persisted (wire) shape — flat, independently-optional root fields. This is what actually
+// lands in DynamoDB and what a raw QueryCommand response looks like.
+const STORED_REPLY_ITEM = {
+    type:         'reply' as const,
+    uuid:         REPLY_UUID,
+    text:         'Great post!',
+    targetHandle: 'someone.bsky.social',
+    parentUri:    PARENT_URI,
+    parentCid:    PARENT_CID,
+    reason:       'Too generic',
+    rejectedAt:   '2026-03-22T15:30:00.000Z',
+};
+
+const STORED_REPLY_ITEM_WITH_ROOT = {
+    ...STORED_REPLY_ITEM,
+    rootUri: ROOT_URI,
+    rootCid: ROOT_CID,
 };
 
 const DM_ITEM: BskyRejectedDM = {
@@ -142,20 +169,17 @@ describe('BskyRejectionBackend', () => {
             const calls = ddbMock.commandCalls(PutCommand);
             expect(calls).toHaveLength(1);
             const item = calls[0].args[0].input.Item;
-            expect(item).toMatchObject({
-                rootUri: 'at://did:plc:test/app.bsky.feed.post/root456',
-                rootCid: 'bafyrerootcid',
-            });
+            expect(item).toMatchObject(STORED_REPLY_ITEM_WITH_ROOT);
         });
     });
 
     describe('listRejections', () => {
-        test('returns parsed reply items from query', async () => {
+        test('returns parsed reply items from query, round-tripping the stored flat row to the domain nested shape', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items: [{
                     PK: 'BSKY#REJECTED',
                     SK: `REJECTION#${REPLY_UUID}`,
-                    ...REPLY_ITEM,
+                    ...STORED_REPLY_ITEM,
                 }],
             });
 
@@ -166,6 +190,43 @@ describe('BskyRejectionBackend', () => {
             // PK/SK must be stripped
             expect(results[0]).not.toHaveProperty('PK');
             expect(results[0]).not.toHaveProperty('SK');
+        });
+
+        test('maps a legacy row with rootUri/rootCid absent to root: undefined, and back to the identical four-field stored row', async () => {
+            ddbMock.on(QueryCommand).resolves({
+                Items: [{
+                    PK: 'BSKY#REJECTED',
+                    SK: `REJECTION#${REPLY_UUID}`,
+                    ...STORED_REPLY_ITEM,
+                }],
+            });
+
+            const [domainItem] = await backend.listRejections();
+            expect(domainItem.type).toBe('reply');
+            expect((domainItem as BskyRejectedReply).reply.root).toBeUndefined();
+
+            ddbMock.on(PutCommand).resolves({});
+            await backend.recordRejection(domainItem);
+
+            const putItem = ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item;
+            expect(putItem).toMatchObject(STORED_REPLY_ITEM);
+            expect(putItem).not.toHaveProperty('rootUri');
+            expect(putItem).not.toHaveProperty('rootCid');
+        });
+
+        test('skips a malformed reply row (invalid strong ref) without hiding the other valid rows', async () => {
+            const malformedRow = { ...STORED_REPLY_ITEM, uuid: '55555555-1111-4222-8333-444444444444', parentUri: '', parentCid: '' };
+            ddbMock.on(QueryCommand).resolves({
+                Items: [
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${malformedRow.uuid}`, ...malformedRow },
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${REPLY_UUID}`, ...STORED_REPLY_ITEM },
+                ],
+            });
+
+            const results = await backend.listRejections();
+
+            expect(results).toHaveLength(1);
+            expect(results[0]).toEqual(REPLY_ITEM);
         });
 
         test('returns parsed DM items from query', async () => {
@@ -196,8 +257,8 @@ describe('BskyRejectionBackend', () => {
         test('sorts results newest first by rejectedAt (client-side)', async () => {
             const OLDER_UUID = '33333333-1111-4222-8333-444444444444';
             const NEWER_UUID = '44444444-1111-4222-8333-444444444444';
-            const olderItem: BskyRejectedReply = {
-                ...REPLY_ITEM,
+            const olderStoredRow = {
+                ...STORED_REPLY_ITEM,
                 uuid:       OLDER_UUID,
                 rejectedAt: '2026-03-21T10:00:00.000Z',
             };
@@ -209,7 +270,7 @@ describe('BskyRejectionBackend', () => {
             // Return in ascending order (older first) — sort must reverse this
             ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${OLDER_UUID}`, ...olderItem },
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${OLDER_UUID}`, ...olderStoredRow },
                     { PK: 'BSKY#REJECTED', SK: `REJECTION#${NEWER_UUID}`, ...newerItem },
                 ],
             });

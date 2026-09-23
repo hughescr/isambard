@@ -1,14 +1,12 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { truncate } from 'lodash-es';
+import type { BskyReplyInput } from './types';
 
 export interface BskyReplyApprovalEmbedParams {
     type:         'reply'
     text:         string             // the post text to be sent
     targetHandle: string             // who we're replying to
-    parentUri?:   string             // AT URI of parent post
-    parentCid?:   string             // CID of parent post
-    rootUri?:     string             // AT URI of root post
-    rootCid?:     string             // CID of root post
+    reply:        BskyReplyInput     // the strong ref of the post being replied to, and optional thread root
     parentText?:  string             // preview of parent post text (optional)
 }
 
@@ -74,15 +72,15 @@ export function buildBskyApprovalEmbed(params: BskyApprovalEmbedParams): BskyApp
         .setColor(BSKY_BLUE)
         .setDescription(params.text)
         .addFields(
-            { name: 'Replying to', value: params.targetHandle, inline: true },
-            { name: 'Parent URI',  value: params.parentUri ?? '',  inline: true },
-            { name: 'Parent CID',  value: params.parentCid ?? '',  inline: true }
+            { name: 'Replying to', value: params.targetHandle,    inline: true },
+            { name: 'Parent URI',  value: params.reply.parent.uri, inline: true },
+            { name: 'Parent CID',  value: params.reply.parent.cid, inline: true }
         );
 
-    if(params.rootUri && params.rootCid) {
+    if(params.reply.root) {
         embed.addFields(
-            { name: 'Root URI', value: params.rootUri, inline: true },
-            { name: 'Root CID', value: params.rootCid, inline: true }
+            { name: 'Root URI', value: params.reply.root.uri, inline: true },
+            { name: 'Root CID', value: params.reply.root.cid, inline: true }
         );
     }
 

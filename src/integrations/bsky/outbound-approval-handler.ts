@@ -4,6 +4,7 @@ import type { NotifyFn } from '@/agent';
 import { InvariantViolationError } from '@/errors';
 import type { BlueskyClient } from '@/integrations/bsky/client';
 import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
+import { createAtUri, createCid, type BskyReplyInput } from '@/integrations/bsky/types';
 import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
 
 const AMBER = 0xFF_AA_00;
@@ -216,15 +217,36 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
             };
         }
 
+        return this.extractReplyRejectionItem(fields, text, reason, uuid, rejectedAt);
+    }
+
+    /**
+     * Builds the reply-type branch of {@link extractRejectionItem}.
+     * Throws InvariantViolationError when Parent URI/CID are missing from the embed
+     * (internal contract violation — the embed builder always sets these fields).
+     */
+    private extractReplyRejectionItem(fields: { name: string, value: string }[], text: string, reason: string, uuid: string, rejectedAt: string): BskyRejectionItem {
+        const parentUri = fields.find(f => f.name === 'Parent URI')?.value;
+        const parentCid = fields.find(f => f.name === 'Parent CID')?.value;
+
+        if(!parentUri || !parentCid) {
+            throw new InvariantViolationError('extractRejectionItem', 'parent URI or CID missing despite embed present — upstream embed builder bug');
+        }
+
+        const rootUri = fields.find(f => f.name === 'Root URI')?.value;
+        const rootCid = fields.find(f => f.name === 'Root CID')?.value;
+
+        const reply: BskyReplyInput = {
+            parent: { uri: createAtUri(parentUri), cid: createCid(parentCid) },
+            root:   (rootUri !== undefined && rootCid !== undefined) ? { uri: createAtUri(rootUri), cid: createCid(rootCid) } : undefined,
+        };
+
         return {
             type:         'reply',
             uuid,
             text,
             targetHandle: fields.find(f => f.name === 'Replying to')?.value ?? '',
-            parentUri:    fields.find(f => f.name === 'Parent URI')?.value ?? '',
-            parentCid:    fields.find(f => f.name === 'Parent CID')?.value ?? '',
-            rootUri:      fields.find(f => f.name === 'Root URI')?.value,
-            rootCid:      fields.find(f => f.name === 'Root CID')?.value,
+            reply,
             reason,
             rejectedAt,
         };

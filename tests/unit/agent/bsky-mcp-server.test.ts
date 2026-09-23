@@ -2,7 +2,7 @@ import { afterEach, describe, test, expect, beforeEach, jest, mock } from 'bun:t
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
 import { createBskyMCPServer } from '../../../src/agent/bsky-mcp-server';
-import type { BskyCheckpointManager } from '../../../src/integrations/bsky';
+import { createAtUri, createCid, type BskyCheckpointManager } from '../../../src/integrations/bsky';
 import type { BlueskyClient } from '../../../src/integrations/bsky/client';
 import type { BskyEmbeddedRecord } from '../../../src/integrations/bsky/embeds';
 import type { BskyRejectionBackend, BskyRejectionItem } from '../../../src/integrations/bsky/rejection-backend';
@@ -121,7 +121,7 @@ describe('createBskyMCPServer', () => {
         ['follow', 'follow', { actor: 'alice.bsky.social' }],
         ['unfollow', 'unfollow', { actor: 'alice.bsky.social' }],
         ['sendPost', 'sendPost', { text: 'hello' }],
-        ['replyToPost', 'getPost', { text: 'hello', parentUri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', parentCid: 'bafyreiabc' }],
+        ['replyToPost', 'getPost', { text: 'hello', parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' } }],
         ['listConversations', 'listConversations', {}],
         ['getDirectMessages', 'getProfile', { recipients: ['alice.bsky.social'] }],
         ['sendDirectMessage', 'getProfile', { recipients: ['alice.bsky.social'], text: 'hello' }],
@@ -213,7 +213,7 @@ describe('createBskyMCPServer', () => {
             ['follow',            ['actor']],
             ['unfollow',          ['actor']],
             ['sendPost',          ['text']],
-            ['replyToPost',       ['text', 'parentUri', 'parentCid', 'rootUri', 'rootCid']],
+            ['replyToPost',       ['text', 'parent', 'root']],
             ['listConversations',  ['limit', 'cursor', 'readState', 'status']],
             ['getDirectMessages',  ['recipients', 'limit', 'cursor']],
             ['sendDirectMessage',  ['recipients', 'text']],
@@ -611,7 +611,7 @@ describe('createBskyMCPServer', () => {
 
             await handler({ uri: 'at://did:plc:xyz/app.bsky.feed.post/abc', cid: 'bafyreid123' });
 
-            expect(mockClient.likePost).toHaveBeenCalledWith('at://did:plc:xyz/app.bsky.feed.post/abc', 'bafyreid123');
+            expect(mockClient.likePost).toHaveBeenCalledWith({ uri: createAtUri('at://did:plc:xyz/app.bsky.feed.post/abc'), cid: createCid('bafyreid123') });
         });
 
         test('should return "Post already liked" when viewer.like is set', async () => {
@@ -1308,9 +1308,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'x'.repeat(301),
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'x'.repeat(301),
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBe(true);
@@ -1323,9 +1322,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'My reply!',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'My reply!',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBeUndefined();
@@ -1337,9 +1335,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
-                text:      'My reply!',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'My reply!',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(mockClient.getPost).toHaveBeenCalledWith('at://did:plc:abc123/app.bsky.feed.post/parent');
@@ -1350,38 +1347,35 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
-                text:      'Top-level reply',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'Top-level reply',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(mockClient.replyToPost).toHaveBeenCalledWith(
                 'Top-level reply',
-                'at://did:plc:abc123/app.bsky.feed.post/parent',
-                'bafyreiparent',
-                undefined,
-                undefined
+                {
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/parent'), cid: createCid('bafyreiparent') },
+                    root:   undefined,
+                }
             );
         });
 
-        test('should pass explicit rootUri and rootCid when provided', async () => {
+        test('should pass explicit root when provided', async () => {
             const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
-                text:      'Nested reply',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
-                rootUri:   'at://did:plc:abc123/app.bsky.feed.post/root',
-                rootCid:   'bafyreiroot',
+                text:   'Nested reply',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
+                root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/root', cid: 'bafyreiroot' },
             });
 
             expect(mockClient.replyToPost).toHaveBeenCalledWith(
                 'Nested reply',
-                'at://did:plc:abc123/app.bsky.feed.post/parent',
-                'bafyreiparent',
-                'at://did:plc:abc123/app.bsky.feed.post/root',
-                'bafyreiroot'
+                {
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/parent'), cid: createCid('bafyreiparent') },
+                    root:   { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/root'), cid: createCid('bafyreiroot') },
+                }
             );
         });
 
@@ -1391,9 +1385,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'Allowlisted reply',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'Allowlisted reply',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBeUndefined();
@@ -1408,9 +1401,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
-                text:      'Not allowlisted',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'Not allowlisted',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             // isAllowed called with platform 'bsky' and handle
@@ -1424,9 +1416,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'Reply needing approval',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'Reply needing approval',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBeUndefined();
@@ -1434,35 +1425,33 @@ describe('createBskyMCPServer', () => {
             expect(mockApproval).toHaveBeenCalledWith(
                 'Reply needing approval',
                 'alice.bsky.social',
-                'at://did:plc:abc123/app.bsky.feed.post/parent',
-                'bafyreiparent',
-                undefined,
-                undefined
+                {
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/parent'), cid: createCid('bafyreiparent') },
+                    root:   undefined,
+                }
             );
             expect(mockClient.replyToPost).not.toHaveBeenCalled();
         });
 
-        test('should pass rootUri and rootCid to approval request when provided', async () => {
+        test('should pass root to approval request when provided', async () => {
             const mockAllowlist = { isAllowed: mock((_platform: string, _value: string) => false) };
             const mockApproval  = mock(async (): Promise<void> => { /* intentionally empty */ });
             const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, sendApprovalRequest: mockApproval });
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
-                text:      'Nested reply needing approval',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
-                rootUri:   'at://did:plc:abc123/app.bsky.feed.post/root',
-                rootCid:   'bafyreiroot',
+                text:   'Nested reply needing approval',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
+                root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/root', cid: 'bafyreiroot' },
             });
 
             expect(mockApproval).toHaveBeenCalledWith(
                 'Nested reply needing approval',
                 'alice.bsky.social',
-                'at://did:plc:abc123/app.bsky.feed.post/parent',
-                'bafyreiparent',
-                'at://did:plc:abc123/app.bsky.feed.post/root',
-                'bafyreiroot'
+                {
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/parent'), cid: createCid('bafyreiparent') },
+                    root:   { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/root'), cid: createCid('bafyreiroot') },
+                }
             );
         });
 
@@ -1472,9 +1461,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'Blocked reply',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'Blocked reply',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBeUndefined();
@@ -1491,9 +1479,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'Reply needing approval',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'Reply needing approval',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             // Approval delivery failure returns an error result
@@ -1516,9 +1503,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
-                text:      'Allowlisted reply',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'Allowlisted reply',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(mockRateLimiter.increment).toHaveBeenCalledTimes(1);
@@ -1535,9 +1521,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'Allowlisted reply',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'Allowlisted reply',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBeUndefined();
@@ -1554,9 +1539,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'Threading my own post',
-                parentUri: 'at://did:plc:botself/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'Threading my own post',
+                parent: { uri: 'at://did:plc:botself/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBeUndefined();
@@ -1574,9 +1558,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'My reply!',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'My reply!',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBe(true);
@@ -1591,9 +1574,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'My reply!',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'My reply!',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBe(true);
@@ -1608,9 +1590,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'My reply!',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'My reply!',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBe(true);
@@ -1627,9 +1608,8 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
-                text:      'x'.repeat(301),
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
-                parentCid: 'bafyreiparent',
+                text:   'x'.repeat(301),
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' },
             });
 
             expect(result.isError).toBe(true);
@@ -1637,14 +1617,14 @@ describe('createBskyMCPServer', () => {
             expect(mockApproval).not.toHaveBeenCalled();
         });
 
-        test('should auto-resolve root from parent replyRef when rootUri/rootCid omitted (nested reply)', async () => {
+        test('should auto-resolve root from parent replyRef when root omitted (nested reply)', async () => {
             // Parent post is itself a reply — it has a replyRef pointing to the real root
             const nestedParent = mockPost({
                 uri:      'at://did:plc:abc123/app.bsky.feed.post/middle',
                 cid:      'bafyreimiddle',
                 replyRef: {
-                    root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/rootpost', cid: 'bafyreiroot' },
-                    parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/original', cid: 'bafyreioriginal' },
+                    root:   { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/rootpost'), cid: createCid('bafyreiroot') },
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/original'), cid: createCid('bafyreioriginal') },
                 },
             });
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
@@ -1653,17 +1633,16 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
-                text:      'Deeply nested reply',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/middle',
-                parentCid: 'bafyreimiddle',
+                text:   'Deeply nested reply',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/middle', cid: 'bafyreimiddle' },
             });
 
             expect(mockClient.replyToPost).toHaveBeenCalledWith(
                 'Deeply nested reply',
-                'at://did:plc:abc123/app.bsky.feed.post/middle',
-                'bafyreimiddle',
-                'at://did:plc:abc123/app.bsky.feed.post/rootpost',
-                'bafyreiroot'
+                {
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/middle'), cid: createCid('bafyreimiddle') },
+                    root:   { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/rootpost'), cid: createCid('bafyreiroot') },
+                }
             );
         });
 
@@ -1675,28 +1654,27 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
-                text:      'Top-level reply',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/xyz',
-                parentCid: 'bafyreiabc',
+                text:   'Top-level reply',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' },
             });
 
             expect(mockClient.replyToPost).toHaveBeenCalledWith(
                 'Top-level reply',
-                'at://did:plc:abc123/app.bsky.feed.post/xyz',
-                'bafyreiabc',
-                undefined,
-                undefined
+                {
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/xyz'), cid: createCid('bafyreiabc') },
+                    root:   undefined,
+                }
             );
         });
 
-        test('should prefer explicit rootUri/rootCid over parent replyRef', async () => {
-            // Parent has a replyRef, but caller also provides explicit root args
+        test('should prefer explicit root over parent replyRef', async () => {
+            // Parent has a replyRef, but caller also provides an explicit root
             const nestedParent = mockPost({
                 uri:      'at://did:plc:abc123/app.bsky.feed.post/middle',
                 cid:      'bafyreimiddle',
                 replyRef: {
-                    root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/actualroot', cid: 'bafyreiactualroot' },
-                    parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/original',   cid: 'bafyreioriginal' },
+                    root:   { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/actualroot'), cid: createCid('bafyreiactualroot') },
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/original'),   cid: createCid('bafyreioriginal') },
                 },
             });
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
@@ -1705,117 +1683,26 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
-                text:      'Reply with explicit root',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/middle',
-                parentCid: 'bafyreimiddle',
-                rootUri:   'at://did:plc:abc123/app.bsky.feed.post/explicitroot',
-                rootCid:   'bafyreiexplicit',
+                text:   'Reply with explicit root',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/middle', cid: 'bafyreimiddle' },
+                root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/explicitroot', cid: 'bafyreiexplicit' },
             });
 
             expect(mockClient.replyToPost).toHaveBeenCalledWith(
                 'Reply with explicit root',
-                'at://did:plc:abc123/app.bsky.feed.post/middle',
-                'bafyreimiddle',
-                'at://did:plc:abc123/app.bsky.feed.post/explicitroot',
-                'bafyreiexplicit'
+                {
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/middle'), cid: createCid('bafyreimiddle') },
+                    root:   { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/explicitroot'), cid: createCid('bafyreiexplicit') },
+                }
             );
         });
 
-        test('should ignore partial explicit root (only rootUri provided) and use replyRef for both values', async () => {
-            // Atomic pair: if only rootUri is given (no rootCid), fall back to replyRef for BOTH
-            const nestedParent = mockPost({
-                uri:      'at://did:plc:abc123/app.bsky.feed.post/middle',
-                cid:      'bafyreimiddle',
-                replyRef: {
-                    root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/rootpost', cid: 'bafyreiroot' },
-                    parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/original', cid: 'bafyreioriginal' },
-                },
-            });
-            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
+        test('root must be a full BskyStrongRef (uri+cid) — the tool schema rejects a partial root', () => {
+            const server = createBskyMCPServer({ client: mockClient });
+            const tool   = (server.instance as unknown as RegisteredToolInstance)._registeredTools.replyToPost;
 
-            const server  = createBskyMCPServer({ client: mockClient });
-            const handler = getToolHandler(server, 'replyToPost');
-
-            await handler({
-                text:      'Partial root reply',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/middle',
-                parentCid: 'bafyreimiddle',
-                rootUri:   'at://did:plc:abc123/app.bsky.feed.post/partialroot',
-                // rootCid deliberately omitted — incomplete pair should fall back to replyRef entirely
-            });
-
-            // Both root values should come from replyRef, not a mix of explicit rootUri + replyRef rootCid
-            expect(mockClient.replyToPost).toHaveBeenCalledWith(
-                'Partial root reply',
-                'at://did:plc:abc123/app.bsky.feed.post/middle',
-                'bafyreimiddle',
-                'at://did:plc:abc123/app.bsky.feed.post/rootpost',
-                'bafyreiroot'
-            );
-        });
-
-        test('should ignore partial explicit root (only rootCid provided) and use replyRef for both values', async () => {
-            // Atomic pair: if only rootCid is given (no rootUri), fall back to replyRef for BOTH
-            const nestedParent = mockPost({
-                uri:      'at://did:plc:abc123/app.bsky.feed.post/middle',
-                cid:      'bafyreimiddle',
-                replyRef: {
-                    root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/rootpost', cid: 'bafyreiroot' },
-                    parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/original', cid: 'bafyreioriginal' },
-                },
-            });
-            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
-
-            const server  = createBskyMCPServer({ client: mockClient });
-            const handler = getToolHandler(server, 'replyToPost');
-
-            await handler({
-                text:      'Partial root reply',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/middle',
-                parentCid: 'bafyreimiddle',
-                rootCid:   'bafyreipartial',
-                // rootUri deliberately omitted — incomplete pair should fall back to replyRef entirely
-            });
-
-            // Both root values should come from replyRef, not a mix of replyRef rootUri + explicit rootCid
-            expect(mockClient.replyToPost).toHaveBeenCalledWith(
-                'Partial root reply',
-                'at://did:plc:abc123/app.bsky.feed.post/middle',
-                'bafyreimiddle',
-                'at://did:plc:abc123/app.bsky.feed.post/rootpost',
-                'bafyreiroot'
-            );
-        });
-
-        test('should pass undefined root when partial explicit root provided and parent has no replyRef', async () => {
-            // Atomic pair: if only rootUri is given (no rootCid) and parent is a top-level post (no replyRef),
-            // the partial arg is discarded and there is no replyRef to fall back to — both resolved values are undefined
-            const topLevelParent = mockPost({
-                uri: 'at://did:plc:abc123/app.bsky.feed.post/top',
-                cid: 'bafyreitop',
-                // no replyRef — this is a top-level post
-            });
-            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => topLevelParent);
-
-            const server  = createBskyMCPServer({ client: mockClient });
-            const handler = getToolHandler(server, 'replyToPost');
-
-            await handler({
-                text:      'Partial root, no replyRef',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/top',
-                parentCid: 'bafyreitop',
-                rootUri:   'at://did:plc:abc123/app.bsky.feed.post/partialroot',
-                // rootCid deliberately omitted — incomplete pair discarded; no replyRef to fall back to
-            });
-
-            // Both root values are undefined: partial arg discarded, no replyRef available
-            expect(mockClient.replyToPost).toHaveBeenCalledWith(
-                'Partial root, no replyRef',
-                'at://did:plc:abc123/app.bsky.feed.post/top',
-                'bafyreitop',
-                undefined,
-                undefined
-            );
+            expect(tool.inputSchema.shape.root.safeParse({ uri: 'at://did:plc:abc123/app.bsky.feed.post/root' }).success).toBe(false);
+            expect(tool.inputSchema.shape.root.safeParse({ uri: 'at://did:plc:abc123/app.bsky.feed.post/root', cid: 'bafyreiroot' }).success).toBe(true);
         });
 
         test('should pass resolved root to sendApprovalRequest for non-allowlisted nested replies', async () => {
@@ -1823,8 +1710,8 @@ describe('createBskyMCPServer', () => {
                 uri:      'at://did:plc:abc123/app.bsky.feed.post/middle',
                 cid:      'bafyreimiddle',
                 replyRef: {
-                    root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/rootpost', cid: 'bafyreiroot' },
-                    parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/original', cid: 'bafyreioriginal' },
+                    root:   { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/rootpost'), cid: createCid('bafyreiroot') },
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/original'), cid: createCid('bafyreioriginal') },
                 },
             });
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
@@ -1835,18 +1722,17 @@ describe('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
-                text:      'Nested reply needing approval',
-                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/middle',
-                parentCid: 'bafyreimiddle',
+                text:   'Nested reply needing approval',
+                parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/middle', cid: 'bafyreimiddle' },
             });
 
             expect(mockApproval).toHaveBeenCalledWith(
                 'Nested reply needing approval',
                 'alice.bsky.social',
-                'at://did:plc:abc123/app.bsky.feed.post/middle',
-                'bafyreimiddle',
-                'at://did:plc:abc123/app.bsky.feed.post/rootpost',
-                'bafyreiroot'
+                {
+                    parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/middle'), cid: createCid('bafyreimiddle') },
+                    root:   { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/rootpost'), cid: createCid('bafyreiroot') },
+                }
             );
         });
     });
@@ -2555,8 +2441,7 @@ describe('createBskyMCPServer', () => {
                 uuid:         'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
                 text:         'My revised reply',
                 targetHandle: 'alice.bsky.social',
-                parentUri:    'at://did:plc:abc123/app.bsky.feed.post/xyz',
-                parentCid:    'bafyreiabc',
+                reply:        { parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/xyz'), cid: createCid('bafyreiabc') } },
                 reason:       'Too aggressive',
                 rejectedAt:   '2026-01-01T00:00:00.000Z',
             };

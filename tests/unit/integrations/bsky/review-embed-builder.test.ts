@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import type { APIButtonComponentWithCustomId } from 'discord.js';
+import { createAtUri, createCid } from '@/integrations/bsky';
 import {
     buildBskyApprovalEmbed,
     type BskyDmApprovalEmbedParams,
@@ -15,8 +16,7 @@ function makeParams(overrides: Partial<BskyReplyApprovalEmbedParams> = {}): Bsky
         type:         'reply',
         text:         'Hello @user.bsky.social, great post!',
         targetHandle: 'user.bsky.social',
-        parentUri:    'at://did:plc:abc123/app.bsky.feed.post/xyz456',
-        parentCid:    'bafyreiabc123',
+        reply:        { parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/xyz456'), cid: createCid('bafyreiabc123') } },
         ...overrides,
     };
 }
@@ -80,52 +80,51 @@ describe('buildBskyApprovalEmbed', () => {
         });
 
         test('embed includes Parent URI field', () => {
-            const params = makeParams({ parentUri: 'at://did:plc:test/app.bsky.feed.post/111' });
+            const params = makeParams({ reply: { parent: { uri: createAtUri('at://did:plc:test/app.bsky.feed.post/111'), cid: createCid('bafyreiabc123') } } });
             const result = buildBskyApprovalEmbed(params);
             const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent URI');
             expect(field?.value).toBe('at://did:plc:test/app.bsky.feed.post/111');
             expect(field?.inline).toBe(true);
         });
 
-        test('embed uses an empty Parent URI when parentUri is not provided', () => {
-            const result = buildBskyApprovalEmbed(makeParams({ parentUri: undefined }));
-            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent URI');
-            expect(field?.value).toBe('');
-        });
-
         test('embed includes Parent CID field', () => {
-            const params = makeParams({ parentCid: 'bafyreidxyz' });
+            const params = makeParams({ reply: { parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/xyz456'), cid: createCid('bafyreidxyz') } } });
             const result = buildBskyApprovalEmbed(params);
             const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent CID');
             expect(field?.value).toBe('bafyreidxyz');
             expect(field?.inline).toBe(true);
         });
 
-        test('embed uses an empty Parent CID when parentCid is not provided', () => {
-            const result = buildBskyApprovalEmbed(makeParams({ parentCid: undefined }));
-            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent CID');
-            expect(field?.value).toBe('');
+        test('reply.parent is required — a rejection embed always has a strong ref, so no empty-fallback case exists', () => {
+            // Documents the deliberate type-level change: unlike the old flat parentUri?/parentCid?
+            // fields (independently optional), reply.parent is now a required BskyStrongRef —
+            // there is no "missing parent" state left to render an empty '' fallback for.
+            const params = makeParams();
+            expect(params.reply.parent.uri).toBe(createAtUri('at://did:plc:abc123/app.bsky.feed.post/xyz456'));
+            expect(params.reply.parent.cid).toBe(createCid('bafyreiabc123'));
         });
 
-        describe('without rootUri/rootCid', () => {
-            test('omits Root URI field when rootUri is not provided', () => {
+        describe('without root', () => {
+            test('omits Root URI field when root is not provided', () => {
                 const result = buildBskyApprovalEmbed(makeParams());
                 const field  = result.embed.toJSON().fields?.find(f => f.name === 'Root URI');
                 expect(field).toBeUndefined();
             });
 
-            test('omits Root CID field when rootUri is not provided', () => {
+            test('omits Root CID field when root is not provided', () => {
                 const result = buildBskyApprovalEmbed(makeParams());
                 const field  = result.embed.toJSON().fields?.find(f => f.name === 'Root CID');
                 expect(field).toBeUndefined();
             });
         });
 
-        describe('with rootUri/rootCid', () => {
-            test('includes Root URI field when rootUri is provided', () => {
+        describe('with root', () => {
+            test('includes Root URI field when root is provided', () => {
                 const params = makeParams({
-                    rootUri: 'at://did:plc:root/app.bsky.feed.post/root123',
-                    rootCid: 'bafyreroot123',
+                    reply: {
+                        parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/xyz456'), cid: createCid('bafyreiabc123') },
+                        root:   { uri: createAtUri('at://did:plc:root/app.bsky.feed.post/root123'), cid: createCid('bafyreroot123') },
+                    },
                 });
                 const result = buildBskyApprovalEmbed(params);
                 const field  = result.embed.toJSON().fields?.find(f => f.name === 'Root URI');
@@ -133,10 +132,12 @@ describe('buildBskyApprovalEmbed', () => {
                 expect(field?.inline).toBe(true);
             });
 
-            test('includes Root CID field when rootUri is provided', () => {
+            test('includes Root CID field when root is provided', () => {
                 const params = makeParams({
-                    rootUri: 'at://did:plc:root/app.bsky.feed.post/root123',
-                    rootCid: 'bafyreroot123',
+                    reply: {
+                        parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/xyz456'), cid: createCid('bafyreiabc123') },
+                        root:   { uri: createAtUri('at://did:plc:root/app.bsky.feed.post/root123'), cid: createCid('bafyreroot123') },
+                    },
                 });
                 const result = buildBskyApprovalEmbed(params);
                 const field  = result.embed.toJSON().fields?.find(f => f.name === 'Root CID');
@@ -144,17 +145,15 @@ describe('buildBskyApprovalEmbed', () => {
                 expect(field?.inline).toBe(true);
             });
 
-            test('omits Root URI and Root CID fields when rootUri provided but rootCid is not', () => {
-                const params = makeParams({
-                    rootUri:   'at://did:plc:root/app.bsky.feed.post/root123',
-                    parentCid: 'bafyreparent',
-                    // rootCid intentionally omitted
+            test('reply.root must be a full BskyStrongRef (uri+cid), not a bare uri', () => {
+                const build = (): BskyReplyApprovalEmbedParams => makeParams({
+                    reply: {
+                        parent: { uri: createAtUri('at://did:plc:abc123/app.bsky.feed.post/xyz456'), cid: createCid('bafyreiabc123') },
+                        // @ts-expect-error -- reply.root must be a full BskyStrongRef (uri+cid), not a bare uri
+                        root:   { uri: 'at://did:plc:root/app.bsky.feed.post/root123' },
+                    },
                 });
-                const result   = buildBskyApprovalEmbed(params);
-                const uriField = result.embed.toJSON().fields?.find(f => f.name === 'Root URI');
-                const cidField = result.embed.toJSON().fields?.find(f => f.name === 'Root CID');
-                expect(uriField).toBeUndefined();
-                expect(cidField).toBeUndefined();
+                expect(build).toBeDefined();
             });
         });
 

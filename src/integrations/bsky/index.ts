@@ -1,6 +1,8 @@
 export type {
     BskyAuthor,
     BskyReplyRef,
+    BskyStrongRef,
+    BskyReplyInput,
     BskyViewerState,
     BskyPost,
     BskyFeedItem,
@@ -9,6 +11,7 @@ export type {
     BskyDirectMessage,
     BskyConversation
 } from './types';
+export { atUriSchema, cidSchema, createAtUri, createCid, type AtUri, type Cid } from './types';
 export type {
     BskyAspectRatio,
     BskyEmbedImage,

@@ -1,6 +1,7 @@
 import { BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { z } from 'zod';
+import { type BskyReplyInput, createAtUri, createCid } from '@/integrations/bsky/types';
 import { BaseRepository, createPrefixedKey } from '@/storage';
 
 const REJECTION_PK        = 'BSKY#REJECTED';
@@ -14,7 +15,10 @@ function rejectionSK(uuid: string): string {
     return createPrefixedKey(REJECTION_SK_PREFIX, uuid);
 }
 
-const BskyRejectedReplySchema = z.object({
+// Persisted (wire) schemas — the DynamoDB row shape. Kept as flat, independently-optional
+// root fields exactly as historically written; never change this shape in place. Domain code
+// sees the nested BskyReplyInput shape instead, via toStoredReply()/fromStoredReply() below.
+const StoredBskyRejectedReplySchema = z.object({
     type:         z.literal('reply'),
     uuid:         z.uuid(),
     text:         z.string(),
@@ -27,7 +31,7 @@ const BskyRejectedReplySchema = z.object({
     rejectedAt:   z.string(),
 });
 
-const BskyRejectedDMSchema = z.object({
+const StoredBskyRejectedDMSchema = z.object({
     type:             z.literal('dm'),
     uuid:             z.uuid(),
     text:             z.string(),
@@ -37,11 +41,58 @@ const BskyRejectedDMSchema = z.object({
     rejectedAt:       z.string(),
 });
 
-const BskyRejectionItemSchema = z.discriminatedUnion('type', [BskyRejectedReplySchema, BskyRejectedDMSchema]);
+const StoredBskyRejectionItemSchema = z.discriminatedUnion('type', [StoredBskyRejectedReplySchema, StoredBskyRejectedDMSchema]);
 
-export type BskyRejectedReply = z.infer<typeof BskyRejectedReplySchema>;
-export type BskyRejectedDM = z.infer<typeof BskyRejectedDMSchema>;
-export type BskyRejectionItem = z.infer<typeof BskyRejectionItemSchema>;
+type StoredBskyRejectedReply = z.infer<typeof StoredBskyRejectedReplySchema>;
+
+/** Domain shape of a rejected Bluesky reply — the strong ref is a single {@link BskyReplyInput}, not four flat optional strings. */
+export interface BskyRejectedReply {
+    type:         'reply'
+    uuid:         string
+    text:         string
+    targetHandle: string
+    reply:        BskyReplyInput
+    reason:       string
+    rejectedAt:   string
+}
+
+export type BskyRejectedDM = z.infer<typeof StoredBskyRejectedDMSchema>;
+export type BskyRejectionItem = BskyRejectedReply | BskyRejectedDM;
+
+/** Flatten a domain reply-rejection into the persisted (wire) row shape. */
+function toStoredReply(item: BskyRejectedReply): StoredBskyRejectedReply {
+    return {
+        type:         'reply',
+        uuid:         item.uuid,
+        text:         item.text,
+        targetHandle: item.targetHandle,
+        parentUri:    item.reply.parent.uri,
+        parentCid:    item.reply.parent.cid,
+        ...(item.reply.root ? { rootUri: item.reply.root.uri, rootCid: item.reply.root.cid } : {}),
+        reason:       item.reason,
+        rejectedAt:   item.rejectedAt,
+    };
+}
+
+/**
+ * Unflatten a persisted reply-rejection row into the domain shape.
+ * Throws (via createAtUri/createCid) if parentUri/parentCid are empty or malformed —
+ * callers must treat that as a single-row failure, not abort the whole listing.
+ */
+function fromStoredReply(row: StoredBskyRejectedReply): BskyRejectedReply {
+    return {
+        type:         'reply',
+        uuid:         row.uuid,
+        text:         row.text,
+        targetHandle: row.targetHandle,
+        reply:        {
+            parent: { uri: createAtUri(row.parentUri), cid: createCid(row.parentCid) },
+            root:   (row.rootUri !== undefined && row.rootCid !== undefined) ? { uri: createAtUri(row.rootUri), cid: createCid(row.rootCid) } : undefined,
+        },
+        reason:     row.reason,
+        rejectedAt: row.rejectedAt,
+    };
+}
 
 /**
  * DynamoDB backend for storing rejected Bluesky posts/DMs.
@@ -52,16 +103,22 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
      * Store a rejected Bluesky post or DM.
      */
     async recordRejection(item: BskyRejectionItem): Promise<void> {
+        const stored = item.type === 'reply' ? toStoredReply(item) : item;
         await this.putItem({
             PK:  REJECTION_PK,
             SK:  rejectionSK(item.uuid),
-            ...item,
+            ...stored,
             TTL: BskyRejectionBackend.ttlFromDays(TTL_DAYS),
         });
     }
 
     /**
      * List all rejections, newest first.
+     *
+     * A row that fails to parse (malformed shape) or fails to unflatten into a domain
+     * strong ref (e.g. a legacy row persisted with an empty parentUri/parentCid before
+     * strong refs were validated) is logged and skipped rather than aborting the whole
+     * listing — one bad row must not hide every other pending rejection from context.
      */
     async listRejections(): Promise<BskyRejectionItem[]> {
         const items = await this.query<Record<string, unknown>>({
@@ -71,9 +128,27 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
                 ':pk': REJECTION_PK,
             },
         });
-        const parsed = items.map(item => BskyRejectionItemSchema.parse(item));
+
+        const results: BskyRejectionItem[] = [];
+        for(const item of items) {
+            const parsedRow = StoredBskyRejectionItemSchema.safeParse(item);
+            if(!parsedRow.success) {
+                logger.warn({ error: parsedRow.error, msg: 'Skipping malformed Bluesky rejection row' });
+                continue;
+            }
+            if(parsedRow.data.type === 'dm') {
+                results.push(parsedRow.data);
+                continue;
+            }
+            try {
+                results.push(fromStoredReply(parsedRow.data));
+            } catch (err) {
+                logger.warn({ err, uuid: parsedRow.data.uuid, msg: 'Skipping Bluesky rejection row with an invalid strong ref' });
+            }
+        }
+
         // Sort newest first by rejectedAt timestamp (SK is now UUID, not time-ordered)
-        return parsed.toSorted((a, b) => b.rejectedAt.localeCompare(a.rejectedAt));
+        return results.toSorted((a, b) => b.rejectedAt.localeCompare(a.rejectedAt));
     }
 
     /**

@@ -11,7 +11,7 @@ import { loadPlugins, QuestionRegistry, syncAgentsAndSkills, createActivityLogge
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { InvariantViolationError } from '@/errors';
-import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
+import { BlueskyClient, BskyHistoryProvider, atUriSchema, cidSchema, type BskyReplyInput } from '@/integrations/bsky';
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCalendarCommand } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
@@ -655,13 +655,22 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
     });
     registerCleanup({ name: 'outbox drainer', run: () => outboxDrainer.stop() });
 
-    // Zod schemas for saga executor param validation
+    // Zod schemas for saga executor param validation.
+    //
+    // The wire shape stays flat (parentUri/parentCid/rootUri?/rootCid?) — the same shape
+    // outbound-approval-handler.ts's handleApprove has always written to ApprovalSagaBackend,
+    // which persists rows for up to 30 days. Reshaping this schema to the nested
+    // `{ reply: BskyReplyInput }` domain shape would silently orphan any saga already
+    // 'approved' (durable, awaiting execution) at deploy time: the executor would throw on
+    // parse, `createSagaExecutor` would mark it 'failed', and it would never post. Instead,
+    // AT-URI/CID branding happens only here, at the read boundary, via atUriSchema/cidSchema;
+    // the domain BskyReplyInput is built from the parsed flat fields just below.
     const bskyReplyParamsSchema = z.object({
         text:      z.string(),
-        parentUri: z.string(),
-        parentCid: z.string(),
-        rootUri:   z.string().optional(),
-        rootCid:   z.string().optional(),
+        parentUri: atUriSchema,
+        parentCid: cidSchema,
+        rootUri:   atUriSchema.optional(),
+        rootCid:   cidSchema.optional(),
     });
 
     const bskyDMParamsSchema = z.object({ text: z.string(), convoId: z.string() });
@@ -676,7 +685,11 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                     throw new InvariantViolationError('sagaExecutor.bsky_reply', 'Bluesky client not available');
                 }
                 const parsed = bskyReplyParamsSchema.parse(params);
-                await bskyClient.replyToPost(parsed.text, parsed.parentUri, parsed.parentCid, parsed.rootUri, parsed.rootCid);
+                const reply: BskyReplyInput = {
+                    parent: { uri: parsed.parentUri, cid: parsed.parentCid },
+                    root:   (parsed.rootUri !== undefined && parsed.rootCid !== undefined) ? { uri: parsed.rootUri, cid: parsed.rootCid } : undefined,
+                };
+                await bskyClient.replyToPost(parsed.text, reply);
             },
             bsky_dm: async (params) => {
                 if(!bskyClient) {

@@ -8,7 +8,8 @@ import {
     BskyOutboundApprovalHandler,
     BskyRejectionBackend,
     buildBskyApprovalEmbed,
-    type BlueskyClient
+    type BlueskyClient,
+    type BskyReplyInput
 } from '@/integrations/bsky';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import type { DiscordCapability } from '@/integrations/discord/capability';
@@ -73,10 +74,7 @@ export interface BskySetupResult {
     sendApprovalRequest: (
         text:         string,
         targetHandle: string,
-        parentUri:    string,
-        parentCid:    string,
-        rootUri?:     string,
-        rootCid?:     string
+        reply:        BskyReplyInput
     ) => Promise<void>
     /** sendDMApprovalRequest callback for DM MCP server integration */
     sendDMApprovalRequest: (
@@ -121,15 +119,12 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     const sendApprovalRequest = async (
         text:         string,
         targetHandle: string,
-        parentUri:    string,
-        parentCid:    string,
-        rootUri?:     string,
-        rootCid?:     string
+        reply:        BskyReplyInput
     ): Promise<void> => {
         // Fetch parent post preview text (best-effort)
         let parentText: string | undefined;
         try {
-            const parentPost = await bskyClient.getPost(parentUri);
+            const parentPost = await bskyClient.getPost(reply.parent.uri);
             parentText = parentPost.text;
         } catch{
             // Silent: fetching the parent post preview is purely cosmetic enrichment for
@@ -141,10 +136,7 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
             type: 'reply',
             text,
             targetHandle,
-            parentUri,
-            parentCid,
-            rootUri,
-            rootCid,
+            reply,
             parentText,
         });
 

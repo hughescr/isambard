@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createContextBuilder, type CalendarService } from '../../../src/agent/context-builder';
-import type { BlueskyClient } from '../../../src/integrations/bsky';
+import { createAtUri, createCid, type BlueskyClient } from '../../../src/integrations/bsky';
 import type { BskyRejectionBackend } from '../../../src/integrations/bsky/rejection-backend';
 import type { CalDAVClient, CalendarRegistryBackend, CalendarEventsResult, CalendarServerEntry } from '../../../src/integrations/caldav';
 import type { ServiceHealthRegistry } from '../../../src/services';
@@ -3808,8 +3808,7 @@ describe('createContextBuilder loading methods', () => {
                     uuid:         'test-uuid-reply-1',
                     text:         'Great post!',
                     targetHandle: 'someone.bsky.social',
-                    parentUri:    'at://parent',
-                    parentCid:    'bafyreparent',
+                    reply:        { parent: { uri: createAtUri('at://parent'), cid: createCid('bafyreparent') } },
                     reason:       'Too generic',
                     rejectedAt:   '2026-03-22T15:30:00.000Z',
                 }]),
@@ -3938,12 +3937,12 @@ describe('createContextBuilder loading methods', () => {
                     uuid:         'test-uuid-reply-2',
                     text:         'Great post!',
                     targetHandle: 'someone.bsky.social',
-                    parentUri:    'at://parent',
-                    parentCid:    'bafyreparent',
-                    rootUri:      'at://root',
-                    rootCid:      'bafyreroot',
-                    reason:       'Off topic',
-                    rejectedAt:   '2026-03-22T15:30:00.000Z',
+                    reply:        {
+                        parent: { uri: createAtUri('at://parent'), cid: createCid('bafyreparent') },
+                        root:   { uri: createAtUri('at://root'), cid: createCid('bafyreroot') },
+                    },
+                    reason:     'Off topic',
+                    rejectedAt: '2026-03-22T15:30:00.000Z',
                 }]),
             } as unknown as BskyRejectionBackend;
 

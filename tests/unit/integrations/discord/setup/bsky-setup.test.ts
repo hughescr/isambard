@@ -15,7 +15,7 @@ import { makeHealthRegistry } from '../../../../helpers/fake-health-registry';
 import { mockLogger } from '../../../../setup';
 import type { NotifyParams } from '@/agent';
 import { ChannelNotAccessibleError } from '@/errors';
-import type { BlueskyClient } from '@/integrations/bsky';
+import { createAtUri, createCid, type BlueskyClient } from '@/integrations/bsky';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { setupBsky, type BskySetupOptions } from '@/integrations/discord/setup/bsky-setup';
 import type { ApprovalSagaBackend } from '@/services';
@@ -85,7 +85,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
 
         // Call sendApprovalRequest — it will call isSendableChannel with the string
         await expect(
-            result.sendApprovalRequest('hello', '@user.bsky.social', 'at://uri', 'cid123')
+            result.sendApprovalRequest('hello', '@user.bsky.social', { parent: { uri: createAtUri('at://uri'), cid: createCid('cid123') } })
         ).rejects.toBeInstanceOf(ChannelNotAccessibleError);
     });
 
@@ -99,7 +99,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
         const result = await setupBsky(options);
 
         await expect(
-            result.sendApprovalRequest('hello', '@user.bsky.social', 'at://uri', 'cid123')
+            result.sendApprovalRequest('hello', '@user.bsky.social', { parent: { uri: createAtUri('at://uri'), cid: createCid('cid123') } })
         ).rejects.toBeInstanceOf(ChannelNotAccessibleError);
     });
 
@@ -121,7 +121,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
 
         const result = await setupBsky(options);
 
-        await result.sendApprovalRequest('hello', '@user.bsky.social', 'at://uri', 'cid123');
+        await result.sendApprovalRequest('hello', '@user.bsky.social', { parent: { uri: createAtUri('at://uri'), cid: createCid('cid123') } });
 
         expect(mockSend).toHaveBeenCalledTimes(1);
         expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({
@@ -141,7 +141,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
 
         const result = await setupBsky(options);
 
-        await result.sendApprovalRequest('hello', '@user.bsky.social', 'at://uri', 'cid123');
+        await result.sendApprovalRequest('hello', '@user.bsky.social', { parent: { uri: createAtUri('at://uri'), cid: createCid('cid123') } });
 
         expect(send).toHaveBeenCalledTimes(2);
         expect(sleep).toHaveBeenCalledTimes(1);
@@ -154,7 +154,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
         (options.bskyClient.getPost as ReturnType<typeof mock>).mockResolvedValue({ text: 'Parent preview' });
         const result = await setupBsky(options);
 
-        await result.sendApprovalRequest('reply text', '@user.bsky.social', 'at://parent', 'cid');
+        await result.sendApprovalRequest('reply text', '@user.bsky.social', { parent: { uri: createAtUri('at://parent'), cid: createCid('cid') } });
 
         const [payload] = send.mock.calls[0] as unknown as [{ embeds: { toJSON(): { fields?: { name: string, value: string }[] } }[], components: unknown[] }];
         expect(payload.embeds).toHaveLength(1);
@@ -168,7 +168,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
         (options.bskyClient.getPost as ReturnType<typeof mock>).mockResolvedValue({ text: 'Parent preview ✓' });
         const result = await setupBsky(options);
 
-        await result.sendApprovalRequest('reply text', '@user.bsky.social', 'at://parent', 'cid');
+        await result.sendApprovalRequest('reply text', '@user.bsky.social', { parent: { uri: createAtUri('at://parent'), cid: createCid('cid') } });
         await result.sendDMApprovalRequest('dm text', ['@first.bsky.social', '@second.bsky.social'], 'convo');
 
         expect(sendToChannel).toHaveBeenCalledTimes(2);

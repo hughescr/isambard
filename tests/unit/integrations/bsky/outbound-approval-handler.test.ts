@@ -1097,8 +1097,8 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(recorded.uuid).toBe(TEST_UUID);
             expect(recorded.text).toBe(POST_TEXT);
             expect(recorded.targetHandle).toBe(TEST_HANDLE);
-            expect(recorded.parentUri).toBe(PARENT_URI);
-            expect(recorded.parentCid).toBe(PARENT_CID);
+            expect(recorded.reply.parent.uri).toBe(PARENT_URI);
+            expect(recorded.reply.parent.cid).toBe(PARENT_CID);
             expect(recorded.reason).toBe('Too aggressive');
             expect(recorded.rejectedAt).toBeDefined();
         });
@@ -1351,8 +1351,8 @@ describe('BskyOutboundApprovalHandler', () => {
             await handler.handleModalSubmit(interaction);
 
             const recorded = (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mock.calls[0][0];
-            expect(recorded.rootUri).toBe(ROOT_URI);
-            expect(recorded.rootCid).toBe(ROOT_CID);
+            expect(recorded.reply.root.uri).toBe(ROOT_URI);
+            expect(recorded.reply.root.cid).toBe(ROOT_CID);
         });
 
         test('should show error embed with original buttons when DynamoDB persist fails — NOT update to Rejected', async () => {
@@ -1487,11 +1487,14 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(mockLogger.error).toHaveBeenCalledTimes(2);
         });
 
-        test('should persist rejection with defaults when embed has no fields', async () => {
+        test('should throw InvariantViolationError (caught by base handler) and NOT record a rejection when Parent URI/CID are missing from a rejection embed', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
 
-            // Create a modal interaction with an embed that has description but no fields
+            // Create a modal interaction with an embed that has description but no fields —
+            // extractRejectionItem can no longer default the strong ref to empty strings
+            // (createAtUri('')/createCid('') would themselves throw), so it now throws
+            // InvariantViolationError directly, mirroring handleApprove's identical guard.
             const deferUpdate = mock(async () => ({}));
             const editReply   = mock(async () => ({}));
             const interaction = {
@@ -1501,6 +1504,7 @@ describe('BskyOutboundApprovalHandler', () => {
                         description: 'Some draft text',
                         // No fields property
                     }],
+                    components: [{ type: 1, components: [] }],
                 },
                 fields: {
                     getTextInputValue: mock((_fieldId: string) => 'Bad tone'),
@@ -1511,18 +1515,14 @@ describe('BskyOutboundApprovalHandler', () => {
 
             await handler.handleModalSubmit(interaction);
 
-            expect(deps.rejectionBackend.recordRejection).toHaveBeenCalledTimes(1);
-            const recorded = (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mock.calls[0][0];
-            expect(recorded.type).toBe('reply');
-            expect(recorded.text).toBe('Some draft text');
-            // All field-extracted values should be empty defaults since no fields exist
-            expect(recorded.targetHandle).toBe('');
-            expect(recorded.parentUri).toBe('');
-            expect(recorded.parentCid).toBe('');
-            expect(recorded.rootUri).toBeUndefined();
-            expect(recorded.rootCid).toBeUndefined();
-            expect(recorded.reason).toBe('Bad tone');
-            expect(recorded.uuid).toBe(TEST_UUID);
+            expect(deps.rejectionBackend.recordRejection).not.toHaveBeenCalled();
+            expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to persist Bluesky rejection to DynamoDB — Discord message left active for retry',
+            }));
+            expect(editReply).toHaveBeenCalledTimes(1);
+            const replyArg = (editReply.mock.calls[0] as unknown as [unknown])[0] as { embeds: { data: { title: string } }[] };
+            const lastEmbed = replyArg.embeds[replyArg.embeds.length - 1];
+            expect(lastEmbed.data.title).toContain('Rejection failed');
         });
 
         test('persists empty text when the rejection embed has a null description', async () => {

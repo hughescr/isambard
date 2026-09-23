@@ -651,10 +651,10 @@ class ContextBuilderImpl implements ContextBuilder {
                         `- **Reply rejected** (${item.rejectedAt}) uuid: ${item.uuid}`,
                         `  Reason: ${item.reason}`,
                         `  To: @${item.targetHandle}`,
-                        `  parentUri: ${item.parentUri}`,
-                        `  parentCid: ${item.parentCid}`,
-                        item.rootUri ? `  rootUri: ${item.rootUri}` : undefined,
-                        item.rootCid ? `  rootCid: ${item.rootCid}` : undefined,
+                        `  parentUri: ${item.reply.parent.uri}`,
+                        `  parentCid: ${item.reply.parent.cid}`,
+                        item.reply.root ? `  rootUri: ${item.reply.root.uri}` : undefined,
+                        item.reply.root ? `  rootCid: ${item.reply.root.cid}` : undefined,
                         `  Text: ${item.text}`,
                     ].filter(Boolean).join('\n');
                 }

@@ -3,7 +3,7 @@ import { logger } from '@hughescr/logger';
 import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError, InvariantViolationError } from '@/errors';
 import { createBskyClassifier } from '@/integrations/bsky/classifier';
 import { type BskyEmbeddedRecord, type BskyPostEmbed, type BskyFacet, type BskyFacetFeature } from '@/integrations/bsky/embeds';
-import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState, type BskyConversationMember, type BskyDirectMessage, type BskyConversation } from '@/integrations/bsky/types';
+import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState, type BskyConversationMember, type BskyDirectMessage, type BskyConversation, type BskyStrongRef, type BskyReplyInput, createAtUri, createCid } from '@/integrations/bsky/types';
 import type { ServiceHealthRegistry } from '@/services';
 import { retryAsync, type RetryDeps, type RetryPolicy } from '@/utils';
 
@@ -342,11 +342,11 @@ export class BlueskyClient {
     }
 
     /**
-     * Like a post by AT URI and CID.
+     * Like a post identified by a strong ref (AT URI + CID).
      */
-    async likePost(uri: string, cid: string): Promise<void> {
+    async likePost(ref: BskyStrongRef): Promise<void> {
         try {
-            await this.agent.like(uri, cid);
+            await this.agent.like(ref.uri, ref.cid);
         } catch (err: unknown) {
             throw this.mapError(err, 'Failed to like post');
         }
@@ -400,11 +400,11 @@ export class BlueskyClient {
      * Send a new post to Bluesky.
      * Detects RichText facets (mentions, links, tags) and validates grapheme length.
      */
-    async sendPost(text: string): Promise<{ uri: string, cid: string }> {
+    async sendPost(text: string): Promise<BskyStrongRef> {
         try {
             const rt       = await this.buildValidatedRichText(text);
             const response = await this.agent.post({ text: rt.text, facets: rt.facets });
-            return { uri: response.uri, cid: response.cid };
+            return { uri: createAtUri(response.uri), cid: createCid(response.cid) };
         } catch (err: unknown) {
             if(err instanceof BskyValidationError) {
                 throw err;
@@ -415,29 +415,22 @@ export class BlueskyClient {
 
     /**
      * Reply to an existing Bluesky post.
-     * rootUri/rootCid default to parentUri/parentCid for top-level replies.
+     * An omitted `reply.root` defaults to `reply.parent` for top-level replies.
      * Detects RichText facets and validates grapheme length.
      */
-    async replyToPost(
-        text:        string,
-        parentUri:   string,
-        parentCid:   string,
-        rootUri?:    string,
-        rootCid?:    string
-    ): Promise<{ uri: string, cid: string }> {
+    async replyToPost(text: string, reply: BskyReplyInput): Promise<BskyStrongRef> {
         try {
-            const rt            = await this.buildValidatedRichText(text);
-            const actualRootUri = rootUri ?? parentUri;
-            const actualRootCid = rootCid ?? parentCid;
-            const response      = await this.agent.post({
+            const rt       = await this.buildValidatedRichText(text);
+            const root     = reply.root ?? reply.parent;
+            const response = await this.agent.post({
                 text:   rt.text,
                 facets: rt.facets,
                 reply:  {
-                    root:   { uri: actualRootUri, cid: actualRootCid },
-                    parent: { uri: parentUri,     cid: parentCid },
+                    root:   { uri: root.uri,          cid: root.cid },
+                    parent: { uri: reply.parent.uri,  cid: reply.parent.cid },
                 },
             });
-            return { uri: response.uri, cid: response.cid };
+            return { uri: createAtUri(response.uri), cid: createCid(response.cid) };
         } catch (err: unknown) {
             if(err instanceof BskyValidationError) {
                 throw err;
@@ -635,7 +628,7 @@ export class BlueskyClient {
             // Stryker disable next-line llm: the runtime PostView validator requires indexedAt, so this fallback is inert.
             indexedAt:   post.indexedAt,
             ...(post.viewer ? { viewer: this.normalizeViewer(post.viewer) } : {}),
-            ...(record.reply ? { replyRef: { root: { uri: record.reply.root.uri, cid: record.reply.root.cid }, parent: { uri: record.reply.parent.uri, cid: record.reply.parent.cid } } } : {}),
+            ...(record.reply ? { replyRef: { root: { uri: createAtUri(record.reply.root.uri), cid: createCid(record.reply.root.cid) }, parent: { uri: createAtUri(record.reply.parent.uri), cid: createCid(record.reply.parent.cid) } } } : {}),
             ...(normalizedEmbed ? { embed: normalizedEmbed } : {}),
             ...(normalizedFacets && normalizedFacets.length > 0 ? { facets: normalizedFacets } : {}),
         };
