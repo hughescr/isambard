@@ -4,7 +4,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { InputQueue } from '../../../../src/agent/session/input-queue';
+import { InputQueue } from '../../../../src/agent/session/input-queue';
 import { createInterruptFlag } from '../../../../src/agent/session/interrupt-flag';
 import { openSession, sdkFrameToAgentStreamEvent } from '../../../../src/agent/session/session';
 import { fakeQueryFn } from '../../../helpers/fake-query';
@@ -20,9 +20,17 @@ function resultFrame(): SDKMessage {
     return { type: 'result', subtype: 'success' } as unknown as Extract<SDKMessage, { type: 'result' }>;
 }
 
-/** A minimal test-double InputQueue: nothing under test here actually drains it. */
+/** A minimal test-double InputQueue: nothing under test here actually drains it, and it never claims a result as an acknowledgement. */
 function stubQueue(): InputQueue {
-    return { close: () => undefined } as unknown as InputQueue;
+    return { close: () => undefined, claimAcknowledgement: () => false } as unknown as InputQueue;
+}
+
+/** A real queue holding one pushed `shouldQuery:false` message, and the bare result that acknowledges it. */
+function queueWithPendingAck(): { queue: InputQueue, ack: SDKMessage } {
+    const queue = new InputQueue();
+    const uuid = queue.push({ type: 'user', message: { role: 'user', content: 'quiet' }, parent_tool_use_id: null, shouldQuery: false });
+    const ack = { type: 'result', subtype: 'success', user_message_uuid: uuid, user_message_uuids: [uuid] } as unknown as Extract<SDKMessage, { type: 'result' }>;
+    return { queue, ack };
 }
 
 /** Flushes enough microtask ticks for the reader loop's promise chain (pull -> yield -> for-await -> handleFrame) to settle. */
@@ -461,5 +469,88 @@ describe('openSession', () => {
         await flush();
 
         expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ role: 'perch' }));
+    });
+
+    describe('shouldQuery:false acknowledgements', () => {
+        test('a result the queue claims as an acknowledgement goes to onAcknowledgement, never to onFrame; init and other results still reach onFrame', async () => {
+            const { queryFn, instances } = fakeQueryFn({ drainPrompts: () => false });
+            const { queue, ack } = queueWithPendingAck();
+            const received: SDKMessage[] = [];
+            const acknowledged: SDKMessage[] = [];
+            openSession({
+                role: 'perch', queryFn, options: OPTIONS, queue, interrupting: createInterruptFlag(), onFrame: frame => received.push(frame), onAcknowledgement: frame => acknowledged.push(frame), onClosed: () => undefined,
+            });
+            const init = initFrame('sess-ack');
+            const other = resultFrame();
+
+            instances[0].emit(init);
+            instances[0].emit(ack);
+            await flush();
+            instances[0].emit(other);
+            await flush();
+
+            expect(received).toEqual([init, other]);
+            expect(received[1]).toBe(other);
+            expect(acknowledged).toEqual([ack]);
+            expect(acknowledged[0]).toBe(ack);
+            const [uuid] = (ack as { user_message_uuids: string[] }).user_message_uuids;
+            expect(mockLogger.debug).toHaveBeenCalledWith({ role: 'perch', uuids: [uuid], msg: 'shouldQuery:false message acknowledged; not a turn result' });
+        });
+
+        test('an acknowledgement with no onAcknowledgement observer is dropped quietly', async () => {
+            const { queryFn, instances } = fakeQueryFn({ drainPrompts: () => false });
+            const { queue, ack } = queueWithPendingAck();
+            const received: SDKMessage[] = [];
+            const session = openSession({
+                role: 'conversation', queryFn, options: OPTIONS, queue, interrupting: createInterruptFlag(), onFrame: frame => received.push(frame), onClosed: () => undefined,
+            });
+
+            instances[0].emit(initFrame('sess-ack'));
+            instances[0].emit(ack);
+            await flush();
+
+            expect(received).toHaveLength(1);
+            expect(session.state()).toBe('open');
+            expect(mockLogger.error).not.toHaveBeenCalled();
+        });
+
+        test('a throwing onAcknowledgement observer is caught so it does not fail the session', async () => {
+            const { queryFn, instances } = fakeQueryFn({ drainPrompts: () => false });
+            const { queue, ack } = queueWithPendingAck();
+            const boom = new Error('ack observer bug');
+            const session = openSession({
+                role: 'conversation', queryFn, options: OPTIONS, queue, interrupting: createInterruptFlag(), onFrame: () => undefined, onAcknowledgement: () => { throw boom; }, onClosed: () => undefined,
+            });
+
+            instances[0].emit(initFrame('sess-ack'));
+            instances[0].emit(ack);
+            await flush();
+
+            expect(session.state()).toBe('open');
+            expect(mockLogger.error).toHaveBeenCalledWith({ role: 'conversation', error: boom, msg: 'Frame observer threw' });
+        });
+
+        test('an acknowledgement arriving after interrupt() resolved does not clear the interrupt latch; the next real result does', async () => {
+            const { queryFn, instances } = fakeQueryFn({ drainPrompts: () => false });
+            const { queue, ack } = queueWithPendingAck();
+            const interrupting = createInterruptFlag();
+            const session = openSession({
+                role: 'conversation', queryFn, options: OPTIONS, queue, interrupting, onFrame: () => undefined, onAcknowledgement: () => undefined, onClosed: () => undefined,
+            });
+            const fake = instances[0];
+
+            const interruptPromise = session.interrupt();
+            fake.resolveInterrupt();
+            await interruptPromise;
+
+            fake.emit(ack);
+            await flush();
+            expect(session.isInterrupting()).toBe(true);
+            expect(interrupting.value).toBe(true);
+
+            fake.emit(resultFrame());
+            await flush();
+            expect(session.isInterrupting()).toBe(false);
+        });
     });
 });

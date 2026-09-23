@@ -1,12 +1,12 @@
 {
-    "sdkVersion": "0.3.258",
+    "sdkVersion": "0.3.280",
     "label": "bare_result_should_query_false",
-    "source": "hand-authored: the `q1,q2,q3 --record` run that produced the sibling frame fixtures never exercised q4 (the shouldQuery:false probe in scripts/spike-long-lived-session.ts), so no bare result frame was ever observed to record. Built to match the shape of the sibling result_success.json/result_interrupted.json fixtures (same field set, real API responses omit usage.fallback_credit despite sdk.d.ts's NonNullableUsage declaring it required), zeroed out for a send that triggered no model call. Re-record (by adding q4 to a --record run) or hand-update this file on every SDK bump.",
+    "source": "hand-authored from real-CLI observations (SDK 0.3.280, haiku, 2026-09-22; logs run-K.log and siblings from the shouldQuery:false investigation): every shouldQuery:false message is answered by exactly one bare result like this, whether it is the boot handshake or a mid-session append, idle or busy. Field set as observed on the wire, minus fast_mode_disabled_reason, fast_mode_state and subagent_stats, whose values the probe did not log; no terminal_reason and no api_error_status. user_message_uuid/user_message_uuids echo the client uuid the host stamped on the message (placeholder here; tests override it with the pushed message's uuid). total_cost_usd is the session's running cumulative (0 on a fresh session, the restored total on a resume). Re-record or hand-update this file on every SDK bump.",
     "frames": [
         {
             "type": "result",
             "subtype": "success",
-            "duration_ms": 0,
+            "duration_ms": 19,
             "duration_api_ms": 0,
             "is_error": false,
             "num_turns": 0,
@@ -32,11 +32,12 @@
             },
             "modelUsage": {},
             "permission_denials": [],
-            "terminal_reason": "completed",
-            "api_error_status": null,
             "uuid": "<uuid>",
             "session_id": "<session_id>",
-            "queued_turn_count": 0
+            "queued_turn_count": 0,
+            "result_index": 0,
+            "user_message_uuid": "<user_message_uuid>",
+            "user_message_uuids": ["<user_message_uuid>"]
         }
     ]
 }

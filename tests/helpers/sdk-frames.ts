@@ -30,6 +30,7 @@ import type {
     SDKTaskNotificationMessage,
     SDKTaskProgressMessage,
     SDKTaskStartedMessage,
+    SDKUserMessage,
     SessionStartHookInput
 } from '@anthropic-ai/claude-agent-sdk';
 import assistantTextFixture from '../fixtures/sdk-frames/frames/assistant_text.json';
@@ -110,9 +111,17 @@ export function resultInterrupted(overrides: Partial<SDKResultError> = {}): SDKR
     return { ...resultInterruptedFrame, ...overrides };
 }
 
-/** Hand-authored: a zero-turn success `result` frame, as produced by a `shouldQuery:false` send. */
+/** Hand-authored from real-CLI observations: the zero-turn success `result` frame SDK 0.3.280 answers every `shouldQuery:false` message with, echoing a placeholder client uuid unless overridden. */
 export function bareResult(overrides: Partial<SDKResultSuccess> = {}): SDKResultSuccess {
     return { ...bareResultFrame, ...overrides };
+}
+
+/** The echo fields a `result` frame carries for the host-stamped user `message` that caused it (SDK 0.3.280). */
+export function echoOf(message: SDKUserMessage): Pick<SDKResultSuccess, 'user_message_uuid' | 'user_message_uuids'> {
+    if(message.uuid === undefined) {
+        throw new Error('echoOf: the message carries no wire uuid (was it pushed through an InputQueue?)');
+    }
+    return { user_message_uuid: message.uuid, user_message_uuids: [message.uuid] };
 }
 
 /** The recorded `system`/`task_started` frame. */

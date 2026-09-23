@@ -33,9 +33,10 @@
  * never preempt a live Discord turn (`conductor.ts`'s human-only fast-path at
  * enqueue/routeIncoming); `false` appends via `conductor.appendWithoutTurn(envelope)`, the
  * accumulate-only seam — `conductor.submit()` unconditionally opens a turn regardless of
- * `shouldQuery`, and the SDK contract for `shouldQuery:false` is "appended to the transcript
- * without triggering an assistant turn" (no result frame), so routing an accumulate envelope
- * through `submit()` would permanently wedge the one-turn-in-flight invariant. Both routes are
+ * `shouldQuery`, and the SDK appends a `shouldQuery:false` message to the transcript without an
+ * assistant turn, answering it only with a bare zero-turn `result` frame (which the conductor's
+ * input queue claims by uuid), so routing an accumulate envelope through `submit()` would open a
+ * turn that bare result settles with an empty reply. Both routes are
  * fire-and-forget from the caller's point of view once readiness is confirmed: `notify()` itself
  * never throws and never returns a rejected promise — a submit/append failure past that point
  * (rather than the conductor simply not being open yet) is logged via the injected `logger` and

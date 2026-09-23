@@ -12,9 +12,10 @@ import { fakeQueryFn, type FakeQuery, type FakeQueryFnOptions } from '../../../h
 import { FakeResumeStore } from '../../../helpers/fake-resume-store';
 import * as frames from '../../../helpers/sdk-frames';
 import { createConductor, type BootBundleRequest, type Conductor, type CreateConductorParams } from '@/agent/session/conductor';
+import { createCostCeiling } from '@/agent/session/cost-ceiling';
 import { createLedgerStore, type LedgerStore } from '@/agent/session/ledger';
 import { createTaskLaunchRegistry } from '@/agent/session/task-launch-registry';
-import type { Envelope } from '@/agent/session/types';
+import type { Envelope, SessionQueryFn } from '@/agent/session/types';
 import { DEFAULT_RETRY_CONFIG } from '@/config/retry-config';
 import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
 import { ResponseUnavailableError } from '@/errors';
@@ -169,6 +170,64 @@ async function openWith(h: Harness, sessionId = 'sess-1'): Promise<{ sessionId: 
 /** The prompts a fake instance consumed AFTER its opening handshake (always its first consumed prompt — see the open() describe block) — i.e. the ones real turns/appends pushed. */
 function turnPrompts(instance: FakeQuery): SDKUserMessage[] {
     return instance.consumedPrompts.slice(1);
+}
+
+/**
+ * A {@link SessionQueryFn} whose query yields `system/init` and then, one microtask later, the
+ * bare result acknowledging the handshake (echoing its wire uuid, carrying `totalCostUsd`) — the
+ * tightest ordering the real CLI can produce when both lines land in one stdout read, and one
+ * {@link FakeQuery}'s async-generator iterator is too slow to reproduce. `ackRead()` reports
+ * whether the session has read the acknowledgement's echo yet (the queue's claim reads it first).
+ * Only the first query opened behaves this way; later ones go to `later` when given.
+ */
+function initThenAckQueryFn(sessionId: string, totalCostUsd: number, later?: SessionQueryFn): { queryFn: SessionQueryFn, ackRead: () => boolean } {
+    let read = false;
+    let calls = 0;
+    const queryFn: SessionQueryFn = (params) => {
+        calls += 1;
+        if(calls > 1 && later !== undefined) {
+            return later(params);
+        }
+        const inbox = params.prompt[Symbol.asyncIterator]();
+        let step = 0;
+        let handshake: SDKUserMessage | undefined;
+        const iterator: AsyncIterator<SDKMessage> = {
+            next: () => {
+                step += 1;
+                if(step === 1) {
+                    return inbox.next().then((first) => {
+                        handshake = first.value as SDKUserMessage;
+                        return { done: false, value: frames.init(sessionId) };
+                    });
+                }
+                if(step === 2 && handshake !== undefined) {
+                    const echo = frames.echoOf(handshake);
+                    const ack = frames.bareResult({ total_cost_usd: totalCostUsd, user_message_uuid: echo.user_message_uuid });
+                    Object.defineProperty(ack, 'user_message_uuids', {
+                        enumerable: true,
+                        get:        () => {
+                            read = true;
+                            return echo.user_message_uuids;
+                        },
+                    });
+                    return Promise.resolve({ done: false, value: ack });
+                }
+                // Parks for good: this query simply stays open with nothing more to say.
+                return new Promise<IteratorResult<SDKMessage>>(() => {
+                    // never settles
+                });
+            },
+        };
+        return {
+            interrupt:              () => Promise.resolve(undefined),
+            close:                  () => undefined,
+            stopTask:               () => Promise.resolve(),
+            streamInput:            () => Promise.resolve(),
+            getContextUsage:        () => Promise.resolve(frames.contextUsage({ percentage: 0 })),
+            [Symbol.asyncIterator]: () => iterator,
+        };
+    };
+    return { queryFn, ackRead: () => read };
 }
 
 describe('createConductor', () => {
@@ -361,30 +420,29 @@ describe('createConductor', () => {
             await expect(openPromise).resolves.toEqual({ sessionId: 'sess-new', resumed: false });
         });
 
-        it('the handshake result arriving after open() resolved and a turn was submitted: characterises the pre-existing opening-result boundary (challenge to #98)', async () => {
-            // The real SDK answers the shouldQuery:false handshake with init and then a bare
-            // result frame. Normally both land before open()'s own finishOpen (a resume-store
-            // write) returns, so no turn can be current yet. If the bare result were ever
-            // delayed past a submitted turn, the conductor treats it as that turn's result: the
-            // turn settles with the handshake's empty response and its real reply arrives as a
-            // spontaneous turn. This test pins that behaviour so the real-SDK #98 check can decide
-            // whether the ordering is reachable before anything changes it.
+        it('the handshake acknowledgement arriving after a submitted turn\'s prompt was read never settles that turn (real SDK 0.3.280 ordering on a submit right after open)', async () => {
+            // Observed on the real CLI: when the host submits in the same tick as init, the CLI
+            // reads that user message BEFORE it writes the handshake's bare result. That bare
+            // result used to settle the new turn with "" and orphan its real reply.
             const h = build({ buildBootBundle: jest.fn(() => 'welcome back') });
             await openWith(h);
 
             const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
             await flush();
-            expect(turnPrompts(h.instances[0])).toHaveLength(1);
+            const [handshake, turn] = h.instances[0].consumedPrompts;
+            expect(turn.shouldQuery).toBe(true);
 
-            h.instances[0].emit(frames.bareResult());
+            h.instances[0].emitAck(handshake);
             await flush();
-            const settled = await submitted;
-            expect(settled.response).toBe('');
-            expect(settled.isError).toBe(false);
+            expect(h.conductor.status().turn?.kind).toBe('discord');
+            expect(h.ledgerStore.get().turn?.kind).toBe('discord');
+            expect(h.journal.byKind('turn_completed')).toEqual([]);
 
             h.instances[0].emit(frames.assistantText('the real reply'));
-            await flush();
-            expect(h.conductor.status().turn?.kind).toBe('notification');
+            h.instances[0].emit(frames.resultSuccess({ result: 'the real reply', ...frames.echoOf(turn) }));
+
+            await expect(submitted).resolves.toMatchObject({ response: 'the real reply', isError: false });
+            expect(h.journal.byKind('turn_completed')).toEqual([expect.objectContaining({ responseText: 'the real reply' })]);
         });
 
         it('the handshake result arriving before the first submitted turn leaves that turn to be settled by its own result', async () => {
@@ -505,6 +563,450 @@ describe('createConductor', () => {
             expect(DEFAULT_CONFIG.humanWaitCeilingMs).toBe(30_000);
             expect(DEFAULT_CONFIG.shutdownTurnWaitMs).toBe(60_000);
             expect(DEFAULT_CONFIG.shutdownDeadlineMs).toBe(120_000);
+        });
+    });
+
+    describe('shouldQuery:false acknowledgements (SDK 0.3.280 answers every no-query message with its own bare result)', () => {
+        it('an append made just before a submit, acknowledged after the turn prompt was read, does not settle the turn', async () => {
+            const h = build();
+            await openWith(h);
+
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'quiet note' }))).toBe(true);
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const [handshake, append, turn] = h.instances[0].consumedPrompts;
+            expect([handshake.shouldQuery, append.shouldQuery, turn.shouldQuery]).toEqual([false, false, true]);
+
+            h.instances[0].emitAck(handshake);
+            h.instances[0].emitAck(append);
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('discord');
+            expect(h.journal.byKind('turn_completed')).toEqual([]);
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'answer', ...frames.echoOf(turn) }));
+            await expect(submitted).resolves.toMatchObject({ response: 'answer', isError: false });
+        });
+
+        it('an append made mid-turn, acknowledged after the next queued turn has begun, settles neither turn early and leaves the ledger turn open', async () => {
+            const h = build();
+            await openWith(h);
+            const first = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const second = h.conductor.submit(catchupEnvelope({ text: 'second turn' }), { priority: 'other' });
+            await flush();
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'mid-turn note' }))).toBe(true);
+            await flush();
+            const [, firstTurn, append] = h.instances[0].consumedPrompts;
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'first answer', total_cost_usd: 0.05, ...frames.echoOf(firstTurn) }));
+            await expect(first).resolves.toMatchObject({ response: 'first answer' });
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('catchup');
+            const secondTurn = h.instances[0].consumedPrompts[3];
+            expect(JSON.stringify(secondTurn.message)).toContain('second turn');
+
+            h.instances[0].emitAck(append, { total_cost_usd: 0.05 });
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('catchup');
+            expect(h.ledgerStore.get().turn?.kind).toBe('catchup');
+            expect(h.ledgerStore.get().cost).toEqual({ cumulativeUsd: 0.05, lastTurnUsd: 0.05 });
+            expect(h.journal.byKind('turn_completed')).toHaveLength(1);
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'second answer', total_cost_usd: 0.08, ...frames.echoOf(secondTurn) }));
+            await expect(second).resolves.toMatchObject({ response: 'second answer' });
+        });
+
+        it('a requested reopen that plays a held envelope ignores the replacement handshake\'s and the buffered append\'s acknowledgements', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const held = h.conductor.submit(catchupEnvelope({ text: 'held behind the reopen' }), { priority: 'other' });
+            await flush();
+            h.conductor.requestReopen('an identity change');
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+            expect(h.instances).toHaveLength(2);
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'buffered during reopen' }))).toBe(true);
+
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            await flush();
+            const [handshake, append, heldTurn] = h.instances[1].consumedPrompts;
+            expect([handshake.shouldQuery, append.shouldQuery, heldTurn.shouldQuery]).toEqual([false, false, true]);
+            expect(JSON.stringify(heldTurn.message)).toContain('held behind the reopen');
+
+            h.instances[1].emitAck(handshake);
+            h.instances[1].emitAck(append);
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('catchup');
+            expect(h.journal.byKind('turn_completed')).toHaveLength(1);
+
+            h.instances[1].emit(frames.resultSuccess({ result: 'held answer', ...frames.echoOf(heldTurn) }));
+            await expect(held).resolves.toMatchObject({ response: 'held answer' });
+        });
+
+        it('a crash reopen replays an unread append but not the crashed turn\'s own unread prompt, which the re-queued turn pushes exactly once', async () => {
+            const h = build({}, { drainPrompts: index => index > 0 });
+            await openWith(h, 'sess-1');
+            const crashed = h.conductor.submit(discordEnvelope({ text: 'the crashed turn' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'unread append' }))).toBe(true);
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            await flush();
+
+            // Instance 0 never drained, so its own handshake is carried over too (unreachable on
+            // the real SDK, which reads the handshake before it emits init); it is a quiet message
+            // and is replayed like any other.
+            const prompts = h.instances[1].consumedPrompts;
+            const texts = prompts.map(prompt => JSON.stringify(prompt.message));
+            expect(texts.filter(text => text.includes('the crashed turn'))).toHaveLength(1);
+            expect(texts.filter(text => text.includes('unread append'))).toHaveLength(1);
+            const rerun = prompts.at(-1);
+            expect(rerun?.shouldQuery).toBe(true);
+            expect(JSON.stringify(rerun?.message)).toContain('the crashed turn');
+            expect(new Set(prompts.map(prompt => prompt.uuid)).size).toBe(prompts.length);
+
+            h.instances[1].emit(frames.resultSuccess({ result: 'rerun', ...frames.echoOf(prompts[prompts.length - 1]) }));
+            await expect(crashed).resolves.toMatchObject({ response: 'rerun' });
+        });
+
+        it('a stray acknowledgement during /compact neither settles the compact turn nor releases the guard', async () => {
+            const h = build();
+            await openWith(h);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            const first = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.conductor.appendWithoutTurn(notificationEnvelope());
+            await flush();
+            const [, firstTurn, append] = h.instances[0].consumedPrompts;
+            h.instances[0].emit(frames.resultSuccess({ ...frames.echoOf(firstTurn) }));
+            await first;
+            await flush();
+            expect(h.ledgerStore.get().turn?.kind).toBe('compact');
+            const compactTurn = h.instances[0].consumedPrompts[3];
+
+            h.instances[0].emitAck(append);
+            await flush();
+            expect(h.ledgerStore.get().turn?.kind).toBe('compact');
+            expect(h.ledgerStore.get().compaction).toBe('compacting');
+            expect(h.journal.byKind('compaction_failed')).toEqual([]);
+
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 10 }));
+            h.instances[0].emit(frames.compactBoundary());
+            await flush();
+            h.instances[0].emit(frames.bareResult({ duration_ms: 13_000, ...frames.echoOf(compactTurn) }));
+            await flush();
+            expect(h.journal.byKind('compaction_completed')).toHaveLength(1);
+            expect(h.conductor.status().turn).toBeNull();
+        });
+
+        it('an acknowledgement arriving during an adopted wake turn does not settle it; the wake\'s own un-echoed result still does', async () => {
+            const h = build();
+            await openWith(h);
+            h.conductor.appendWithoutTurn(notificationEnvelope());
+            await flush();
+            const append = h.instances[0].consumedPrompts[1];
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'background work finished' });
+            h.instances[0].emit(frames.assistantText('working on the wake'));
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('task');
+
+            h.instances[0].emitAck(append);
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('task');
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'wake done' }));
+            await flush();
+            expect(h.conductor.status().turn).toBeNull();
+            expect(h.journal.byKind('turn_completed')).toEqual([expect.objectContaining({ kind: 'task', responseText: 'wake done' })]);
+        });
+
+        it('ignores, with a warning, a result that answers a different message than the current turn; the turn\'s own result settles it', async () => {
+            const h = build();
+            await openWith(h);
+            const envelope = discordEnvelope();
+            const submitted = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const turn = h.instances[0].consumedPrompts[1];
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'not yours', user_message_uuid: 'someone-else', user_message_uuids: ['someone-else'] }));
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('discord');
+            expect(h.ledgerStore.get().turn?.kind).toBe('discord');
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                { echoed: ['someone-else'], turnId: envelope.id },
+                'Ignoring a result frame that answers a different message than the current turn'
+            );
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'yours', user_message_uuid: turn.uuid, user_message_uuids: ['earlier-batched', String(turn.uuid)] }));
+            await expect(submitted).resolves.toMatchObject({ response: 'yours' });
+        });
+
+        it('a result arriving while no turn is current still reaches the ledger', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 0.25, user_message_uuid: 'unclaimed', user_message_uuids: ['unclaimed'] }));
+            await flush();
+
+            expect(h.ledgerStore.get().cost.cumulativeUsd).toBeCloseTo(0.25, 10);
+            expect(h.logger.warn).not.toHaveBeenCalledWith(expect.anything(), 'Ignoring a result frame that answers a different message than the current turn');
+        });
+
+        it('an adopted wake turn is settled by a result naming a host message (the CLI may fold one into a turn it started)', async () => {
+            const h = build();
+            await openWith(h);
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'background work finished' });
+            h.instances[0].emit(frames.assistantText('working on the wake'));
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('task');
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'wake done', user_message_uuid: 'folded-host-message', user_message_uuids: ['folded-host-message'] }));
+            await flush();
+
+            expect(h.conductor.status().turn).toBeNull();
+        });
+
+        it('a result that echoes nothing still settles a host-pushed turn (older producers, delivery-failure results)', async () => {
+            const h = build();
+            await openWith(h);
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'legacy' }));
+
+            await expect(submitted).resolves.toMatchObject({ response: 'legacy' });
+            expect(h.logger.warn).not.toHaveBeenCalledWith(expect.anything(), 'Ignoring a result frame that answers a different message than the current turn');
+        });
+
+        it('a retry pushes the envelope again under a fresh wire uuid, since the CLI drops a uuid it has already seen', async () => {
+            const h = build();
+            await openWith(h);
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const [firstAttempt] = turnPrompts(h.instances[0]);
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'overloaded', api_error_status: 529, ...frames.echoOf(firstAttempt) }));
+            await flush();
+            h.clock.advance(FAST_RETRY_POLICY.baseDelayMs);
+            await flush();
+
+            const [, secondAttempt] = turnPrompts(h.instances[0]);
+            expect(secondAttempt.message).toEqual(firstAttempt.message);
+            expect(secondAttempt.uuid).toBeDefined();
+            expect(secondAttempt.uuid).not.toBe(firstAttempt.uuid);
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'second try', ...frames.echoOf(secondAttempt) }));
+            await expect(submitted).resolves.toMatchObject({ response: 'second try' });
+        });
+
+        it('an undeclared command_lifecycle frame (emitted for every uuid-stamped message) changes nothing', async () => {
+            const h = build();
+            await openWith(h);
+            const lifecycle = { type: 'command_lifecycle', command_uuid: 'cmd-1', state: 'queued', uuid: 'frame-1', session_id: 'sess-1' } as unknown as SDKMessage;
+            const idleLedger = h.ledgerStore.get();
+
+            h.instances[0].emit(lifecycle);
+            await flush();
+            expect(h.conductor.status().turn).toBeNull();
+            expect(h.ledgerStore.get()).toBe(idleLedger);
+
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(lifecycle);
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('discord');
+            h.instances[0].emit(frames.resultSuccess({ result: 'done' }));
+            await expect(submitted).resolves.toMatchObject({ response: 'done' });
+        });
+
+        describe('a failed resume\'s pre-init error result', () => {
+            function failedResumeResult(): SDKMessage {
+                return frames.resultInterrupted({
+                    subtype: 'error_during_execution', is_error: true, num_turns: 0, total_cost_usd: 0, errors: ['No conversation found with session ID: sess-old'],
+                });
+            }
+
+            it('is not treated as a turn result: no ledger dispatch, no compaction poll, and the fresh fallback still opens', async () => {
+                const h = build();
+                await h.resumeStore.save('conversation', 'sess-old');
+                h.ledgerStore.dispatch({ type: 'cost_baseline', cumulativeUsd: 0.4, at: new Date(0) });
+                const dispatch = jest.spyOn(h.ledgerStore, 'dispatch');
+
+                const openPromise = h.conductor.open();
+                await flush();
+                h.instances[0].emit(failedResumeResult());
+                await flush();
+
+                expect(dispatch).not.toHaveBeenCalled();
+                expect(h.ledgerStore.get().cost.cumulativeUsd).toBeCloseTo(0.4, 10);
+                expect(h.logger.warn).toHaveBeenCalledWith(
+                    { subtype: 'error_during_execution' },
+                    'Session emitted a result before system/init; not a turn result'
+                );
+                expect(h.logger.warn).not.toHaveBeenCalledWith(expect.anything(), 'Compaction guard: getContextUsage rejected');
+
+                h.instances[0].fail(new Error('Claude Code returned an error result: No conversation found with session ID: sess-old'));
+                await flush();
+                h.instances[1].emit(frames.init('sess-new'));
+                await expect(openPromise).resolves.toEqual({ sessionId: 'sess-new', resumed: false });
+            });
+
+            it('a pre-init success result is dropped too', async () => {
+                const h = build();
+                const openPromise = h.conductor.open();
+                await flush();
+
+                h.instances[0].emit(frames.resultSuccess({ result: 'impossible' }));
+                await flush();
+                expect(h.logger.warn).toHaveBeenCalledWith(
+                    { subtype: 'success' },
+                    'Session emitted a result before system/init; not a turn result'
+                );
+
+                h.instances[0].emit(frames.init('sess-1'));
+                await expect(openPromise).resolves.toEqual({ sessionId: 'sess-1', resumed: false });
+            });
+        });
+
+        describe('the acknowledgement\'s running cost total', () => {
+            it('restores a resumed session\'s cost baseline, so the first turn is charged only its own delta', async () => {
+                const h = build();
+                await h.resumeStore.save('conversation', 'sess-old');
+                await openWith(h, 'sess-old');
+                expect(h.ledgerStore.get().cost.cumulativeUsd).toBe(0);
+
+                h.instances[0].emitAck(h.instances[0].consumedPrompts[0], { total_cost_usd: 0.030_103 });
+                await flush();
+                expect(h.ledgerStore.get().cost).toEqual({ cumulativeUsd: 0.030_103, lastTurnUsd: 0 });
+
+                const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                await flush();
+                h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 0.032_069_6, ...frames.echoOf(h.instances[0].consumedPrompts[1]) }));
+                await submitted;
+                expect(h.ledgerStore.get().cost.lastTurnUsd).toBeCloseTo(0.001_966_6, 10);
+            });
+
+            it('restores the baseline even when the acknowledgement lands after a turn has begun', async () => {
+                const h = build();
+                await h.resumeStore.save('conversation', 'sess-old');
+                await openWith(h, 'sess-old');
+                const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                await flush();
+                const [handshake, turn] = h.instances[0].consumedPrompts;
+
+                h.instances[0].emitAck(handshake, { total_cost_usd: 0.030_103 });
+                await flush();
+                expect(h.ledgerStore.get().turn?.kind).toBe('discord');
+                h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 0.032_069_6, ...frames.echoOf(turn) }));
+                await submitted;
+
+                expect(h.ledgerStore.get().cost.lastTurnUsd).toBeCloseTo(0.001_966_6, 10);
+            });
+
+            it('an acknowledgement that lands before open() has journaled session_opened is applied after it, not wiped by its reset', async () => {
+                const burst = initThenAckQueryFn('sess-old', 0.030_103);
+                const h = build({ queryFn: burst.queryFn });
+                await h.resumeStore.save('conversation', 'sess-old');
+                const events: string[] = [];
+                const acknowledgedBeforeSessionOpened: boolean[] = [];
+                h.ledgerStore.subscribe((_ledger, event) => {
+                    events.push(event.type);
+                    if(event.type === 'session_opened') {
+                        acknowledgedBeforeSessionOpened.push(burst.ackRead());
+                    }
+                });
+
+                await h.conductor.open();
+                await flush();
+
+                // The witness that this test exercises the ordering it names.
+                expect(acknowledgedBeforeSessionOpened).toEqual([true]);
+                expect(events.filter(type => type === 'session_opened' || type === 'cost_baseline')).toEqual(['session_opened', 'cost_baseline']);
+                expect(h.ledgerStore.get().cost.cumulativeUsd).toBeCloseTo(0.030_103, 10);
+            });
+
+            it('an acknowledgement from a discarded handle is ignored', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                const oldHandshake = h.instances[0].consumedPrompts[0];
+                h.conductor.requestReopen('an identity change');
+                await flush();
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+                h.instances[1].emitAck(h.instances[1].consumedPrompts[0], { total_cost_usd: 0.2 });
+                await flush();
+                expect(h.ledgerStore.get().cost.cumulativeUsd).toBeCloseTo(0.2, 10);
+
+                h.instances[0].emitAck(oldHandshake, { total_cost_usd: 9 });
+                await flush();
+                expect(h.ledgerStore.get().cost.cumulativeUsd).toBeCloseTo(0.2, 10);
+
+                // Not held for a later open either: the next replacement starts from its own reset.
+                h.conductor.requestReopen('another identity change');
+                await flush();
+                h.instances[2].emit(frames.init('sess-1'));
+                await flush();
+
+                expect(h.ledgerStore.get().cost.cumulativeUsd).toBe(0);
+            });
+
+            it('only the handshake\'s acknowledgement restores a baseline: a later append\'s is a live cost update the daily ceiling books', async () => {
+                const h = build();
+                const ceiling = createCostCeiling({ clock: h.clock, timezone: 'UTC', ceilingUsd: 1 });
+                h.ledgerStore.subscribe((ledger, event) => {
+                    ceiling.record(h.ledgerStore, ledger, event);
+                });
+                const costEvents: string[] = [];
+                h.ledgerStore.subscribe((_ledger, event) => {
+                    costEvents.push(event.type);
+                });
+                await h.resumeStore.save('conversation', 'sess-old');
+                await openWith(h, 'sess-old');
+                h.instances[0].emitAck(h.instances[0].consumedPrompts[0], { total_cost_usd: 0.1 });
+                await flush();
+
+                const first = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                await flush();
+                h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 0.5, ...frames.echoOf(h.instances[0].consumedPrompts[1]) }));
+                await first;
+                expect(h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'quiet note' }))).toBe(true);
+                await flush();
+                // Background subagent spend lands in the running total between turns.
+                h.instances[0].emitAck(h.instances[0].consumedPrompts[2], { total_cost_usd: 1.3 });
+                await flush();
+                expect(h.ledgerStore.get().cost).toEqual({ cumulativeUsd: 1.3, lastTurnUsd: 0.4 });
+
+                const second = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                await flush();
+                h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 1.4, ...frames.echoOf(h.instances[0].consumedPrompts[3]) }));
+                await second;
+
+                expect(costEvents.filter(type => type === 'cost_baseline' || type === 'cost_update')).toEqual(['cost_baseline', 'cost_update']);
+                expect(ceiling.snapshot().totalUsd).toBeCloseTo(1.3, 10);
+                expect(ceiling.isPaused()).toBe(true);
+            });
+
+            it('an early acknowledgement is applied once: a later reopen does not re-apply it over the replacement\'s reset', async () => {
+                const fake = fakeQueryFn();
+                const burst = initThenAckQueryFn('sess-old', 0.030_103, fake.queryFn);
+                const h = build({ queryFn: burst.queryFn });
+                await h.resumeStore.save('conversation', 'sess-old');
+                await h.conductor.open();
+                await flush();
+                expect(h.ledgerStore.get().cost.cumulativeUsd).toBeCloseTo(0.030_103, 10);
+
+                h.conductor.requestReopen('an identity change');
+                await flush();
+                fake.instances[0].emit(frames.init('sess-old'));
+                await flush();
+
+                expect(h.ledgerStore.get().cost.cumulativeUsd).toBe(0);
+            });
         });
     });
 
@@ -1485,18 +1987,20 @@ describe('createConductor', () => {
         it('submitCompact() rejects "Conductor is reopening its session" while a mid-life reopen is in flight, surfaced via the guard\'s submitCompact-rejected log', async () => {
             const h = build();
             await openWith(h, 'sess-1');
-            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            const pendingSave = deferred<undefined>();
+            jest.spyOn(h.resumeStore, 'save').mockReturnValue(pendingSave.promise);
 
             h.instances[0].fail(new Error('worker crashed')); // handleMidLifeClosed sets reopening = true
             await flush();
             expect(h.instances).toHaveLength(2);
 
-            // currentHandleRef/currentQueue still point at the crashed instances[0] (uncleared)
-            // until the reopen settles, so getContextUsage() still resolves via its scripted value
-            // above. instances[0]'s reader loop has already exited (it failed), so the 'result'
-            // frame that drives afterResult() -> guard.onTurnEnd() -> submit() -> submitCompact()
-            // must come from instances[1] instead — its own reader loop is alive and forwards every
-            // frame to the same global onFrame handler even before it has captured a session id.
+            // The replacement settles on init, but its finishOpen is still awaiting the resume-store
+            // save, so `reopening` stays true. A result frame from it now (a pre-init one would be
+            // dropped as a failed resume's) drives afterResult() -> guard.onTurnEnd() ->
+            // submitCompact() while the reopen is still in flight.
+            h.instances[1].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
             h.instances[1].emit(frames.resultSuccess());
             await flush();
 
@@ -1505,7 +2009,7 @@ describe('createConductor', () => {
                 expect.any(String)
             );
 
-            h.instances[1].emit(frames.init('sess-1'));
+            pendingSave.resolve(undefined);
             await flush();
         });
 

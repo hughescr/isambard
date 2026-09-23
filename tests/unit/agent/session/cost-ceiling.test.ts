@@ -145,6 +145,34 @@ describe('createCostCeiling — accumulation', () => {
         expect(ceiling.snapshot().totalUsd).toBeCloseTo(0.7);
     });
 
+    test('a cost_baseline re-baselines without booking: a resumed session\'s restored total is spend already counted', () => {
+        const clock = new FakeClock(T0);
+        const ceiling = createCostCeiling({ clock, timezone: 'UTC', ceilingUsd: 10 });
+        const store = { name: 'conversation' };
+        primeStore(ceiling, store, new Date(T0));
+
+        ceiling.record(store, ledgerWithCost(0.5), tickEvent(new Date(T0)));
+        ceiling.record(store, ledgerWithCost(0), tickEvent(new Date(T0))); // session_opened reset
+        ceiling.record(store, ledgerWithCost(0.5), { type: 'cost_baseline', cumulativeUsd: 0.5, at: new Date(T0) });
+        ceiling.record(store, ledgerWithCost(0.6), tickEvent(new Date(T0)));
+
+        expect(ceiling.snapshot().totalUsd).toBeCloseTo(0.6);
+    });
+
+    test('a cost_update books its delta: live spend reported between turns is not a restored baseline', () => {
+        const clock = new FakeClock(T0);
+        const ceiling = createCostCeiling({ clock, timezone: 'UTC', ceilingUsd: 1 });
+        const store = { name: 'conversation' };
+        primeStore(ceiling, store, new Date(T0));
+
+        ceiling.record(store, ledgerWithCost(0.4), tickEvent(new Date(T0)));
+        ceiling.record(store, ledgerWithCost(1.2), { type: 'cost_update', cumulativeUsd: 1.2, at: new Date(T0) });
+        ceiling.record(store, ledgerWithCost(1.3), tickEvent(new Date(T0)));
+
+        expect(ceiling.snapshot().totalUsd).toBeCloseTo(1.3);
+        expect(ceiling.isPaused()).toBe(true);
+    });
+
     test('ceilingUsd undefined never pauses regardless of spend', () => {
         const clock = new FakeClock(T0);
         const ceiling = createCostCeiling({ clock, timezone: 'UTC' });

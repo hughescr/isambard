@@ -10,13 +10,14 @@
  *
  * @module agent/session/session
  */
-import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKMessage, SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import { extractSessionId } from '../session-cleanup';
 import { createRoleLogger, createStreamEventLogger, type FieldLogger } from '../stream-event-logger';
 import type { AgentStreamEvent, AssistantEvent } from '../types';
 import type { InputQueue } from './input-queue';
 import type { InterruptFlag } from './interrupt-flag';
+import { echoedUserMessageUuids } from './result-echo';
 import type { ContextUsageSummary, SessionQueryFn, SessionRole } from './types';
 
 /** Lifecycle state of a {@link SessionHandle}. */
@@ -83,26 +84,38 @@ export function sdkFrameToAgentStreamEvent(frame: SDKMessage): AgentStreamEvent 
 /** Parameters for {@link openSession}. */
 export interface OpenSessionParams {
     /** Which of the two concurrent sessions this is. */
-    role:         SessionRole
+    role:               SessionRole
     /** Factory matching the real Agent SDK `query()` function; {@link openSession} calls it exactly once. */
-    queryFn:      SessionQueryFn
+    queryFn:            SessionQueryFn
     /** Full Agent SDK options for this query (typically built by ./query-options.ts). */
-    options:      Options
+    options:            Options
     /** Host-owned input queue, passed to `queryFn` as the prompt iterable. */
-    queue:        InputQueue
+    queue:              InputQueue
     /**
      * Interrupt-in-flight flag, owned by this session for its whole lifetime: {@link interrupt}
      * sets it, the reader loop clears it. The same flag object is read by the query options'
      * stderr classifier (built before this session exists), which is how a flag owned by the
      * session reaches options built ahead of it.
      */
-    interrupting: InterruptFlag
+    interrupting:       InterruptFlag
     /** Base logger every line this session emits is stamped with `role` and written through; defaults to the shared `@hughescr/logger` logger. */
-    logger?:      FieldLogger
-    /** Called with every frame the query yields, in order, after this session's own bookkeeping. */
-    onFrame:      (frame: SDKMessage) => void
+    logger?:            FieldLogger
+    /**
+     * Called with every frame the query yields, in order, after this session's own bookkeeping —
+     * except a `result` frame {@link InputQueue.claimAcknowledgement} claims, which goes to
+     * {@link onAcknowledgement} instead.
+     */
+    onFrame:            (frame: SDKMessage) => void
+    /**
+     * Called with the bare `result` frame that acknowledges a `shouldQuery:false` message this
+     * session's queue pushed. Such a frame is not a turn's result, so it never reaches
+     * {@link onFrame} and never clears the interrupt latch; it still carries the session's
+     * running `total_cost_usd`, which is why it is handed over rather than dropped. Omitted: the
+     * acknowledgement is dropped.
+     */
+    onAcknowledgement?: (frame: SDKResultMessage) => void
     /** Called once, when the query ends cleanly (no argument) or throws (the thrown value). */
-    onClosed:     (error?: unknown) => void
+    onClosed:           (error?: unknown) => void
 }
 
 /** Handle returned by {@link openSession}. */
@@ -119,7 +132,7 @@ export interface SessionHandle {
     getContextUsage: (opts?: { detail?: 'summary' | 'full' }) => Promise<ContextUsageSummary>
     /** Closes the input queue, then the underlying query. */
     close:           () => void
-    /** True while an {@link interrupt} is in flight (set immediately, cleared on the next result frame observed after it resolves, or on session end/failure). */
+    /** True while an {@link interrupt} is in flight (set immediately, cleared on the next result frame — not a `shouldQuery:false` acknowledgement — observed after it resolves, or on session end/failure). */
     isInterrupting:  () => boolean
 }
 
@@ -129,7 +142,7 @@ export interface SessionHandle {
  * @returns A {@link SessionHandle}
  */
 export function openSession(params: OpenSessionParams): SessionHandle {
-    const { role, queryFn, options, queue, interrupting, onFrame, onClosed } = params;
+    const { role, queryFn, options, queue, interrupting, onFrame, onAcknowledgement, onClosed } = params;
     const log = createRoleLogger(role, params.logger ?? logger);
     const streamEventLogger = createStreamEventLogger(log);
 
@@ -157,6 +170,15 @@ export function openSession(params: OpenSessionParams): SessionHandle {
         // being torn down (state 'failed', onClosed(error)) by someone else's mistake.
         try {
             streamEventLogger.logStreamEvent(sdkFrameToAgentStreamEvent(frame));
+            // Claimed before onFrame and before the interrupt latch below: the bare result that
+            // answers a shouldQuery:false message can arrive after the CLI has already read the
+            // next, querying message, and must not settle that turn or pass for an interrupt's
+            // result (see InputQueue.claimAcknowledgement).
+            if(frame.type === 'result' && queue.claimAcknowledgement(frame)) {
+                log.debug({ uuids: echoedUserMessageUuids(frame), msg: 'shouldQuery:false message acknowledged; not a turn result' });
+                onAcknowledgement?.(frame);
+                return;
+            }
             onFrame(frame);
         } catch (error) {
             log.error({ error, msg: 'Frame observer threw' });

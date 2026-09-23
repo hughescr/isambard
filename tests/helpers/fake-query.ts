@@ -12,9 +12,16 @@
  * ordering in its own open() tests (the opening handshake is always each instance's first
  * `consumedPrompts` entry).
  *
+ * Likewise the real SDK (0.3.280) answers EVERY `shouldQuery:false` message — the boot handshake
+ * and each mid-session append alike — with its own bare `result` frame echoing that message's
+ * wire uuid, and that frame can land after the CLI has already read the next, querying message.
+ * This fake emits nothing on its own: a test models that acknowledgement explicitly with
+ * {@link FakeQuery.emitAck}, at exactly the point in the ordering it wants to exercise.
+ *
  * @module tests/helpers/fake-query
  */
-import type { Options, SDKControlInterruptResponse, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKControlInterruptResponse, SDKMessage, SDKResultSuccess, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { bareResult, echoOf } from './sdk-frames';
 import type { ContextUsageSummary, SessionQuery, SessionQueryFn } from '@/agent/session/types';
 
 type QueueItem
@@ -50,6 +57,15 @@ export class FakeQuery implements SessionQuery {
     /** Push a frame the fake query "yields" to whatever is iterating it. */
     emit(frame: SDKMessage): void {
         this.deliver({ kind: 'frame', frame });
+    }
+
+    /**
+     * Emits the bare `result` frame the real SDK answers a `shouldQuery:false` `message` with,
+     * echoing the wire uuid the host's queue stamped on it. `overrides` sets e.g. the running
+     * `total_cost_usd`.
+     */
+    emitAck(message: SDKUserMessage, overrides: Partial<SDKResultSuccess> = {}): void {
+        this.emit(bareResult({ ...echoOf(message), ...overrides }));
     }
 
     /** End the iterator cleanly, as a real query does when the underlying process exits. */

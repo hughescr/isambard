@@ -7,9 +7,11 @@
  * one shared local-calendar-day bucket. `isPaused()` flips true once the day's total crosses a
  * configured USD ceiling and self-clears at local midnight — no restart, no `stop()`/`start()`.
  *
- * Deliberately event-type-agnostic: {@link record} never inspects `event.type`. A `session_opened`
- * reset makes the next delta negative, which clamps to 0 and re-baselines cleanly; a repeat
- * notification with an unchanged `cumulativeUsd` adds nothing.
+ * Event-type-agnostic but for one event: a `session_opened` reset makes the next delta negative,
+ * which clamps to 0 and re-baselines cleanly; a repeat notification with an unchanged
+ * `cumulativeUsd` adds nothing. The exception is `cost_baseline`, a resumed session's restored
+ * running total (spend already booked before the reopen or restart), which re-baselines without
+ * booking anything. A later acknowledgement's `cost_update` is live spend and books like any other.
  *
  * `snapshot()`/`restore()` are the B4 persistence seam: a caller pairs them with a {@link
  * CostCeilingPersistence} adapter (e.g. {@link import('./cost-ceiling-store').createCostCeilingStore}
@@ -135,10 +137,12 @@ export function createCostCeiling(params: CreateCostCeilingParams): CostCeiling 
     }
 
     return {
-        record(ledgerStoreIdentity, ledger, _event) {
+        record(ledgerStoreIdentity, ledger, event) {
             rolloverIfNeeded();
             const lastSeen = baselines.get(ledgerStoreIdentity) ?? ledger.cost.cumulativeUsd;
-            const delta = Math.max(0, ledger.cost.cumulativeUsd - lastSeen);
+            // A cost_baseline restores a resumed session's running total: spend already booked
+            // (this process, or the one before a restart), so it moves the baseline only.
+            const delta = event.type === 'cost_baseline' ? 0 : Math.max(0, ledger.cost.cumulativeUsd - lastSeen);
             baselines.set(ledgerStoreIdentity, ledger.cost.cumulativeUsd);
             totalUsd += delta;
             evaluatePause();

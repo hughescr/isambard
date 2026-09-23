@@ -40,6 +40,7 @@ import { createInterruptFlag } from './interrupt-flag';
 import { finishedTaskStatus, type Ledger, type LedgerEvent, type LedgerStore, type LedgerTask } from './ledger';
 import type { SessionJournal, ResumeStore } from './ports';
 import { computeRecovery } from './recovery';
+import { echoedUserMessageUuids } from './result-echo';
 import { resultFrameToError } from './result-frame-error';
 import { openSession, type SessionHandle } from './session';
 import type { TaskLaunchRegistry } from './task-launch-registry';
@@ -375,8 +376,11 @@ export interface Conductor {
      * burning a dedupe key on a `false` would lose the notification permanently. Never reads or writes
      * {@link ConductorStatus.turn} and never calls `beginTurn`/`processQueue`: this is the
      * accumulate-only seam for `shouldQuery:false` notifications, which the SDK appends to the
-     * transcript without triggering an assistant turn (no result frame), so routing one through
-     * `submit()` would wedge the one-turn-in-flight invariant forever. Throws
+     * transcript without an assistant turn. It does answer each one with its own bare `result`
+     * frame (`num_turns: 0`, `result: ""` — SDK 0.3.280, verified 2026-09-22), which can arrive
+     * after the CLI has read the next querying message; the session's {@link InputQueue} claims
+     * it by its echoed wire uuid so it never settles a turn. Routing one through `submit()`
+     * instead would open a turn that bare result settles with an empty reply. Throws
      * {@link InvariantViolationError} if `envelope.shouldQuery !== false`.
      */
     appendWithoutTurn:             (envelope: Envelope) => boolean
@@ -513,6 +517,13 @@ interface ActiveTurn {
     interruptRequested: boolean
     escalationArmed:    boolean
     escalationTimer?:   TimerHandle
+    /**
+     * The wire uuid {@link InputQueue.push} stamped on this turn's user message — set only for a
+     * turn the host pushed (`beginTurn`); `undefined` for an adopted wake/peer turn or a
+     * spontaneous one, which the CLI started itself. A `result` frame whose echo is non-empty
+     * but does not name it answers some other message and must not settle this turn.
+     */
+    wireUuid?:          string
 }
 
 /** A no-op {@link Deferred} for envelopes the conductor submits to itself (`/compact`, a resume note). */
@@ -621,6 +632,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
     let currentSessionId: string | undefined;
     let currentHandleRef: SessionHandle | undefined;
     let currentQueue: InputQueue | undefined;
+    /** The handle whose `finishOpen` has dispatched `session_opened`, after which its acknowledgements' cost totals go straight to the ledger (see {@link noteAcknowledgedCost}). */
+    let costBaselineHandle: SessionHandle | undefined;
+    /** An acknowledgement's cost total from the current handle that landed before its `finishOpen`, applied there after the `session_opened` reset. */
+    let earlyCostBaseline: number | undefined;
     let currentTurn: ActiveTurn | null = null;
     /** True only for the span of {@link afterResult} between nulling `currentTurn` and `guard.onTurnEnd()` resolving — blocks {@link onFrame} from spontaneously opening a notification turn for a frame that arrives in that window, which `submitCompact`'s `beginTurn` (driven by that very `onTurnEnd` call) would otherwise silently clobber. */
     let awaitingTurnEnd = false;
@@ -876,7 +891,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         journal.append({
             type: 'envelope_submitted', at, envelopeId: item.envelope.id, kind: item.envelope.kind, ...(item.envelope.channelId === undefined ? {} : { channelId: item.envelope.channelId }),
         });
-        queue.push(toSdkUserMessage(item.envelope));
+        currentTurn.wireUuid = queue.push(toSdkUserMessage(item.envelope));
     }
 
     function processQueue(): void {
@@ -1267,7 +1282,27 @@ export function createConductor(params: CreateConductorParams): Conductor {
         beginAdoptedPeerTurn(next.envelope);
     }
 
+    /**
+     * True when `frame` names, in its client-uuid echo, only messages other than the one the
+     * current host-pushed turn sent — a stale result from a discarded handle, or an
+     * acknowledgement the queue did not claim. Such a frame must not settle the turn: by the SDK
+     * contract a turn's own result always lists its uuid. A result that echoes nothing (a turn
+     * the CLI started, an older producer, a delivery failure) is never "elsewhere", so a missing
+     * echo cannot wedge a turn.
+     */
+    function resultBelongsElsewhere(turn: ActiveTurn, frame: ResultFrame): boolean {
+        if(turn.wireUuid === undefined) {
+            return false;
+        }
+        const echoed = echoedUserMessageUuids(frame);
+        return echoed.length > 0 && !echoed.includes(turn.wireUuid);
+    }
+
     function onFrame(frame: SDKMessage): void {
+        if(frame.type === 'result' && currentTurn !== null && resultBelongsElsewhere(currentTurn, frame)) {
+            logger.warn({ echoed: echoedUserMessageUuids(frame), turnId: currentTurn.id }, 'Ignoring a result frame that answers a different message than the current turn');
+            return;
+        }
         guard.onFrame(frame);
         pendingAdoptions = pendingAdoptions.filter((entry) => {
             // Stryker disable llm: PendingAdoption.setAt is always clock.now() at push time and never null/undefined, so `?? now()` is dead code
@@ -1326,6 +1361,19 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * bare `result` in under a second, with no model turn). Without this push, `open()` would
      * never resolve.
      *
+     * That bare result is NOT reliably before the next user message: on SDK 0.3.280 it follows
+     * init by 0.5-1.7 ms in a separate stdout read, and a querying message pushed in the meantime
+     * (a submit right after open, or the held envelope a reopen plays at once) is read by the CLI
+     * first. Every `shouldQuery:false` message — this handshake and every
+     * {@link Conductor.appendWithoutTurn} — gets such a result, which the handle's
+     * {@link InputQueue} claims by its echoed wire uuid before it can reach {@link onFrame} (see
+     * `session.ts`); its running cost total comes back through {@link noteAcknowledgedCost},
+     * flagged as the restored baseline only when it echoes this handshake's wire uuid.
+     *
+     * A `result` frame arriving before `system/init` settles this open is dropped: that is how a
+     * failed resume reports itself (an `error_during_execution` result with no echo, then the
+     * generator throws and `onClosed` rejects), and it is not the result of any turn.
+     *
      * `cause` is handed to {@link CreateConductorParams.buildOptions} with the resume id, so the
      * query's own hooks know why it was opened (see that field's doc).
      */
@@ -1340,7 +1388,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             // "every live query predates the request" without comparing handle identities.
             // Stryker disable next-line NumberLiteralValue: openGeneration is only compared with > against earlier snapshots, so any positive step decides identically (see the same reasoning on its initial 0)
             openGeneration += 1;
-            queue.push(toSdkUserMessage(buildBootEnvelope(handshakeText, now())));
+            const handshakeUuid = queue.push(toSdkUserMessage(buildBootEnvelope(handshakeText, now())));
             const handle = openSession({
                 role,
                 queryFn,
@@ -1348,6 +1396,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 queue,
                 interrupting,
                 onFrame: (frame) => {
+                    if(!settled && frame.type === 'result') {
+                        logger.warn({ subtype: frame.subtype }, 'Session emitted a result before system/init; not a turn result');
+                        return;
+                    }
                     onFrame(frame);
                     if(!settled) {
                         const id = handle.sessionId();
@@ -1358,6 +1410,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
                             resolve({ handle, sessionId: id });
                         }
                     }
+                },
+                onAcknowledgement: (frame) => {
+                    noteAcknowledgedCost(handle, frame.total_cost_usd, echoedUserMessageUuids(frame).includes(handshakeUuid));
                 },
                 onClosed: (error) => {
                     if(!settled) {
@@ -1374,6 +1429,30 @@ export function createConductor(params: CreateConductorParams): Conductor {
         });
     }
 
+    /**
+     * Folds the running `total_cost_usd` a `shouldQuery:false` acknowledgement from `handle`
+     * carries into the ledger — never as a turn result. The handshake's acknowledgement
+     * (`restoresBaseline`) is a `cost_baseline`: the only way a resumed session's restored total
+     * (which `session_opened` zeroes) comes back before its first turn's result, so that turn is
+     * charged only its own delta and the daily cost ceiling does not re-book history. Any later
+     * acknowledgement is a `cost_update`: live spend (`total_cost_usd` includes background
+     * subagent work that can land between turns), which the ceiling books. Ignored unless
+     * `handle` is current (a discarded handle's late frames are not this session's). Held when it
+     * lands between this handle's `system/init` and its `finishOpen`, whose `session_opened` reset
+     * would otherwise wipe it; `finishOpen` applies it after that reset as a baseline, since no
+     * query has run on the handle by then.
+     */
+    function noteAcknowledgedCost(handle: SessionHandle, cumulativeUsd: number, restoresBaseline: boolean): void {
+        if(handle !== currentHandleRef) {
+            return;
+        }
+        if(handle === costBaselineHandle) {
+            ledgerStore.dispatch({ type: restoresBaseline ? 'cost_baseline' : 'cost_update', cumulativeUsd, at: now() });
+            return;
+        }
+        earlyCostBaseline = cumulativeUsd;
+    }
+
     async function finishOpen(sessionId: string, { outcome, cause }: { outcome: SessionOpenOutcome, cause: SessionOpenCause }): Promise<void> {
         currentSessionId = sessionId;
         opened = true;
@@ -1382,6 +1461,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
             type: 'session_opened', at, role, sessionId, outcome, cause,
         });
         ledgerStore.dispatch({ type: 'session_opened', sessionId, at });
+        costBaselineHandle = currentHandleRef;
+        if(earlyCostBaseline !== undefined) {
+            ledgerStore.dispatch({ type: 'cost_baseline', cumulativeUsd: earlyCostBaseline, at });
+            earlyCostBaseline = undefined;
+        }
         // After the dispatch, which resets the task list and so would restart the window: the new
         // session has no wake of the old one's left to wait for (#97).
         wakeSettleFrom = undefined;
@@ -1694,7 +1778,12 @@ export function createConductor(params: CreateConductorParams): Conductor {
             return;
         }
         reopening = false;
-        for(const message of [...carryOver, ...bufferedAppends]) {
+        // Only the carried-over shouldQuery:false messages are replayed. A querying message can
+        // only have been pushed by beginTurn — the one place that pushes one — for the turn then in
+        // flight, so an unread one is the crashed turn's own prompt, which re-queuing inFlightItem
+        // below pushes again (under a fresh wire uuid); replaying it too would run that turn twice.
+        // A requested reopen only starts while idle, so its carry-over never holds one.
+        for(const message of [...carryOver.filter(carried => carried.shouldQuery === false), ...bufferedAppends]) {
             currentQueue?.push(message);
         }
         bufferedAppends = [];

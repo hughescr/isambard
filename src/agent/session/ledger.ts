@@ -174,6 +174,22 @@ export type LedgerEvent
       | { type: 'tick', rssBytes: number, at: Date }
       | { type: 'task_lost', taskId: string, at: Date }
       | { type: 'session_opened', sessionId: string, at: Date }
+      /**
+       * The session's running `total_cost_usd` as reported by the bare result that acknowledges
+       * the opening `[BOOT]` handshake (`conductor.ts`'s `noteAcknowledgedCost`). Not a turn's
+       * result, so it sets only `cost.cumulativeUsd` — the baseline the next turn's
+       * `lastTurnUsd` is measured against — and never closes a turn. On a resumed session it is
+       * how the restored total (which `session_opened` zeroed) comes back without being billed to
+       * the first turn; the daily cost ceiling re-baselines on it rather than booking it.
+       */
+      | { type: 'cost_baseline', cumulativeUsd: number, at: Date }
+      /**
+       * The session's running `total_cost_usd` as reported by the bare result that acknowledges
+       * any LATER `shouldQuery:false` message (an append). Reduced exactly like `cost_baseline`,
+       * but it is live spend — `total_cost_usd` includes background subagent work that can land
+       * between turns — so the daily cost ceiling books its delta.
+       */
+      | { type: 'cost_update', cumulativeUsd: number, at: Date }
       | { type: 'phase_changed', phase: ActivityPhase | null, at: Date }
       /**
        * A bare spontaneous turn the conductor just opened (`conductor.ts`'s
@@ -276,14 +292,23 @@ interface OptionalTaskUsage {
 function reduceResultFrame(ledger: Ledger, frame: ResultFrame, at: Date): Ledger {
     const { total_cost_usd: cumulativeUsd } = frame;
     if(ledger.turn === null) {
-        if(cumulativeUsd === ledger.cost.cumulativeUsd) {
-            return ledger;
-        }
-        return { ...ledger, cost: { ...ledger.cost, cumulativeUsd } };
+        return reduceCostBaseline(ledger, cumulativeUsd);
     }
     const lastTurnUsd = Math.max(0, cumulativeUsd - ledger.cost.cumulativeUsd);
     const stopped = stopForegroundTasks(ledger, at);
     return { ...stopped, turn: null, lastTurnEndedAt: at, cost: { cumulativeUsd, lastTurnUsd } };
+}
+
+/**
+ * Sets `cost.cumulativeUsd` to `cumulativeUsd`, leaving the turn and `lastTurnUsd` alone; returns
+ * `ledger` by reference when it already holds that total. Shared by a `result` frame that closes no
+ * turn and by the `cost_baseline` and `cost_update` events.
+ */
+function reduceCostBaseline(ledger: Ledger, cumulativeUsd: number): Ledger {
+    if(cumulativeUsd === ledger.cost.cumulativeUsd) {
+        return ledger;
+    }
+    return { ...ledger, cost: { ...ledger.cost, cumulativeUsd } };
 }
 
 /**
@@ -1143,6 +1168,10 @@ export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
         }
         case 'session_opened': {
             return reduceSessionOpened(ledger, event.sessionId, event.at);
+        }
+        case 'cost_baseline':
+        case 'cost_update': {
+            return reduceCostBaseline(ledger, event.cumulativeUsd);
         }
         case 'phase_changed': {
             return reducePhaseChanged(ledger, event.phase);
