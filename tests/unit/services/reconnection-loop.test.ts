@@ -9,7 +9,6 @@ function createMockRegistry(): ServiceHealthRegistry {
         getEntry:           mock(() => ({ state: 'offline' as const, epoch: 0, failureCount: 0 })),
         getAll:             mock(() => ({} as ReturnType<ServiceHealthRegistry['getAll']>)),
         isAvailable:        mock(() => false),
-        isWriteAvailable:   mock(() => false),
         sendEvent:          mock(() => undefined),
         subscribe:          mock(() => () => undefined),
         buildStatusSummary: mock(() => undefined),
@@ -60,10 +59,10 @@ describe('createReconnectionLoop', () => {
         });
 
         expect(await loop.triggerNow()).toBe(false);
-        expect(sendEvent).toHaveBeenCalledWith(SERVICE, 'CONNECT_FAIL', expect.objectContaining({ error: 'offline' }));
+        expect(sendEvent).toHaveBeenCalledWith(SERVICE, expect.objectContaining({ type: 'CONNECT_FAIL', error: 'offline' }));
         loop.start();
         await Promise.resolve();
-        expect(sendEvent).toHaveBeenCalledWith(SERVICE, 'CONNECT_SUCCESS');
+        expect(sendEvent).toHaveBeenCalledWith(SERVICE, { type: 'CONNECT_SUCCESS' });
         loop.stop();
     });
 
@@ -83,9 +82,9 @@ describe('createReconnectionLoop', () => {
         }
 
         const failures = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls
-            .filter(call => call[1] === 'CONNECT_FAIL');
+            .filter(call => call[1].type === 'CONNECT_FAIL');
         expect(failures).toHaveLength(7);
-        expect(failures[6]?.[2]?.nextRetryAt).toEqual(new Date(64_000));
+        expect((failures[6]?.[1] as { nextRetryAt?: Date }).nextRetryAt).toEqual(new Date(64_000));
         loop.stop();
     });
 
@@ -125,7 +124,7 @@ describe('createReconnectionLoop', () => {
 
             loop.start();
 
-            expect(registry.sendEvent).toHaveBeenCalledWith(SERVICE, 'RECONNECT_ATTEMPT');
+            expect(registry.sendEvent).toHaveBeenCalledWith(SERVICE, { type: 'RECONNECT_ATTEMPT' });
         });
 
         test('start() calls connectFn immediately', () => {
@@ -191,7 +190,7 @@ describe('createReconnectionLoop', () => {
             // Flush IIFE continuation so CONNECT_SUCCESS event is sent
             await Promise.resolve();
 
-            expect(registry.sendEvent).toHaveBeenCalledWith(SERVICE, 'CONNECT_SUCCESS');
+            expect(registry.sendEvent).toHaveBeenCalledWith(SERVICE, { type: 'CONNECT_SUCCESS' });
         });
 
         test('loop auto-stops after success', async () => {
@@ -243,10 +242,11 @@ describe('createReconnectionLoop', () => {
             await Promise.resolve();
 
             const calls = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls;
-            const failCall = calls.find(c => c[1] === 'CONNECT_FAIL');
+            const failCall = calls.find(c => c[1].type === 'CONNECT_FAIL');
             expect(failCall).toBeDefined();
-            expect(failCall![2]?.error).toBe('connection refused');
-            expect(failCall![2]?.nextRetryAt).toBeInstanceOf(Date);
+            const failPayload = failCall![1] as { error?: string, nextRetryAt?: Date };
+            expect(failPayload.error).toBe('connection refused');
+            expect(failPayload.nextRetryAt).toBeInstanceOf(Date);
 
             loop.stop();
         });
@@ -262,9 +262,9 @@ describe('createReconnectionLoop', () => {
             await Promise.resolve();
 
             const calls = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls;
-            const failCall = calls.find(c => c[1] === 'CONNECT_FAIL');
+            const failCall = calls.find(c => c[1].type === 'CONNECT_FAIL');
             expect(failCall).toBeDefined();
-            expect(failCall![2]?.error).toBe('plain string error');
+            expect((failCall![1] as { error?: string }).error).toBe('plain string error');
 
             loop.stop();
         });
@@ -285,9 +285,9 @@ describe('createReconnectionLoop', () => {
             await Promise.resolve();
 
             const calls = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls;
-            const failCall = calls.find(c => c[1] === 'CONNECT_FAIL');
+            const failCall = calls.find(c => c[1].type === 'CONNECT_FAIL');
             expect(failCall).toBeDefined();
-            expect(failCall![2]?.error).toBe('CustomError: oops');
+            expect((failCall![1] as { error?: string }).error).toBe('CustomError: oops');
 
             loop.stop();
         });
@@ -336,7 +336,7 @@ describe('createReconnectionLoop', () => {
             jest.advanceTimersByTime(100);
 
             // A second RECONNECT_ATTEMPT should have been sent by the timer callback
-            const reconnectAttempts = sendEventMock.mock.calls.filter(c => c[1] === 'RECONNECT_ATTEMPT');
+            const reconnectAttempts = sendEventMock.mock.calls.filter(c => c[1].type === 'RECONNECT_ATTEMPT');
             expect(reconnectAttempts.length).toBeGreaterThan(callsBefore - 1);
         });
     });
@@ -429,17 +429,17 @@ describe('createReconnectionLoop', () => {
             const sendEventMock = registry.sendEvent as Mock<typeof registry.sendEvent>;
 
             // Get delay from first failure's nextRetryAt
-            const fail1Call = sendEventMock.mock.calls.find(c => c[1] === 'CONNECT_FAIL');
-            const delay1 = (fail1Call![2]!.nextRetryAt as Date).getTime() - baseNow;
+            const fail1Call = sendEventMock.mock.calls.find(c => c[1].type === 'CONNECT_FAIL');
+            const delay1 = ((fail1Call![1] as { nextRetryAt?: Date }).nextRetryAt!).getTime() - baseNow;
 
             // Trigger second attempt
             jest.advanceTimersByTime(delay1);
             await Promise.resolve();
             await Promise.resolve();
 
-            const fail2Call = sendEventMock.mock.calls.filter(c => c[1] === 'CONNECT_FAIL')[1];
-            const fail2Payload = fail2Call[2] ?? {};
-            const delay2 = (fail2Payload.nextRetryAt as Date).getTime() - baseNow;
+            const fail2Call = sendEventMock.mock.calls.filter(c => c[1].type === 'CONNECT_FAIL')[1];
+            const fail2Payload = fail2Call[1] as { nextRetryAt?: Date };
+            const delay2 = fail2Payload.nextRetryAt!.getTime() - baseNow;
 
             expect(delay2).toBeGreaterThan(delay1);
         });
@@ -476,7 +476,7 @@ describe('createReconnectionLoop', () => {
             expect(connectFn.mock.calls).toHaveLength(callsBefore + 1);
 
             // RECONNECT_ATTEMPT should have been sent by triggerNow
-            const reconnectCalls = sendEventMock.mock.calls.filter(c => c[1] === 'RECONNECT_ATTEMPT');
+            const reconnectCalls = sendEventMock.mock.calls.filter(c => c[1].type === 'RECONNECT_ATTEMPT');
             expect(reconnectCalls.length).toBeGreaterThanOrEqual(2);
 
             await resultPromise;
@@ -558,7 +558,8 @@ describe('createReconnectionLoop', () => {
 
             expect(await loop.triggerNow()).toBe(false);
 
-            expect(registry.sendEvent).toHaveBeenCalledWith(SERVICE, 'CONNECT_FAIL', {
+            expect(registry.sendEvent).toHaveBeenCalledWith(SERVICE, {
+                type:        'CONNECT_FAIL',
                 error:       'offline',
                 nextRetryAt: new Date(1100),
             });
@@ -766,7 +767,7 @@ describe('createReconnectionLoop', () => {
 
             loop.restart();
 
-            const attempts = sendEventMock.mock.calls.filter(c => c[1] === 'RECONNECT_ATTEMPT');
+            const attempts = sendEventMock.mock.calls.filter(c => c[1].type === 'RECONNECT_ATTEMPT');
             expect(attempts).toHaveLength(1);
 
             loop.stop();
@@ -865,8 +866,8 @@ describe('createReconnectionLoop', () => {
             const expectedRetryAt = new Date(nowMs + 100);
 
             const sendEventMock = registry.sendEvent as Mock<typeof registry.sendEvent>;
-            const failCall = sendEventMock.mock.calls.find(c => c[1] === 'CONNECT_FAIL');
-            expect(failCall![2]!.nextRetryAt).toEqual(expectedRetryAt);
+            const failCall = sendEventMock.mock.calls.find(c => c[1].type === 'CONNECT_FAIL');
+            expect((failCall![1] as { nextRetryAt?: Date }).nextRetryAt).toEqual(expectedRetryAt);
 
             loop.stop();
         });
@@ -920,7 +921,7 @@ describe('createReconnectionLoop', () => {
             await Promise.resolve();
 
             const retryAttempts = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls
-                .filter(call => call[1] === 'RECONNECT_ATTEMPT');
+                .filter(call => call[1].type === 'RECONNECT_ATTEMPT');
             expect(retryAttempts).toHaveLength(1);
             loop.stop();
         });
@@ -940,7 +941,7 @@ describe('createReconnectionLoop', () => {
             loop.start();
 
             const sendEventMock = registry.sendEvent as Mock<typeof registry.sendEvent>;
-            const attempts = sendEventMock.mock.calls.filter(c => c[1] === 'RECONNECT_ATTEMPT');
+            const attempts = sendEventMock.mock.calls.filter(c => c[1].type === 'RECONNECT_ATTEMPT');
             expect(attempts).toHaveLength(1);
             loop.stop();
         });
@@ -1018,12 +1019,12 @@ describe('createReconnectionLoop', () => {
             }
 
             const failures = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls
-                .filter(call => call[1] === 'CONNECT_FAIL');
+                .filter(call => call[1].type === 'CONNECT_FAIL');
             expect(failures).toHaveLength(10);
             // Attempt 10 is the first whose uncapped delay (1000 * 2^9 = 512 000 ms) exceeds
             // the cap even at the low end of the ±10% jitter band (460 800 ms), so the default
             // maxDelayMs is exactly the reported wait.
-            expect(failures[9]?.[2]?.nextRetryAt).toEqual(new Date(300_000));
+            expect((failures[9]?.[1] as { nextRetryAt?: Date } | undefined)?.nextRetryAt).toEqual(new Date(300_000));
             loop.stop();
         });
 
@@ -1043,8 +1044,8 @@ describe('createReconnectionLoop', () => {
             // Math.random() === 1 is the top of the jitter band: 1000 * (1 + 0.1 * 1) = 1100 ms.
             // Without a jitter fraction the wait would be the bare 1000 ms base delay.
             const failure = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls
-                .find(call => call[1] === 'CONNECT_FAIL');
-            expect(failure?.[2]?.nextRetryAt).toEqual(new Date(1100));
+                .find(call => call[1].type === 'CONNECT_FAIL');
+            expect((failure?.[1] as { nextRetryAt?: Date } | undefined)?.nextRetryAt).toEqual(new Date(1100));
             loop.stop();
         });
     });

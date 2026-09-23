@@ -1,6 +1,7 @@
 import { describe, it, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { runDynamoDBProbe, type ProbeEventSender } from '../../../src/storage/dynamo-probe-callback';
+import type { ServiceHealthRegistry } from '@/services/health-registry';
 import type { RetryLogger } from '@/utils/retry/types';
 
 function makeStubClient(): DynamoDBClient {
@@ -81,8 +82,7 @@ describe('runDynamoDBProbe', () => {
             expect(sendEventMock).toHaveBeenCalledTimes(1);
             expect(sendEventMock).toHaveBeenCalledWith(
                 'dynamodb',
-                'CONNECTION_LOST',
-                { error: 'FailedToOpenSocket' }
+                { type: 'CONNECTION_LOST', error: 'FailedToOpenSocket' }
             );
         });
 
@@ -96,7 +96,7 @@ describe('runDynamoDBProbe', () => {
             await runDynamoDBProbe(client, 'TestTable', eventSender, undefined, probeFn);
 
             const calls = sendEventMock.mock.calls as unknown[][];
-            const connectFailCalls = calls.filter(args => args[1] === 'CONNECT_FAIL');
+            const connectFailCalls = calls.filter(args => (args[1] as { type?: string } | undefined)?.type === 'CONNECT_FAIL');
             expect(connectFailCalls).toHaveLength(0);
         });
 
@@ -141,8 +141,7 @@ describe('runDynamoDBProbe', () => {
 
             expect(sendEventMock).toHaveBeenCalledWith(
                 'dynamodb',
-                'CONNECTION_LOST',
-                { error: 'plain string error' }
+                { type: 'CONNECTION_LOST', error: 'plain string error' }
             );
         });
 
@@ -160,8 +159,7 @@ describe('runDynamoDBProbe', () => {
 
             expect(sendEventMock).toHaveBeenCalledWith(
                 'dynamodb',
-                'CONNECTION_LOST',
-                { error: '42' }
+                { type: 'CONNECTION_LOST', error: '42' }
             );
         });
     });
@@ -179,9 +177,23 @@ describe('runDynamoDBProbe', () => {
 
             expect(sendEventMock).toHaveBeenCalledWith(
                 'dynamodb',
-                'CONNECTION_LOST',
-                { error: 'ECONNRESET' }
+                { type: 'CONNECTION_LOST', error: 'ECONNRESET' }
             );
+        });
+    });
+
+    describe('ProbeEventSender / ServiceHealthRegistry assignability', () => {
+        // This file is under tests/**, which eslint-boundaries does not restrict (its `files`
+        // glob is src/**/*.ts only), so importing the type here does not create the
+        // storage->services production import that ProbeEventSender is deliberately declared
+        // without. If ServiceHealthRegistry.sendEvent's signature ever narrows in a way that
+        // no longer covers ProbeEventSender's { type: 'CONNECTION_LOST' } shape, this function
+        // fails to typecheck and `bun run typecheck` catches the drift.
+        it('a real ServiceHealthRegistry satisfies ProbeEventSender with no cast', () => {
+            function assertAssignable(registry: ServiceHealthRegistry): ProbeEventSender {
+                return registry;
+            }
+            expect(typeof assertAssignable).toBe('function');
         });
     });
 

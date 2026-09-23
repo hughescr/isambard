@@ -1906,7 +1906,7 @@ describe('createContextBuilder loading methods', () => {
     });
 
     describe('buildUserMessagePrefix', () => {
-        test('includes a degraded service-health summary in the composed prefix', async () => {
+        test('includes an unavailable-service-health summary in the composed prefix', async () => {
             backend.list = mock(async () => ({ items: [] }));
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => []);
@@ -2703,19 +2703,19 @@ describe('createContextBuilder loading methods', () => {
             }
         });
 
-        test('includes a degraded service-health summary in perch context', async () => {
+        test('includes an unavailable-service-health summary in perch context', async () => {
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] }));
             const healthRegistry = {
-                buildStatusSummary: mock(() => '- email: degraded'),
+                buildStatusSummary: mock(() => '- email: offline'),
             } as unknown as ServiceHealthRegistry;
 
             const contextBuilder = createContextBuilder({ backend, healthRegistry });
             const result = await contextBuilder.buildPerchContext();
 
             expect(result).toContain('## Service Status');
-            expect(result).toContain('- email: degraded');
+            expect(result).toContain('- email: offline');
             expect(result).toContain('\n\n## Service Status\n');
         });
 

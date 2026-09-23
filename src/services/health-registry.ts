@@ -1,4 +1,4 @@
-import { createServiceActor, type ServiceLifecycleActor } from './lifecycle-orchestrator';
+import { createServiceActor, type ServiceLifecycleActor, type ServiceLifecycleEvent } from './lifecycle-orchestrator';
 import { serviceNameSchema, type ServiceName, type HealthState, type ServiceHealthEntry, type ServiceHealthChange, type HealthChangeListener } from './types';
 import { formatShortRelativeTime } from '@/utils';
 
@@ -7,8 +7,7 @@ export interface ServiceHealthRegistry {
     getEntry(service: ServiceName): Readonly<ServiceHealthEntry>
     getAll(): Readonly<Record<ServiceName, ServiceHealthEntry>>
     isAvailable(service: ServiceName): boolean
-    isWriteAvailable(service: ServiceName): boolean
-    sendEvent(service: ServiceName, event: string, payload?: Record<string, unknown>): void
+    sendEvent(service: ServiceName, event: ServiceLifecycleEvent): void
     subscribe(listener: HealthChangeListener): () => void
     buildStatusSummary(): string | undefined
     stop(): void
@@ -147,17 +146,11 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
     }
 
     isAvailable(service: ServiceName): boolean {
-        const state = this.getState(service);
-        return state === 'online' || state === 'degraded';
-    }
-
-    isWriteAvailable(service: ServiceName): boolean {
         return this.getState(service) === 'online';
     }
 
-    sendEvent(service: ServiceName, event: string, payload?: Record<string, unknown>): void {
-        const actor = this.actors[service];
-        actor.send({ type: event, ...payload } as Parameters<typeof actor.send>[0]);
+    sendEvent(service: ServiceName, event: ServiceLifecycleEvent): void {
+        this.actors[service].send(event);
     }
 
     subscribe(listener: HealthChangeListener): () => void {

@@ -857,13 +857,13 @@ describe('createConversationConductor', () => {
     });
 
     it('Q12: threads a supplied healthRegistry into the context policy\'s healthNote gate', async () => {
-        const healthRegistry = makeHealthRegistry({ summary: 'Email is degraded.' });
+        const healthRegistry = makeHealthRegistry({ summary: 'Email is offline.' });
         const h = build({ healthRegistry });
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
 
         const { contextPolicy } = await createConversationConductor(h.params);
 
-        expect(contextPolicy.healthNote()).toBe('Email is degraded.');
+        expect(contextPolicy.healthNote()).toBe('Email is offline.');
     });
 
     it('Q12: healthNote() always returns undefined when no healthRegistry is supplied', async () => {

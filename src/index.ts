@@ -96,7 +96,7 @@ async function wireDynamoDBHealth(
     // Reconnect strategy: probe the LIVE client (via holder.getClient()) first.
     // On persistent failure, build a fresh DynamoDBClient pair and call holder.swap()
     // so all backends immediately start using the new connection pool without restart.
-    healthRegistry.sendEvent('dynamodb', 'CONFIGURE');
+    healthRegistry.sendEvent('dynamodb', { type: 'CONFIGURE' });
 
     const dynamoDBReconnectionLoop = createReconnectionLoop({
         service:   'dynamodb',
@@ -143,7 +143,8 @@ async function wireDynamoDBHealth(
     // health registry — triggering the reconnection loop without waiting for the
     // next periodic probe.
     setDynamoHealthNotifier((err) => {
-        healthRegistry.sendEvent('dynamodb', 'CONNECTION_LOST', {
+        healthRegistry.sendEvent('dynamodb', {
+            type:  'CONNECTION_LOST',
             error: err instanceof Error ? err.message : String(err),
         });
     });
@@ -154,10 +155,10 @@ async function wireDynamoDBHealth(
     try {
         logger.info('Probing DynamoDB connectivity...');
         await probeDynamoDB(storage.holder.getClient(), dynamoDBConfig.tableName);
-        healthRegistry.sendEvent('dynamodb', 'CONNECT_SUCCESS');
+        healthRegistry.sendEvent('dynamodb', { type: 'CONNECT_SUCCESS' });
         logger.info('DynamoDB connectivity verified');
     } catch (err) {
-        healthRegistry.sendEvent('dynamodb', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
+        healthRegistry.sendEvent('dynamodb', { type: 'CONNECT_FAIL', error: err instanceof Error ? err.message : String(err) });
         logger.error({
             error: err instanceof Error ? err.message : String(err),
             msg:   'DynamoDB probe failed at startup, starting reconnection loop',
@@ -168,7 +169,7 @@ async function wireDynamoDBHealth(
     // Periodic DynamoDB background probe — detects post-startup connection failures
     // that would otherwise go unnoticed until the next operation fails.
     // Interval: 60s. Sends CONNECTION_LOST on failure, which the lifecycle state machine
-    // handles by transitioning online/degraded → offline, triggering the reconnection loop.
+    // handles by transitioning online → offline, triggering the reconnection loop.
     const dynamoDBProbeIntervalMs = 60_000;
     const dynamoDBProbeInterval = setInterval(() => {
         void runDynamoDBProbe(storage.holder.getClient(), dynamoDBConfig.tableName, healthRegistry, logger);
@@ -444,7 +445,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     }
     async function initializeEmailIntegration(): Promise<void> {
         if(config.email) {
-            healthRegistry.sendEvent('email', 'CONFIGURE');
+            healthRegistry.sendEvent('email', { type: 'CONFIGURE' });
 
             // Create client eagerly so all downstream objects can capture a stable reference.
             eagerWildDuckClient = new WildDuckClient({
@@ -514,10 +515,10 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             try {
                 logger.info('Starting WildDuck client...');
                 await trackEmailInit(stableWildDuckClient);
-                healthRegistry.sendEvent('email', 'CONNECT_SUCCESS');
+                healthRegistry.sendEvent('email', { type: 'CONNECT_SUCCESS' });
                 logger.info('WildDuck client initialized');
             } catch (err) {
-                healthRegistry.sendEvent('email', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
+                healthRegistry.sendEvent('email', { type: 'CONNECT_FAIL', error: err instanceof Error ? err.message : String(err) });
                 logger.error({
                     error: err instanceof Error ? err.message : String(err),
                     msg:   'WildDuck init failed, starting reconnection loop',
@@ -535,7 +536,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     let unsubscribeBskyReconnect: (() => void) | undefined;
     async function initializeBlueskyIntegration(): Promise<void> {
         if(config.bsky) {
-            healthRegistry.sendEvent('bluesky', 'CONFIGURE');
+            healthRegistry.sendEvent('bluesky', { type: 'CONFIGURE' });
 
             // Create client eagerly so reconnection loop can capture a stable reference.
             bskyClient = new BlueskyClient({
@@ -570,10 +571,10 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             try {
                 logger.info('Logging into Bluesky...');
                 await bskyClient.login();
-                healthRegistry.sendEvent('bluesky', 'CONNECT_SUCCESS');
+                healthRegistry.sendEvent('bluesky', { type: 'CONNECT_SUCCESS' });
                 logger.info('Bluesky login successful');
             } catch (err) {
-                healthRegistry.sendEvent('bluesky', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
+                healthRegistry.sendEvent('bluesky', { type: 'CONNECT_FAIL', error: err instanceof Error ? err.message : String(err) });
                 logger.error({
                     error: err instanceof Error ? err.message : String(err),
                     msg:   'Bluesky login failed, starting reconnection loop',
@@ -774,8 +775,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
     // Create CalDAV components (always available — DynamoDB is required)
     const caldavClient = new CalDAVClient({ healthRegistry });
-    healthRegistry.sendEvent('caldav', 'CONFIGURE');
-    healthRegistry.sendEvent('caldav', 'CONNECT_SUCCESS');
+    healthRegistry.sendEvent('caldav', { type: 'CONFIGURE' });
+    healthRegistry.sendEvent('caldav', { type: 'CONNECT_SUCCESS' });
     const caldavRegistry = new CalendarRegistryBackend(storage.holder, storage.tableName);
     const calendarService = { client: caldavClient, registry: caldavRegistry };
     const calendarHandler = new CalendarCommandHandler(
@@ -1212,15 +1213,16 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             logger.info('Starting Isambard application...');
 
             // Mark Discord as starting
-            healthRegistry.sendEvent('discord', 'CONFIGURE');
+            healthRegistry.sendEvent('discord', { type: 'CONFIGURE' });
 
             logger.info('Connecting to Discord...');
             try {
                 await bot.start();
-                healthRegistry.sendEvent('discord', 'CONNECT_SUCCESS');
+                healthRegistry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
                 logger.info('Discord connected');
             } catch (err) {
-                healthRegistry.sendEvent('discord', 'CONNECT_FAIL', {
+                healthRegistry.sendEvent('discord', {
+                    type:  'CONNECT_FAIL',
                     error: err instanceof Error ? err.message : String(err),
                 });
                 logger.warn({

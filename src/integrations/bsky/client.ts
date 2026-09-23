@@ -908,7 +908,7 @@ export class BlueskyClient {
         if(isXRPCError(err)) {
             if(err.status === HTTP_STATUS.AUTH_REQUIRED) {
                 if(notifyHealthRegistry) {
-                    this.healthRegistry?.sendEvent('bluesky', 'CONNECTION_LOST', { error: err.message });
+                    this.healthRegistry?.sendEvent('bluesky', { type: 'CONNECTION_LOST', error: err.message });
                 }
                 return new BskyAuthError(message, { originalMessage: err.message, error: err.error });
             }

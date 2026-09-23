@@ -494,7 +494,7 @@ class ContextBuilderImpl implements ContextBuilder {
     }
 
     /**
-     * Build the service health section showing any degraded or offline services.
+     * Build the service health section showing any unavailable services.
      * Returns formatted section string, or undefined if all services are online or no registry is configured.
      */
 

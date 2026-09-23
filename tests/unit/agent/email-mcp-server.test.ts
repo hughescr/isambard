@@ -19,7 +19,6 @@ function makeOfflineHealthRegistry(): ServiceHealthRegistry {
         getEntry:           mock(() => offlineEntry),
         getState:           mock(() => 'offline' as const),
         getAll:             mock(() => ({}) as ReturnType<ServiceHealthRegistry['getAll']>),
-        isWriteAvailable:   mock(() => false),
         sendEvent:          mock(() => undefined),
         subscribe:          mock(() => () => undefined),
         buildStatusSummary: mock(() => undefined),

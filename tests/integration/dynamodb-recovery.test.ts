@@ -43,7 +43,7 @@ describe('DynamoDB failure → CONNECTION_LOST → offline chain', () => {
         // Wire the notifier to route health events through the real registry
         setDynamoHealthNotifier((err) => {
             const error = err instanceof Error ? err.message : String(err);
-            registry.sendEvent(SERVICE, 'CONNECTION_LOST', { error });
+            registry.sendEvent(SERVICE, { type: 'CONNECTION_LOST', error });
         });
     });
 
@@ -55,7 +55,7 @@ describe('DynamoDB failure → CONNECTION_LOST → offline chain', () => {
 
     it('should transition from starting to offline when CONNECTION_LOST fires during startup probe', () => {
         // Put service in starting state
-        registry.sendEvent(SERVICE, 'CONFIGURE');
+        registry.sendEvent(SERVICE, { type: 'CONFIGURE' });
         expect(registry.getState(SERVICE)).toBe('starting');
 
         // Simulate a probe failure during startup — use a real Smithy TimeoutError shape
@@ -66,15 +66,15 @@ describe('DynamoDB failure → CONNECTION_LOST → offline chain', () => {
 
         // Fire notifier manually (simulates a backend op failing during startup)
         const error = smithyTimeoutErr instanceof Error ? smithyTimeoutErr.message : String(smithyTimeoutErr);
-        registry.sendEvent(SERVICE, 'CONNECTION_LOST', { error });
+        registry.sendEvent(SERVICE, { type: 'CONNECTION_LOST', error });
 
         expect(registry.getState(SERVICE)).toBe('offline');
     });
 
     it('should transition from online to offline when a DynamoDB op throws a network-classified error', async () => {
         // Put service in online state
-        registry.sendEvent(SERVICE, 'CONFIGURE');
-        registry.sendEvent(SERVICE, 'CONNECT_SUCCESS');
+        registry.sendEvent(SERVICE, { type: 'CONFIGURE' });
+        registry.sendEvent(SERVICE, { type: 'CONNECT_SUCCESS' });
         expect(registry.getState(SERVICE)).toBe('online');
 
         // Simulate DynamoDB operation that throws a real ETIMEDOUT socket error
@@ -97,8 +97,8 @@ describe('DynamoDB failure → CONNECTION_LOST → offline chain', () => {
     });
 
     it('should transition from online to offline when a DynamoDB timeout fires', async () => {
-        registry.sendEvent(SERVICE, 'CONFIGURE');
-        registry.sendEvent(SERVICE, 'CONNECT_SUCCESS');
+        registry.sendEvent(SERVICE, { type: 'CONFIGURE' });
+        registry.sendEvent(SERVICE, { type: 'CONNECT_SUCCESS' });
         expect(registry.getState(SERVICE)).toBe('online');
 
         const neverResolves = mock(() => new Promise<never>(() => {}));
@@ -123,10 +123,10 @@ describe('DynamoDB failure → CONNECTION_LOST → offline chain', () => {
 
     it('should transition from recovering to offline when a DynamoDB op fails during reconnect attempt', async () => {
         // Start → online → offline → recovering
-        registry.sendEvent(SERVICE, 'CONFIGURE');
-        registry.sendEvent(SERVICE, 'CONNECT_SUCCESS');
-        registry.sendEvent(SERVICE, 'CONNECTION_LOST', { error: 'initial failure' });
-        registry.sendEvent(SERVICE, 'RECONNECT_ATTEMPT');
+        registry.sendEvent(SERVICE, { type: 'CONFIGURE' });
+        registry.sendEvent(SERVICE, { type: 'CONNECT_SUCCESS' });
+        registry.sendEvent(SERVICE, { type: 'CONNECTION_LOST', error: 'initial failure' });
+        registry.sendEvent(SERVICE, { type: 'RECONNECT_ATTEMPT' });
         expect(registry.getState(SERVICE)).toBe('recovering');
 
         // Another network error fires during recovery
@@ -146,8 +146,8 @@ describe('DynamoDB failure → CONNECTION_LOST → offline chain', () => {
     });
 
     it('should capture state change via health-change listener when transitioning to offline', async () => {
-        registry.sendEvent(SERVICE, 'CONFIGURE');
-        registry.sendEvent(SERVICE, 'CONNECT_SUCCESS');
+        registry.sendEvent(SERVICE, { type: 'CONFIGURE' });
+        registry.sendEvent(SERVICE, { type: 'CONNECT_SUCCESS' });
 
         const stateChanges: string[] = [];
         const unsubscribe = registry.subscribe((change) => {
@@ -174,8 +174,8 @@ describe('DynamoDB failure → CONNECTION_LOST → offline chain', () => {
     });
 
     it('reconnect loop integration: notifier fires → offline → reconnect loop start → CONNECT_SUCCESS → online', async () => {
-        registry.sendEvent(SERVICE, 'CONFIGURE');
-        registry.sendEvent(SERVICE, 'CONNECT_SUCCESS');
+        registry.sendEvent(SERVICE, { type: 'CONFIGURE' });
+        registry.sendEvent(SERVICE, { type: 'CONNECT_SUCCESS' });
         expect(registry.getState(SERVICE)).toBe('online');
 
         let connectCallCount = 0;
@@ -208,7 +208,7 @@ describe('DynamoDB failure → CONNECTION_LOST → offline chain', () => {
 
         // Start reconnect loop (normally driven by the health change listener)
         loop.start();
-        registry.sendEvent(SERVICE, 'RECONNECT_ATTEMPT');
+        registry.sendEvent(SERVICE, { type: 'RECONNECT_ATTEMPT' });
 
         // Let reconnect attempt run
         await Promise.resolve();

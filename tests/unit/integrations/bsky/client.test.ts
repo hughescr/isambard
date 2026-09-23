@@ -2922,7 +2922,7 @@ describe.concurrent('BlueskyClient', () => {
             mockGetTimeline.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Token expired'));
             const client = new BlueskyClient({ ...CLIENT_OPTIONS, healthRegistry });
             await expect(client.getFeed()).rejects.toBeInstanceOf(BskyAuthError);
-            expect(mockSendEvent).toHaveBeenCalledWith('bluesky', 'CONNECTION_LOST', expect.objectContaining({ error: expect.any(String) }));
+            expect(mockSendEvent).toHaveBeenCalledWith('bluesky', expect.objectContaining({ type: 'CONNECTION_LOST', error: expect.any(String) }));
         });
 
         test('does not send CONNECTION_LOST on rate limit error (429) after exhausting retries', async () => {

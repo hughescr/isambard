@@ -28,12 +28,9 @@ function change(overrides: Partial<ServiceHealthChange> = {}): ServiceHealthChan
 describe('shouldNotifyHealthChange', () => {
     const truthTable: { previousState: HealthState, newState: HealthState, expected: boolean }[] = [
         { previousState: 'online', newState: 'offline', expected: true },
-        { previousState: 'degraded', newState: 'offline', expected: true },
         { previousState: 'starting', newState: 'offline', expected: true },
         { previousState: 'recovering', newState: 'offline', expected: true },
-        { previousState: 'online', newState: 'degraded', expected: false },
         { previousState: 'offline', newState: 'online', expected: false },
-        { previousState: 'degraded', newState: 'online', expected: false },
         { previousState: 'offline', newState: 'recovering', expected: false },
         { previousState: 'offline', newState: 'offline', expected: false },
     ];
@@ -118,7 +115,7 @@ describe('createHealthOutageCoalescer', () => {
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
         expect(notify).toHaveBeenCalledTimes(1);
 
-        // ... recovering -> offline again, same epoch (RECOVERY_FAIL never increments epoch)
+        // ... recovering -> offline again, same epoch (CONNECT_FAIL never increments epoch)
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS * 10);
         coalescer.report(change({ service: 'bluesky', previousState: 'recovering', newState: 'offline', epoch: 1 }));
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
@@ -280,12 +277,12 @@ describe('createHealthNotificationListener', () => {
         expect(coalescerReport.mock.calls[0]?.[0]).toBe(input);
     });
 
-    test('a degraded <-> online flap with predicate false in both directions notifies once per transition (accumulate, wake:false); coalescer.report is never called', () => {
+    test('an online <-> recovering flap with predicate false in both directions notifies once per transition (accumulate, wake:false); coalescer.report is never called', () => {
         predicate.mockReturnValue(false);
         const listener = buildListener();
 
-        listener(change({ previousState: 'online', newState: 'degraded' }));
-        listener(change({ previousState: 'degraded', newState: 'online' }));
+        listener(change({ previousState: 'online', newState: 'recovering' }));
+        listener(change({ previousState: 'recovering', newState: 'online' }));
 
         expect(coalescerReport).not.toHaveBeenCalled();
         expect(notify).toHaveBeenCalledTimes(2);

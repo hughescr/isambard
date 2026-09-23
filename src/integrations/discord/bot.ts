@@ -564,13 +564,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Register shard event listeners for health tracking
     if(healthRegistry) {
         client.on('shardDisconnect', () => {
-            healthRegistry.sendEvent('discord', 'CONNECTION_LOST');
+            healthRegistry.sendEvent('discord', { type: 'CONNECTION_LOST' });
         });
         client.on('shardReady', () => {
-            healthRegistry.sendEvent('discord', 'CONNECT_SUCCESS');
+            healthRegistry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
         });
         client.on('shardResume', () => {
-            healthRegistry.sendEvent('discord', 'CONNECT_SUCCESS');
+            healthRegistry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
         });
     }
 

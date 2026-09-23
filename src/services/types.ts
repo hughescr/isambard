@@ -1,11 +1,12 @@
 import { z } from 'zod';
+import type { ServiceLifecycleState } from './lifecycle-orchestrator';
 
 export const serviceNameSchema = z.enum(['discord', 'discord-channel-registry', 'email', 'bluesky', 'caldav', 'dynamodb']);
 export type ServiceName = z.infer<typeof serviceNameSchema>;
 
-export type HealthState = 'disabled' | 'starting' | 'recovering' | 'online' | 'degraded' | 'offline';
+export type HealthState = ServiceLifecycleState;
 
-export type ServiceErrorCategory = 'offline_retryable_later' | 'degraded_read_only' | 'permanent_not_configured';
+export type ServiceErrorCategory = 'offline_retryable_later' | 'permanent_not_configured';
 
 export interface ServiceHealthEntry {
     state:          HealthState

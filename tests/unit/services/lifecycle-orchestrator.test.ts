@@ -8,12 +8,12 @@ const _invalidLifecycleActorEvent: LifecycleActorEvent = { type: 'UNKNOWN_EVENT'
 
 interface TransitionCase {
     event:    LifecycleActorEvent
-    expected: 'disabled' | 'starting' | 'recovering' | 'online' | 'degraded' | 'offline'
+    expected: 'disabled' | 'starting' | 'recovering' | 'online' | 'offline'
     desc:     string
 }
 
 // Helper to build an actor, start it, and send it to a desired state quickly
-function actorInState(targetState: 'disabled' | 'starting' | 'online' | 'offline' | 'recovering' | 'degraded') {
+function actorInState(targetState: 'disabled' | 'starting' | 'online' | 'offline' | 'recovering') {
     const actor = createActor(serviceLifecycleMachine);
     actor.start();
 
@@ -29,12 +29,6 @@ function actorInState(targetState: 'disabled' | 'starting' | 'online' | 'offline
 
     if(targetState === 'online') {
         actor.send({ type: 'CONNECT_SUCCESS' });
-        return actor;
-    }
-
-    if(targetState === 'degraded') {
-        actor.send({ type: 'CONNECT_SUCCESS' });
-        actor.send({ type: 'PARTIAL_FAILURE' });
         return actor;
     }
 
@@ -220,11 +214,9 @@ describe('serviceLifecycleMachine', () => {
     describe('online state transitions', () => {
         test.each([
             { event: { type: 'CONNECTION_LOST' }, expected: 'offline', desc: 'CONNECTION_LOST transitions to offline' },
-            { event: { type: 'PARTIAL_FAILURE' }, expected: 'degraded', desc: 'PARTIAL_FAILURE transitions to degraded' },
             { event: { type: 'CONFIGURE' }, expected: 'online', desc: 'CONFIGURE is ignored' },
             { event: { type: 'CONNECT_SUCCESS' }, expected: 'online', desc: 'CONNECT_SUCCESS is ignored' },
             { event: { type: 'RECONNECT_ATTEMPT' }, expected: 'online', desc: 'RECONNECT_ATTEMPT is ignored' },
-            { event: { type: 'RECOVERY_FAIL' }, expected: 'online', desc: 'RECOVERY_FAIL is ignored' },
         ] satisfies TransitionCase[])('should end in $expected when $desc', ({ event, expected }) => {
             const actor = actorInState('online');
             actor.send(event);
@@ -247,45 +239,6 @@ describe('serviceLifecycleMachine', () => {
             expect(ctx.failureCount).toBe(1);
             expect(ctx.lastOfflineAt).toBeInstanceOf(Date);
             expect(ctx.lastError).toEqual({ code: 'CONNECTION_FAILED', message: 'Timed out' });
-            actor.stop();
-        });
-
-        test('should not change epoch on PARTIAL_FAILURE', () => {
-            const actor = actorInState('online');
-            const epochBefore = actor.getSnapshot().context.epoch;
-            actor.send({ type: 'PARTIAL_FAILURE' });
-            expect(actor.getSnapshot().context.epoch).toBe(epochBefore);
-            actor.stop();
-        });
-    });
-
-    describe('degraded state transitions', () => {
-        test.each([
-            { event: { type: 'RECOVERED' }, expected: 'online', desc: 'RECOVERED transitions to online' },
-            { event: { type: 'CONNECTION_LOST' }, expected: 'offline', desc: 'CONNECTION_LOST transitions to offline' },
-            { event: { type: 'CONFIGURE' }, expected: 'degraded', desc: 'CONFIGURE is ignored' },
-            { event: { type: 'RECONNECT_ATTEMPT' }, expected: 'degraded', desc: 'RECONNECT_ATTEMPT is ignored' },
-        ] satisfies TransitionCase[])('should end in $expected when $desc', ({ event, expected }) => {
-            const actor = actorInState('degraded');
-            actor.send(event);
-            expect(actor.getSnapshot().value).toBe(expected);
-            actor.stop();
-        });
-
-        test('should set lastOnlineAt and reset failureCount on RECOVERED from degraded', () => {
-            const actor = actorInState('degraded');
-            actor.send({ type: 'RECOVERED' });
-            const ctx = actor.getSnapshot().context;
-            expect(ctx.lastOnlineAt).toBeInstanceOf(Date);
-            expect(ctx.failureCount).toBe(0);
-            actor.stop();
-        });
-
-        test('should increment epoch on CONNECTION_LOST from degraded', () => {
-            const actor = actorInState('degraded');
-            const epochBefore = actor.getSnapshot().context.epoch;
-            actor.send({ type: 'CONNECTION_LOST' });
-            expect(actor.getSnapshot().context.epoch).toBe(epochBefore + 1);
             actor.stop();
         });
     });
@@ -337,7 +290,6 @@ describe('serviceLifecycleMachine', () => {
         test.each([
             { event: { type: 'CONNECT_SUCCESS' }, expected: 'online', desc: 'CONNECT_SUCCESS transitions to online' },
             { event: { type: 'CONNECT_FAIL' }, expected: 'offline', desc: 'CONNECT_FAIL transitions to offline' },
-            { event: { type: 'RECOVERY_FAIL' }, expected: 'offline', desc: 'RECOVERY_FAIL transitions to offline' },
             { event: { type: 'CONFIGURE' }, expected: 'recovering', desc: 'CONFIGURE is ignored' },
             { event: { type: 'RECONNECT_ATTEMPT' }, expected: 'recovering', desc: 'RECONNECT_ATTEMPT is ignored' },
             { event: { type: 'CONNECTION_LOST' }, expected: 'offline', desc: 'CONNECTION_LOST transitions to offline' },
@@ -362,21 +314,6 @@ describe('serviceLifecycleMachine', () => {
             const failureBefore = actor.getSnapshot().context.failureCount;
             actor.send({ type: 'CONNECT_FAIL' });
             expect(actor.getSnapshot().context.failureCount).toBe(failureBefore + 1);
-            actor.stop();
-        });
-
-        test('should increment failureCount on RECOVERY_FAIL', () => {
-            const actor = actorInState('recovering');
-            const failureBefore = actor.getSnapshot().context.failureCount;
-            actor.send({ type: 'RECOVERY_FAIL' });
-            expect(actor.getSnapshot().context.failureCount).toBe(failureBefore + 1);
-            actor.stop();
-        });
-
-        test('should set lastError on RECOVERY_FAIL with error string', () => {
-            const actor = actorInState('recovering');
-            actor.send({ type: 'RECOVERY_FAIL', error: 'Auth failed' });
-            expect(actor.getSnapshot().context.lastError).toEqual({ code: 'CONNECTION_FAILED', message: 'Auth failed' });
             actor.stop();
         });
 
@@ -414,9 +351,9 @@ describe('serviceLifecycleMachine', () => {
             actor.send({ type: 'CONNECT_FAIL', error: 'error 2' });
             expect(actor.getSnapshot().context.failureCount).toBe(2);
 
-            // Third failure via RECOVERY_FAIL
+            // Third failure via CONNECT_FAIL from recovering
             actor.send({ type: 'RECONNECT_ATTEMPT' });
-            actor.send({ type: 'RECOVERY_FAIL' });
+            actor.send({ type: 'CONNECT_FAIL', error: 'error 3' });
             expect(actor.getSnapshot().context.failureCount).toBe(3);
 
             actor.stop();
@@ -539,7 +476,6 @@ describe('createServiceActor', () => {
         'offline',
         'starting',
         'recovering',
-        'degraded',
     ] as const)('should start in %s state when initialState is %j', (state) => {
         const actor = createServiceActor(state);
         actor.start();

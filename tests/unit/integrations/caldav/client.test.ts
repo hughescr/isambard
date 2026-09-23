@@ -728,7 +728,7 @@ describe('CalDAVClient.getEvents', () => {
         await client.getEvents([server], BASE_DATE, end);
         await client.getEvents([server], BASE_DATE, end);
 
-        expect(sendEvent).not.toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', expect.anything());
+        expect(sendEvent).not.toHaveBeenCalledWith('caldav', expect.objectContaining({ type: 'CONNECTION_LOST' }));
     });
 
     test('emits CONNECTION_LOST after 3 consecutive server failures', async () => {
@@ -747,7 +747,8 @@ describe('CalDAVClient.getEvents', () => {
         await client.getEvents([server], BASE_DATE, end); // failure 2
         await client.getEvents([server], BASE_DATE, end); // failure 3 — threshold
 
-        expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', expect.objectContaining({
+        expect(sendEvent).toHaveBeenCalledWith('caldav', expect.objectContaining({
+            type:  'CONNECTION_LOST',
             error: 'Network error',
         }));
     });
@@ -774,8 +775,8 @@ describe('CalDAVClient.getEvents', () => {
         await client.getEvents([server], BASE_DATE, end); // failure 3 — CONNECTION_LOST emitted
         await client.getEvents([server], BASE_DATE, end); // success — CONNECT_SUCCESS emitted
 
-        expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', expect.anything());
-        expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECT_SUCCESS');
+        expect(sendEvent).toHaveBeenCalledWith('caldav', expect.objectContaining({ type: 'CONNECTION_LOST' }));
+        expect(sendEvent).toHaveBeenCalledWith('caldav', { type: 'CONNECT_SUCCESS' });
     });
 
     test('a recovery resets the failure streak before counting later failures', async () => {
@@ -801,9 +802,9 @@ describe('CalDAVClient.getEvents', () => {
         shouldFail = true;
         await client.getEvents([server], BASE_DATE, end);
         await client.getEvents([server], BASE_DATE, end);
-        expect(sendEvent).not.toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', expect.anything());
+        expect(sendEvent).not.toHaveBeenCalledWith('caldav', expect.objectContaining({ type: 'CONNECTION_LOST' }));
         await client.getEvents([server], BASE_DATE, end);
-        expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', expect.anything());
+        expect(sendEvent).toHaveBeenCalledWith('caldav', expect.objectContaining({ type: 'CONNECTION_LOST' }));
     });
 
     test('no CONNECT_SUCCESS on success when no prior failures', async () => {
@@ -820,7 +821,7 @@ describe('CalDAVClient.getEvents', () => {
         await client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
         // No CONNECT_SUCCESS when already online (no failures tracked)
-        expect(sendEvent).not.toHaveBeenCalledWith('caldav', 'CONNECT_SUCCESS');
+        expect(sendEvent).not.toHaveBeenCalledWith('caldav', { type: 'CONNECT_SUCCESS' });
     });
 
     test('CONNECTION_LOST stringifies a non-Error failure value', async () => {
@@ -839,7 +840,7 @@ describe('CalDAVClient.getEvents', () => {
         await client.getEvents([server], BASE_DATE, end);
         await client.getEvents([server], BASE_DATE, end);
 
-        expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', { error: 'socket hang up' });
+        expect(sendEvent).toHaveBeenCalledWith('caldav', { type: 'CONNECTION_LOST', error: 'socket hang up' });
     });
 });
 

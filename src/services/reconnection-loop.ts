@@ -48,7 +48,7 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
         currentAttemptPromise = (async (): Promise<boolean> => {
             try {
                 await connectFn();
-                registry.sendEvent(service, 'CONNECT_SUCCESS');
+                registry.sendEvent(service, { type: 'CONNECT_SUCCESS' });
                 running = false;
                 currentAttemptPromise = undefined;
                 return true;
@@ -59,13 +59,13 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
                 const delayMs = calculateDelay(attemptCount, policy);
                 const nextRetryAt = new Date(deps.now() + delayMs);
 
-                registry.sendEvent(service, 'CONNECT_FAIL', { error: errorMessage, nextRetryAt });
+                registry.sendEvent(service, { type: 'CONNECT_FAIL', error: errorMessage, nextRetryAt });
 
                 currentAttemptPromise = undefined;
 
                 if(running) {
                     pendingTimer = setTimeout(() => {
-                        registry.sendEvent(service, 'RECONNECT_ATTEMPT');
+                        registry.sendEvent(service, { type: 'RECONNECT_ATTEMPT' });
                         void attemptConnect();
                     }, delayMs);
                 }
@@ -84,7 +84,7 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
             stopped = false;
             running = true;
             attemptCount = 0;
-            registry.sendEvent(service, 'RECONNECT_ATTEMPT');
+            registry.sendEvent(service, { type: 'RECONNECT_ATTEMPT' });
             void attemptConnect();
         },
 
@@ -101,7 +101,7 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
             running = true;
             clearTimeout(pendingTimer);
             pendingTimer = undefined;
-            registry.sendEvent(service, 'RECONNECT_ATTEMPT');
+            registry.sendEvent(service, { type: 'RECONNECT_ATTEMPT' });
             void attemptConnect();
         },
 
@@ -120,7 +120,7 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
             clearTimeout(pendingTimer);
             pendingTimer = undefined;
 
-            registry.sendEvent(service, 'RECONNECT_ATTEMPT');
+            registry.sendEvent(service, { type: 'RECONNECT_ATTEMPT' });
             return attemptConnect();
         },
 

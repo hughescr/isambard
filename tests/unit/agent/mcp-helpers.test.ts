@@ -22,7 +22,6 @@ function makeRegistry(available: Record<string, boolean>, entries: Record<string
         getEntry:           mock((svc: string) => entries[svc] ?? makeEntry()),
         getState:           mock(() => 'offline' as const),
         getAll:             mock(() => ({}) as ReturnType<ServiceHealthRegistry['getAll']>),
-        isWriteAvailable:   mock(() => false),
         sendEvent:          mock(() => undefined),
         subscribe:          mock(() => () => undefined),
         buildStatusSummary: mock(() => undefined),
@@ -79,14 +78,6 @@ describe('mcpServiceUnavailableResult', () => {
         expect(text).toContain('not configured');
         // Should NOT include retry language
         expect(text).not.toContain('retry');
-    });
-
-    test('state=degraded → message says "Read operations may still work"', () => {
-        const entry = makeEntry({ state: 'degraded' });
-        const result = mcpServiceUnavailableResult('email', entry);
-        expect(result.isError).toBe(true);
-        const text = (result.content[0] as { text: string }).text;
-        expect(text).toContain('Read operations may still work');
     });
 
     test('state=offline → message contains "retry"', () => {
@@ -202,15 +193,6 @@ describe('mcpServiceUnavailableResult', () => {
         expect(text).toContain('currently offline. Last error');
     });
 
-    test('degraded state does NOT trigger reconnection loop', () => {
-        const entry = makeEntry({ state: 'degraded' });
-        const loop = makeLoop();
-        mcpServiceUnavailableResult('email', entry, loop);
-        // degraded is not offline_retryable_later category — but loop is still called
-        // Actually looking at the code: reconnectionLoop.triggerNow() is called for any state
-        expect(loop.triggerNow).toHaveBeenCalledTimes(1);
-    });
-
     test('nextRetryAt in future: waitSec uses Math.ceil', () => {
         // 500ms in the future → Math.ceil(500/1000) = Math.ceil(0.5) = 1s
         // Use 500ms instead of 1ms to avoid flakiness under parallel test runs (1ms can expire during the call)
@@ -238,13 +220,6 @@ describe('mcpServiceUnavailableResult', () => {
         const text = textOf(mcpServiceUnavailableResult('email', entry));
         expect(text).toStartWith('The email service is currently offline.');
         expect(text).toContain('Next reconnection attempt');
-    });
-
-    test('part order: degraded notice is appended after the header', () => {
-        const entry = makeEntry({ state: 'degraded' });
-        const text = textOf(mcpServiceUnavailableResult('email', entry));
-        expect(text).toStartWith('The email service is currently degraded.');
-        expect(text).toContain('Read operations may still work');
     });
 
     test('part order: "not configured" notice is appended after the header', () => {

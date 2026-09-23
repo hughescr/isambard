@@ -3,21 +3,28 @@ import { probeDynamoDB as defaultProbeDynamoDB } from './client';
 import type { RetryLogger } from '@/utils';
 
 /**
- * Minimal event-sender interface so the probe callback can signal the health registry
- * without importing the full `ServiceHealthRegistry` from `@/services` (which would
- * create a circular module dependency: storage → services → storage).
+ * Minimal, self-contained event-sender interface so the probe callback can signal the
+ * health registry without importing anything from `@/services`. `eslint-boundaries.config.mjs`
+ * only allows `storage` to import `utils`, `errors` and `config` — there is no carve-out for
+ * a type-only `services` import on this pair (unlike e.g. `agent`↔`email`) — so this interface
+ * is declared structurally rather than derived from `ServiceHealthRegistry` via `Pick`.
  *
- * `ServiceHealthRegistryImpl.sendEvent` satisfies this interface automatically.
+ * This module only ever sends `CONNECTION_LOST`, so the shape is narrowed to that one event.
+ * `ServiceHealthRegistryImpl.sendEvent` (whose `event` parameter is the wider
+ * `ServiceLifecycleEvent` union) satisfies this narrower interface with no cast, because a
+ * function accepting a wider event type can always be used where a function accepting a
+ * narrower one is expected (parameter contravariance). If a future caller needs to send a
+ * different event through this port, widen this type by hand — it cannot import the real union.
  */
 export interface ProbeEventSender {
-    sendEvent(service: 'dynamodb', event: string, payload?: Record<string, unknown>): void
+    sendEvent(service: 'dynamodb', event: { type: 'CONNECTION_LOST', error?: string }): void
 }
 
 /**
  * Executes a single DynamoDB background probe and signals the health registry on failure.
  *
  * On probe failure, sends `CONNECTION_LOST` to the health registry for the `dynamodb`
- * service so the lifecycle state machine transitions online/degraded → offline and
+ * service so the lifecycle state machine transitions online → offline and
  * the reconnection loop starts.  A passing probe does NOT mark the service online —
  * only the reconnection loop does that, to avoid a wedged-then-probe-succeeds race.
  *
@@ -43,7 +50,7 @@ export async function runDynamoDBProbe(
         const error = err instanceof Error ? err.message : String(err);
         logger?.warn({ error, msg: 'DynamoDB periodic probe failed' });
         try {
-            eventSender.sendEvent('dynamodb', 'CONNECTION_LOST', { error });
+            eventSender.sendEvent('dynamodb', { type: 'CONNECTION_LOST', error });
         } catch (error_) {
             const sendError = error_ instanceof Error ? error_.message : String(error_);
             logger?.warn({ error: sendError, msg: 'DynamoDB probe: failed to send CONNECTION_LOST event' });

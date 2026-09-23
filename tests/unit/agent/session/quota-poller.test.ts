@@ -893,7 +893,7 @@ describe('provider polling', () => {
     it('selects Anthropic by provider name when another provider is listed first', async () => {
         const report = providerReport();
         // The codex entry's quota has no windows, so it must be skipped rather than matched by
-        // position: if the provider lookup ever degraded to "take the first entry", this would
+        // position: if the provider lookup ever regressed to "take the first entry", this would
         // dispatch nothing at all instead of the real Anthropic windows below.
         const codex = {
             ...report.providers[0],

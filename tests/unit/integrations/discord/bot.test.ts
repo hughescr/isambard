@@ -4941,7 +4941,7 @@ describe('createDiscordBot', () => {
                 handler!();
                 eventCount += 1;
                 expect(sendEvent).toHaveBeenCalledTimes(eventCount);
-                expect(sendEvent).toHaveBeenLastCalledWith('discord', state);
+                expect(sendEvent).toHaveBeenLastCalledWith('discord', { type: state });
             }
         });
 

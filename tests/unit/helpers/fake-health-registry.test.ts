@@ -39,20 +39,18 @@ describe('makeHealthRegistry', () => {
     });
 
     test('getEntry and getState read the same per-service data as getAll', () => {
-        const entry    = makeHealthEntry({ state: 'degraded', epoch: 5 });
+        const entry    = makeHealthEntry({ state: 'recovering', epoch: 5 });
         const registry = makeHealthRegistry({ entries: { caldav: entry } });
 
         expect(registry.getEntry('caldav')).toEqual(entry);
-        expect(registry.getState('caldav')).toBe('degraded');
+        expect(registry.getState('caldav')).toBe('recovering');
     });
 
-    test('isAvailable/isWriteAvailable default to false and honor overrides', () => {
-        const registry = makeHealthRegistry({ available: { discord: true }, writeAvailable: { email: true } });
+    test('isAvailable defaults to false and honors overrides', () => {
+        const registry = makeHealthRegistry({ available: { discord: true } });
 
         expect(registry.isAvailable('discord')).toBe(true);
         expect(registry.isAvailable('email')).toBe(false);
-        expect(registry.isWriteAvailable('email')).toBe(true);
-        expect(registry.isWriteAvailable('discord')).toBe(false);
     });
 
     test('buildStatusSummary returns the configured text, or undefined when omitted', () => {
@@ -64,11 +62,11 @@ describe('makeHealthRegistry', () => {
         const registry = makeHealthRegistry();
 
         registry.subscribe(() => undefined);
-        registry.sendEvent('discord', 'reconnected');
+        registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
         registry.stop();
 
         expect(registry.subscribe.mock.calls).toHaveLength(1);
-        expect(registry.sendEvent.mock.calls[0]).toEqual(['discord', 'reconnected']);
+        expect(registry.sendEvent.mock.calls[0]).toEqual(['discord', { type: 'CONNECT_SUCCESS' }]);
         expect(registry.stop.mock.calls).toHaveLength(1);
     });
 });

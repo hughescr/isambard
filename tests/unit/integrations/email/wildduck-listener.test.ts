@@ -1354,7 +1354,7 @@ describe('WildDuckListener', () => {
             await listener.stop();
             resolvePoll([]);
             await poll;
-            expect(sendEvent).not.toHaveBeenCalledWith('email', 'CONNECT_SUCCESS');
+            expect(sendEvent).not.toHaveBeenCalledWith('email', { type: 'CONNECT_SUCCESS' });
         });
 
         test('late failed poll cannot log or report a connection loss after stop', async () => {
@@ -1385,7 +1385,7 @@ describe('WildDuckListener', () => {
             rejectPoll(new Error('late failure'));
             await poll;
             expect(mockLogger.warn).not.toHaveBeenCalledWith(expect.objectContaining({ msg: 'Poll cycle failed, will retry' }));
-            expect(sendEvent).not.toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.anything());
+            expect(sendEvent).not.toHaveBeenCalledWith('email', expect.objectContaining({ type: 'CONNECTION_LOST' }));
         });
     });
 
@@ -1563,7 +1563,7 @@ describe('WildDuckListener', () => {
             await nextPoll();
 
             // Should NOT emit CONNECT_SUCCESS when already online (no consecutive failures)
-            expect(sendEvent).not.toHaveBeenCalledWith('email', 'CONNECT_SUCCESS');
+            expect(sendEvent).not.toHaveBeenCalledWith('email', { type: 'CONNECT_SUCCESS' });
 
             await listener.stop();
         });
@@ -1593,7 +1593,7 @@ describe('WildDuckListener', () => {
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
             await nextPoll(); // listCount=3 (fails)
 
-            expect(sendEvent).not.toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.anything());
+            expect(sendEvent).not.toHaveBeenCalledWith('email', expect.objectContaining({ type: 'CONNECTION_LOST' }));
 
             await listener.stop();
         });
@@ -1626,7 +1626,8 @@ describe('WildDuckListener', () => {
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
             await nextPoll(); // failure 3 — threshold hit
 
-            expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.objectContaining({
+            expect(sendEvent).toHaveBeenCalledWith('email', expect.objectContaining({
+                type:  'CONNECTION_LOST',
                 error: 'Network error',
             }));
 
@@ -1656,15 +1657,15 @@ describe('WildDuckListener', () => {
                 await nextPoll();
             }
 
-            const lostCalls = (sendEvent.mock.calls as unknown[][]).filter(call => call[1] === 'CONNECTION_LOST');
+            const lostCalls = (sendEvent.mock.calls as unknown[][]).filter(call => (call[1] as { type?: string }).type === 'CONNECTION_LOST');
             expect(lostCalls).toEqual([
-                ['email', 'CONNECTION_LOST', { error: 'network unavailable' }],
-                ['email', 'CONNECTION_LOST', { error: 'network unavailable' }],
+                ['email', { type: 'CONNECTION_LOST', error: 'network unavailable' }],
+                ['email', { type: 'CONNECTION_LOST', error: 'network unavailable' }],
             ]);
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
             await nextPoll();
-            expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECT_SUCCESS');
+            expect(sendEvent).toHaveBeenCalledWith('email', { type: 'CONNECT_SUCCESS' });
             await listener.stop();
         });
 
@@ -1699,9 +1700,9 @@ describe('WildDuckListener', () => {
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
             await nextPoll(); // failure 3 — threshold hit, CONNECTION_LOST emitted
 
-            expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.anything());
+            expect(sendEvent).toHaveBeenCalledWith('email', expect.objectContaining({ type: 'CONNECTION_LOST' }));
             const connectLostCallCount = (sendEvent.mock.calls as unknown[][]).filter(
-                c => c[1] === 'CONNECTION_LOST'
+                c => (c[1] as { type?: string }).type === 'CONNECTION_LOST'
             ).length;
             expect(connectLostCallCount).toBe(1);
 
@@ -1709,7 +1710,7 @@ describe('WildDuckListener', () => {
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
             await nextPoll();
 
-            expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECT_SUCCESS');
+            expect(sendEvent).toHaveBeenCalledWith('email', { type: 'CONNECT_SUCCESS' });
 
             await listener.stop();
         });
@@ -1742,21 +1743,21 @@ describe('WildDuckListener', () => {
                 await runPoll();
                 await runPoll();
                 await runPoll();
-                expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.anything());
+                expect(sendEvent).toHaveBeenCalledWith('email', expect.objectContaining({ type: 'CONNECTION_LOST' }));
 
                 await runPoll();
-                expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECT_SUCCESS');
+                expect(sendEvent).toHaveBeenCalledWith('email', { type: 'CONNECT_SUCCESS' });
                 const lostAfterRecovery = (sendEvent.mock.calls as unknown[][])
-                    .filter(call => call[1] === 'CONNECTION_LOST').length;
+                    .filter(call => (call[1] as { type?: string }).type === 'CONNECTION_LOST').length;
 
                 await runPoll();
                 await runPoll();
                 expect((sendEvent.mock.calls as unknown[][])
-                    .filter(call => call[1] === 'CONNECTION_LOST')).toHaveLength(lostAfterRecovery);
+                    .filter(call => (call[1] as { type?: string }).type === 'CONNECTION_LOST')).toHaveLength(lostAfterRecovery);
 
                 await runPoll();
                 expect((sendEvent.mock.calls as unknown[][])
-                    .filter(call => call[1] === 'CONNECTION_LOST')).toHaveLength(lostAfterRecovery + 1);
+                    .filter(call => (call[1] as { type?: string }).type === 'CONNECTION_LOST')).toHaveLength(lostAfterRecovery + 1);
             } finally {
                 await listener.stop();
             }
@@ -1798,7 +1799,7 @@ describe('WildDuckListener', () => {
             await nextPoll(); // second success — no extra CONNECT_SUCCESS
 
             const connectSuccessCalls = (sendEvent.mock.calls as unknown[][]).filter(
-                c => c[1] === 'CONNECT_SUCCESS'
+                c => (c[1] as { type?: string }).type === 'CONNECT_SUCCESS'
             ).length;
             expect(connectSuccessCalls).toBe(1);
 
@@ -2027,7 +2028,7 @@ describe('WildDuckListener', () => {
             await flushAsync();
             expect(source.closed).toBe(true);
             expect(mockLogger.warn).not.toHaveBeenCalled();
-            expect(sendEvent).not.toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.anything());
+            expect(sendEvent).not.toHaveBeenCalledWith('email', expect.objectContaining({ type: 'CONNECTION_LOST' }));
             await listener.stop();
         });
 
@@ -2232,7 +2233,8 @@ describe('WildDuckListener', () => {
             // A second EventSource should have been created immediately (no delay needed)
             expect(fakeEventSourceInstances).toHaveLength(2);
             expect(firstFakeEventSource().closed).toBe(true);
-            expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECTION_LOST', {
+            expect(sendEvent).toHaveBeenCalledWith('email', {
+                type:  'CONNECTION_LOST',
                 error: 'SSE connection error',
             });
 

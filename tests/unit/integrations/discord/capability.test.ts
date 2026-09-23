@@ -14,7 +14,6 @@ function makeRegistry(discordAvailable: boolean): ServiceHealthRegistry {
         getEntry:           mock(() => ({ state: 'offline' as const, epoch: 0, failureCount: 0 })),
         getState:           mock(() => 'offline' as const),
         getAll:             mock(() => ({}) as ReturnType<ServiceHealthRegistry['getAll']>),
-        isWriteAvailable:   mock(() => false),
         sendEvent:          mock(() => undefined),
         subscribe:          mock(() => () => undefined),
         buildStatusSummary: mock(() => undefined),

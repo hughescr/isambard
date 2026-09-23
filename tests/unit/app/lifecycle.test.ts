@@ -261,7 +261,7 @@ describe('createDiscordRecoveryHandler', () => {
         const submitCatchUp = mock(async () => undefined);
         const handler = createDiscordRecoveryHandler({ warmCache, submitCatchUp, logger: makeFakeLogger() });
 
-        handler({ service: 'discord', newState: 'degraded' } as never);
+        handler({ service: 'discord', newState: 'offline' } as never);
         await Promise.resolve();
 
         expect(warmCache).not.toHaveBeenCalled();

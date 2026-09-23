@@ -355,15 +355,15 @@ describe('buildDiscordEnvelope', () => {
             now,
             timezone,
             timeHeader,
-            healthNote:      'MCP degraded',
+            healthNote:      'MCP offline',
             userMemoryBlock: 'Craig likes TypeScript.',
             newEvents:       ['- event one', '- event two'],
             channelList:     '#general, #random',
         });
 
         const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig · channelId=c · authorId=a · messageIds=[msg-1]]';
-        expect(envelope.text.startsWith(`${header}\n\n${timeHeader}\n\n[Service health]\nMCP degraded`)).toBe(true);
-        expect(envelope.text).toContain('[Service health]\nMCP degraded');
+        expect(envelope.text.startsWith(`${header}\n\n${timeHeader}\n\n[Service health]\nMCP offline`)).toBe(true);
+        expect(envelope.text).toContain('[Service health]\nMCP offline');
         expect(envelope.text).toContain('[About this user]\nCraig likes TypeScript.');
         expect(envelope.text).toContain('[Recent events]\n- event one\n- event two');
         expect(envelope.text).toContain('[Channels]\n#general, #random');

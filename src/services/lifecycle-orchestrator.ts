@@ -1,5 +1,4 @@
-import { assign, setup, createActor } from 'xstate';
-import type { HealthState } from './types';
+import { assign, setup, createActor, type StateValueFrom } from 'xstate';
 
 interface ServiceLifecycleContext {
     epoch:         number
@@ -10,15 +9,12 @@ interface ServiceLifecycleContext {
     nextRetryAt:   Date | undefined
 }
 
-type ServiceLifecycleEvent
+export type ServiceLifecycleEvent
     = | { type: 'CONFIGURE' }
       | { type: 'CONNECT_SUCCESS' }
       | { type: 'CONNECT_FAIL', error?: string, nextRetryAt?: Date }
       | { type: 'CONNECTION_LOST', error?: string }
-      | { type: 'PARTIAL_FAILURE' }
-      | { type: 'RECOVERED' }
-      | { type: 'RECONNECT_ATTEMPT' }
-      | { type: 'RECOVERY_FAIL', error?: string };
+      | { type: 'RECONNECT_ATTEMPT' };
 
 export const serviceLifecycleMachine = setup({
     types: {
@@ -77,19 +73,11 @@ export const serviceLifecycleMachine = setup({
             on: {
                 CONNECT_SUCCESS: { target: 'online', actions: 'recordOnline' },
                 CONNECT_FAIL:    { target: 'offline', actions: ['recordOffline', 'setNextRetry'] },
-                RECOVERY_FAIL:   { target: 'offline', actions: 'recordOffline' },
                 CONNECTION_LOST: { target: 'offline', actions: ['incrementEpoch', 'recordOffline'] },
             },
         },
         online: {
             on: {
-                CONNECTION_LOST: { target: 'offline', actions: ['incrementEpoch', 'recordOffline'] },
-                PARTIAL_FAILURE: { target: 'degraded' },
-            },
-        },
-        degraded: {
-            on: {
-                RECOVERED:       { target: 'online', actions: 'recordOnline' },
                 CONNECTION_LOST: { target: 'offline', actions: ['incrementEpoch', 'recordOffline'] },
             },
         },
@@ -103,9 +91,11 @@ export const serviceLifecycleMachine = setup({
     },
 });
 
+export type ServiceLifecycleState = StateValueFrom<typeof serviceLifecycleMachine>;
+
 export type ServiceLifecycleActor = ReturnType<typeof createActor<typeof serviceLifecycleMachine>>;
 
-export function createServiceActor(initialState?: HealthState): ServiceLifecycleActor {
+export function createServiceActor(initialState?: ServiceLifecycleState): ServiceLifecycleActor {
     // Stryker disable next-line llm: HealthState has no falsy members, so this is equivalent for every valid input.
     if(initialState === undefined) {
         // Stryker disable next-line llm: XState spreads omitted and empty actor options into identical defaults.

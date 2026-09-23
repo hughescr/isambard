@@ -157,7 +157,7 @@ describe('initializeChannelRegistry', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(healthRegistry.sendEvent).toHaveBeenCalledWith('discord-channel-registry', 'CONFIGURE');
+        expect(healthRegistry.sendEvent).toHaveBeenCalledWith('discord-channel-registry', { type: 'CONFIGURE' });
         expect(infoSpy).toHaveBeenCalledWith(expect.objectContaining({ discovered: 2, updated: 3, errors: 1, msg: 'Channel discovery completed: 2 new, 3 updated' }));
     });
 
@@ -456,7 +456,6 @@ describe('initializeChannelRegistry', () => {
             getEntry:           mock(() => ({ state: 'offline' as const, epoch: 0, failureCount: 0 })),
             getAll:             mock(() => ({} as ReturnType<ServiceHealthRegistry['getAll']>)),
             isAvailable:        mock(() => false),
-            isWriteAvailable:   mock(() => false),
             sendEvent:          mock(() => undefined),
             subscribe:          mock(() => () => undefined),
             buildStatusSummary: mock(() => undefined),
@@ -502,8 +501,8 @@ describe('initializeChannelRegistry', () => {
         // Track which services receive CONNECT_FAIL
         const connectFailServices: string[] = [];
         (healthRegistry.sendEvent as ReturnType<typeof mock>).mockImplementation(
-            (service: string, event: string) => {
-                if(event === 'CONNECT_FAIL') {
+            (service: string, event: { type: string }) => {
+                if(event.type === 'CONNECT_FAIL') {
                     connectFailServices.push(service);
                 }
             }

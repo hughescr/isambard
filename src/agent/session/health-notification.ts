@@ -14,7 +14,7 @@
  * {@link createHealthOutageCoalescer} batches same-window offline transitions into ONE wake
  * notification naming every affected service. Per `src/services/lifecycle-orchestrator.ts`,
  * `epoch` increments only on `CONFIGURE`/`CONNECTION_LOST`, never on
- * `CONNECT_FAIL`/`RECOVERY_FAIL` — so a service that flaps
+ * `CONNECT_FAIL` — so a service that flaps
  * `online -> offline -> recovering -> offline` within one connection-loss episode keeps one
  * epoch throughout. The coalescer keys its own "already handled" memory on `${service}:${epoch}`
  * so that flap is intentionally coalesced/deduped to a single outage notice, not one per
@@ -106,7 +106,7 @@ export function createHealthOutageCoalescer(params: CreateHealthOutageCoalescerP
     // unconditional scope as the rest of createApp()'s health listeners, before bot.ts's
     // clientReady ever calls `conductor.open()`. Marking a key "reported" before delivery was
     // even attempted would permanently lose that outage notice for the rest of the epoch (epoch
-    // does not advance on CONNECT_FAIL/RECOVERY_FAIL) the moment the very first flush landed
+    // does not advance on CONNECT_FAIL) the moment the very first flush landed
     // inside that boot window — silently, since `report()`/`flush()` never throw. Gating on
     // delivery instead means an outage whose first flush finds the conductor not yet open simply
     // is not remembered, so the next report() for that same key (a service's periodic reconnect
@@ -202,7 +202,7 @@ export function createHealthNotificationListener(params: CreateHealthNotificatio
         // Intentional trade-off, not an oversight (review finding): this key carries no time
         // component, only (service, epoch, newState). Combined with the bridge's own
         // process-lifetime dedupe set, a service that keeps landing on the exact same
-        // (previous, new) pair within one epoch — e.g. hourly degraded<->online churn while
+        // (previous, new) pair within one epoch — e.g. hourly offline<->recovering churn while
         // `epoch` itself never advances, per the module doc — is announced at most once per
         // direction for the rest of that epoch, not re-announced on every recurrence. Left this
         // way deliberately: this file is required to carry no time window or per-service memory

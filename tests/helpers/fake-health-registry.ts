@@ -8,6 +8,7 @@
  */
 import { mock, type Mock } from 'bun:test';
 import type { ServiceHealthRegistry } from '@/services';
+import type { ServiceLifecycleEvent } from '@/services/lifecycle-orchestrator';
 import { serviceNameSchema, type HealthChangeListener, type ServiceHealthEntry, type ServiceName } from '@/services/types';
 
 const SERVICE_NAMES = serviceNameSchema.options;
@@ -28,13 +29,11 @@ export function makeHealthEntry(overrides: Partial<ServiceHealthEntry> = {}): Se
 
 export interface MakeHealthRegistryOptions {
     /** Per-service entries. A {@link ServiceName} not named here still gets an entry — {@link makeHealthEntry}'s all-offline default — so `getAll()` always covers every known service. */
-    entries?:        Partial<Record<ServiceName, ServiceHealthEntry>>
+    entries?:   Partial<Record<ServiceName, ServiceHealthEntry>>
     /** Per-service `isAvailable()` answers. Defaults to `false` for any service not named here. */
-    available?:      Partial<Record<ServiceName, boolean>>
-    /** Per-service `isWriteAvailable()` answers. Defaults to `false` for any service not named here. */
-    writeAvailable?: Partial<Record<ServiceName, boolean>>
+    available?: Partial<Record<ServiceName, boolean>>
     /** What `buildStatusSummary()` returns. Omit (or pass `undefined`) to model "nothing to report". */
-    summary?:        string
+    summary?:   string
 }
 
 /**
@@ -43,19 +42,19 @@ export interface MakeHealthRegistryOptions {
  * via `subscribe` — with no cast at the call site.
  */
 export interface FakeHealthRegistry extends ServiceHealthRegistry {
-    sendEvent: Mock<(service: ServiceName, event: string, payload?: Record<string, unknown>) => void>
+    sendEvent: Mock<(service: ServiceName, event: ServiceLifecycleEvent) => void>
     subscribe: Mock<(listener: HealthChangeListener) => () => void>
     stop:      Mock<() => void>
 }
 
 /**
  * Build a scriptable {@link FakeHealthRegistry} double whose read methods (`getAll`,
- * `getEntry`, `getState`, `isAvailable`, `isWriteAvailable`, `buildStatusSummary`) genuinely derive
+ * `getEntry`, `getState`, `isAvailable`, `buildStatusSummary`) genuinely derive
  * from `options`, and whose side-effecting methods (`sendEvent`, `subscribe`, `stop`) are `mock()`s
  * a test can assert against.
  */
 export function makeHealthRegistry(options: MakeHealthRegistryOptions = {}): FakeHealthRegistry {
-    const { entries = {}, available = {}, writeAvailable = {}, summary } = options;
+    const { entries = {}, available = {}, summary } = options;
 
     const resolvedEntries = Object.fromEntries(
         SERVICE_NAMES.map(name => [name, entries[name] ?? makeHealthEntry()])
@@ -66,7 +65,6 @@ export function makeHealthRegistry(options: MakeHealthRegistryOptions = {}): Fak
         getEntry:           mock((service: ServiceName) => resolvedEntries[service]),
         getAll:             mock(() => resolvedEntries),
         isAvailable:        mock((service: ServiceName) => available[service] ?? false),
-        isWriteAvailable:   mock((service: ServiceName) => writeAvailable[service] ?? false),
         sendEvent:          mock(() => undefined),
         subscribe:          mock(() => noopUnsubscribe),
         buildStatusSummary: mock(() => summary),

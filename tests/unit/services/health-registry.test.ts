@@ -40,27 +40,27 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should return starting after CONFIGURE', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
             expect(registry.getState('discord')).toBe('starting');
         });
 
         test('should return online after CONFIGURE + CONNECT_SUCCESS', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
             expect(registry.getState('discord')).toBe('online');
         });
 
         test('should return offline after CONFIGURE + CONNECT_FAIL', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL' });
             expect(registry.getState('discord')).toBe('offline');
         });
 
         test('should track state independently for each service', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
 
-            registry.sendEvent('email', 'CONFIGURE');
+            registry.sendEvent('email', { type: 'CONFIGURE' });
 
             expect(registry.getState('discord')).toBe('online');
             expect(registry.getState('email')).toBe('starting');
@@ -71,7 +71,7 @@ describe('ServiceHealthRegistryImpl', () => {
     describe('stop()', () => {
         test('stops actors so later events cannot change their state', () => {
             registry.stop();
-            registry.sendEvent('discord', 'CONFIGURE');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
 
             expect(registry.getState('discord')).toBe('disabled');
         });
@@ -86,8 +86,8 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should return entry with updated state after transitions', () => {
-            registry.sendEvent('email', 'CONFIGURE');
-            registry.sendEvent('email', 'CONNECT_SUCCESS');
+            registry.sendEvent('email', { type: 'CONFIGURE' });
+            registry.sendEvent('email', { type: 'CONNECT_SUCCESS' });
 
             const entry = registry.getEntry('email');
             expect(entry.state).toBe('online');
@@ -97,8 +97,8 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should return entry with failure details after CONNECT_FAIL', () => {
-            registry.sendEvent('bluesky', 'CONFIGURE');
-            registry.sendEvent('bluesky', 'CONNECT_FAIL', { error: 'Auth failed' });
+            registry.sendEvent('bluesky', { type: 'CONFIGURE' });
+            registry.sendEvent('bluesky', { type: 'CONNECT_FAIL', error: 'Auth failed' });
 
             const entry = registry.getEntry('bluesky');
             expect(entry.state).toBe('offline');
@@ -165,8 +165,8 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should reflect current state for each service', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
 
             const all = registry.getAll();
             expect(all.discord.state).toBe('online');
@@ -180,92 +180,48 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should return false for starting state', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
             expect(registry.isAvailable('discord')).toBe(false);
         });
 
         test('should return true for online state', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS');
-            expect(registry.isAvailable('discord')).toBe(true);
-        });
-
-        test('should return true for degraded state', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS');
-            registry.sendEvent('discord', 'PARTIAL_FAILURE');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
             expect(registry.isAvailable('discord')).toBe(true);
         });
 
         test('should return false for offline state', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL' });
             expect(registry.isAvailable('discord')).toBe(false);
         });
 
         test('should return false for recovering state', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL');
-            registry.sendEvent('discord', 'RECONNECT_ATTEMPT');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL' });
+            registry.sendEvent('discord', { type: 'RECONNECT_ATTEMPT' });
             expect(registry.isAvailable('discord')).toBe(false);
-        });
-    });
-
-    describe('isWriteAvailable()', () => {
-        test('should return false for disabled state', () => {
-            expect(registry.isWriteAvailable('discord')).toBe(false);
-        });
-
-        test('should return false for starting state', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            expect(registry.isWriteAvailable('discord')).toBe(false);
-        });
-
-        test('should return true for online state', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS');
-            expect(registry.isWriteAvailable('discord')).toBe(true);
-        });
-
-        test('should return false for degraded state', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS');
-            registry.sendEvent('discord', 'PARTIAL_FAILURE');
-            expect(registry.isWriteAvailable('discord')).toBe(false);
-        });
-
-        test('should return false for offline state', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL');
-            expect(registry.isWriteAvailable('discord')).toBe(false);
-        });
-
-        test('should return false for recovering state', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL');
-            registry.sendEvent('discord', 'RECONNECT_ATTEMPT');
-            expect(registry.isWriteAvailable('discord')).toBe(false);
         });
     });
 
     describe('sendEvent()', () => {
         test('should transition state correctly for a given service', () => {
-            registry.sendEvent('email', 'CONFIGURE');
+            registry.sendEvent('email', { type: 'CONFIGURE' });
             expect(registry.getState('email')).toBe('starting');
         });
 
         test('should pass payload to the actor', () => {
             const retryAt = new Date(Date.now() + 5000);
-            registry.sendEvent('email', 'CONFIGURE');
-            registry.sendEvent('email', 'CONNECT_FAIL', { nextRetryAt: retryAt });
+            registry.sendEvent('email', { type: 'CONFIGURE' });
+            registry.sendEvent('email', { type: 'CONNECT_FAIL', nextRetryAt: retryAt });
             expect(registry.getEntry('email').nextRetryAt).toEqual(retryAt);
         });
 
         test('should only affect the specified service', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
 
-            registry.sendEvent('email', 'CONFIGURE');
+            registry.sendEvent('email', { type: 'CONFIGURE' });
 
             expect(registry.getState('discord')).toBe('online');
             expect(registry.getState('email')).toBe('starting');
@@ -274,8 +230,16 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should work without payload', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
             expect(registry.getState('discord')).toBe('starting');
+        });
+
+        test('rejects an event whose type is not in the closed ServiceLifecycleEvent union at compile time', () => {
+            // @ts-expect-error registry.sendEvent's event param is the closed ServiceLifecycleEvent union — an unknown `type` must fail to compile.
+            registry.sendEvent('discord', { type: 'TYPO' });
+            // The unknown event type matches no transition, so xstate silently ignores it —
+            // the state machine is untouched, unlike a real event such as CONFIGURE.
+            expect(registry.getState('discord')).toBe('disabled');
         });
     });
 
@@ -290,7 +254,7 @@ describe('ServiceHealthRegistryImpl', () => {
         // We use a helper to prime the first state transition before registering test listeners.
 
         function primeFirstTransition(service: ServiceName = 'discord') {
-            registry.sendEvent(service, 'CONFIGURE'); // disabled → starting, sets previousStates
+            registry.sendEvent(service, { type: 'CONFIGURE' }); // disabled → starting, sets previousStates
         }
 
         test('should notify listener on the second state transition', () => {
@@ -301,7 +265,7 @@ describe('ServiceHealthRegistryImpl', () => {
                 changes.push(change);
             });
 
-            registry.sendEvent('discord', 'CONNECT_SUCCESS'); // starting → online
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' }); // starting → online
 
             expect(changes).toHaveLength(1);
             expect(changes[0].service).toBe('discord');
@@ -318,7 +282,7 @@ describe('ServiceHealthRegistryImpl', () => {
             });
 
             // Send an event that has no transition defined in current state (starting)
-            registry.sendEvent('discord', 'RECONNECT_ATTEMPT'); // ignored in starting
+            registry.sendEvent('discord', { type: 'RECONNECT_ATTEMPT' }); // ignored in starting
 
             expect(changes).toHaveLength(0);
         });
@@ -332,7 +296,7 @@ describe('ServiceHealthRegistryImpl', () => {
             });
 
             const before = new Date();
-            registry.sendEvent('discord', 'CONNECT_SUCCESS'); // starting → online
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' }); // starting → online
             const after = new Date();
 
             expect(changes).toHaveLength(1);
@@ -359,7 +323,7 @@ describe('ServiceHealthRegistryImpl', () => {
                 changes2.push(change);
             });
 
-            registry.sendEvent('email', 'CONNECT_SUCCESS'); // starting → online
+            registry.sendEvent('email', { type: 'CONNECT_SUCCESS' }); // starting → online
 
             expect(changes1).toHaveLength(1);
             expect(changes2).toHaveLength(1);
@@ -373,12 +337,12 @@ describe('ServiceHealthRegistryImpl', () => {
                 changes.push(change);
             });
 
-            registry.sendEvent('discord', 'CONNECT_SUCCESS'); // starting → online
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' }); // starting → online
             expect(changes).toHaveLength(1);
 
             unsubscribe();
 
-            registry.sendEvent('discord', 'CONNECTION_LOST'); // online → offline
+            registry.sendEvent('discord', { type: 'CONNECTION_LOST' }); // online → offline
             expect(changes).toHaveLength(1); // No new change after unsubscribe
         });
 
@@ -394,7 +358,7 @@ describe('ServiceHealthRegistryImpl', () => {
                 changes2.push(change);
             });
 
-            registry.sendEvent('discord', 'CONNECT_SUCCESS'); // starting → online
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' }); // starting → online
 
             expect(changes2).toHaveLength(1);
             expect(mockLogger.error).toHaveBeenCalledTimes(1);
@@ -408,7 +372,7 @@ describe('ServiceHealthRegistryImpl', () => {
                 throw thrownError;
             });
 
-            registry.sendEvent('discord', 'CONNECT_SUCCESS'); // starting → online
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' }); // starting → online
 
             expect(mockLogger.error).toHaveBeenCalledWith(
                 { error: thrownError },
@@ -432,8 +396,8 @@ describe('ServiceHealthRegistryImpl', () => {
     describe('buildStatusSummary()', () => {
         test('should return undefined when all services are in online state', () => {
             for(const service of ['discord', 'email', 'bluesky', 'caldav'] as ServiceName[]) {
-                registry.sendEvent(service, 'CONFIGURE');
-                registry.sendEvent(service, 'CONNECT_SUCCESS');
+                registry.sendEvent(service, { type: 'CONFIGURE' });
+                registry.sendEvent(service, { type: 'CONNECT_SUCCESS' });
             }
             expect(registry.buildStatusSummary()).toBeUndefined();
         });
@@ -456,8 +420,8 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should return undefined when all services are online or disabled', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
 
             // email/bluesky/caldav are disabled — also excluded
             const summary = registry.buildStatusSummary();
@@ -466,15 +430,15 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should return undefined when all services are online', () => {
             for(const service of ['discord', 'email', 'bluesky', 'caldav'] as ServiceName[]) {
-                registry.sendEvent(service, 'CONFIGURE');
-                registry.sendEvent(service, 'CONNECT_SUCCESS');
+                registry.sendEvent(service, { type: 'CONFIGURE' });
+                registry.sendEvent(service, { type: 'CONNECT_SUCCESS' });
             }
             expect(registry.buildStatusSummary()).toBeUndefined();
         });
 
         test('should include offline duration in summary when lastOfflineAt is set', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL' });
 
             const summary = registry.buildStatusSummary();
             expect(summary).toContain('discord: offline');
@@ -483,8 +447,8 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should include error details in summary when lastError is set', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL', { error: 'Connection timed out' });
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL', error: 'Connection timed out' });
 
             const summary = registry.buildStatusSummary();
             expect(summary).toContain('[CONNECTION_FAILED: Connection timed out]');
@@ -492,8 +456,8 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should include retry info when nextRetryAt is in the future', () => {
             const retryAt = new Date(Date.now() + 60_000);
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL', { nextRetryAt: retryAt });
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL', nextRetryAt: retryAt });
 
             const summary = registry.buildStatusSummary();
             expect(summary).toContain('retry in');
@@ -501,8 +465,8 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should show seconds for retry under 60 seconds', () => {
             const retryAt = new Date(Date.now() + 30_000);
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL', { nextRetryAt: retryAt });
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL', nextRetryAt: retryAt });
 
             const summary = registry.buildStatusSummary();
             expect(summary).toBeDefined();
@@ -513,8 +477,8 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should show minutes for retry of 60 seconds or more', () => {
             const retryAt = new Date(Date.now() + 120_000);
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL', { nextRetryAt: retryAt });
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL', nextRetryAt: retryAt });
 
             const summary = registry.buildStatusSummary();
             expect(summary).toBeDefined();
@@ -524,8 +488,8 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should show 1m for retry of exactly 60 seconds', () => {
             const retryAt = new Date(Date.now() + 60_000);
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL', { nextRetryAt: retryAt });
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL', nextRetryAt: retryAt });
 
             const summary = registry.buildStatusSummary();
             expect(summary).toBeDefined();
@@ -535,8 +499,8 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should not include retry info when nextRetryAt is in the past', () => {
             const retryAt = new Date(Date.now() - 60_000);
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL', { nextRetryAt: retryAt });
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL', nextRetryAt: retryAt });
 
             const summary = registry.buildStatusSummary();
             expect(summary).not.toContain('retry in');
@@ -544,8 +508,8 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should not include retry info when nextRetryAt equals exactly now (retryMs=0)', () => {
             const retryAt = new Date(Date.now()); // exactly now, retryMs=0
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL', { nextRetryAt: retryAt });
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL', nextRetryAt: retryAt });
 
             const summary = registry.buildStatusSummary();
             // retryMs === 0 is not > 0, so should fall through to "reconnection attempt is in progress"
@@ -554,11 +518,11 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should include multiple offline services on separate lines', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL' });
 
-            registry.sendEvent('email', 'CONFIGURE');
-            registry.sendEvent('email', 'CONNECT_FAIL');
+            registry.sendEvent('email', { type: 'CONFIGURE' });
+            registry.sendEvent('email', { type: 'CONNECT_FAIL' });
 
             const summary = registry.buildStatusSummary();
             expect(summary).toBeDefined();
@@ -572,8 +536,8 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should format status line as "name: state (offline duration) [error]"', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL', { error: 'Timeout' });
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL', error: 'Timeout' });
 
             const summary = registry.buildStatusSummary();
             expect(summary).toBeDefined();
@@ -584,11 +548,11 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should not include online services in summary', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS'); // online
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' }); // online
 
-            registry.sendEvent('email', 'CONFIGURE');
-            registry.sendEvent('email', 'CONNECT_FAIL'); // offline
+            registry.sendEvent('email', { type: 'CONFIGURE' });
+            registry.sendEvent('email', { type: 'CONNECT_FAIL' }); // offline
 
             const summary = registry.buildStatusSummary();
             expect(summary).toBeDefined();
@@ -597,11 +561,11 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should separate multiple services with newlines (no trailing newline)', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL' });
 
-            registry.sendEvent('email', 'CONFIGURE');
-            registry.sendEvent('email', 'CONNECT_FAIL');
+            registry.sendEvent('email', { type: 'CONFIGURE' });
+            registry.sendEvent('email', { type: 'CONNECT_FAIL' });
 
             const summary = registry.buildStatusSummary()!;
             expect(summary).toBeDefined();
@@ -611,8 +575,8 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should list offline services in SERVICE_NAMES order', () => {
             for(const service of ['discord', 'email'] as ServiceName[]) {
-                registry.sendEvent(service, 'CONFIGURE');
-                registry.sendEvent(service, 'CONNECT_FAIL');
+                registry.sendEvent(service, { type: 'CONFIGURE' });
+                registry.sendEvent(service, { type: 'CONNECT_FAIL' });
             }
 
             const lines = registry.buildStatusSummary()!.split('\n');
@@ -625,8 +589,9 @@ describe('ServiceHealthRegistryImpl', () => {
             const now = new Date('2026-01-01T00:00:00.000Z');
             jest.setSystemTime(now);
 
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL', {
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', {
+                type:        'CONNECT_FAIL',
                 error:       'Timeout',
                 nextRetryAt: new Date(now.getTime() + 61_000),
             });
@@ -640,8 +605,8 @@ describe('ServiceHealthRegistryImpl', () => {
             const now = new Date('2026-01-01T00:00:00.000Z');
             jest.setSystemTime(now);
 
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_FAIL');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_FAIL' });
 
             jest.setSystemTime(new Date(now.getTime() + 90_000));
 
@@ -653,8 +618,9 @@ describe('ServiceHealthRegistryImpl', () => {
 
             function goOfflineWithRetryIn(retryInMs: number): void {
                 jest.setSystemTime(NOW);
-                registry.sendEvent('discord', 'CONFIGURE');
-                registry.sendEvent('discord', 'CONNECT_FAIL', {
+                registry.sendEvent('discord', { type: 'CONFIGURE' });
+                registry.sendEvent('discord', {
+                    type:        'CONNECT_FAIL',
                     nextRetryAt: new Date(NOW.getTime() + retryInMs),
                 });
             }
@@ -709,7 +675,7 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should stop actors so previous state is preserved', () => {
             // First prime the state machine
-            registry.sendEvent('discord', 'CONFIGURE');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
             expect(registry.getState('discord')).toBe('starting');
 
             // After stop, the last known state should still be accessible
@@ -719,7 +685,7 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should unsubscribe from all actors on stop (no events after stop)', () => {
             // Prime transition, register listener
-            registry.sendEvent('discord', 'CONFIGURE');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
             const changes: ServiceHealthChange[] = [];
             registry.subscribe((change) => {
                 changes.push(change);
@@ -734,7 +700,7 @@ describe('ServiceHealthRegistryImpl', () => {
 
     describe('handleStateChange() optimization — zero listeners', () => {
         test('does not allocate a change timestamp when there are no listeners', () => {
-            registry.sendEvent('discord', 'CONFIGURE');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
 
             const RealDate = globalThis.Date;
             let constructedDates = 0;
@@ -747,7 +713,7 @@ describe('ServiceHealthRegistryImpl', () => {
             globalThis.Date = CountingDate as unknown as DateConstructor;
 
             try {
-                registry.sendEvent('discord', 'CONNECT_SUCCESS');
+                registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
             } finally {
                 globalThis.Date = RealDate;
             }
@@ -759,12 +725,12 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should not throw when state changes and there are no subscribers', () => {
             // Prime first transition (sets previousStates)
-            registry.sendEvent('discord', 'CONFIGURE');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
 
             // Ensure no listeners registered
             // Second transition would normally notify listeners, but with none registered it's a no-op
             expect(() => {
-                registry.sendEvent('discord', 'CONNECT_SUCCESS');
+                registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
             }).not.toThrow();
 
             // State should still update correctly even with no listeners
@@ -773,8 +739,8 @@ describe('ServiceHealthRegistryImpl', () => {
 
         test('should still update state even with zero listeners', () => {
             // No subscribers at all
-            registry.sendEvent('discord', 'CONFIGURE');
-            registry.sendEvent('discord', 'CONNECT_SUCCESS');
+            registry.sendEvent('discord', { type: 'CONFIGURE' });
+            registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
 
             expect(registry.getState('discord')).toBe('online');
         });

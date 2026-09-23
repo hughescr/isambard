@@ -686,7 +686,7 @@ describe('createConductorProcessor', () => {
             };
             contextPolicy = makeContextPolicy({
                 calendarDelta: jest.fn(() => Promise.resolve(delta)),
-                healthNote:    jest.fn(() => 'Email is degraded.'),
+                healthNote:    jest.fn(() => 'Email is offline.'),
             });
             const calendarProcessor = createConductorProcessor({
                 conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
@@ -705,7 +705,7 @@ describe('createConductorProcessor', () => {
                     changed: ['All day: Moved lunch'],
                     isFirst: false,
                 },
-                healthNote: 'Email is degraded.',
+                healthNote: 'Email is offline.',
             }));
         });
 

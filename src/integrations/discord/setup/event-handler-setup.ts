@@ -93,7 +93,7 @@ export function initializeChannelRegistry(
 
     // Register the channel-registry service with the health registry so it
     // appears in status summaries and transitions correctly through the state machine.
-    registry.sendEvent('discord-channel-registry', 'CONFIGURE');
+    registry.sendEvent('discord-channel-registry', { type: 'CONFIGURE' });
 
     // Warn at startup if no rateLimiter is provided — hydration failures won't surface to operators.
     if(!rateLimiter) {

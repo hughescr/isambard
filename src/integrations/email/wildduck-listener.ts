@@ -193,7 +193,7 @@ export class WildDuckListener {
         const wasOffline = this.consecutivePollFails >= CONSECUTIVE_POLL_FAILURE_THRESHOLD;
         this.consecutivePollFails = 0;
         if(wasOffline) {
-            healthRegistry.sendEvent('email', 'CONNECT_SUCCESS');
+            healthRegistry.sendEvent('email', { type: 'CONNECT_SUCCESS' });
         }
     }
 
@@ -205,7 +205,8 @@ export class WildDuckListener {
         // Stryker disable next-line llm: the increment result is discarded, so prefix and postfix leave the same counter for the threshold check.
         this.consecutivePollFails++;
         if(this.consecutivePollFails >= CONSECUTIVE_POLL_FAILURE_THRESHOLD) {
-            healthRegistry.sendEvent('email', 'CONNECTION_LOST', {
+            healthRegistry.sendEvent('email', {
+                type:  'CONNECTION_LOST',
                 error: error instanceof Error ? error.message : String(error),
             });
         }

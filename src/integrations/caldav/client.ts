@@ -214,7 +214,7 @@ export class CalDAVClient {
         const wasOffline = this.#consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD;
         this.#consecutiveFailures = 0;
         if(wasOffline) {
-            this.#healthRegistry.sendEvent('caldav', 'CONNECT_SUCCESS');
+            this.#healthRegistry.sendEvent('caldav', { type: 'CONNECT_SUCCESS' });
         }
     }
 
@@ -224,7 +224,8 @@ export class CalDAVClient {
         }
         this.#consecutiveFailures++;
         if(this.#consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD) {
-            this.#healthRegistry.sendEvent('caldav', 'CONNECTION_LOST', {
+            this.#healthRegistry.sendEvent('caldav', {
+                type:  'CONNECTION_LOST',
                 error: error instanceof Error ? error.message : String(error),
             });
         }

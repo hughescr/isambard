@@ -33,7 +33,6 @@ function createMockRegistry(): ServiceHealthRegistry {
         getEntry:           mock(() => ({ state: 'offline' as const, epoch: 0, failureCount: 0 })),
         getAll:             mock(() => ({} as ReturnType<ServiceHealthRegistry['getAll']>)),
         isAvailable:        mock(() => false),
-        isWriteAvailable:   mock(() => false),
         sendEvent:          mock(() => undefined),
         subscribe:          mock(() => () => undefined),
         buildStatusSummary: mock(() => undefined),

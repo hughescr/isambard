@@ -52,14 +52,7 @@ export function mcpServiceUnavailableResult(
     reconnectionLoop?: ReconnectionLoop
 ): CallToolResult {
     // Determine category from state
-    let category: ServiceErrorCategory;
-    if(entry.state === 'disabled') {
-        category = 'permanent_not_configured';
-    } else if(entry.state === 'degraded') {
-        category = 'degraded_read_only';
-    } else {
-        category = 'offline_retryable_later';
-    }
+    const category: ServiceErrorCategory = entry.state === 'disabled' ? 'permanent_not_configured' : 'offline_retryable_later';
 
     const parts: string[] = [`The ${service} service is currently ${entry.state}.`];
 
@@ -80,8 +73,6 @@ export function mcpServiceUnavailableResult(
             parts.push('A reconnection attempt is in progress.');
         }
         parts.push('You can retry this tool call — retrying will trigger an immediate reconnection attempt.');
-    } else if(category === 'degraded_read_only') {
-        parts.push('Read operations may still work, but write operations will fail.');
     } else {
         parts.push('This service is not configured and cannot be used.');
     }
