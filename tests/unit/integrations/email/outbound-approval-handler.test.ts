@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, mock, spyOn } from 'bun:test';
 import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
 import type { AllowlistInteractionHandler } from '../../../../src/integrations/discord/allowlist-interaction-handler';
+import { DRAFT_STATE_FLAG } from '../../../../src/integrations/email/draft-review-state';
 import { OutboundApprovalHandler, type OutboundApprovalHandlerDeps  } from '../../../../src/integrations/email/outbound-approval-handler';
 import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
 import type { ApprovalSagaBackend } from '../../../../src/services/approval-saga/backend';
@@ -854,7 +855,7 @@ describe('OutboundApprovalHandler', () => {
             expect(updateArgs[0]).toBe('Drafts');
             expect(updateArgs[1]).toBe(42);
             expect((updateArgs[2] as Record<string, unknown>).reason).toBe('Not appropriate');
-            expect(deps.wildDuckClient.updateMessageFlags).toHaveBeenCalledWith('Drafts', 42, { addFlags: ['SendRejectedByAdmin'] });
+            expect(deps.wildDuckClient.updateMessageFlags).toHaveBeenCalledWith('Drafts', 42, { addFlags: [DRAFT_STATE_FLAG.rejected_by_admin] });
             expect(editReply).toHaveBeenCalledTimes(1);
             expect(mockLogger.info).toHaveBeenCalledTimes(1);
             const infoArg = (mockLogger.info as ReturnType<typeof mock>).mock.calls[0]?.[0] as Record<string, unknown>;
@@ -954,7 +955,7 @@ describe('OutboundApprovalHandler', () => {
 
             await handler.handleModalSubmit(interaction);
 
-            expect(deps.wildDuckClient.updateMessageFlags).toHaveBeenCalledWith('Drafts', 42, { addFlags: ['SendRejectedByAdmin'] });
+            expect(deps.wildDuckClient.updateMessageFlags).toHaveBeenCalledWith('Drafts', 42, { addFlags: [DRAFT_STATE_FLAG.rejected_by_admin] });
         });
 
         test('should NOT submit message after rejection (draft stays in Drafts)', async () => {

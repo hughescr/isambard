@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { buildAdminRejectedSubsection, buildGaveUpSubsection, formatMemoryPreview } from '@/agent/context-builder';
+import { buildAdminRejectedSubsection, formatMemoryPreview } from '@/agent/context-builder';
 import { createMemoryPath } from '@/storage/memory-tool/types';
 
 function makeWildDuck(getMessage: (mailbox: string, uid: number) => Promise<{ id: number, subject?: string, to?: { address: string }[], metaData?: Record<string, unknown> } | null>) {
@@ -25,10 +25,8 @@ describe('draft context subsections', () => {
         const getMessage = mock(async (_mailbox: string, _uid: number) => null);
         const wildDuck = makeWildDuck(getMessage);
         expect(await buildAdminRejectedSubsection([], wildDuck)).toBeUndefined();
-        expect(await buildGaveUpSubsection([], wildDuck)).toBeUndefined();
         expect(await buildAdminRejectedSubsection([17], wildDuck)).toBeUndefined();
-        expect(await buildGaveUpSubsection([19], wildDuck)).toBeUndefined();
-        expect(getMessage.mock.calls).toEqual([['Drafts', 17], ['Drafts', 19]]);
+        expect(getMessage.mock.calls).toEqual([['Drafts', 17]]);
     });
 
     test('fetches independent rejected drafts with bounded concurrency and renders UID order', async () => {
@@ -73,21 +71,6 @@ describe('draft context subsections', () => {
 
         expect(text).toContain('To: recipient@example.com, Subject: "" — Reason: admin declined');
     });
-
-    test('fetches gave-up drafts in UID order and counts every attempted UID', async () => {
-        const uids = [3, 1, 2];
-        const text = await buildGaveUpSubsection(uids, makeWildDuck(async (_mailbox, uid) => ({
-            id: uid, subject: `subject-${uid}`, to: [{ address: `user${uid}@example.com` }],
-        })));
-        expect(text).toContain('CRITICAL: 3 draft(s)');
-        expect(text?.indexOf('Drafts:3')).toBeLessThan(text!.indexOf('Drafts:1'));
-        expect(text?.indexOf('Drafts:1')).toBeLessThan(text!.indexOf('Drafts:2'));
-        expect(text?.split('\n').slice(1, 4)).toEqual([
-            '- Drafts:3 to user3@example.com — "subject-3"',
-            '- Drafts:1 to user1@example.com — "subject-1"',
-            '- Drafts:2 to user2@example.com — "subject-2"',
-        ]);
-    });
 });
 
 describe('draft fetch concurrency and escalation count', () => {
@@ -117,41 +100,5 @@ describe('draft fetch concurrency and escalation count', () => {
             release();
         }
         expect(await resultPromise).toContain('Messages You Attempted to Send');
-    });
-
-    test('starts exactly eight of nine gave-up-draft fetches before any completes', async () => {
-        const uids = Array.from({ length: 9 }, (_, index) => index + 1);
-        const releases: (() => void)[] = [];
-        const getMessage = mock((_mailbox: string, uid: number) => {
-            const message = { id: uid, subject: `subject-${uid}`, to: [{ address: `user${uid}@example.com` }] };
-            if(uid === 9) {
-                return Promise.resolve(message);
-            }
-            return new Promise<typeof message>((resolve) => {
-                releases.push(() => resolve(message));
-            });
-        });
-
-        const resultPromise = buildGaveUpSubsection(uids, makeWildDuck(getMessage));
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(getMessage).toHaveBeenCalledTimes(8);
-        for(const release of releases) {
-            release();
-        }
-        expect(await resultPromise).toContain('CRITICAL: 9 draft(s)');
-    });
-
-    test('counts all gave-up UIDs even when a draft can no longer be fetched', async () => {
-        const text = await buildGaveUpSubsection([10, 11], makeWildDuck(async (_mailbox, uid) => {
-            if(uid === 10) {
-                return null;
-            }
-            return { id: uid, subject: 'available', to: [{ address: 'available@example.com' }] };
-        }));
-
-        expect(text).toContain('CRITICAL: 2 draft(s)');
-        expect(text).toContain('Drafts:11');
     });
 });

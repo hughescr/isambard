@@ -11,6 +11,8 @@ import type { SummarizeEventBatchesFn } from './event-summarizer';
 import { formatTimeHeader } from './time-header';
 import type { BlueskyClient, BskyRejectionBackend } from '@/integrations/bsky';
 import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, type FailedCalendarEvent, CaldavTimeoutError, CaldavAuthError } from '@/integrations/caldav';
+// eslint-disable-next-line boundaries/dependencies -- Draft review states are the public email persistence contract shared by the perch context.
+import { searchDraftsByReviewState } from '@/integrations/email';
 import type { ServiceHealthRegistry } from '@/services';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, resolveTimezone } from '@/utils';
@@ -254,27 +256,6 @@ export async function buildAdminRejectedSubsection(uids: number[], wdc: WildDuck
         return undefined;
     }
     return `## Messages You Attempted to Send (Rejected by Admin)\n${rejectionLines.join('\n')}`;
-}
-
-/**
- * Build the gave-up escalation subsection: drafts that could not reach Discord for approval.
- */
-export async function buildGaveUpSubsection(uids: number[], wdc: WildDuckService): Promise<string | undefined> {
-    const limit = pLimit(8);
-    const messages = await Promise.all(uids.map(uid => limit(() => wdc.getMessage('Drafts', uid))));
-    const gaveUpLines: string[] = [];
-    for(const [index, msg] of messages.entries()) {
-        if(!msg) {
-            continue;
-        }
-        const toStr  = (msg.to ?? []).map(addr => addr.address).join(', ');
-        const subject = msg.subject ?? '(no subject)';
-        gaveUpLines.push(`- Drafts:${uids[index]} to ${toStr} — "${subject}"`);
-    }
-    if(gaveUpLines.length === 0) {
-        return undefined;
-    }
-    return `## CRITICAL: ${uids.length} draft(s) could not be sent for admin approval after multiple attempts:\n${gaveUpLines.join('\n')}\nPlease notify Craig directly to check the Drafts folder.`;
 }
 
 /**
@@ -557,9 +538,8 @@ class ContextBuilderImpl implements ContextBuilder {
     }
 
     /**
-     * Build the rejected drafts section for perch context.
+     * Build the admin-rejected drafts section for perch context.
      * Returns formatted rejected drafts section string, or undefined if none found or service unavailable.
-     * Also includes a CRITICAL escalation section for drafts where Discord notification has permanently failed.
      */
     async #buildRejectedDraftSection(): Promise<string | undefined> {
         if(!this.#emailService) {
@@ -567,23 +547,8 @@ class ContextBuilderImpl implements ContextBuilder {
         }
         const { wildDuckClient } = this.#emailService;
         try {
-            const rejectedUids = await wildDuckClient.searchByKeyword('Drafts', 'SendRejectedByAdmin');
-            const gaveUpUids   = await wildDuckClient.searchByKeyword('Drafts', 'DiscordNotifyGaveUp');
-
-            const sections: string[] = [];
-
-            const rejectedSubsection = await buildAdminRejectedSubsection(rejectedUids, wildDuckClient);
-            if(rejectedSubsection) {
-                // Stryker disable next-line ArrayMethodSwap: sections is newly allocated, so this first insertion has the same order.
-                sections.push(rejectedSubsection);
-            }
-
-            const gaveUpSubsection = await buildGaveUpSubsection(gaveUpUids, wildDuckClient);
-            if(gaveUpSubsection) {
-                sections.push(gaveUpSubsection);
-            }
-
-            return sections.join('\n\n');
+            const rejectedUids = await searchDraftsByReviewState(wildDuckClient, 'rejected_by_admin');
+            return await buildAdminRejectedSubsection(rejectedUids, wildDuckClient);
         } catch (err) {
             logger.warn({ err, msg: 'Failed to load rejected draft context' });
         }

@@ -1,6 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { chain } from 'lodash-es';
+import { markDraftReviewState } from './draft-review-state';
 import type { NotifyFn } from '@/agent';
 import { EmailFolder } from '@/config';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
@@ -99,8 +100,7 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             reason,
         });
 
-        // Set flag so context-builder's searchByFlag can find rejected drafts
-        await this.wildDuckClient.updateMessageFlags(EmailFolder.Drafts, uid, { addFlags: ['SendRejectedByAdmin'] });
+        await markDraftReviewState(this.wildDuckClient, uid, 'rejected_by_admin');
 
         void this.activityLogger?.log({ type: 'email-rejected', summary: 'Email rejected' }).catch((err) => {
             logger.warn({ err, msg: 'Activity log failed for email rejection' });

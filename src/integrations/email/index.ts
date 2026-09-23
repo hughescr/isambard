@@ -32,3 +32,5 @@ export type { WildDuckAttachment, WildDuckAttachmentMeta } from './wildduck-clie
 export { OutboundApprovalHandler } from './outbound-approval-handler';
 export type { OutboundApprovalHandlerDeps } from './outbound-approval-handler';
 export { EmailHistoryProvider } from './history-provider';
+export { DRAFT_STATE_FLAG, searchDraftsByReviewState, markDraftReviewState } from './draft-review-state';
+export type { DraftReviewState } from './draft-review-state';

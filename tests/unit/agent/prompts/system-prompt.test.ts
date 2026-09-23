@@ -69,7 +69,7 @@ describe.concurrent('system-prompt', () => {
 
             expect(conversation).toContain('getRejectedDrafts');
             expect(conversation).toContain('admin-rejected');
-            expect(conversation).toContain('gave-up');
+            expect(conversation).not.toContain('gave-up');
             expect(conversation).toContain('perch turn');
             assertPromptHygiene(conversation);
 

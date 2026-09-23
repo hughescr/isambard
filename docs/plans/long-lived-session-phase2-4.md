@@ -49,6 +49,8 @@ Added 2026-09-06 after the completeness critic, before any package starts. Packa
 
 **Goal:** Add a `getRejectedDrafts` tool to the email MCP server that reuses context-builder's existing admin-rejected/gave-up subsection builders, so pull-tool and push-section text cannot drift.
 
+> **Historical / superseded by #72:** The give-up branch was removed after the durable outbox became the retry owner; `getRejectedDrafts` now covers only admin rejection. The implementation notes below describe the original plan.
+
 **Depends on:** none · **Deployable:** yes · **Points:** 5
 
 ### Files & changes

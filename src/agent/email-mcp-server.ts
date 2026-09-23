@@ -7,11 +7,12 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chain } from 'lodash-es';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { buildAdminRejectedSubsection, buildGaveUpSubsection } from './context-builder';
+import { buildAdminRejectedSubsection } from './context-builder';
 import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthGuard } from './mcp-helpers';
 import { EmailFolder } from '@/config';
 import { EmailProcessingError } from '@/errors';
-import type { WildDuckClient, WildDuckAttachment, WildDuckAttachmentMeta } from '@/integrations/email';
+// eslint-disable-next-line boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
+import { searchDraftsByReviewState, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
@@ -780,44 +781,16 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
 
-            // getRejectedDrafts is a pull-tool twin of ContextBuilder#buildRejectedDraftSection
-            // (the perch push section, context-builder.ts) — both search the same two keywords
-            // and render through the same two exported subsection builders below, so the two
-            // paths cannot drift on formatting even though the composition is duplicated. The
-            // push section is deliberately left as-is (see docs/plans/long-lived-session-phase2-4.md,
-            // Gaps item on Q1/Q2): it still fires unconditionally on every perch turn, and this
-            // tool exists so the conversation session (and perch on demand) can pull the same
-            // information without waiting for one.
             tool(
                 'getRejectedDrafts',
-                'List drafts rejected by admin review, and drafts that could not be sent for approval after multiple attempts.',
+                'List drafts rejected by admin review.',
                 {},
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
                     withToolErrorHandling('getRejectedDrafts', async (): Promise<CallToolResult> => {
-                        const rejectedUids = await wildDuckClient.searchByKeyword(EmailFolder.Drafts, 'SendRejectedByAdmin');
-                        const gaveUpUids   = await wildDuckClient.searchByKeyword(EmailFolder.Drafts, 'DiscordNotifyGaveUp');
-
-                        const sections: string[] = [];
-
-                        // buildAdminRejectedSubsection/buildGaveUpSubsection already no-op (return
-                        // undefined) for an empty uid list, so there is no separate length guard
-                        // here — an outer `if(uids.length > 0)` would be an equivalent mutant.
+                        const rejectedUids = await searchDraftsByReviewState(wildDuckClient, 'rejected_by_admin');
                         const adminRejectedSection = await buildAdminRejectedSubsection(rejectedUids, wildDuckClient);
-                        if(adminRejectedSection) {
-                            // Stryker disable next-line ArrayMethodSwap: sections is newly allocated, so this first insertion has the same order.
-                            sections.push(adminRejectedSection);
-                        }
 
-                        const gaveUpSection = await buildGaveUpSubsection(gaveUpUids, wildDuckClient);
-                        if(gaveUpSection) {
-                            sections.push(gaveUpSection);
-                        }
-
-                        if(sections.length === 0) {
-                            return mcpTextResult('No rejected or gave-up drafts.');
-                        }
-
-                        return mcpTextResult(sections.join('\n\n'));
+                        return mcpTextResult(adminRejectedSection ?? 'No drafts rejected by admin review.');
                     })),
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
