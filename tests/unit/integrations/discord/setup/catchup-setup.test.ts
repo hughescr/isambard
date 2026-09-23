@@ -10,6 +10,7 @@ import * as loggerModule from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import * as agentModule from '@/agent';
 import type { SendOutcome } from '@/agent';
+import { InvariantViolationError } from '@/errors';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
 import {
     setupInboxAndCatchUp,
@@ -62,7 +63,7 @@ function makeFakeConductor(overrides: Record<string, unknown> = {}) {
             return { outcome: 'committed' as const, disposition: 'sent' as const };
         }),
         // R1: the merged boot envelope appends via this seam whenever it carries nothing worth
-        // opening a turn for (`shouldQuery: false`) — see `submitMergedBootEnvelope`.
+        // opening a turn for (an accumulation envelope) — see `submitMergedBootEnvelope`.
         appendWithoutTurn: mock(() => undefined),
         ...overrides,
     };
@@ -107,7 +108,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse'));
 
         await submitAndDeliverConductorEnvelope(
-            { id: 'e1', kind: 'catchup', text: 'x', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         );
 
@@ -129,7 +130,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
         const warnCount = warnSpy.mock.calls.length;
 
         await submitAndDeliverConductorEnvelope(
-            { id: 'e1', kind: 'catchup', text: 'x', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         );
 
@@ -147,7 +148,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
         const warnCount = warnSpy.mock.calls.length;
 
         await expect(submitAndDeliverConductorEnvelope(
-            { id: 'e1', kind: 'catchup', text: 'x', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         )).resolves.toBeUndefined();
 
@@ -169,7 +170,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
         warnSpy.mockClear();
 
         await expect(submitAndDeliverConductorEnvelope(
-            { id: 'e1', kind: 'catchup', text: 'x', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         )).resolves.toBeUndefined();
 
@@ -185,7 +186,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
         warnSpy.mockClear();
 
         await submitAndDeliverConductorEnvelope(
-            { id: 'e1', kind: 'catchup', text: 'x', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never }
         );
 
@@ -214,7 +215,7 @@ describe('submitAndDeliverConductorEnvelope — discordCapability forwarding', (
         const discordCapability = { sendToChannel: mock(() => Promise.resolve({ status: 'sent' as const })) };
 
         await submitAndDeliverConductorEnvelope(
-            { id: 'e1', kind: 'catchup', text: 'x', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0) },
+            { id: 'e1', mode: 'query', kind: 'catchup', text: 'x', hostPriority: 'wake', createdAt: new Date(0) },
             { conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never, discordCapability: discordCapability as never }
         );
 
@@ -270,6 +271,16 @@ describe('submitConductorCatchUp', () => {
         expect(timeHeader).toHaveBeenCalledWith();
         const [ambientEnvelope] = conductor.submit.mock.calls[0] as unknown as [{ text: string }];
         expect(ambientEnvelope.text).toContain('- Perch: idle');
+    });
+
+    test('rejects without submitting when nothing is unread — a catch-up with nothing unread is an accumulation envelope, which opens no turn (#60)', async () => {
+        const conductor = makeFakeConductor();
+        const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })) });
+
+        await expect(submitConductorCatchUp({
+            inboxManager: inboxManager as never, conversationConductor: conductor as never, responseRouter: {} as never, client: makeFakeClient(), rateLimiter: {} as never,
+        })).rejects.toThrow(new InvariantViolationError('submitConductorCatchUp', 'called with no unread mail — a catch-up with nothing unread opens no turn, so there is nothing to submit'));
+        expect(conductor.submit).not.toHaveBeenCalled();
     });
 });
 
@@ -801,7 +812,7 @@ describe('runConductorInboxInit', () => {
             }));
 
             expect(conductor.appendWithoutTurn).toHaveBeenCalledWith(expect.objectContaining({
-                kind: 'catchup', shouldQuery: false, text: expect.stringContaining('Foo happened') as unknown,
+                kind: 'catchup', mode: 'append', text: expect.stringContaining('Foo happened') as unknown,
             }));
             const [envelope] = conductor.appendWithoutTurn.mock.calls[0] as unknown as [{ text: string }];
             expect(envelope.text).not.toContain('Replies redelivered');
@@ -814,7 +825,7 @@ describe('runConductorInboxInit', () => {
 
             await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));
 
-            expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'catchup', shouldQuery: true }), { priority: 'other' });
+            expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'catchup', mode: 'query' }), { priority: 'other' });
             expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
         });
 
@@ -830,7 +841,7 @@ describe('runConductorInboxInit', () => {
             await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
 
             expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({
-                kind: 'catchup', shouldQuery: true, text: expect.stringContaining('Summarize last week') as unknown,
+                kind: 'catchup', mode: 'query', text: expect.stringContaining('Summarize last week') as unknown,
             }), { priority: 'other' });
         });
 
@@ -930,7 +941,7 @@ describe('runConductorInboxInit', () => {
 
             await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
 
-            // shouldQuery is false here (no unread mail, no lost tasks) -- a redelivered reply
+            // An accumulation envelope here (no unread mail, no lost tasks) -- a redelivered reply
             // alone does not escalate to a turn -- so this goes through appendWithoutTurn.
             expect(conductor.appendWithoutTurn).toHaveBeenCalledWith(expect.objectContaining({
                 kind: 'catchup', text: expect.stringContaining('a stale reply') as unknown,

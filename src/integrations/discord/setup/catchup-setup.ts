@@ -8,11 +8,11 @@ import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from '../response-sender';
 import { createChannelId, type ChannelId } from '../types';
 import {
-    type PerchConfig, type Conductor, type SessionJournal, type Envelope, type UndeliveredEnvelope, type ContextPolicy,
+    type PerchConfig, type Conductor, type SessionJournal, type QueryEnvelope, type UndeliveredEnvelope, type ContextPolicy,
     type TimeHeaderProvider,
     computeRecovery, lastKnownAt, buildDiscordEnvelope, buildCatchupEnvelope, formatTimeHeader, runBootSequence
 } from '@/agent';
-import { ResponseUnavailableError } from '@/errors';
+import { InvariantViolationError, ResponseUnavailableError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services';
 import { resolveTimezone, truncateToWordBoundary } from '@/utils';
 
@@ -102,10 +102,10 @@ export interface SubmitConductorEnvelopeDeps {
  * submission and a live one can never double-deliver the same envelope id. A delivery failure
  * (no well-known channel, or a send that neither sent nor queued) is logged and swallowed — this
  * function never rejects.
- * @param envelope The envelope to submit — see {@link Envelope}.
+ * @param envelope The envelope to submit — see {@link QueryEnvelope}.
  * @param deps See {@link SubmitConductorEnvelopeDeps}.
  */
-export async function submitAndDeliverConductorEnvelope(envelope: Envelope, deps: SubmitConductorEnvelopeDeps): Promise<void> {
+export async function submitAndDeliverConductorEnvelope(envelope: QueryEnvelope, deps: SubmitConductorEnvelopeDeps): Promise<void> {
     const { conversationConductor, responseRouter, client, rateLimiter, discordCapability } = deps;
 
     const result = await conversationConductor.submit(envelope, { priority: 'other' });
@@ -170,13 +170,20 @@ export async function submitConductorCatchUp(params: SubmitConductorCatchUpParam
     const { inboxManager, timeHeader = formatTimeHeader, ...envelopeDeps } = params;
     const overview = inboxManager.getUnreadOverview();
     const timezone = resolveTimezone();
-    await submitAndDeliverConductorEnvelope(buildCatchupEnvelope({
+    const envelope = buildCatchupEnvelope({
         unreadCount:  overview.totalUnread,
         channelCount: overview.channels.length,
         now:          new Date(),
         timezone,
         timeHeader:   timeHeader(),
-    }), envelopeDeps);
+    });
+    // With no lost tasks passed, only unread mail makes a catch-up wake; the one caller
+    // (`bot.ts`'s `triggerCatchUp`) checks `totalUnread > 0` first. Before the envelope
+    // contracts (#60) the conductor's own submit() threw here instead.
+    if(envelope.mode === 'append') {
+        throw new InvariantViolationError('submitConductorCatchUp', 'called with no unread mail — a catch-up with nothing unread opens no turn, so there is nothing to submit');
+    }
+    await submitAndDeliverConductorEnvelope(envelope, envelopeDeps);
 }
 
 /** Parameters for {@link runConductorInboxInit}. */
@@ -244,7 +251,7 @@ export interface RunConductorInboxInitParams {
  * single envelope on the Discord side) via {@link submitMergedBootEnvelope} — unread overview,
  * events since the journal-derived `lastKnownAt` mark, recovery's lost tasks, and the undelivered
  * replies this same boot actually redelivered — submitted with a turn or appended without one per
- * the envelope's own `shouldQuery` (see `buildCatchupEnvelope`'s doc). `runBootSequence`'s own
+ * the envelope's own contract (see `buildCatchupEnvelope`'s doc). `runBootSequence`'s own
  * `submitCatchUp` callback is therefore a no-op here: the merged envelope subsumes it.
  *
  * Perch's `triggerOnStartup` test mode means perch handles everything this boot: recovery
@@ -411,7 +418,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
      * the mark {@link seedEventsMark} already seeded (BEFORE the ingress gate opened — see that
      * function's own doc for the concurrency hazard seeding here, after the gate is open, used to
      * create); submits with a turn (`submitAndDeliverConductorEnvelope`, `{ priority: 'other' }`)
-     * when the envelope's own `shouldQuery` is true (unread mail or a lost task), or appends it
+     * when the envelope is a query envelope (unread mail or a lost task), or appends it
      * without opening one (`conversationConductor.appendWithoutTurn`) otherwise; advances the
      * mark via `markEventsSeen()` only AFTER submission, so a failure partway through does not
      * mark events seen that were never actually surfaced. A no-op for the events section (and the
@@ -446,7 +453,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
                 redelivered:  redeliveredTexts,
             });
 
-            if(envelope.shouldQuery) {
+            if(envelope.mode === 'query') {
                 await submitAndDeliverConductorEnvelope(envelope, envelopeDeps);
             } else {
                 conversationConductor.appendWithoutTurn(envelope);

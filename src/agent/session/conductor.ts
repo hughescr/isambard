@@ -45,14 +45,17 @@ import { resultFrameToError } from './result-frame-error';
 import { openSession, type SessionHandle } from './session';
 import type { TaskLaunchRegistry } from './task-launch-registry';
 import type {
+    AccumulationEnvelope,
+    AdoptedPeerEnvelope,
     Clock,
-    Envelope,
     EnvelopeMeta,
+    QueryEnvelope,
     SessionOpenCause,
     SessionOpenOutcome,
     SessionQueryFn,
     SessionRole,
     TaskFinishedOutcome,
+    TaskQueryEnvelope,
     TimerHandle,
     TurnKind
 } from './types';
@@ -185,7 +188,7 @@ interface PendingWakeAdoption {
 
 interface PendingPeerAdoption {
     kind:     'peer'
-    envelope: Envelope
+    envelope: AdoptedPeerEnvelope
     setAt:    number
 }
 
@@ -346,7 +349,7 @@ export interface CreateConductorParams {
      * origin channel (or a fallback, for a turn with no channel). A rejection is caught and
      * logged; it never affects the conductor or any other caller.
      */
-    onWakeTurnSettled?:        (envelope: Envelope, result: TurnResult) => void | Promise<void>
+    onWakeTurnSettled?:        (envelope: TaskQueryEnvelope, result: TurnResult) => void | Promise<void>
 }
 
 /** A caller's delivery result, distinguishing durable delivery from intentional non-delivery. */
@@ -364,8 +367,8 @@ export interface DeliverResult {
 /** The long-lived session conductor returned by {@link createConductor}. */
 export interface Conductor {
     open:                          () => Promise<{ sessionId: string, resumed: boolean }>
-    /** Throws {@link InvariantViolationError} if `envelope.shouldQuery !== true` — `submit()` always opens a turn; a `shouldQuery:false` envelope belongs on {@link Conductor.appendWithoutTurn} instead. */
-    submit:                        (envelope: Envelope, options: SubmitOptions) => Promise<TurnResult>
+    /** Opens a turn, so it takes only a {@link QueryEnvelope}: an {@link AccumulationEnvelope} belongs on {@link Conductor.appendWithoutTurn}, and an {@link AdoptedPeerEnvelope} on {@link Conductor.adoptPeerTurn} — the SDK already started that turn. */
+    submit:                        (envelope: QueryEnvelope, options: SubmitOptions) => Promise<TurnResult>
     /**
      * Pushes `envelope` onto the live SDK queue without opening a turn — mirrors the private
      * boot-bundle push (`pushBootBundle`). Returns `true` once the envelope is the conductor's
@@ -375,15 +378,15 @@ export interface Conductor {
      * their own "already reported" memory (see `notification-bridge.ts`) key off that boolean:
      * burning a dedupe key on a `false` would lose the notification permanently. Never reads or writes
      * {@link ConductorStatus.turn} and never calls `beginTurn`/`processQueue`: this is the
-     * accumulate-only seam for `shouldQuery:false` notifications, which the SDK appends to the
+     * accumulate-only seam for {@link AccumulationEnvelope}s (sent `shouldQuery:false`), which the SDK appends to the
      * transcript without an assistant turn. It does answer each one with its own bare `result`
      * frame (`num_turns: 0`, `result: ""` — SDK 0.3.280, verified 2026-09-22), which can arrive
      * after the CLI has read the next querying message; the session's {@link InputQueue} claims
      * it by its echoed wire uuid so it never settles a turn. Routing one through `submit()`
-     * instead would open a turn that bare result settles with an empty reply. Throws
-     * {@link InvariantViolationError} if `envelope.shouldQuery !== false`.
+     * instead would open a turn that bare result settles with an empty reply — which is why the
+     * two seams take disjoint envelope contracts.
      */
-    appendWithoutTurn:             (envelope: Envelope) => boolean
+    appendWithoutTurn:             (envelope: AccumulationEnvelope) => boolean
     /**
      * Asks for a controlled close-and-resume of the live session.
      *
@@ -429,12 +432,11 @@ export interface Conductor {
      * Adopts a pending peer-message turn (session-peers block 2): the NEXT spontaneous assistant
      * frame — the one the SDK's own `<cross-session-message>` delivery produces — opens a real
      * `peer`-kind turn carrying `envelope` instead of falling through to the bare `notification`
-     * fallback. Takes an already-built {@link Envelope} (see {@link
+     * fallback. Takes an already-built {@link AdoptedPeerEnvelope} (see {@link
      * import('./envelope').buildPeerEnvelope}) rather than the raw `{ from, fromName, text }`
      * triple because the rendering needs a timezone and a time header, neither of which the
      * conductor has — the same division of labour `createNotificationBridge` already uses for
-     * `buildNotificationEnvelope`. Throws {@link InvariantViolationError} unless
-     * `envelope.kind === 'peer'`.
+     * `buildNotificationEnvelope`.
      *
      * Nothing is ever pushed to the SDK queue for this turn, for the same reason
      * {@link Conductor.adoptWakeTurn}'s is not: the SDK already started it from the peer's raw
@@ -449,7 +451,7 @@ export interface Conductor {
      * {@link Conductor.appendWithoutTurn} pushes. A second call before the first pending peer
      * message is consumed overwrites it and logs a warning.
      */
-    adoptPeerTurn:                 (envelope: Envelope) => void
+    adoptPeerTurn:                 (envelope: AdoptedPeerEnvelope) => void
     /**
      * Delivers `envelopeId`'s response exactly once (P8): if the delivery guard already knows
      * this id, `send` is skipped entirely. A committed outcome is journaled and flushed before
@@ -475,7 +477,13 @@ interface Deferred {
 
 /** One envelope waiting in the host-side priority queue, or already promoted to the active turn. */
 interface QueuedItem {
-    envelope:               Envelope
+    /**
+     * A submitted, compaction or resume envelope, or the synthesized/adopted envelope of a turn
+     * the SDK started itself (a `task` wake, an adopted peer). An adopted item is seeded at
+     * `retryPolicy.maxAttempts`, so it never retries through {@link beginTurn}; only a crash
+     * reopen re-queues it (as the turn then in flight).
+     */
+    envelope:               QueryEnvelope | AdoptedPeerEnvelope
     priority:               SubmitPriority
     requestingChannelId?:   string
     attempts:               number
@@ -1124,7 +1132,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * and the reopen-failure path, whose callers only ever `resolve` a wake item's deferred), but
      * is still logged defensively rather than silently swallowed.
      */
-    function buildWakeSettledDeferred(envelope: Envelope): Deferred {
+    function buildWakeSettledDeferred(envelope: TaskQueryEnvelope): Deferred {
         return {
             resolve: (result: TurnResult) => {
                 if(onWakeTurnSettled === undefined) {
@@ -1156,14 +1164,14 @@ export function createConductor(params: CreateConductorParams): Conductor {
     function beginAdoptedWakeTurn(wake: { taskId: string, toolUseId: string, summary: string }): void {
         const launch = taskLaunches?.lookup(wake);
         const at = now();
-        const envelope: Envelope = {
+        const envelope: TaskQueryEnvelope = {
             id:           crypto.randomUUID(),
+            mode:         'query',
             kind:         'task',
             text:         wake.summary,
             channelId:    launch?.channelId,
             authorId:     launch?.authorId,
             hostPriority: 'wake',
-            shouldQuery:  true,
             createdAt:    at,
             synopsisSeed: toSynopsisSeed(wake.summary),
         };
@@ -1208,7 +1216,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * this turn and there is no host-side delivery for it — Claude answers a peer with its own
      * `SendMessage` call.
      */
-    function beginAdoptedPeerTurn(envelope: Envelope): void {
+    function beginAdoptedPeerTurn(envelope: AdoptedPeerEnvelope): void {
         const at = now();
         const item: QueuedItem = {
             envelope, priority: 'other', attempts: retryPolicy.maxAttempts, deferred: internalDeferred(),
@@ -1228,10 +1236,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * and journal AND attach the second envelope to the first message's turn. Only the
      * {@link PENDING_PEER_QUEUE_MAX} cap loses one, oldest first, and says so.
      */
-    function adoptPeerTurn(envelope: Envelope): void {
-        if(envelope.kind !== 'peer') {
-            throw new InvariantViolationError('conductor.adoptPeerTurn', 'called with a non peer-kind envelope — the adopted turn IS this envelope, so its kind is what the ledger and journal record');
-        }
+    function adoptPeerTurn(envelope: AdoptedPeerEnvelope): void {
         const peers = pendingAdoptions.filter((entry): entry is PendingPeerAdoption => entry.kind === 'peer');
         const overflowing = peers.length >= PENDING_PEER_QUEUE_MAX ? peers[0] : undefined;
         if(overflowing !== undefined) {
@@ -1536,10 +1541,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         return paragraphs.join('\n\n');
     }
 
-    function appendWithoutTurn(envelope: Envelope): boolean {
-        if(envelope.shouldQuery !== false) {
-            throw new InvariantViolationError('conductor.appendWithoutTurn', 'called with a shouldQuery:true envelope — this seam is accumulate-only; use submit() for shouldQuery:true envelopes');
-        }
+    function appendWithoutTurn(envelope: AccumulationEnvelope): boolean {
         // Tested BEFORE `reopening`: a shutting-down conductor must refuse rather than buffer,
         // because the buffer a reopen unwinding into `shutdown` discards is exactly the
         // "reported accepted, then silently dropped" loss the boolean exists to prevent.
@@ -2072,10 +2074,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         item.deferred.resolve(withdrawnResult(item));
     }
 
-    function submit(envelope: Envelope, options: SubmitOptions): Promise<TurnResult> {
-        if(envelope.shouldQuery !== true) {
-            throw new InvariantViolationError('conductor.submit', 'called with a shouldQuery:false envelope — submit() always opens a turn; use appendWithoutTurn() for shouldQuery:false envelopes');
-        }
+    function submit(envelope: QueryEnvelope, options: SubmitOptions): Promise<TurnResult> {
         if(shuttingDown) {
             return Promise.reject(new Error('Conductor is shutting down'));
         }

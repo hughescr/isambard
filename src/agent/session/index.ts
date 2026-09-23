@@ -14,6 +14,12 @@ export type {
     SessionOpenCause,
     EnvelopeKind,
     Envelope,
+    QueryEnvelope,
+    DiscordQueryEnvelope,
+    TaskQueryEnvelope,
+    AccumulationEnvelope,
+    AdoptedPeerEnvelope,
+    DeliverableEnvelope,
     EnvelopeMeta,
     TurnKind,
     JournalEntry

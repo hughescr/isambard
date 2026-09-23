@@ -27,13 +27,13 @@
  * been (or was already) handed to the conductor, and `false` only when delivery could not be
  * attempted right now (see the readiness paragraph above) — a caller with its own delivery
  * memory reads this to decide whether THIS occurrence may be forgotten or must be retried on the
- * next one. `wake` selects the routing, mirroring `Envelope`'s `hostPriority`/`shouldQuery` split
- * (see `./envelope.ts`'s `buildNotificationEnvelope`): `true` submits a turn-opening envelope via
+ * next one. `wake` selects the routing through the envelope contract it builds (see
+ * `./envelope.ts`'s `buildNotificationEnvelope`): `true` submits a turn-opening envelope via
  * `conductor.submit(envelope, { priority: 'other' })` — never `'human'`, so a notification can
  * never preempt a live Discord turn (`conductor.ts`'s human-only fast-path at
  * enqueue/routeIncoming); `false` appends via `conductor.appendWithoutTurn(envelope)`, the
- * accumulate-only seam — `conductor.submit()` unconditionally opens a turn regardless of
- * `shouldQuery`, and the SDK appends a `shouldQuery:false` message to the transcript without an
+ * accumulate-only seam — `conductor.submit()` unconditionally opens a turn, and the SDK
+ * appends a `shouldQuery:false` message to the transcript without an
  * assistant turn, answering it only with a bare zero-turn `result` frame (which the conductor's
  * input queue claims by uuid), so routing an accumulate envelope through `submit()` would open a
  * turn that bare result settles with an empty reply. Both routes are
@@ -171,7 +171,9 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
             source, text, now: at ?? new Date(clock.now()), timezone, timeHeader: timeHeader(), wake,
         });
 
-        if(wake) {
+        // Narrowed on the envelope's own contract rather than on `wake`, which built it: the
+        // compiler then holds each branch to the one conductor seam that contract belongs on.
+        if(envelope.mode === 'query') {
             // Burned up front on this path: `submit()` opens a real turn and the conductor owns
             // the envelope from here, so a later failure is a failed turn, not a lost hand-off.
             rememberKey(dedupeKey);

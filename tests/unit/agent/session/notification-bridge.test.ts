@@ -76,7 +76,7 @@ describe('createNotificationBridge', () => {
         const [envelope, options] = conductor.submit.mock.calls[0];
         expect(options.priority).toBe('other');
         expect(envelope.hostPriority).toBe('wake');
-        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.mode).toBe('query');
     });
 
     test('wake:true burns the dedupe key eagerly, before conductor.submit() has resolved', () => {
@@ -103,7 +103,7 @@ describe('createNotificationBridge', () => {
         expect(conductor.submit).not.toHaveBeenCalled();
         const [envelope] = conductor.appendWithoutTurn.mock.calls[0];
         expect(envelope.hostPriority).toBe('accumulate');
-        expect(envelope.shouldQuery).toBe(false);
+        expect(envelope.mode).toBe('append');
     });
 
     test('an explicit `at` overrides the envelope timestamp instead of the call-time clock', () => {

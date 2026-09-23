@@ -25,7 +25,7 @@ import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { buildMultimodalContent } from '../multimodal-message-builder';
 import type { MessageContext, PlatformImage } from '../types';
 import { buildCatchupText } from './catchup-text';
-import type { Envelope } from './types';
+import type { AccumulationEnvelope, AdoptedPeerEnvelope, DiscordQueryEnvelope, Envelope, QueryEnvelope } from './types';
 import { formatEnvelopeStamp } from '@/utils';
 
 /** Joins non-empty sections with a blank line, dropping any `undefined`/empty entries. */
@@ -162,9 +162,9 @@ export interface BuildDiscordEnvelopeParams {
  * changed]`/`[Calendar]`/`[Channels]` sections (each rendered only when its input is
  * provided/non-empty), then the message texts in order.
  * @param params Discord envelope inputs
- * @returns A `discord`-kind {@link Envelope}
+ * @returns A `discord`-kind {@link QueryEnvelope}
  */
-export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Envelope {
+export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): DiscordQueryEnvelope {
     const {
         messages, authorId, authorName, channelId, channelName, guildName, isDM,
         now, timezone, timeHeader, newEvents, userMemoryBlock, stateChanged, calendarChanged, channelList, healthNote, images, resumeNote,
@@ -195,6 +195,7 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Envelo
 
     return {
         id:           crypto.randomUUID(),
+        mode:         'query',
         kind:         'discord',
         text,
         images,
@@ -202,7 +203,6 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Envelo
         authorId,
         origin:       { kind: 'human' },
         hostPriority: 'human',
-        shouldQuery:  true,
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(messageText),
     };
@@ -226,9 +226,9 @@ export interface BuildPerchEnvelopeParams {
  * time header, a suggestion-level line (with a background clause only when
  * `backgroundSummary` is given), the slot hint, and the perch context.
  * @param params Perch envelope inputs
- * @returns A `perch`-kind {@link Envelope}
+ * @returns A `perch`-kind {@link QueryEnvelope}
  */
-export function buildPerchEnvelope(params: BuildPerchEnvelopeParams): Envelope {
+export function buildPerchEnvelope(params: BuildPerchEnvelopeParams): QueryEnvelope {
     const { slotName, now, timezone, endsAt, suggestionLevel, backgroundSummary, slotHint, perchContext, timeHeader } = params;
 
     const stamp = formatEnvelopeStamp(now, timezone);
@@ -244,10 +244,10 @@ export function buildPerchEnvelope(params: BuildPerchEnvelopeParams): Envelope {
 
     return {
         id:           crypto.randomUUID(),
+        mode:         'query',
         kind:         'perch',
         text,
         hostPriority: 'wake',
-        shouldQuery:  true,
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(slotHint),
     };
@@ -265,12 +265,13 @@ export interface BuildNotificationEnvelopeParams {
 
 /**
  * Builds a notification envelope: `[NOTIFICATION · {source} · stamp]`, followed by the time
- * header and the notification text. `wake` drives both `shouldQuery` and `hostPriority`
- * ('wake' when true, 'accumulate' when false).
+ * header and the notification text. `wake` drives both the contract and `hostPriority`: a
+ * {@link QueryEnvelope} queued as 'wake' when true, an {@link AccumulationEnvelope} queued as
+ * 'accumulate' when false — callers narrow on `mode` to pick the conductor seam.
  * @param params Notification envelope inputs
- * @returns A `notification`-kind {@link Envelope}
+ * @returns A `notification`-kind {@link QueryEnvelope} or {@link AccumulationEnvelope}
  */
-export function buildNotificationEnvelope(params: BuildNotificationEnvelopeParams): Envelope {
+export function buildNotificationEnvelope(params: BuildNotificationEnvelopeParams): QueryEnvelope | AccumulationEnvelope {
     const { source, text, now, timezone, timeHeader, wake } = params;
 
     const stamp = formatEnvelopeStamp(now, timezone);
@@ -278,10 +279,10 @@ export function buildNotificationEnvelope(params: BuildNotificationEnvelopeParam
 
     return {
         id:           crypto.randomUUID(),
+        mode:         wake ? 'query' : 'append',
         kind:         'notification',
         text:         joinSections([header, timeHeader, text]),
         hostPriority: wake ? 'wake' : 'accumulate',
-        shouldQuery:  wake,
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(text),
     };
@@ -313,9 +314,9 @@ export interface BuildPeerEnvelopeParams {
  * the raw tag stays legible to a later reader. See
  * {@link import('./conductor').Conductor.adoptPeerTurn}.
  * @param params Peer envelope inputs
- * @returns A `peer`-kind {@link Envelope}
+ * @returns A `peer`-kind {@link AdoptedPeerEnvelope}
  */
-export function buildPeerEnvelope(params: BuildPeerEnvelopeParams): Envelope {
+export function buildPeerEnvelope(params: BuildPeerEnvelopeParams): AdoptedPeerEnvelope {
     const { from, fromName, text, now, timezone, timeHeader } = params;
 
     const name = fromName === undefined || fromName === '' ? from : fromName;
@@ -323,11 +324,11 @@ export function buildPeerEnvelope(params: BuildPeerEnvelopeParams): Envelope {
 
     return {
         id:           crypto.randomUUID(),
+        mode:         'adopted',
         kind:         'peer',
         text:         joinSections([header, timeHeader, text, `Reply with SendMessage to ${name}.`]),
         peer:         { from, ...(fromName === undefined || fromName === '' ? {} : { fromName }) },
         hostPriority: 'wake',
-        shouldQuery:  true,
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(`${name}: ${text}`),
     };
@@ -343,7 +344,7 @@ export interface BuildCatchupEnvelopeParams {
     timeHeader:   string
     /** Memory-preview-formatted events recorded while offline (e.g. `ContextPolicy.eventsDelta()`). Rendered as `## Events while you were away`; omitted when empty/undefined (R1). */
     eventsDelta?: string[]
-    /** Background task descriptions lost at restart. Rendered as `## Background tasks lost at restart`; also the sole non-unread trigger for `shouldQuery` (R1). */
+    /** Background task descriptions lost at restart. Rendered as `## Background tasks lost at restart`; also the sole non-unread trigger for a waking (query) catch-up (R1). */
     lostTasks?:   string[]
     /** Descriptions of undelivered replies the boot sequence redelivered on Izzy's behalf. Rendered as `## Replies redelivered for you`, last. */
     redelivered?: string[]
@@ -360,13 +361,14 @@ function renderCatchupListSection(heading: string, items: string[] | undefined):
  * ({@link buildCatchupText}) only when `unreadCount` is positive, then `## Events while you were
  * away` / `## Background tasks lost at restart` / `## Replies redelivered for you`, each only
  * when non-empty (R1: the boot sequence's catch-up and the recovery re-seed merge into this one
- * envelope). `shouldQuery`/`hostPriority` escalate to a turn ('wake') only when there is unread
- * mail or a lost task to surface; an events/redelivered-only catch-up stays 'accumulate' so the
- * host appends it without interrupting via `Conductor.appendWithoutTurn`.
+ * envelope). It is a {@link QueryEnvelope} queued as 'wake' only when there is unread mail or a
+ * lost task to surface; an events/redelivered-only catch-up is an {@link AccumulationEnvelope}
+ * queued as 'accumulate', so the host appends it without interrupting via
+ * `Conductor.appendWithoutTurn` — callers narrow on `mode` to pick the seam.
  * @param params Catch-up envelope inputs
- * @returns A `catchup`-kind {@link Envelope}
+ * @returns A `catchup`-kind {@link QueryEnvelope} or {@link AccumulationEnvelope}
  */
-export function buildCatchupEnvelope(params: BuildCatchupEnvelopeParams): Envelope {
+export function buildCatchupEnvelope(params: BuildCatchupEnvelopeParams): QueryEnvelope | AccumulationEnvelope {
     const { unreadCount, channelCount, now, timezone, timeHeader, eventsDelta, lostTasks, redelivered } = params;
 
     const stamp = formatEnvelopeStamp(now, timezone);
@@ -374,7 +376,7 @@ export function buildCatchupEnvelope(params: BuildCatchupEnvelopeParams): Envelo
     // Stryker disable next-line NumberLiteralValue: the fallback is taken only when unreadCount is undefined, and 0 > 0 and -1 > 0 are both false, so no input can distinguish them.
     const hasUnread = (unreadCount ?? 0) > 0;
     // Stryker disable next-line NumberLiteralValue: the fallback is taken only when lostTasks is undefined, and 0 > 0 and -1 > 0 are both false, so no input can distinguish them.
-    const shouldQuery = hasUnread || (lostTasks?.length ?? 0) > 0;
+    const wakes = hasUnread || (lostTasks?.length ?? 0) > 0;
 
     // The seed is exactly the body — header and time header stripped — so `text` and
     // `synopsisSeed` read from one expression rather than drifting apart.
@@ -389,10 +391,10 @@ export function buildCatchupEnvelope(params: BuildCatchupEnvelopeParams): Envelo
 
     return {
         id:           crypto.randomUUID(),
+        mode:         wakes ? 'query' : 'append',
         kind:         'catchup',
         text,
-        hostPriority: shouldQuery ? 'wake' : 'accumulate',
-        shouldQuery,
+        hostPriority: wakes ? 'wake' : 'accumulate',
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(body),
     };
@@ -408,19 +410,19 @@ export interface BuildWrapUpEnvelopeParams {
  * Builds a wrap-up envelope: `[WRAP-UP · perch slot ends in N min]` plus a one-line
  * instruction.
  * @param params Wrap-up envelope inputs
- * @returns A `wrapup`-kind {@link Envelope}
+ * @returns A `wrapup`-kind {@link QueryEnvelope}
  */
-export function buildWrapUpEnvelope(params: BuildWrapUpEnvelopeParams): Envelope {
+export function buildWrapUpEnvelope(params: BuildWrapUpEnvelopeParams): QueryEnvelope {
     const { minutesLeft, now } = params;
     const header = `[WRAP-UP · perch slot ends in ${minutesLeft} min]`;
     const instruction = 'Wrap up your current work now; the perch slot is ending.';
 
     return {
         id:           crypto.randomUUID(),
+        mode:         'query',
         kind:         'wrapup',
         text:         joinSections([header, instruction]),
         hostPriority: 'wake',
-        shouldQuery:  true,
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(instruction),
     };
@@ -430,15 +432,15 @@ export function buildWrapUpEnvelope(params: BuildWrapUpEnvelopeParams): Envelope
  * Builds a resume envelope carrying a pre-composed resume note verbatim.
  * @param note Resume note text (see `buildResumeNote` in resume-prompt-builder.ts)
  * @param now Envelope creation time, for `createdAt`
- * @returns A `resume`-kind {@link Envelope}
+ * @returns A `resume`-kind {@link QueryEnvelope}
  */
-export function buildResumeEnvelope(note: string, now: Date): Envelope {
+export function buildResumeEnvelope(note: string, now: Date): QueryEnvelope {
     return {
         id:           crypto.randomUUID(),
+        mode:         'query',
         kind:         'resume',
         text:         note,
         hostPriority: 'wake',
-        shouldQuery:  true,
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(note),
     };
@@ -446,44 +448,51 @@ export function buildResumeEnvelope(note: string, now: Date): Envelope {
 
 /**
  * Builds a boot envelope carrying a pre-composed boot bundle verbatim (see boot-bundle.ts).
- * Never interrupts and never escalates: `shouldQuery` is false and `hostPriority` is
- * 'accumulate'.
+ * Never interrupts and never escalates: it is an {@link AccumulationEnvelope} (sent with
+ * `shouldQuery: false`) and its `hostPriority` is 'accumulate'.
  * @param text Pre-composed boot bundle text
  * @param now Envelope creation time, for `createdAt`
- * @returns A `boot`-kind {@link Envelope}
+ * @returns A `boot`-kind {@link AccumulationEnvelope}
  */
-export function buildBootEnvelope(text: string, now: Date): Envelope {
+export function buildBootEnvelope(text: string, now: Date): AccumulationEnvelope {
     return {
         id:           crypto.randomUUID(),
+        mode:         'append',
         kind:         'boot',
         text,
         hostPriority: 'accumulate',
-        shouldQuery:  false,
         createdAt:    now,
     };
 }
 
 /**
  * Builds the host-driven '/compact' envelope submitted by the compaction guard at a turn
- * boundary.
+ * boundary. A {@link QueryEnvelope} queued as 'accumulate' — the one pairing that shows the
+ * contract and `hostPriority` are independent.
  * @param now Envelope creation time, for `createdAt`
- * @returns A `compact`-kind {@link Envelope} whose text is exactly '/compact'
+ * @returns A `compact`-kind {@link QueryEnvelope} whose text is exactly '/compact'
  */
-export function buildCompactEnvelope(now: Date): Envelope {
+export function buildCompactEnvelope(now: Date): QueryEnvelope {
     return {
         id:           crypto.randomUUID(),
+        mode:         'query',
         kind:         'compact',
         text:         '/compact',
         hostPriority: 'accumulate',
-        shouldQuery:  true,
         createdAt:    now,
     };
 }
 
 /**
- * Converts a domain {@link Envelope} into the SDK's wire shape. Deliberately does not set the
- * SDK's own `priority?: 'now'|'next'|'later'` field — a different concept from
- * `Envelope.hostPriority` that this session core does not use.
+ * Converts a domain {@link Envelope} into the SDK's wire shape — the one place the SDK's
+ * `shouldQuery` boolean exists. It is derived from the envelope's contract: `false` for an
+ * {@link AccumulationEnvelope} (the SDK appends it and answers with a bare acknowledgement the
+ * session's input queue absorbs), `true` otherwise. An {@link AdoptedPeerEnvelope} still maps
+ * to `true`, as it did before the contracts were split: the adopted record is never pushed on
+ * its own, but a crash reopen re-queues whatever turn was in flight, adopted or not, and
+ * {@link import('./conductor')}'s `beginTurn` pushes it. Deliberately does not set the SDK's own
+ * `priority?: 'now'|'next'|'later'` field — a different concept from `Envelope.hostPriority`
+ * that this session core does not use.
  * @param envelope Envelope to convert
  * @returns An `SDKUserMessage` ready to feed the session's input stream
  */
@@ -492,7 +501,7 @@ export function toSdkUserMessage(envelope: Envelope): SDKUserMessage {
         type:               'user',
         message:            { role: 'user', content: buildMultimodalContent(envelope.text, envelope.images) },
         parent_tool_use_id: null,
-        shouldQuery:        envelope.shouldQuery,
+        shouldQuery:        envelope.mode !== 'append',
         ...(envelope.origin ? { origin: envelope.origin } : {}),
     };
 }

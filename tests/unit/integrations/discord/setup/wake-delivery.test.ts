@@ -7,7 +7,7 @@
  * otherwise.
  */
 import { afterEach, describe, expect, it, jest } from 'bun:test';
-import { type Envelope, type TurnResult, type SendOutcome  } from '@/agent';
+import { type DeliverableEnvelope, type TurnResult, type SendOutcome  } from '@/agent';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
 import type { SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
 import { createWakeTurnDelivery, type CreateWakeTurnDeliveryParams } from '@/integrations/discord/setup/wake-delivery';
@@ -26,15 +26,12 @@ function makeTurnResult(overrides: Partial<TurnResult> = {}): TurnResult {
     };
 }
 
-/** Minimal-but-complete `Envelope` fixture. */
-function makeEnvelope(overrides: Partial<Envelope> = {}): Envelope {
+/** Minimal-but-complete `DeliverableEnvelope` fixture — all a wake-turn delivery reads. */
+function makeEnvelope(overrides: Partial<DeliverableEnvelope> = {}): DeliverableEnvelope {
     return {
-        id:           'env-1',
-        kind:         'task',
-        text:         'Task summary line',
-        hostPriority: 'wake',
-        shouldQuery:  true,
-        createdAt:    new Date(0),
+        id:   'env-1',
+        kind: 'task',
+        text: 'Task summary line',
         ...overrides,
     };
 }

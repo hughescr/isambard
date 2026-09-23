@@ -23,7 +23,7 @@
 import { formatSlotName } from './prompts';
 import { getSlotConfig } from './schedule';
 import type { PerchSlot, SuggestionLevel } from './types';
-import { buildPerchEnvelope, buildWrapUpEnvelope, type Envelope } from '@/agent/session';
+import { buildPerchEnvelope, buildWrapUpEnvelope, type QueryEnvelope } from '@/agent/session';
 
 /**
  * Maps a slot's {@link SuggestionLevel} onto the 0-3 scale `buildPerchEnvelope`'s
@@ -71,9 +71,9 @@ export interface BuildPerchSlotEnvelopeParams {
  * {@link suggestionLevelToNumber}'s mapping of the slot's suggestion level, delegating the
  * actual header/body rendering to `buildPerchEnvelope` (`@/agent/session`, P6).
  * @param params Perch slot envelope inputs
- * @returns A `perch`-kind {@link Envelope}
+ * @returns A `perch`-kind {@link QueryEnvelope}
  */
-export function buildPerchSlotEnvelope(params: BuildPerchSlotEnvelopeParams): Envelope {
+export function buildPerchSlotEnvelope(params: BuildPerchSlotEnvelopeParams): QueryEnvelope {
     const { slot, now, timezone, endsAt, timeHeader, perchContext, backgroundSummary } = params;
     const config = getSlotConfig(slot);
 
@@ -100,8 +100,8 @@ export interface BuildPerchWrapUpEnvelopeParams {
  * Builds a perch wrap-up envelope: `[WRAP-UP · perch slot ends in N min]`, delegating to
  * `buildWrapUpEnvelope` (`@/agent/session`, P6).
  * @param params Wrap-up envelope inputs
- * @returns A `wrapup`-kind {@link Envelope}
+ * @returns A `wrapup`-kind {@link QueryEnvelope}
  */
-export function buildPerchWrapUpEnvelope(params: BuildPerchWrapUpEnvelopeParams): Envelope {
+export function buildPerchWrapUpEnvelope(params: BuildPerchWrapUpEnvelopeParams): QueryEnvelope {
     return buildWrapUpEnvelope({ minutesLeft: params.leadMinutes, now: params.now });
 }

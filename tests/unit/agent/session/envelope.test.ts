@@ -438,7 +438,7 @@ describe('buildDiscordEnvelope', () => {
         );
     });
 
-    test('sets origin, channelId, authorId, hostPriority human, shouldQuery true, kind discord, createdAt now', () => {
+    test('sets origin, channelId, authorId, hostPriority human, mode query, kind discord, createdAt now', () => {
         const envelope = buildDiscordEnvelope({
             messages: [makeMessage()], authorId: 'author-9', authorName: 'craig', channelId: 'chan-9', channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
@@ -448,7 +448,7 @@ describe('buildDiscordEnvelope', () => {
         expect(envelope.channelId).toBe('chan-9');
         expect(envelope.authorId).toBe('author-9');
         expect(envelope.hostPriority).toBe('human');
-        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.mode).toBe('query');
         expect(envelope.createdAt).toBe(now);
     });
 
@@ -479,7 +479,7 @@ describe('buildPerchEnvelope', () => {
         expect(envelope.text.startsWith(`${header}\n\n${timeHeader}`)).toBe(true);
         expect(envelope.kind).toBe('perch');
         expect(envelope.hostPriority).toBe('wake');
-        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.mode).toBe('query');
     });
 
     test('renders the suggestion level with background summary when given', () => {
@@ -512,13 +512,13 @@ describe('buildNotificationEnvelope', () => {
         expect(envelope.kind).toBe('notification');
     });
 
-    test('shouldQuery follows wake; hostPriority is wake when waking, accumulate otherwise', () => {
+    test('the contract follows wake (query when waking, append otherwise); hostPriority is wake when waking, accumulate otherwise', () => {
         const waking = buildNotificationEnvelope({ source: 'email', text: 't', now, timezone, timeHeader, wake: true });
         const quiet = buildNotificationEnvelope({ source: 'email', text: 't', now, timezone, timeHeader, wake: false });
 
-        expect(waking.shouldQuery).toBe(true);
+        expect(waking.mode).toBe('query');
         expect(waking.hostPriority).toBe('wake');
-        expect(quiet.shouldQuery).toBe(false);
+        expect(quiet.mode).toBe('append');
         expect(quiet.hostPriority).toBe('accumulate');
     });
 });
@@ -534,7 +534,7 @@ describe('buildPeerEnvelope', () => {
         expect(envelope.kind).toBe('peer');
         expect(envelope.peer).toEqual({ from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' });
         expect(envelope.hostPriority).toBe('wake');
-        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.mode).toBe('adopted');
         expect(envelope.createdAt).toBe(now);
         expect(envelope.id).not.toBe(buildPeerEnvelope({
             from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main', text: 'MIDTURN-PING-CHARLIE-3', now, timezone, timeHeader,
@@ -572,7 +572,7 @@ describe('buildCatchupEnvelope', () => {
         expect(envelope.text).toContain('getUnreadOverview');
         expect(envelope.kind).toBe('catchup');
         expect(envelope.hostPriority).toBe('wake');
-        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.mode).toBe('query');
     });
 
     test('omits the unread summary entirely when unreadCount is 0', () => {
@@ -582,11 +582,11 @@ describe('buildCatchupEnvelope', () => {
         expect(envelope.text).not.toContain('getUnreadOverview');
     });
 
-    test('omits the unread summary when unreadCount is undefined; shouldQuery/hostPriority follow the accumulate rule', () => {
+    test('omits the unread summary when unreadCount is undefined; mode/hostPriority follow the accumulate rule', () => {
         const envelope = buildCatchupEnvelope({ channelCount: 0, now, timezone, timeHeader });
 
         expect(envelope.text).not.toContain('unread');
-        expect(envelope.shouldQuery).toBe(false);
+        expect(envelope.mode).toBe('append');
         expect(envelope.hostPriority).toBe('accumulate');
     });
 
@@ -626,26 +626,26 @@ describe('buildCatchupEnvelope', () => {
         expect(envelope.text).toContain('## Background tasks lost at restart\nlost-1\nlost-2');
     });
 
-    test('shouldQuery is true when unreadCount > 0, even with nothing else', () => {
+    test('is a query envelope when unreadCount > 0, even with nothing else', () => {
         const envelope = buildCatchupEnvelope({ unreadCount: 1, channelCount: 1, now, timezone, timeHeader });
 
-        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.mode).toBe('query');
         expect(envelope.hostPriority).toBe('wake');
     });
 
-    test('shouldQuery is true when lostTasks is non-empty, even with unreadCount 0', () => {
+    test('is a query envelope when lostTasks is non-empty, even with unreadCount 0', () => {
         const envelope = buildCatchupEnvelope({ unreadCount: 0, channelCount: 0, now, timezone, timeHeader, lostTasks: ['lost-1'] });
 
-        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.mode).toBe('query');
         expect(envelope.hostPriority).toBe('wake');
     });
 
-    test('shouldQuery is false (accumulate, appendWithoutTurn) when only events/redelivered are present', () => {
+    test('is an accumulation envelope (appendWithoutTurn) when only events/redelivered are present', () => {
         const envelope = buildCatchupEnvelope({
             unreadCount: 0, channelCount: 0, now, timezone, timeHeader, eventsDelta: ['- /events/1: a thing'], redelivered: ['reply: hi'],
         });
 
-        expect(envelope.shouldQuery).toBe(false);
+        expect(envelope.mode).toBe('append');
         expect(envelope.hostPriority).toBe('accumulate');
     });
 });
@@ -657,7 +657,7 @@ describe('buildWrapUpEnvelope', () => {
         expect(envelope.text.startsWith('[WRAP-UP · perch slot ends in 5 min]')).toBe(true);
         expect(envelope.kind).toBe('wrapup');
         expect(envelope.hostPriority).toBe('wake');
-        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.mode).toBe('query');
     });
 });
 
@@ -668,28 +668,29 @@ describe('buildResumeEnvelope', () => {
         expect(envelope.text).toBe('[RESUME NOTE]\nsomething');
         expect(envelope.kind).toBe('resume');
         expect(envelope.hostPriority).toBe('wake');
-        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.mode).toBe('query');
     });
 });
 
 describe('buildBootEnvelope', () => {
-    test('carries the text verbatim, shouldQuery false, hostPriority accumulate', () => {
+    test('carries the text verbatim, mode append, hostPriority accumulate', () => {
         const envelope = buildBootEnvelope('[BOOT BUNDLE · conversation]\n...', now);
 
         expect(envelope.text).toBe('[BOOT BUNDLE · conversation]\n...');
         expect(envelope.kind).toBe('boot');
-        expect(envelope.shouldQuery).toBe(false);
+        expect(envelope.mode).toBe('append');
         expect(envelope.hostPriority).toBe('accumulate');
     });
 });
 
 describe('buildCompactEnvelope', () => {
-    test('text is exactly /compact, shouldQuery true, kind compact', () => {
+    test('text is exactly /compact, mode query, hostPriority accumulate, kind compact', () => {
         const envelope = buildCompactEnvelope(now);
 
         expect(envelope.text).toBe('/compact');
         expect(envelope.kind).toBe('compact');
-        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.mode).toBe('query');
+        expect(envelope.hostPriority).toBe('accumulate');
     });
 });
 
@@ -706,7 +707,34 @@ describe('distinct ids', () => {
 });
 
 describe('toSdkUserMessage', () => {
-    test('content equals buildMultimodalContent(text, images), shouldQuery copied, origin absent for non-discord, no SDK priority key', () => {
+    // Every builder, with the SDK `shouldQuery` its contract must derive: only an accumulation
+    // envelope is sent `shouldQuery:false` (the only kind the SDK answers with a bare, absorbed
+    // ack), and an adopted peer keeps the `true` it carried before the contract split (#60).
+    const discordParams = {
+        messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
+    };
+    const perchParams = {
+        slotName: 'evening', now, timezone, endsAt: new Date('2026-09-05T02:45:00Z'), suggestionLevel: 1, slotHint: 'hint', perchContext: 'context', timeHeader,
+    };
+    const everyBuilder: [string, () => Envelope, boolean][] = [
+        ['discord', () => buildDiscordEnvelope(discordParams), true],
+        ['perch', () => buildPerchEnvelope(perchParams), true],
+        ['waking notification', () => buildNotificationEnvelope({ source: 's', text: 't', now, timezone, timeHeader, wake: true }), true],
+        ['non-waking notification', () => buildNotificationEnvelope({ source: 's', text: 't', now, timezone, timeHeader, wake: false }), false],
+        ['peer', () => buildPeerEnvelope({ from: 'uds:/tmp/cc-socks/1.sock', text: 't', now, timezone, timeHeader }), true],
+        ['waking catch-up', () => buildCatchupEnvelope({ unreadCount: 1, channelCount: 1, now, timezone, timeHeader }), true],
+        ['non-waking catch-up', () => buildCatchupEnvelope({ channelCount: 0, now, timezone, timeHeader, eventsDelta: ['e'] }), false],
+        ['wrap-up', () => buildWrapUpEnvelope({ minutesLeft: 5, now }), true],
+        ['resume', () => buildResumeEnvelope('note', now), true],
+        ['boot', () => buildBootEnvelope('boot', now), false],
+        ['compact', () => buildCompactEnvelope(now), true],
+    ];
+
+    test.each(everyBuilder)('derives shouldQuery from the %s envelope\'s contract', (_label, build, expected) => {
+        expect(toSdkUserMessage(build()).shouldQuery).toBe(expected);
+    });
+
+    test('content equals buildMultimodalContent(text, images), shouldQuery derived, origin absent for non-discord, no SDK priority key', () => {
         const spy = spyOn(mm, 'buildMultimodalContent');
         const envelope = buildBootEnvelope('boot text', now);
 

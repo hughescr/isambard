@@ -15,7 +15,7 @@ import { createConductor, type BootBundleRequest, type Conductor, type CreateCon
 import { createCostCeiling } from '@/agent/session/cost-ceiling';
 import { createLedgerStore, type LedgerStore } from '@/agent/session/ledger';
 import { createTaskLaunchRegistry } from '@/agent/session/task-launch-registry';
-import type { Envelope, SessionQueryFn } from '@/agent/session/types';
+import type { AccumulationEnvelope, AdoptedPeerEnvelope, DiscordQueryEnvelope, QueryEnvelope, SessionQueryFn } from '@/agent/session/types';
 import { DEFAULT_RETRY_CONFIG } from '@/config/retry-config';
 import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
 import { ResponseUnavailableError } from '@/errors';
@@ -35,17 +35,17 @@ function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void, reje
 
 let idCounter = 0;
 
-function discordEnvelope(overrides: Partial<Envelope> = {}): Envelope {
+function discordEnvelope(overrides: Partial<DiscordQueryEnvelope> = {}): DiscordQueryEnvelope {
     idCounter += 1;
     return {
         id:           `discord-${idCounter}`,
+        mode:         'query',
         kind:         'discord',
         text:         `discord text ${idCounter}`,
         channelId:    'chan-1',
         authorId:     'user-1',
         origin:       { kind: 'human' },
         hostPriority: 'human',
-        shouldQuery:  true,
         createdAt:    new Date(0),
         ...overrides,
     };
@@ -63,41 +63,41 @@ function notificationFrame(key: string): SDKNotificationMessage {
     };
 }
 
-function catchupEnvelope(overrides: Partial<Envelope> = {}): Envelope {
+function catchupEnvelope(overrides: Partial<Pick<QueryEnvelope, 'id' | 'text' | 'synopsisSeed'>> = {}): QueryEnvelope {
     idCounter += 1;
     return {
         id:           `catchup-${idCounter}`,
+        mode:         'query',
         kind:         'catchup',
         text:         `catchup text ${idCounter}`,
         hostPriority: 'wake',
-        shouldQuery:  true,
         createdAt:    new Date(0),
         ...overrides,
     };
 }
 
-function peerEnvelope(overrides: Partial<Envelope> = {}): Envelope {
+function peerEnvelope(overrides: Partial<AdoptedPeerEnvelope> = {}): AdoptedPeerEnvelope {
     idCounter += 1;
     return {
         id:           `peer-${idCounter}`,
+        mode:         'adopted',
         kind:         'peer',
         text:         `[PEER · Izzy-main]\n\npeer text ${idCounter}`,
         peer:         { from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' },
         hostPriority: 'wake',
-        shouldQuery:  true,
         createdAt:    new Date(0),
         ...overrides,
     };
 }
 
-function notificationEnvelope(overrides: Partial<Envelope> = {}): Envelope {
+function notificationEnvelope(overrides: Partial<Pick<AccumulationEnvelope, 'id' | 'text'>> = {}): AccumulationEnvelope {
     idCounter += 1;
     return {
         id:           `notification-${idCounter}`,
+        mode:         'append',
         kind:         'notification',
         text:         `notification text ${idCounter}`,
         hostPriority: 'accumulate',
-        shouldQuery:  false,
         createdAt:    new Date(0),
         ...overrides,
     };
@@ -1234,7 +1234,10 @@ describe('createConductor', () => {
         it('does not pre-empt a channel-tagged non-discord turn when a same-channel human arrives', async () => {
             const h = build();
             await openWith(h);
-            const first = h.conductor.submit(catchupEnvelope({ channelId: 'chan-1' }), { priority: 'other' });
+            // A `task` envelope is the one non-discord contract that can carry a channel.
+            const first = h.conductor.submit({
+                id: 'task-chan-1', mode: 'query', kind: 'task', text: 'task text', channelId: 'chan-1', hostPriority: 'wake', createdAt: new Date(0),
+            }, { priority: 'other' });
             await flush();
 
             const second = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
@@ -1252,6 +1255,9 @@ describe('createConductor', () => {
         it('does not pre-empt an unscoped discord turn for an unscoped human arrival', async () => {
             const h = build();
             await openWith(h);
+            // A channel-less discord envelope is unrepresentable since #60 (the `Partial` override
+            // slips it past the compiler); kept because it is the one state that tells
+            // routeIncoming's `requestingChannelId !== undefined` guard from its removal.
             const first = h.conductor.submit(discordEnvelope({ channelId: undefined }), { priority: 'human' });
             await flush();
 
@@ -1345,33 +1351,9 @@ describe('createConductor', () => {
             expect(h.instances).toHaveLength(0);
         });
 
-        it('throws an InvariantViolationError when given a shouldQuery:true envelope', async () => {
-            const h = build();
-            await openWith(h);
-
-            expect(() => {
-                h.conductor.appendWithoutTurn(catchupEnvelope());
-            }).toThrow('Invariant violated in conductor.appendWithoutTurn: called with a shouldQuery:true envelope — this seam is accumulate-only; use submit() for shouldQuery:true envelopes');
-        });
-
-        it('throws the shouldQuery:true InvariantViolationError even before open() has assigned a live queue', () => {
-            const h = build();
-
-            expect(() => {
-                h.conductor.appendWithoutTurn(catchupEnvelope());
-            }).toThrow('Invariant violated in conductor.appendWithoutTurn: called with a shouldQuery:true envelope — this seam is accumulate-only; use submit() for shouldQuery:true envelopes');
-        });
-    });
-
-    describe('submit() shouldQuery guard', () => {
-        it('throws an InvariantViolationError when given a shouldQuery:false envelope', async () => {
-            const h = build();
-            await openWith(h);
-
-            expect(() => {
-                void h.conductor.submit(notificationEnvelope(), { priority: 'other' });
-            }).toThrow('Invariant violated in conductor.submit: called with a shouldQuery:false envelope — submit() always opens a turn; use appendWithoutTurn() for shouldQuery:false envelopes');
-        });
+        // The former runtime guards (submit() of a no-query envelope, appendWithoutTurn() of a
+        // query one, adoptPeerTurn() of a non-peer one) are compile errors since #60: see the
+        // `envelope contracts` checks in types.test.ts.
     });
 
     describe('task lifecycle journaling', () => {
@@ -3823,7 +3805,7 @@ describe('createConductor', () => {
             });
             expect(onWakeTurnSettled).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    id: taskEnvelopeId, kind: 'task', channelId: 'chan-C', authorId: 'user-U', text: 'done', hostPriority: 'wake', shouldQuery: true,
+                    id: taskEnvelopeId, mode: 'query', kind: 'task', channelId: 'chan-C', authorId: 'user-U', text: 'done', hostPriority: 'wake',
                 }),
                 expect.objectContaining({ response: 'done', isError: false })
             );
@@ -4161,8 +4143,8 @@ describe('createConductor', () => {
         it('a directly-submitted (non-adopted) task-kind turn starts with its human-wait escalation NOT yet armed: a human envelope during it still waits out humanWaitTargetMs rather than interrupting immediately', async () => {
             const h = build();
             await openWith(h);
-            const directTaskEnvelope: Envelope = {
-                id: 'direct-task-1', kind: 'task', text: 'direct task text', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0),
+            const directTaskEnvelope: QueryEnvelope = {
+                id: 'direct-task-1', mode: 'query', kind: 'task', text: 'direct task text', hostPriority: 'wake', createdAt: new Date(0),
             };
             void h.conductor.submit(directTaskEnvelope, { priority: 'other' });
             await flush();
@@ -4264,21 +4246,6 @@ describe('createConductor', () => {
                 { type: 'turn_completed', at: expect.any(Date), envelopeId: envelope.id, kind: 'peer', responseText: 'replied' },
             ]);
             expect(h.conductor.status().turn).toBeNull();
-        });
-
-        it('rejects an envelope that is not peer-kind — the adopted turn IS the envelope, so a mis-kinded one would journal and ledger the wrong kind', async () => {
-            const h = build();
-            await openWith(h);
-
-            expect(() => {
-                h.conductor.adoptPeerTurn(discordEnvelope());
-            }).toThrow('Invariant violated in conductor.adoptPeerTurn: called with a non peer-kind envelope');
-            h.instances[0].emit(frames.assistantText('musing'));
-            await flush();
-
-            expect(h.conductor.status().turn).toMatchObject({ kind: 'notification' });
-            h.instances[0].emit(frames.resultSuccess());
-            await flush();
         });
 
         it('a single, fresh adoptPeerTurn() call (no prior pending peer) never logs the overwrite warning', async () => {

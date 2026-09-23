@@ -7,7 +7,7 @@ import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from '../response-sender';
 import {
     type ContextBuilder, type PerchConfig, type PerchScheduler, type PerchDriver, type PerchSlotHooks, type ActivityLogger,
-    type Clock, type Conductor, type Envelope, type SubmitOptions, type TimeHeaderProvider, type TurnResult,
+    type Clock, type Conductor, type QueryEnvelope, type SubmitOptions, type TimeHeaderProvider, type TurnResult,
     createPerchScheduler, createPerchDriver
 } from '@/agent';
 import { ResponseUnavailableError } from '@/errors';
@@ -54,7 +54,7 @@ function wrapConductorWithDelivery(
 ): Pick<Conductor, 'submit' | 'interruptCurrent' | 'status'> {
     const { channelRegistry, responseRouter, client, rateLimiter, discordCapability } = deps;
 
-    async function deliverResult(envelope: Envelope, result: TurnResult): Promise<void> {
+    async function deliverResult(envelope: QueryEnvelope, result: TurnResult): Promise<void> {
         if(!result.response || (envelope.kind !== 'perch' && envelope.kind !== 'wrapup')) {
             return;
         }
@@ -98,7 +98,7 @@ function wrapConductorWithDelivery(
     return {
         interruptCurrent: options => conductor.interruptCurrent(options),
         status:           () => conductor.status(),
-        submit:           async (envelope: Envelope, options: SubmitOptions) => {
+        submit:           async (envelope: QueryEnvelope, options: SubmitOptions) => {
             const result = await conductor.submit(envelope, options);
             await deliverResult(envelope, result);
             return result;

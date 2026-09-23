@@ -80,10 +80,13 @@ export interface EnvelopeMeta {
     }
 }
 
-/** A unit of host-driven work submitted to a session's input queue. */
-export interface Envelope {
+/**
+ * The fields every envelope carries, whatever its contract. Not an envelope on its own: every
+ * envelope is exactly one of {@link QueryEnvelope}, {@link AccumulationEnvelope} or
+ * {@link AdoptedPeerEnvelope}, told apart at runtime by `mode`.
+ */
+interface EnvelopeBase {
     id:            string
-    kind:          EnvelopeKind
     text:          string
     /**
      * Widened to {@link PlatformImage} (rather than pre-encoded `string[]`) because
@@ -92,27 +95,17 @@ export interface Envelope {
      * string array would force a lossy re-encoding step for no benefit.
      */
     images?:       PlatformImage[]
-    channelId?:    string
-    authorId?:     string
-    /** Present only for envelopes that originated from a human message (currently: discord). */
-    origin?:       { kind: 'human' }
-    /**
-     * Present only on `peer`-kind envelopes (session-peers block 2): the sender of a
-     * `<cross-session-message>` prompt the SDK delivered from another Claude Code process on
-     * this machine. `from` is the raw `uds:/tmp/cc-socks/<pid>.sock` reply address (verified as
-     * a working `SendMessage` `to:` target by the block-0 probe, 2026-09-09); `fromName` is the
-     * peer-registry name the tag carried, absent when the tag named none.
-     */
-    peer?:         { from: string, fromName?: string }
     /**
      * How the host queues/escalates this envelope: `'human'` interrupts promptly (a direct
      * message), `'wake'` escalates after a wait (perch, catch-up, resume, a waking
      * notification), `'accumulate'` queues silently with no escalation (boot, compact, a
      * non-waking notification). Renamed from the prior 2-way `priority` field (plan amendment
      * A1 extension) — confirmed unread by any consumer before the rename.
+     *
+     * Independent of `mode`: `compact` opens a turn (`mode: 'query'`) yet queues as
+     * `'accumulate'`, so neither field is derivable from the other.
      */
     hostPriority:  'human' | 'wake' | 'accumulate'
-    shouldQuery:   boolean
     createdAt:     Date
     /**
      * Header-free, capped (see `SYNOPSIS_SEED_CAP` in ./envelope.ts) content for the Discord
@@ -126,6 +119,109 @@ export interface Envelope {
      * `/compact`, and the ledger already renders a `compacting` phase of its own).
      */
     synopsisSeed?: string
+}
+
+/**
+ * Source metadata an envelope of a kind that has none must not carry. Declared `?: never`
+ * rather than left off, so code handling any {@link Envelope} can still read (and always gets
+ * `undefined` from) the fields another variant owns.
+ */
+interface NoSource {
+    channelId?: never
+    authorId?:  never
+    origin?:    never
+    peer?:      never
+}
+
+/** A `discord` envelope: a human's message, so it always names its channel and author. */
+export interface DiscordQueryEnvelope extends EnvelopeBase {
+    mode:      'query'
+    kind:      'discord'
+    channelId: string
+    authorId:  string
+    /** The human origin forwarded to the SDK's `SDKUserMessage.origin`. */
+    origin:    { kind: 'human' }
+    peer?:     never
+}
+
+/**
+ * A `task` envelope, synthesized when the conductor adopts an SDK wake (R2): its channel and
+ * author come from the task's launch record, and are absent when none was found.
+ */
+export interface TaskQueryEnvelope extends EnvelopeBase {
+    mode:       'query'
+    kind:       'task'
+    channelId?: string
+    authorId?:  string
+    origin?:    never
+    peer?:      never
+}
+
+/** A host-originated envelope that opens a turn and carries no source metadata. */
+export interface HostQueryEnvelope extends EnvelopeBase, NoSource {
+    mode: 'query'
+    kind: 'perch' | 'notification' | 'catchup' | 'wrapup' | 'resume' | 'compact'
+}
+
+/**
+ * An envelope that opens a turn: the only contract {@link import('./conductor').Conductor.submit}
+ * accepts, sent to the SDK with `shouldQuery: true`. Deliberately excludes the adopted peer
+ * record, which also once carried `shouldQuery: true` but must never be submitted.
+ */
+export type QueryEnvelope = DiscordQueryEnvelope | TaskQueryEnvelope | HostQueryEnvelope;
+
+/**
+ * An append-only envelope: sent to the SDK with `shouldQuery: false`, which appends it to the
+ * transcript without an assistant turn and answers it with a bare, absorbed acknowledgement
+ * `result`. The only contract {@link import('./conductor').Conductor.appendWithoutTurn}
+ * accepts: the boot handshake, a non-waking notification, and a non-waking catch-up.
+ */
+export interface AccumulationEnvelope extends EnvelopeBase, NoSource {
+    mode: 'append'
+    kind: 'boot' | 'notification' | 'catchup'
+}
+
+/**
+ * The host-side record of a turn the SDK already started from another Claude Code process's
+ * `<cross-session-message>` prompt (session-peers block 2). Never submitted and never appended:
+ * the only contract {@link import('./conductor').Conductor.adoptPeerTurn} accepts.
+ */
+export interface AdoptedPeerEnvelope extends EnvelopeBase {
+    mode:       'adopted'
+    kind:       'peer'
+    /**
+     * The sender of the `<cross-session-message>` prompt. `from` is the raw
+     * `uds:/tmp/cc-socks/<pid>.sock` reply address (verified as a working `SendMessage` `to:`
+     * target by the block-0 probe, 2026-09-09); `fromName` is the peer-registry name the tag
+     * carried, absent when the tag named none.
+     */
+    peer:       { from: string, fromName?: string }
+    channelId?: never
+    authorId?:  never
+    origin?:    never
+}
+
+/**
+ * A unit of host-driven work for a session: exactly one of the three contracts, discriminated
+ * by `mode`. Which one decides where it may go — {@link QueryEnvelope} to `submit()`,
+ * {@link AccumulationEnvelope} to `appendWithoutTurn()`, {@link AdoptedPeerEnvelope} to
+ * `adoptPeerTurn()` — so passing one to the wrong seam is a compile error rather than a runtime
+ * throw. `notification` and `catchup` appear in two contracts: whether one wakes is decided at
+ * build time, which is why `kind` alone is not the discriminant.
+ */
+export type Envelope = QueryEnvelope | AccumulationEnvelope | AdoptedPeerEnvelope;
+
+/**
+ * What a settled turn's reply delivery reads from its envelope. Wider than {@link Envelope} on
+ * purpose: the perch conductor relabels an adopted `task` wake as `kind: 'perch'` so its reply
+ * routes to the perch channel, while keeping whatever channel the task's launch record carried —
+ * a pairing no envelope contract allows, and one delivery has no reason to forbid.
+ */
+export interface DeliverableEnvelope {
+    id:         string
+    kind:       EnvelopeKind
+    text:       string
+    channelId?: string
 }
 
 /**

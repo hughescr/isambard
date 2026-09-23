@@ -28,7 +28,7 @@ import { setupConductorPresence, type ConductorPresenceSession } from './setup/p
 import { createWakeTurnDelivery } from './setup/wake-delivery';
 import { setupTaskBoard } from './task-board/setup';
 import { createChannelId, createUserId, type ChannelId } from './types';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type Envelope, type TimeHeaderProvider, type PerchSlotHooks, type TurnResult  } from '@/agent';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type DeliverableEnvelope, type Envelope, type TimeHeaderProvider, type PerchSlotHooks, type TurnResult  } from '@/agent';
 import { DEFAULT_TASK_BOARD_CONFIG, type DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
@@ -253,7 +253,7 @@ export interface DiscordBotOptions {
      * delivery function bound to `perchConductor` (a different `Conductor.deliver` target), only
      * built/attached when `perchConductor` is present.
      */
-    setPerchWakeTurnDelivery?: (fn: (envelope: Envelope, result: TurnResult) => Promise<void>) => void
+    setPerchWakeTurnDelivery?: (fn: (envelope: DeliverableEnvelope, result: TurnResult) => Promise<void>) => void
 
     /**
      * Optional write-through identity cache.

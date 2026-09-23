@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { Conductor } from '../../../../src/agent/session/conductor';
+import { buildBootEnvelope, buildCompactEnvelope, buildPeerEnvelope } from '../../../../src/agent/session/envelope';
 import { ENVELOPE_KINDS, type Envelope, type EnvelopeMeta, type JournalEntry, type SessionQuery } from '../../../../src/agent/session/types';
 import type { SystemEvent } from '../../../../src/agent/types';
 import { FakeQuery } from '../../../helpers/fake-query';
@@ -38,15 +40,91 @@ describe('Envelope.peer', () => {
     it('carries the peer\'s reply address and, when the cross-session tag named one, its peer-registry name', () => {
         const envelope: Envelope = {
             id:           'p1',
+            mode:         'adopted',
             kind:         'peer',
             text:         '[PEER · Izzy-main · 2026-09-09 14:02 PDT]',
             peer:         { from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' },
             hostPriority: 'wake',
-            shouldQuery:  true,
             createdAt:    new Date('2026-09-09T21:02:00Z'),
         };
 
         expect(envelope.peer).toEqual({ from: 'uds:/tmp/cc-socks/94548.sock', fromName: 'Izzy-main' });
+    });
+});
+
+// Each `@ts-expect-error` below is the assertion: it fails to compile the moment the line under
+// it starts type-checking, i.e. the moment the contract it pins stops being enforced by the
+// compiler. The runtime `expect` only satisfies `jest/expect-expect`.
+describe('envelope contracts (#60)', () => {
+    const createdAt = new Date('2026-09-23T00:00:00Z');
+    const peer = buildPeerEnvelope({ from: 'uds:/tmp/cc-socks/1.sock', text: 'hi', now: createdAt, timezone: 'UTC', timeHeader: '' });
+    const boot = buildBootEnvelope('[BOOT]', createdAt);
+    const compact = buildCompactEnvelope(createdAt);
+
+    it('an adopted peer envelope is not assignable to submit()\'s parameter', () => {
+        // @ts-expect-error -- an adopted peer turn was already started by the SDK; submitting it would push it a second time
+        const submitted: Parameters<Conductor['submit']>[0] = peer;
+
+        expect<unknown>(submitted).toBe(peer);
+    });
+
+    it('a boot (accumulation) envelope is not assignable to submit()\'s parameter', () => {
+        // @ts-expect-error -- an accumulation envelope never opens a turn
+        const submitted: Parameters<Conductor['submit']>[0] = boot;
+
+        expect<unknown>(submitted).toBe(boot);
+    });
+
+    it('a query envelope is not assignable to appendWithoutTurn()\'s parameter, while a boot envelope is', () => {
+        // @ts-expect-error -- a query envelope opens a turn; appending it would let its bare ack settle nothing
+        const appended: Parameters<Conductor['appendWithoutTurn']>[0] = compact;
+        const bootAppended: Parameters<Conductor['appendWithoutTurn']>[0] = boot;
+
+        expect<unknown[]>([appended, bootAppended]).toEqual([compact, boot]);
+    });
+
+    it('only an adopted peer envelope is assignable to adoptPeerTurn()\'s parameter', () => {
+        // @ts-expect-error -- the adopted turn IS this envelope, so it must be a peer envelope
+        const adopted: Parameters<Conductor['adoptPeerTurn']>[0] = compact;
+        const peerAdopted: Parameters<Conductor['adoptPeerTurn']>[0] = peer;
+
+        expect<unknown[]>([adopted, peerAdopted]).toEqual([compact, peer]);
+    });
+
+    it('rejects a discord envelope carrying peer metadata', () => {
+        // @ts-expect-error -- peer metadata belongs only to the adopted peer contract
+        const discordWithPeer: Envelope = {
+            id: 'd1', mode: 'query', kind: 'discord', text: 't', channelId: 'c', authorId: 'a', origin: { kind: 'human' }, hostPriority: 'human', createdAt, peer: { from: 'uds:/tmp/cc-socks/1.sock' },
+        };
+
+        expect<unknown>(discordWithPeer).toHaveProperty('peer');
+    });
+
+    it('rejects a boot envelope that opens a turn', () => {
+        // @ts-expect-error -- a boot envelope is accumulation-only
+        const queryingBoot: Envelope = {
+            id: 'b1', mode: 'query', kind: 'boot', text: 't', hostPriority: 'accumulate', createdAt,
+        };
+
+        expect<unknown>(queryingBoot).toHaveProperty('mode', 'query');
+    });
+
+    it('rejects a discord envelope without its channel, author and human origin', () => {
+        // @ts-expect-error -- a discord envelope always carries its channel, author and human origin
+        const sourcelessDiscord: Envelope = {
+            id: 'd2', mode: 'query', kind: 'discord', text: 't', hostPriority: 'human', createdAt,
+        };
+
+        expect<unknown>(sourcelessDiscord).not.toHaveProperty('channelId');
+    });
+
+    it('has no shouldQuery field on the domain type — the SDK boolean is derived at toSdkUserMessage', () => {
+        const withShouldQuery: Envelope = {
+            // @ts-expect-error -- shouldQuery is a wire field, not a domain field
+            id: 'c1', mode: 'query', kind: 'compact', text: '/compact', hostPriority: 'accumulate', createdAt, shouldQuery: true,
+        };
+
+        expect<unknown>(withShouldQuery).toHaveProperty('shouldQuery', true);
     });
 });
 

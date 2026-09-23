@@ -14,7 +14,7 @@ import { fakeQueryFn, type FakeQuery } from '../../helpers/fake-query';
 import { FakeResumeStore } from '../../helpers/fake-resume-store';
 import * as frames from '../../helpers/sdk-frames';
 import { mockLogger } from '../../setup';
-import { DEFAULT_STEP_PERCENT, createLedgerStore, formatTimeHeader, type ContextBuilder, type Envelope, type QuotaFetch, type QuotaFetchResponse, type TimeHeaderProvider } from '@/agent';
+import { DEFAULT_STEP_PERCENT, createLedgerStore, formatTimeHeader, type ContextBuilder, type DiscordQueryEnvelope, type Envelope, type QueryEnvelope, type QuotaFetch, type QuotaFetchResponse, type TimeHeaderProvider } from '@/agent';
 import type { JournalEntry } from '@/agent/session/types';
 import * as mcpServersModule from '@/app/mcp-servers';
 import type { McpSharedDeps } from '@/app/mcp-servers';
@@ -454,7 +454,7 @@ describe('createConversationConductor', () => {
 
         const submitPromise = conductor.submit(
             {
-                id: 'env-1', kind: 'discord', text: 'hi', channelId: 'chan-1', authorId: 'user-42', origin: { kind: 'human' }, hostPriority: 'human', shouldQuery: true, createdAt: new Date(0),
+                id: 'env-1', mode: 'query', kind: 'discord', text: 'hi', channelId: 'chan-1', authorId: 'user-42', origin: { kind: 'human' }, hostPriority: 'human', createdAt: new Date(0),
             },
             { priority: 'human', requestingChannelId: 'chan-1' }
         );
@@ -1001,7 +1001,9 @@ describe('createConversationConductor', () => {
             async function submitDiscord(authorId: string | undefined, envelopeId: string): Promise<void> {
                 const submitPromise = conductor.submit(
                     {
-                        id: envelopeId, kind: 'discord', text: 'hi', channelId: 'chan-1', authorId, origin: { kind: 'human' }, hostPriority: 'human', shouldQuery: true, createdAt: new Date(0),
+                        // An authorless discord envelope is unrepresentable since #60; the assertion
+                        // keeps pinning recordRecentAuthor's own undefined guard at runtime.
+                        id: envelopeId, mode: 'query', kind: 'discord', text: 'hi', channelId: 'chan-1', authorId: authorId!, origin: { kind: 'human' }, hostPriority: 'human', createdAt: new Date(0),
                     },
                     { priority: 'human', requestingChannelId: 'chan-1' }
                 );
@@ -1013,7 +1015,8 @@ describe('createConversationConductor', () => {
             async function submitNonDiscord(envelopeId: string): Promise<void> {
                 const submitPromise = conductor.submit(
                     {
-                        id: envelopeId, kind: 'notification', text: 'note', authorId: 'user-NON-DISCORD', hostPriority: 'accumulate', shouldQuery: true, createdAt: new Date(0),
+                        // `task` is the one non-discord contract that carries an author.
+                        id: envelopeId, mode: 'query', kind: 'task', text: 'note', authorId: 'user-NON-DISCORD', hostPriority: 'accumulate', createdAt: new Date(0),
                     },
                     { priority: 'other' }
                 );
@@ -1103,9 +1106,9 @@ describe('createConversationConductor', () => {
     describe('R2: background-work wake-turn delivery wiring', () => {
         const BASE_HOOK_FIELDS = { session_id: 'sess-1', transcript_path: '/tmp/transcript', cwd: '/tmp' };
 
-        function discordEnvelope(overrides: Partial<Envelope> = {}): Envelope {
+        function discordEnvelope(overrides: Partial<DiscordQueryEnvelope> = {}): DiscordQueryEnvelope {
             return {
-                id: 'discord-1', kind: 'discord', text: 'hello', channelId: 'chan-C', authorId: 'user-U', origin: { kind: 'human' }, hostPriority: 'human', shouldQuery: true, createdAt: new Date(0), ...overrides,
+                id: 'discord-1', mode: 'query', kind: 'discord', text: 'hello', channelId: 'chan-C', authorId: 'user-U', origin: { kind: 'human' }, hostPriority: 'human', createdAt: new Date(0), ...overrides,
             };
         }
 
@@ -2120,8 +2123,8 @@ describe('createPerchConductor', () => {
             expect(postToolUseHook).toBeDefined();
             expect(userPromptSubmitHook).toBeDefined();
 
-            const perchEnvelope: Envelope = {
-                id: 'perch-1', kind: 'perch', text: 'perch turn', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0),
+            const perchEnvelope: QueryEnvelope = {
+                id: 'perch-1', mode: 'query', kind: 'perch', text: 'perch turn', hostPriority: 'wake', createdAt: new Date(0),
             };
             const perchResultPromise = conductor.submit(perchEnvelope, { priority: 'other' });
             await flush();

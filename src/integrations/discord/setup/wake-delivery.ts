@@ -5,11 +5,11 @@ import { ENVELOPE_KIND_TO_CHANNEL, type ResponseRouter } from '../channel-regist
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse, type SendEnvelopeResponseResult } from '../response-sender';
 import { createChannelId } from '../types';
-import type { Conductor, Envelope, TurnResult } from '@/agent';
+import type { Conductor, DeliverableEnvelope, TurnResult } from '@/agent';
 import { ResponseUnavailableError } from '@/errors';
 
-/** A settled turn's delivery callback — see `Conductor.setWakeTurnDelivery`/`NotificationBridge.attachReplyDelivery`. */
-export type WakeTurnDelivery = (envelope: Envelope, result: TurnResult) => Promise<void>;
+/** A settled turn's delivery callback — see `Conductor.setWakeTurnDelivery`/`NotificationBridge.attachReplyDelivery`. Takes a {@link DeliverableEnvelope} because the perch conductor hands it a wake relabelled as `perch`. */
+export type WakeTurnDelivery = (envelope: DeliverableEnvelope, result: TurnResult) => Promise<void>;
 
 /** First line of `text`, for the default `task` fallback prefix's summary excerpt. */
 function firstLine(text: string): string {
@@ -18,7 +18,7 @@ function firstLine(text: string): string {
 }
 
 /** Default {@link CreateWakeTurnDeliveryParams.fallbackPrefix}: distinct wording for a `notification` bridge reply vs. an unrouted `task` wake-turn reply. */
-function defaultFallbackPrefix(envelope: Envelope): string {
+function defaultFallbackPrefix(envelope: DeliverableEnvelope): string {
     if(envelope.kind === 'notification') {
         return 'Reply to a host notification:\n';
     }
@@ -35,7 +35,7 @@ export interface CreateWakeTurnDeliveryParams {
     discordCapability?: DiscordCapability
     logger:             Pick<Logger, 'warn' | 'error'>
     /** Overrides the route-3 fallback text prefix; defaults to {@link defaultFallbackPrefix}. */
-    fallbackPrefix?:    (envelope: Envelope) => string
+    fallbackPrefix?:    (envelope: DeliverableEnvelope) => string
 }
 
 /**
@@ -49,7 +49,7 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
 
     /** Maps every sender result to a durable or intentionally skipped conductor outcome. */
     async function deliverViaConductor(
-        envelope: Envelope,
+        envelope: DeliverableEnvelope,
         sendAndDescribe: () => Promise<SendEnvelopeResponseResult>
     ): Promise<void> {
         try {
@@ -73,7 +73,7 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
         }
     }
 
-    async function deliverToKnownTarget(envelope: Envelope, text: string): Promise<void> {
+    async function deliverToKnownTarget(envelope: DeliverableEnvelope, text: string): Promise<void> {
         await deliverViaConductor(envelope, async () => {
             return sendEnvelopeResponse({
                 envelopeId: envelope.id,
@@ -88,7 +88,7 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
         });
     }
 
-    async function deliverToFallback(envelope: Envelope, text: string): Promise<void> {
+    async function deliverToFallback(envelope: DeliverableEnvelope, text: string): Promise<void> {
         const prefixedText = (fallbackPrefix ?? defaultFallbackPrefix)(envelope) + text;
         await deliverViaConductor(envelope, async () => {
             const routing = await responseRouter.routeToFallback(prefixedText);
@@ -105,7 +105,7 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
         });
     }
 
-    return async function deliverWakeTurn(envelope: Envelope, result: TurnResult): Promise<void> {
+    return async function deliverWakeTurn(envelope: DeliverableEnvelope, result: TurnResult): Promise<void> {
         // Stryker disable next-line llm: TurnResult.response is string | null, so these explicit empty cases and !response are equivalent for every produced result.
         if(result.response === null || result.response === '' || result.outcome !== undefined) {
             return;
