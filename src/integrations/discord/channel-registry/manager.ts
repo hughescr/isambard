@@ -1,6 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Channel, DMChannel } from 'discord.js';
-import { createGuildId, type ChannelId, type GuildId  } from '../types';
+import { DM_SCOPE, isDmScope, type ChannelId, type ChannelScope, type GuildId  } from '../types';
 import type { ChannelRegistryBackend } from './backend';
 import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './types';
 import { InvariantViolationError } from '@/errors';
@@ -191,10 +191,9 @@ export class ChannelRegistryManager {
      * Should be called on startup for optimal performance.
      */
     async warmCache(): Promise<void> {
-        const dmGuildId = createGuildId('DM');
         const [guildRecords, dmRecords] = await Promise.all([
-            this.backend.getChannelsByGuild(this.homeGuildId),
-            this.backend.getChannelsByGuild(dmGuildId),
+            this.backend.getChannelsByScope(this.homeGuildId),
+            this.backend.getChannelsByScope(DM_SCOPE),
         ]);
 
         logger.info({ guildChannels: guildRecords.length, dmChannels: dmRecords.length, msg: 'Warming channel cache...' });
@@ -324,16 +323,16 @@ export class ChannelRegistryManager {
     }
 
     /**
-     * Get all channels in a guild.
+     * Get all channels in a channel scope.
      * Cache-first with backend fallback.
      * Fetches channel info from Discord API for uncached channels.
      */
-    async getChannelsByGuild(guildId: GuildId): Promise<ChannelMetadata[]> {
+    async getChannelsByScope(scope: ChannelScope): Promise<ChannelMetadata[]> {
         // If cache is warmed, filter from cache
         if(this.cacheWarmed) {
             const results: ChannelMetadata[] = [];
             for(const channel of this.channelCache.values()) {
-                if(channel.guildId === guildId) {
+                if(channel.guildId === scope) {
                     results.push(channel);
                 }
             }
@@ -341,7 +340,7 @@ export class ChannelRegistryManager {
         }
 
         // Fallback to backend
-        const storedRecords = await this.backend.getChannelsByGuild(guildId);
+        const storedRecords = await this.backend.getChannelsByScope(scope);
         const results: ChannelMetadata[] = [];
         for(const record of storedRecords) {
             // eslint-disable-next-line no-await-in-loop -- ordered cache writes preserve last-record-wins well-known channel mappings
@@ -371,7 +370,7 @@ export class ChannelRegistryManager {
         }
 
         // Fallback to backend
-        const storedRecords = await this.backend.getChannelsByGuild(this.homeGuildId);
+        const storedRecords = await this.backend.getChannelsByScope(this.homeGuildId);
         const results: ChannelMetadata[] = [];
         for(const record of storedRecords) {
             // eslint-disable-next-line no-await-in-loop -- ordered cache writes preserve last-record-wins well-known channel mappings
@@ -583,7 +582,7 @@ export class ChannelRegistryManager {
         const discordChannelName = (discordChannel as unknown as { name?: unknown } | null)?.name;
 
         // For DM channels, format as @username
-        if(record.guildId === 'DM') {
+        if(isDmScope(record.guildId)) {
             // Try to get username from Discord DMChannel recipient
             if(isDMChannelWithRecipient(discordChannel) && discordChannel.recipient) {
                 channelName = `@${discordChannel.recipient.username}`;

@@ -37,7 +37,7 @@ describe('MessageCoordinator', () => {
 
         // Create a basic message context
         mockContext = {
-            guildId:   createGuildId('guild-123'),
+            guildId:   createGuildId('111222333444555666'),
             channelId: createChannelId('channel-456'),
             userId:    createUserId('user-789'),
             messageId: 'msg-001',

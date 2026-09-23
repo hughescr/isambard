@@ -29,7 +29,7 @@ describe('ResponseRouter', () => {
     describe('routeToFallback', () => {
         const FALLBACK_META: ChannelMetadata = {
             channelId:    FALLBACK_CHANNEL,
-            guildId:      createGuildId('guild-123'),
+            guildId:      createGuildId('111222333444555666'),
             channelName:  'fallback',
             isMuted:      false,
             isWellKnown:  'fallback',
@@ -79,7 +79,7 @@ describe('ResponseRouter', () => {
     describe('resolveEnvelopeTarget', () => {
         const CATCHUP_META: ChannelMetadata = {
             channelId:    CATCHUP_CHANNEL,
-            guildId:      createGuildId('guild-123'),
+            guildId:      createGuildId('111222333444555666'),
             channelName:  'catch-up',
             isMuted:      false,
             isWellKnown:  'catch-up',
@@ -90,7 +90,7 @@ describe('ResponseRouter', () => {
 
         const PERCH_META: ChannelMetadata = {
             channelId:    PERCH_CHANNEL,
-            guildId:      createGuildId('guild-123'),
+            guildId:      createGuildId('111222333444555666'),
             channelName:  'perch-time',
             isMuted:      false,
             isWellKnown:  'perch-time',

@@ -65,6 +65,7 @@ export const emailConfigSchema = z.object({
 export const guildIdSchema = z
     .string()
     .min(1, 'Guild ID cannot be empty')
+    .regex(/^\d+$/, 'Guild ID must be a decimal snowflake')
     .brand<'GuildId'>();
 
 export type GuildId = z.infer<typeof guildIdSchema>;

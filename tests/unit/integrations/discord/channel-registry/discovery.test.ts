@@ -27,7 +27,7 @@ describe('discovery', () => {
 
         // Mock guild
         mockGuild = {
-            id:       'guild-123',
+            id:       '111222333444555666',
             channels: {
                 fetch: mock(async () => new Map()),
             },
@@ -96,7 +96,7 @@ describe('discovery', () => {
                 return new Map([['channel-1', mockChannel]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
 
             const result = await discoverAllChannels(mockClient, mockManager);
 
@@ -117,12 +117,12 @@ describe('discovery', () => {
                 return new Map([['channel-1', mockChannel]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
 
             // Mock existing channel with old name
             (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue({
                 channelId:    createChannelId('channel-1'),
-                guildId:      createGuildId('guild-123'),
+                guildId:      createGuildId('111222333444555666'),
                 channelName:  'general',
                 isMuted:      false,
                 discoveredAt: '2025-01-01T00:00:00.000Z',
@@ -155,10 +155,10 @@ describe('discovery', () => {
                 send: mock(noop),
             } as unknown as GuildChannel;
             mockGuild.channels.fetch = mock(async () => new Map([['channel-1', mockChannel]])) as unknown as typeof mockGuild.channels.fetch;
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
             (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue({
                 channelId:    createChannelId('channel-1'),
-                guildId:      createGuildId('guild-123'),
+                guildId:      createGuildId('111222333444555666'),
                 channelName:  'general',
                 isMuted:      false,
                 discoveredAt: '2025-01-01T00:00:00.000Z',
@@ -174,7 +174,7 @@ describe('discovery', () => {
             expect(result).toEqual({
                 discovered: 0,
                 updated:    0,
-                errors:     [{ guildId: 'guild-123', error: 'metadata write failed' }],
+                errors:     [{ guildId: '111222333444555666', error: 'metadata write failed' }],
             });
         });
 
@@ -189,12 +189,12 @@ describe('discovery', () => {
                 return new Map([['channel-1', mockChannel]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
 
             // Mock existing channel with user settings
             (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue({
                 channelId:    createChannelId('channel-1'),
-                guildId:      createGuildId('guild-123'),
+                guildId:      createGuildId('111222333444555666'),
                 channelName:  'general',
                 isMuted:      true,  // User muted this channel
                 isWellKnown:  'general' as const,  // Admin marked as well-known
@@ -232,7 +232,7 @@ describe('discovery', () => {
                 return new Map([['category-1', mockCategory]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
 
             const result = await discoverAllChannels(mockClient, mockManager);
 
@@ -247,7 +247,7 @@ describe('discovery', () => {
                 return new Map([['channel-1', null]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
 
             const result = await discoverAllChannels(mockClient, mockManager);
 
@@ -258,7 +258,7 @@ describe('discovery', () => {
 
         it('should handle multiple guilds', async () => {
             const mockGuild1 = {
-                id:       'guild-1',
+                id:       '111222333444555666',
                 channels: {
                     fetch: mock(async () => new Map([
                         ['channel-1', {
@@ -271,7 +271,7 @@ describe('discovery', () => {
             } as unknown as Guild;
 
             const mockGuild2 = {
-                id:       'guild-2',
+                id:       '222333444555666777',
                 channels: {
                     fetch: mock(async () => new Map([
                         ['channel-2', {
@@ -283,8 +283,8 @@ describe('discovery', () => {
                 },
             } as unknown as Guild;
 
-            mockClient.guilds.cache.set('guild-1', mockGuild1);
-            mockClient.guilds.cache.set('guild-2', mockGuild2);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild1);
+            mockClient.guilds.cache.set('222333444555666777', mockGuild2);
 
             const result = await discoverAllChannels(mockClient, mockManager);
 
@@ -299,7 +299,7 @@ describe('discovery', () => {
                 throw new Error('Network error');
             });
 
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
 
             const result = await discoverAllChannels(mockClient, mockManager);
 
@@ -307,7 +307,7 @@ describe('discovery', () => {
             expect(result.updated).toBe(0);
             expect(result.errors).toHaveLength(1);
             expect(result.errors[0]).toEqual({
-                guildId: 'guild-123',
+                guildId: '111222333444555666',
                 error:   'Network error',
             });
         });
@@ -372,11 +372,11 @@ describe('discovery', () => {
             mockGuild.channels.fetch = mock(async () => {
                 throw null;
             });
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
 
             const result = await discoverAllChannels(mockClient, mockManager);
 
-            expect(result.errors).toEqual([{ guildId: 'guild-123', error: 'null' }]);
+            expect(result.errors).toEqual([{ guildId: '111222333444555666', error: 'null' }]);
         });
 
         it('waits for admitted upserts after failure and starts no queued write', async () => {
@@ -389,7 +389,7 @@ describe('discovery', () => {
                 } as unknown as GuildChannel);
             }
             mockGuild.channels.fetch = mock(async () => channels) as unknown as typeof mockGuild.channels.fetch;
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
 
             let rejectFirst!: (error: Error) => void;
             const firstWrite = new Promise<void>((_resolve, reject) => {
@@ -429,7 +429,7 @@ describe('discovery', () => {
             releaseOthers();
             const result = await observed;
             expect(completed).toBe(true);
-            expect(result.errors).toEqual([{ guildId: 'guild-123', error: 'upsert failed' }]);
+            expect(result.errors).toEqual([{ guildId: '111222333444555666', error: 'upsert failed' }]);
             expect(started).toHaveLength(5);
             expect(mockLogger.info).toHaveBeenCalledTimes(2);
         });
@@ -439,13 +439,13 @@ describe('discovery', () => {
                 throw 'String error';
             });
 
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
 
             const result = await discoverAllChannels(mockClient, mockManager);
 
             expect(result.errors).toHaveLength(1);
             expect(result.errors[0]).toEqual({
-                guildId: 'guild-123',
+                guildId: '111222333444555666',
                 error:   'String error',
             });
         });
@@ -461,7 +461,7 @@ describe('discovery', () => {
                 return new Map([['channel-1', mockChannel]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
 
             await discoverAllChannels(mockClient, mockManager);
 
@@ -470,7 +470,7 @@ describe('discovery', () => {
             const metadata = call[0] as ChannelMetadata;
 
             expect(metadata.channelId).toBe(createChannelId('channel-1'));
-            expect(metadata.guildId).toBe(createGuildId('guild-123'));
+            expect(metadata.guildId).toBe(createGuildId('111222333444555666'));
             expect(metadata.channelName).toBe('general');
             expect(metadata.isMuted).toBe(false);
             expect(metadata.discoveredAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
@@ -596,7 +596,7 @@ describe('discovery', () => {
 
                 const existingMetadata: ChannelMetadata = {
                     channelId:    createChannelId('channel-1'),
-                    guildId:      createGuildId('guild-123'),
+                    guildId:      createGuildId('111222333444555666'),
                     channelName:  'old-name',
                     isMuted:      false,
                     discoveredAt: '2025-01-01T00:00:00.000Z',
@@ -780,10 +780,10 @@ describe('discovery', () => {
         try {
             const channel = { id: 'channel-1', name: 'general', send: mock(noop) } as unknown as GuildChannel;
             mockGuild.channels.fetch = mock(async () => new Map([['channel-1', channel]])) as unknown as typeof mockGuild.channels.fetch;
-            mockClient.guilds.cache.set('guild-123', mockGuild);
+            mockClient.guilds.cache.set('111222333444555666', mockGuild);
             (mockManager.getChannel as Mock<() => Promise<ChannelMetadata | null>>).mockResolvedValue({
                 channelId:    createChannelId('channel-1'),
-                guildId:      createGuildId('guild-123'),
+                guildId:      createGuildId('111222333444555666'),
                 channelName:  'old-name',
                 isMuted:      false,
                 discoveredAt: '2025-01-01T00:00:00.000Z',

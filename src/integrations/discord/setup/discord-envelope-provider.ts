@@ -11,7 +11,7 @@
 import type { Client } from 'discord.js';
 import type { ChannelRegistryManager } from '../channel-registry/manager';
 import type { ChannelMetadata } from '../channel-registry/types';
-import { createChannelId, type DiscordMessageContext } from '../types';
+import { createChannelId, isDmScope, type DiscordMessageContext } from '../types';
 import type { DiscordEnvelopeInput, PlatformImage } from '@/agent';
 import { InvariantViolationError } from '@/errors';
 
@@ -35,7 +35,7 @@ export const CHANNEL_LIST_HYDRATING_MARKER = channelListHydratingMarker();
  */
 function formatChannelEntry(channel: ChannelMetadata, client: Client): string {
     let guildName: string | undefined;
-    if(channel.guildId !== 'DM') {
+    if(!isDmScope(channel.guildId)) {
         try {
             guildName = client.guilds.cache.get(channel.guildId)?.name;
         } catch{
@@ -82,8 +82,7 @@ export interface ResolvedDiscordNames {
 
 /**
  * Resolves the channel/guild/author display names for one {@link DiscordMessageContext}'s
- * envelope header. `context.guildId === 'DM'` (the same sentinel `handlers.ts` stamps via
- * `createGuildId(message.guild?.id ?? 'DM')`) is the DM signal; the channel name comes from the
+ * envelope header. `isDmScope(context.guildId)` identifies the fixed DM sentinel; the channel name comes from the
  * registry (falling back to the raw channel id when the registry has no record yet — cosmetic
  * only, never fatal), and the guild name from the client's own guild cache (cosmetic
  * disambiguation only, per {@link formatChannelEntry}'s own note).
@@ -93,8 +92,7 @@ export interface ResolvedDiscordNames {
  */
 export function resolveNames(registry: ChannelRegistryManager, client: Client): (context: DiscordMessageContext) => Promise<ResolvedDiscordNames> {
     return async (context) => {
-        // Stryker disable next-line llm: guildId is a branded string, so == and === against the 'DM' literal are the same comparison.
-        const isDM = context.guildId === 'DM';
+        const isDM = isDmScope(context.guildId);
         // Stryker disable next-line llm: createChannelId is a brand-only schema parse (no transform) on an already-validated ChannelId, so it returns context.channelId unchanged (covers 29300 and 29301).
         const channel = await registry.getChannel(createChannelId(context.channelId));
         // Stryker disable next-line llm: channelName is z.string().min(1) in channelMetadataSchema and the registry builds it from Discord's non-empty name or a literal fallback, so the '' case || would additionally catch cannot occur.

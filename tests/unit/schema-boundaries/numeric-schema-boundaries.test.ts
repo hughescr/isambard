@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { channelIdSchema, userIdSchema } from '@/agent/types';
 import { calendarEntrySchema, calendarRegistryRecordSchema, calendarServerEntrySchema } from '@/integrations/caldav/calendar-registry/types';
 import { channelMetadataSchema } from '@/integrations/discord/channel-registry/types';
-import { discordMessageContextSchema } from '@/integrations/discord/types';
+import { DM_SCOPE, discordMessageContextSchema } from '@/integrations/discord/types';
 import { outboxItemSchema } from '@/services/outbox/types';
 import { contactIdSchema, contactIdentifierSchema, contactSchema } from '@/storage/contacts/types';
 import { memoryToolItemSchema } from '@/storage/memory-tool/types';
@@ -33,8 +33,8 @@ describe('public numeric schema boundaries', () => {
         ['calendarServerEntry.description', calendarServerEntrySchema, { ...server, description: 'x' }],
         ['calendarServerEntry.username', calendarServerEntrySchema, { ...server, username: 'x' }],
         ['calendarRegistryRecord.scope.personal.userId', calendarRegistryRecordSchema, { scope: { kind: 'personal', userId: 'x' }, servers: [], createdAt: timestamp, updatedAt: timestamp }],
-        ['channelMetadata.channelName', channelMetadataSchema, { channelId: 'x', guildId: 'DM', channelName: 'x', discoveredAt: timestamp, lastSeenAt: timestamp, updatedAt: timestamp }],
-        ['discordMessageContext.messageId', discordMessageContextSchema, { guildId: 'x', channelId: 'x', userId: 'x', messageId: 'x', content: '', timestamp, botUserId: 'x' }],
+        ['channelMetadata.channelName', channelMetadataSchema, { channelId: 'x', guildId: DM_SCOPE, channelName: 'x', discoveredAt: timestamp, lastSeenAt: timestamp, updatedAt: timestamp }],
+        ['discordMessageContext.messageId', discordMessageContextSchema, { guildId: DM_SCOPE, channelId: 'x', userId: 'x', messageId: 'x', content: '', timestamp, botUserId: 'x' }],
         ['contactIdentifier.value', contactIdentifierSchema, { ...contactIdentifier, value: 'x' }],
         ['contactIdentifier.value max', contactIdentifierSchema, { ...contactIdentifier, value: 'x'.repeat(500) }],
         ['contactId max', contactIdSchema, 'x'.repeat(100)],

@@ -1,5 +1,5 @@
 import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { createChannelId, type ChannelId, type GuildId } from '../types';
+import { createChannelId, type ChannelId, type ChannelScope } from '../types';
 import { ChannelRegistryKeyGenerator, type ChannelRegistryKeys } from './key-generator';
 import {
     type ChannelStorageRecord,
@@ -88,24 +88,24 @@ export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord>
     }
 
     /**
-     * Gets all channel storage records in a guild.
-     * Uses GSI1 to query by guild ID.
+     * Gets all channel storage records in a channel scope.
+     * Uses GSI1 to query by scope.
      * Manager layer is responsible for merging with Discord API data.
      *
-     * @param guildId - Discord guild ID
+     * @param scope - Discord guild or direct-message scope
      * @returns Array of channel storage records
      */
-    async getChannelsByGuild(guildId: GuildId): Promise<ChannelStorageRecord[]> {
+    async getChannelsByScope(scope: ChannelScope): Promise<ChannelStorageRecord[]> {
         const items = await this.query<Record<string, unknown>>(
             {
                 IndexName:                 'GSI1',
-                KeyConditionExpression:    'GSI1PK = :guildPk AND begins_with(GSI1SK, :channelPrefix)',
+                KeyConditionExpression:    'GSI1PK = :scopePk AND begins_with(GSI1SK, :channelPrefix)',
                 ExpressionAttributeValues: {
-                    ':guildPk':       `GUILD#${guildId}`,
+                    ':scopePk':       `GUILD#${scope}`,
                     ':channelPrefix': 'CHANNEL#',
                 },
             },
-            'ChannelRegistry.getChannelsByGuild'
+            'ChannelRegistry.getChannelsByScope'
         );
 
         return items.map(item => stripDynamoKeys(item) as ChannelStorageRecord);

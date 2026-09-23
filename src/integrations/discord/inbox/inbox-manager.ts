@@ -21,7 +21,7 @@ import type { DiscordChannelCheckpoint, UnreadMessage, UnreadOverview } from './
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import { mapBounded } from '@/integrations/discord/map-bounded';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
-import type { ChannelId, GuildId } from '@/integrations/discord/types';
+import { DM_SCOPE, type ChannelId, type ChannelScope } from '@/integrations/discord/types';
 
 /**
  * Channel metadata cache entry.
@@ -30,8 +30,8 @@ import type { ChannelId, GuildId } from '@/integrations/discord/types';
 interface ChannelMetadata {
     /** Human-readable channel name for display */
     channelName: string
-    /** Guild ID where the channel exists, or 'DM' for direct messages */
-    guildId:     GuildId | 'DM'
+    /** Channel scope where the channel exists. */
+    guildId:     ChannelScope
 }
 
 /**
@@ -136,7 +136,7 @@ export class InboxManager {
      *
      * @param channelId - Discord channel ID
      * @param channelName - Human-readable channel name
-     * @param guildId - Guild ID or 'DM' for direct messages
+     * @param guildId - Channel scope where the channel exists
      *
      * @example
      * ```typescript
@@ -147,7 +147,7 @@ export class InboxManager {
      * );
      * ```
      */
-    updateChannelMetadata(channelId: ChannelId, channelName: string, guildId: GuildId | 'DM'): void {
+    updateChannelMetadata(channelId: ChannelId, channelName: string, guildId: ChannelScope): void {
         this.channelMetadata.set(channelId, { channelName, guildId });
 
         logger.debug({
@@ -419,7 +419,7 @@ export class InboxManager {
         // Update checkpoint if we marked any messages
         if(latestTimestamp && latestMessageId) {
             const metadata = this.channelMetadata.get(channelId);
-            const guildId = metadata?.guildId ?? 'DM';
+            const guildId = metadata?.guildId ?? DM_SCOPE;
             await this.checkpointManager.updateLastSeen(
                 channelId,
                 guildId,
@@ -468,7 +468,7 @@ export class InboxManager {
         // Update checkpoint to latest message
         if(latestMessage) {
             const metadata = this.channelMetadata.get(channelId);
-            const guildId = metadata?.guildId ?? 'DM';
+            const guildId = metadata?.guildId ?? DM_SCOPE;
             await this.checkpointManager.updateLastSeen(
                 channelId,
                 guildId,
@@ -491,7 +491,7 @@ export class InboxManager {
      * Call this after the bot processes a new message to update the last-seen position.
      *
      * @param channelId - Discord channel ID
-     * @param guildId - Guild ID or 'DM' for direct messages
+     * @param guildId - Channel scope where the channel exists
      * @param messageId - Discord message ID being processed
      * @param timestamp - ISO 8601 timestamp of the message
      *
@@ -506,7 +506,7 @@ export class InboxManager {
      * );
      * ```
      */
-    async recordActivity(channelId: ChannelId, guildId: GuildId | 'DM', messageId: string, timestamp: string): Promise<void> {
+    async recordActivity(channelId: ChannelId, guildId: ChannelScope, messageId: string, timestamp: string): Promise<void> {
         await this.checkpointManager.updateLastSeen(channelId, guildId, timestamp, messageId);
 
         logger.debug({

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { channelIdSchema, guildIdSchema } from '../types';
+import { channelIdSchema, channelScopeSchema } from '../types';
 
 /**
  * Well-known channel types that have special meaning in the system.
@@ -25,8 +25,8 @@ export const WELL_KNOWN_CHANNELS: readonly WellKnownChannel[] = [
 export const channelStorageRecordSchema = z.object({
     /** Discord channel ID */
     channelId:   channelIdSchema,
-    /** Guild ID or 'DM' for direct messages */
-    guildId:     z.union([guildIdSchema, z.literal('DM')]),
+    /** Channel scope: a guild ID or the direct-message sentinel. */
+    guildId:     channelScopeSchema,
     /** Whether the channel is muted (defaults to false) */
     isMuted:     z.boolean().default(false),
     /** Optional well-known channel designation */
@@ -46,8 +46,8 @@ export type ChannelStorageRecord = z.infer<typeof channelStorageRecordSchema>;
 export const channelMetadataSchema = z.object({
     /** Discord channel ID */
     channelId:    channelIdSchema,
-    /** Guild ID or 'DM' for direct messages */
-    guildId:      z.union([guildIdSchema, z.literal('DM')]),
+    /** Channel scope: a guild ID or the direct-message sentinel. */
+    guildId:      channelScopeSchema,
     /** Human-readable channel name (from Discord API) */
     channelName:  z.string().min(1),
     /** Whether the channel is muted (from storage) */

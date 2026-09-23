@@ -1,3 +1,4 @@
+import type { Message } from 'discord.js';
 import { z } from 'zod';
 import { AttachmentMetadataSchema } from './attachments/types';
 // eslint-disable-next-line boundaries/dependencies -- direct import from agent/types.ts breaks circular dep: discord/types → @/agent → discord-mcp-server → @/integrations/discord
@@ -8,12 +9,31 @@ import { guildIdSchema, type GuildId  } from '@/config';
 export { channelIdSchema, type ChannelId, userIdSchema, type UserId, createChannelId, createUserId, isChannelId, isUserId } from '@/agent/types';
 export { guildIdSchema, type GuildId } from '@/config';
 
+/** Fixed channel scope for direct messages, which do not have a Discord guild. */
+export const DM_SCOPE = 'DM' as const;
+
+/** A channel's Discord guild or the direct-message scope sentinel. */
+export type ChannelScope = GuildId | typeof DM_SCOPE;
+
+/** Schema for a channel's guild or direct-message scope. */
+export const channelScopeSchema = z.union([guildIdSchema, z.literal(DM_SCOPE)]);
+
+/** Returns whether a channel scope represents a direct message. */
+export function isDmScope(scope: ChannelScope): scope is typeof DM_SCOPE {
+    return scope === DM_SCOPE;
+}
+
+/** Derives a channel scope from a Discord message. */
+export function scopeOf(message: Message): ChannelScope {
+    return message.guild ? createGuildId(message.guild.id) : DM_SCOPE;
+}
+
 /**
  * Discord message context schema with Zod validation.
  * Represents the full context of a Discord message for processing.
  */
 export const discordMessageContextSchema = z.object({
-    guildId:     guildIdSchema,
+    guildId:     channelScopeSchema,
     channelId:   channelIdSchema,
     userId:      userIdSchema,
     /** Discord username (e.g. 'craig') — used for contact lookup and cross-platform history */

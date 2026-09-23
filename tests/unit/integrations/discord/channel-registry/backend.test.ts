@@ -220,7 +220,7 @@ describe('ChannelRegistryBackend', () => {
         });
     });
 
-    describe('getChannelsByGuild', () => {
+    describe('getChannelsByScope', () => {
         test('should return all channels in a guild', async () => {
             const channel1 = createStorageRecord({ channelId: createChannelId('111') });
             const channel2 = createStorageRecord({ channelId: createChannelId('222') });
@@ -232,7 +232,7 @@ describe('ChannelRegistryBackend', () => {
                 ],
             });
 
-            const result = await backend.getChannelsByGuild(guildId);
+            const result = await backend.getChannelsByScope(guildId);
 
             expect(result).toHaveLength(2);
             expect(result).toEqual(expect.arrayContaining([
@@ -243,23 +243,23 @@ describe('ChannelRegistryBackend', () => {
             const calls = ddbMock.commandCalls(QueryCommand);
             const call = calls[0];
             expect(call.args[0].input.IndexName).toBe('GSI1');
-            expect(call.args[0].input.KeyConditionExpression).toBe('GSI1PK = :guildPk AND begins_with(GSI1SK, :channelPrefix)');
+            expect(call.args[0].input.KeyConditionExpression).toBe('GSI1PK = :scopePk AND begins_with(GSI1SK, :channelPrefix)');
             expect(call.args[0].input.ExpressionAttributeValues).toEqual({
-                ':guildPk':       `GUILD#${guildId}`,
+                ':scopePk':       `GUILD#${guildId}`,
                 ':channelPrefix': 'CHANNEL#',
             });
 
             // Verify operation name passed to withDynamoTimeout
             expect(withDynamoTimeoutSpy).toHaveBeenCalledWith(
                 expect.any(Function),
-                expect.objectContaining({ operation: 'ChannelRegistry.getChannelsByGuild' })
+                expect.objectContaining({ operation: 'ChannelRegistry.getChannelsByScope' })
             );
         });
 
         test('should return empty array when no channels found', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-            const result = await backend.getChannelsByGuild(guildId);
+            const result = await backend.getChannelsByScope(guildId);
 
             expect(result).toEqual([]);
         });
@@ -267,7 +267,7 @@ describe('ChannelRegistryBackend', () => {
         test('should handle undefined Items in response', async () => {
             ddbMock.on(QueryCommand).resolves({});
 
-            const result = await backend.getChannelsByGuild(guildId);
+            const result = await backend.getChannelsByScope(guildId);
 
             expect(result).toEqual([]);
         });

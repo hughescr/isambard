@@ -104,7 +104,7 @@ describe('createDiscordBot', () => {
     const mockConfig: DiscordConfig = {
         botToken:      'test-bot-token',
         applicationId: 'test-app-id',
-        homeGuildId:   createGuildId('home-guild-123'),
+        homeGuildId:   createGuildId('111222333444555666'),
     };
 
     const mockChannelRegistry = {
@@ -3675,7 +3675,7 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
 
             // Mock channel registry to return guild's channels
-            const guildId = createGuildId('guild-123');
+            const guildId = createGuildId('222333444555666777');
             const channelIds = [
                 createChannelId('channel-1'),
                 createChannelId('channel-2'),
@@ -3764,7 +3764,7 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
 
             // Mock channel registry to return empty channels array
-            const guildId = createGuildId('guild-123');
+            const guildId = createGuildId('222333444555666777');
             const mockChannelRegistryWithGuild = {
                 ...mockChannelRegistry,
                 getAllChannels: mock(() => []),
@@ -3864,7 +3864,7 @@ describe('createDiscordBot', () => {
             expect(guildDeleteHandler).toBeDefined();
 
             // Trigger guildDelete event - should not throw
-            const guildId = createGuildId('guild-123');
+            const guildId = createGuildId('222333444555666777');
             // Call the handler - it should not throw even without a coordinator
             guildDeleteHandler!({ id: guildId });
             await Promise.resolve();

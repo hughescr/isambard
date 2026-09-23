@@ -6,7 +6,7 @@ import type { InboxManager } from '../inbox';
 import type { IngressGate } from '../ingress-gate';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from '../response-sender';
-import { createChannelId, type ChannelId } from '../types';
+import { createChannelId, isDmScope, type ChannelId, type ChannelScope } from '../types';
 import {
     type PerchConfig, type Conductor, type SessionJournal, type QueryEnvelope, type UndeliveredEnvelope, type ContextPolicy,
     type TimeHeaderProvider,
@@ -25,7 +25,7 @@ interface ReplayableMessage {
     id:          string
     channelId:   string
     channelName: string
-    guildId:     string
+    guildId:     ChannelScope
     author:      string
     /** The real Discord user id (snowflake) — falls back to {@link author} (a display name) only for pre-P10 callers that never set it. */
     authorId?:   string
@@ -381,7 +381,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
             authorName:  newest.author,
             channelId,
             channelName: newest.channelName,
-            isDM:        newest.guildId === 'DM',
+            isDM:        isDmScope(newest.guildId),
             now:         new Date(),
             timezone,
             timeHeader:  timeHeader(),

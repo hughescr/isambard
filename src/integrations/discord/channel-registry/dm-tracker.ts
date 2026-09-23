@@ -1,5 +1,5 @@
 import type { Client } from 'discord.js';
-import { type ChannelId, type UserId, createChannelId, createUserId  } from '../types';
+import { DM_SCOPE, type ChannelId, type UserId, createChannelId, createUserId  } from '../types';
 import type { ChannelRegistryManager } from './manager';
 
 /**
@@ -76,7 +76,7 @@ export class DMTracker {
         // Also upsert to registry for persistence
         await this.manager.upsertChannel({
             channelId,
-            guildId:      'DM',
+            guildId:      DM_SCOPE,
             channelName:  formatDMChannelName(user.username),
             isMuted:      false,
             discoveredAt: new Date().toISOString(),
@@ -179,7 +179,7 @@ export class DMTracker {
 
         await this.manager.upsertChannel({
             channelId,
-            guildId:      'DM',
+            guildId:      DM_SCOPE,
             channelName:  formatDMChannelName(username),
             isMuted:      false,
             discoveredAt: new Date().toISOString(),

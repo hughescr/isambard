@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { snowflakeSchema } from '@/integrations/discord/message-history/snowflake';
-import { channelIdSchema, guildIdSchema } from '@/integrations/discord/types';
+import { channelIdSchema, channelScopeSchema } from '@/integrations/discord/types';
 
 /**
  * Discord channel checkpoint schema.
@@ -13,8 +13,8 @@ export const discordChannelCheckpointSchema = z
         service:           z.literal('discord'),
         /** Discord channel ID where the checkpoint was created */
         channelId:         channelIdSchema,
-        /** Guild ID where the channel exists, or 'DM' for direct messages */
-        guildId:           z.union([guildIdSchema, z.literal('DM')]),
+        /** Channel scope where the channel exists. */
+        guildId:           channelScopeSchema,
         /** ISO 8601 timestamp when the channel was last seen */
         lastSeenAt:        z.iso.datetime(),
         /** Discord message ID (snowflake) of the last seen message (optional) */
@@ -52,8 +52,8 @@ export const unreadMessageSchema = z
         channelId:   channelIdSchema,
         /** Human-readable channel name */
         channelName: z.string().min(1, 'Channel name cannot be empty'),
-        /** Guild ID where the channel exists, or 'DM' for direct messages */
-        guildId:     z.union([guildIdSchema, z.literal('DM')]),
+        /** Channel scope where the channel exists. */
+        guildId:     channelScopeSchema,
         /** Author's display name */
         author:      z.string().min(1, 'Author cannot be empty'),
         /**

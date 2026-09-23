@@ -8,7 +8,7 @@ describe.concurrent('createDiscordClient', () => {
     const validConfig: DiscordConfig = {
         botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
         applicationId: '123456789012345678',
-        homeGuildId:   createGuildId('home-guild-123'),
+        homeGuildId:   createGuildId('111222333444555666'),
     };
 
     test('should create a Discord Client instance', () => {

@@ -24,7 +24,7 @@ import type { ServiceName } from '@/services/types';
 // Test helpers
 // ---------------------------------------------------------------------------
 
-const homeGuildId = createGuildId('home-guild');
+const homeGuildId = createGuildId('111222333444555666');
 const SERVICE: ServiceName = 'discord';
 
 function createMockRegistry(): ServiceHealthRegistry {
@@ -41,13 +41,13 @@ function createMockRegistry(): ServiceHealthRegistry {
     };
 }
 
-function createMockBackend(getChannelsByGuildImpl: () => Promise<never[]>): ChannelRegistryBackend {
+function createMockBackend(getChannelsByScopeImpl: () => Promise<never[]>): ChannelRegistryBackend {
     return {
         getAllChannels:      mock(() => Promise.resolve([])),
         getChannel:          mock(() => Promise.resolve(null)),
         upsertChannel:       mock(() => Promise.resolve()),
         deleteChannel:       mock(() => Promise.resolve()),
-        getChannelsByGuild:  mock(getChannelsByGuildImpl),
+        getChannelsByScope:  mock(getChannelsByScopeImpl),
         getWellKnownChannel: mock(() => Promise.resolve(null)),
         muteChannel:         mock(() => Promise.resolve()),
         unmuteChannel:       mock(() => Promise.resolve()),
@@ -228,7 +228,7 @@ describe('ChannelRegistryManager — self-healing hydration via ReconnectionLoop
             await Promise.resolve();
             await Promise.resolve();
 
-            const backendMock = backend.getChannelsByGuild as ReturnType<typeof mock>;
+            const backendMock = backend.getChannelsByScope as ReturnType<typeof mock>;
             const callsAfterFirstAttempt = backendMock.mock.calls.length;
             expect(callsAfterFirstAttempt).toBeGreaterThanOrEqual(1);
 

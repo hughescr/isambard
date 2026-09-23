@@ -72,7 +72,7 @@ describe('Vector feature wiring', () => {
                 IsambardFallbackModel: { value: 'sonnet' },
                 DiscordBotToken:       { value: 'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB' },
                 DiscordApplicationId:  { value: '123456789012345678' },
-                DiscordHomeGuildId:    { value: 'test-guild-123' },
+                DiscordHomeGuildId:    { value: '111222333444555666' },
                 AdminDiscordUserId:    { value: '123456789' },
                 EmailUser:             { value: undefined },
                 EmailPassword:         { value: undefined },
@@ -151,7 +151,7 @@ describe('Vector feature wiring', () => {
                     discord: {
                         botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
                         applicationId: '123456789012345678',
-                        homeGuildId:   'test-guild-123' as ReturnType<typeof configLoaderModule.loadConfig>['discord']['homeGuildId'],
+                        homeGuildId:   '111222333444555666' as ReturnType<typeof configLoaderModule.loadConfig>['discord']['homeGuildId'],
                     },
                     adminDiscordUserId: '123456789',
                     vectorIndex:        { enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0' },
@@ -402,7 +402,7 @@ describe('Vector feature wiring', () => {
                     discord: {
                         botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
                         applicationId: '123456789012345678',
-                        homeGuildId:   'test-guild-123' as ReturnType<typeof configLoaderModule.loadConfig>['discord']['homeGuildId'],
+                        homeGuildId:   '111222333444555666' as ReturnType<typeof configLoaderModule.loadConfig>['discord']['homeGuildId'],
                     },
                     adminDiscordUserId: '123456789',
                     vectorIndex:        { enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0' },

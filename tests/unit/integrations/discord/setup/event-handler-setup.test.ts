@@ -1014,8 +1014,8 @@ describe('setupChannelCleanupHandlers', () => {
             const mockRemoveGuildChannels = mock(() => undefined);
             const mockCoordinator = { removeGuildChannels: mockRemoveGuildChannels } as unknown as MessageCoordinator;
 
-            const guildId       = createGuildId('guild-abc');
-            const otherGuildId  = createGuildId('guild-xyz');
+            const guildId       = createGuildId('111222333444555666');
+            const otherGuildId  = createGuildId('222333444555666777');
             const channelId1    = createChannelId('ch-1');
             const channelId2    = createChannelId('ch-2');
             const otherChannelId = createChannelId('ch-other');
@@ -1047,8 +1047,8 @@ describe('setupChannelCleanupHandlers', () => {
             const mockRemoveGuildChannels = mock(() => undefined);
             const mockCoordinator = { removeGuildChannels: mockRemoveGuildChannels } as unknown as MessageCoordinator;
 
-            const guildId      = createGuildId('guild-abc');
-            const otherGuildId = createGuildId('guild-xyz');
+            const guildId      = createGuildId('111222333444555666');
+            const otherGuildId = createGuildId('222333444555666777');
 
             const mockRegistry = {
                 getAllChannels: mock(() => [
@@ -1076,7 +1076,7 @@ describe('setupChannelCleanupHandlers', () => {
             setupChannelCleanupHandlers({ client, coordinator: undefined, channelRegistry: mockRegistry });
 
             // Should not throw even without a coordinator
-            await emitAsync('guildDelete', { id: 'guild-abc' });
+            await emitAsync('guildDelete', { id: '111222333444555666' });
 
             expect(mockRegistry.getAllChannels).not.toHaveBeenCalled();
         });
@@ -1086,7 +1086,7 @@ describe('setupChannelCleanupHandlers', () => {
             const mockRemoveGuildChannels = mock(() => undefined);
             const mockCoordinator = { removeGuildChannels: mockRemoveGuildChannels } as unknown as MessageCoordinator;
 
-            const guildId   = createGuildId('guild-abc');
+            const guildId   = createGuildId('111222333444555666');
             const channelId = createChannelId('ch-1');
 
             const mockRegistry = {

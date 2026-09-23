@@ -625,7 +625,7 @@ describe('processAttachments', () => {
 
     function context(messageId: string, attachments: DiscordMessageContext['attachments']): DiscordMessageContext {
         return {
-            guildId:   createGuildId('guild-1'),
+            guildId:   createGuildId('111222333444555666'),
             channelId: createChannelId('channel-1'),
             userId:    createUserId('user-1'),
             username:  'Craig',

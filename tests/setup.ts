@@ -42,7 +42,7 @@ export const mockSstResource: Record<string, { value?: unknown, name?: string }>
     DiscordToken:          { value: 'test-discord-token' },
     ClaudeApiKey:          { value: 'test-claude-api-key' },
     ClaudeCodeOAuthToken:  { value: 'test-oauth-token' },
-    DiscordHomeGuildId:    { value: 'test-guild-123' },
+    DiscordHomeGuildId:    { value: '111222333444555666' },
     DiscordApplicationId:  { value: 'test-app-id' },
     IsambardMainModel:     { value: 'sonnet' },
     IsambardFallbackModel: { value: 'sonnet' },
@@ -62,7 +62,7 @@ export function resetMockSstResource(): void {
     mockSstResource.DiscordToken = { value: 'test-discord-token' };
     mockSstResource.ClaudeApiKey = { value: 'test-claude-api-key' };
     mockSstResource.ClaudeCodeOAuthToken = { value: 'test-oauth-token' };
-    mockSstResource.DiscordHomeGuildId = { value: 'test-guild-123' };
+    mockSstResource.DiscordHomeGuildId = { value: '111222333444555666' };
     mockSstResource.DiscordApplicationId = { value: 'test-app-id' };
     mockSstResource.IsambardMainModel = { value: 'sonnet' };
     mockSstResource.IsambardFallbackModel = { value: 'sonnet' };

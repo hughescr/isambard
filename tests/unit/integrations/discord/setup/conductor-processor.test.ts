@@ -152,7 +152,7 @@ function makeLogger() {
 
 function makeContext(overrides: Partial<DiscordMessageContext> = {}): DiscordMessageContext {
     return {
-        guildId:   createGuildId('guild-1'),
+        guildId:   createGuildId('111222333444555666'),
         channelId: createChannelId('chan-1'),
         userId:    createUserId('user-1'),
         username:  'craig',

@@ -3,7 +3,7 @@ import type { Channel, Client } from 'discord.js';
 import type { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { ChannelMetadata, ChannelStorageRecord } from '@/integrations/discord/channel-registry/types';
-import { createChannelId, createGuildId, type GuildId } from '@/integrations/discord/types';
+import { DM_SCOPE, createChannelId, createGuildId, type ChannelScope } from '@/integrations/discord/types';
 
 function deferred<T>() {
     let finish!: (value: T) => void;
@@ -14,7 +14,7 @@ function deferred<T>() {
 }
 
 describe('ChannelRegistryManager mutation contracts', () => {
-    const homeGuildId = createGuildId('home');
+    const homeGuildId = createGuildId('111222333444555666');
     const channelId = createChannelId('channel');
     let backend: ChannelRegistryBackend;
     let client: Client;
@@ -45,7 +45,7 @@ describe('ChannelRegistryManager mutation contracts', () => {
             getChannel:          mock(() => Promise.resolve(null)),
             upsertChannel:       mock(() => Promise.resolve()),
             deleteChannel:       mock(() => Promise.resolve()),
-            getChannelsByGuild:  mock(() => Promise.resolve([])),
+            getChannelsByScope:  mock(() => Promise.resolve([])),
             getWellKnownChannel: mock(() => Promise.resolve(null)),
             muteChannel:         mock(() => Promise.resolve()),
             unmuteChannel:       mock(() => Promise.resolve()),
@@ -137,7 +137,7 @@ describe('ChannelRegistryManager mutation contracts', () => {
         ['DMbob', '@DMbob'],
         ['prefix @alice', '@prefix @alice'],
     ])('normalizes a DM name %p as %p', async (name, expected) => {
-        backend.getChannel = mock(() => Promise.resolve(record({ guildId: createGuildId('DM') })));
+        backend.getChannel = mock(() => Promise.resolve(record({ guildId: DM_SCOPE })));
         client.channels.fetch = mock(() => Promise.resolve({ id: channelId, name } as unknown as Channel));
 
         const result = await manager.getChannel(channelId);
@@ -180,16 +180,16 @@ describe('ChannelRegistryManager mutation contracts', () => {
         }
     });
 
-    test('getChannelsByGuild returns warmed-cache channels in cache insertion order', async () => {
+    test('getChannelsByScope returns warmed-cache channels in cache insertion order', async () => {
         const first = record({ channelId: createChannelId('order-1') });
         const second = record({ channelId: createChannelId('order-2') });
         const third = record({ channelId: createChannelId('order-3') });
-        backend.getChannelsByGuild = mock((guildId: GuildId) => Promise.resolve(
-            guildId === homeGuildId ? [first, second, third] : []
+        backend.getChannelsByScope = mock((scope: ChannelScope) => Promise.resolve(
+            scope === homeGuildId ? [first, second, third] : []
         ));
 
         await manager.warmCache();
-        const results = await manager.getChannelsByGuild(homeGuildId);
+        const results = await manager.getChannelsByScope(homeGuildId);
 
         // Reversed (3, 2, 1) if the warmed-cache loop iterates the cache backwards
         // or accumulates matches with unshift instead of push.
@@ -202,8 +202,8 @@ describe('ChannelRegistryManager mutation contracts', () => {
         const muted = record({ channelId: createChannelId('muted'), isMuted: true });
         const second = record({ channelId: createChannelId('unmuted-2') });
         const third = record({ channelId: createChannelId('unmuted-3') });
-        backend.getChannelsByGuild = mock((guildId: GuildId) => Promise.resolve(
-            guildId === homeGuildId ? [first, muted, second, third] : []
+        backend.getChannelsByScope = mock((scope: ChannelScope) => Promise.resolve(
+            scope === homeGuildId ? [first, muted, second, third] : []
         ));
 
         await manager.warmCache();
@@ -217,10 +217,10 @@ describe('ChannelRegistryManager mutation contracts', () => {
 
     test('warms home-guild channels before direct-message channels', async () => {
         const guildRecord = record({ channelId: createChannelId('guild-channel') });
-        const dmRecord = record({ channelId: createChannelId('dm-channel'), guildId: createGuildId('DM') });
+        const dmRecord = record({ channelId: createChannelId('dm-channel'), guildId: DM_SCOPE });
         const fetched: string[] = [];
-        backend.getChannelsByGuild = mock((guildId: GuildId) => Promise.resolve(
-            guildId === homeGuildId ? [guildRecord] : [dmRecord]
+        backend.getChannelsByScope = mock((scope: ChannelScope) => Promise.resolve(
+            scope === homeGuildId ? [guildRecord] : [dmRecord]
         ));
         client.channels.fetch = mock(async (id) => {
             fetched.push(id);

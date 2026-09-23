@@ -52,7 +52,7 @@ describe('Bot Lifecycle Integration', () => {
         mockDiscordConfig = {
             botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId: '123456789012345678',
-            homeGuildId:   createGuildId('home-guild-123'),
+            homeGuildId:   createGuildId('111222333444555666'),
         };
 
         // Mock Agent configuration

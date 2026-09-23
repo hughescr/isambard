@@ -1,7 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { type DiscordChannelCheckpoint, discordChannelCheckpointSchema  } from './types';
 import { InvariantViolationError } from '@/errors';
-import type { ChannelId, GuildId } from '@/integrations/discord/types';
+import type { ChannelId, ChannelScope } from '@/integrations/discord/types';
 import { type MemoryToolBackend, type MemoryPath, createMemoryPath  } from '@/storage';
 
 /**
@@ -174,7 +174,7 @@ export class CheckpointManager {
      * Sets lastSeenAt to current time (no catchup needed for new channels).
      *
      * @param channelId - Discord channel ID
-     * @param guildId - Guild ID or 'DM' for direct messages
+     * @param guildId - channel scope where the channel exists
      * @returns The existing or newly created checkpoint
      *
      * @example
@@ -186,7 +186,7 @@ export class CheckpointManager {
      */
     async initializeIfMissing(
         channelId: ChannelId,
-        guildId: GuildId | 'DM'
+        guildId: ChannelScope
     ): Promise<DiscordChannelCheckpoint> {
         const existing = await this.load(channelId);
         if(existing) {
@@ -217,7 +217,7 @@ export class CheckpointManager {
      * for the same channel.
      *
      * @param channelId - Discord channel ID
-     * @param guildId - Guild ID or 'DM' for direct messages
+     * @param guildId - channel scope where the channel exists
      * @param lastSeenAt - ISO 8601 timestamp of last seen time
      * @param lastSeenMessageId - Optional message ID of last seen message
      * @returns The updated checkpoint
@@ -236,7 +236,7 @@ export class CheckpointManager {
      */
     async updateLastSeen(
         channelId: ChannelId,
-        guildId: GuildId | 'DM',
+        guildId: ChannelScope,
         lastSeenAt: string,
         lastSeenMessageId?: string
     ): Promise<DiscordChannelCheckpoint> {

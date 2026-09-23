@@ -410,15 +410,28 @@ describe('discordConfigSchema', () => {
         expect(discordConfigSchema.safeParse({
             botToken:      'x',
             applicationId: 'x',
-            homeGuildId:   createGuildId('g'),
+            homeGuildId:   createGuildId('111222333444555666'),
         }).success).toBe(true);
+    });
+
+    test.each([
+        ['123456789012345678', true],
+        ['DM', false],
+        ['guild', false],
+        ['123guild', false],
+    ])('validates homeGuildId %s as %s', (homeGuildId, expected) => {
+        expect(discordConfigSchema.safeParse({
+            botToken:      'x',
+            applicationId: 'x',
+            homeGuildId,
+        }).success).toBe(expected);
     });
 
     test('should accept valid presence config', () => {
         const configWithPresence = {
             botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId: '123456789012345678',
-            homeGuildId:   createGuildId('home-guild-123'),
+            homeGuildId:   createGuildId('111222333444555666'),
             presence:      {
                 updateThrottleMs:      5000,
                 idleTimeoutMs:         120_000,
@@ -441,7 +454,7 @@ describe('discordConfigSchema', () => {
         const result = discordConfigSchema.safeParse({
             botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId: '123456789012345678',
-            homeGuildId:   createGuildId('home-guild-123'),
+            homeGuildId:   createGuildId('111222333444555666'),
             taskBoard:     {},
         });
 
@@ -459,7 +472,7 @@ describe('discordConfigSchema', () => {
         const result = discordConfigSchema.safeParse({
             botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId: '123456789012345678',
-            homeGuildId:   createGuildId('home-guild-123'),
+            homeGuildId:   createGuildId('111222333444555666'),
         });
 
         expect(result.success).toBe(true);
@@ -472,7 +485,7 @@ describe('discordConfigSchema', () => {
         const configWithEmptyPresence = {
             botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
             applicationId: '123456789012345678',
-            homeGuildId:   createGuildId('home-guild-123'),
+            homeGuildId:   createGuildId('111222333444555666'),
             presence:      {},
         };
 
@@ -591,7 +604,7 @@ describe('configSchema', () => {
             discord:            {
                 botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
                 applicationId: '123456789012345678',
-                homeGuildId:   createGuildId('home-guild-123'),
+                homeGuildId:   createGuildId('111222333444555666'),
             },
         };
 
@@ -624,7 +637,7 @@ describe('configSchema', () => {
             discord:            {
                 botToken:      'token',
                 applicationId: '123',
-                homeGuildId:   createGuildId('home-guild-123'),
+                homeGuildId:   createGuildId('111222333444555666'),
             },
         };
 
@@ -650,7 +663,7 @@ describe('configSchema', () => {
             discord:            {
                 botToken:      'token',
                 applicationId: '123',
-                homeGuildId:   createGuildId('home-guild-123'),
+                homeGuildId:   createGuildId('111222333444555666'),
             },
             // Planned integrations are optional:
             // caldav: {
@@ -682,7 +695,7 @@ describe('configSchema', () => {
         expect(configSchema.safeParse({
             app:                { nodeEnv: 'test', port: 1 },
             agent:              { oauthToken: 'x' },
-            discord:            { botToken: 'x', applicationId: 'x', homeGuildId: createGuildId('g') },
+            discord:            { botToken: 'x', applicationId: 'x', homeGuildId: createGuildId('111222333444555666') },
             adminDiscordUserId: 'x',
         }).success).toBe(true);
     });

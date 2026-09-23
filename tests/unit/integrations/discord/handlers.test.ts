@@ -173,7 +173,7 @@ describe('Discord Event Handlers', () => {
                     sendTyping: mock(async () => {}),
                 },
                 guild: {
-                    id: 'guild-123',
+                    id: '111222333444555666',
                 },
                 attachments: attachmentCollection,
                 createdAt:   new Date(),
@@ -655,7 +655,7 @@ describe('Discord Event Handlers', () => {
                     sendTyping: mock(async () => {}),
                 },
                 guild: {
-                    id: 'guild-123',
+                    id: '111222333444555666',
                 },
                 attachments: new Map(),
                 createdAt:   new Date(),

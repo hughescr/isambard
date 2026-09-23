@@ -10,7 +10,7 @@ import type { MessageCoordinator } from './message-coordinator';
 import type { DiscordRateLimiter } from './rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from './response-sender';
 import { withDiscordRetry } from './retry';
-import { type DiscordMessageContext, type UserId, type ChannelId, createGuildId, createChannelId, createUserId  } from './types';
+import { type DiscordMessageContext, type UserId, type ChannelId, createChannelId, createUserId, isDmScope, scopeOf  } from './types';
 import { buildDiscordEnvelope, formatTimeHeader, type QuestionRegistry, type AnswerClassifier, type Conductor, type ContextBuilder, type TimeHeaderProvider } from '@/agent';
 import { ResponseUnavailableError } from '@/errors';
 import { resolveTimezone } from '@/utils';
@@ -240,7 +240,7 @@ function updateChannelMetadataInInbox(
     inboxManager.updateChannelMetadata(
         createChannelId(message.channel.id),
         channelDisplayName(message),
-        createGuildId(message.guild?.id ?? 'DM')
+        scopeOf(message)
     );
 }
 
@@ -270,7 +270,7 @@ async function updateInboxCheckpoint(
     if(inboxManager && shouldRespond) {
         await inboxManager.recordActivity(
             createChannelId(message.channel.id),
-            createGuildId(message.guild?.id ?? 'DM'),
+            scopeOf(message),
             message.id,
             message.createdAt.toISOString()
         );
@@ -304,7 +304,7 @@ async function determineResponseContext(
     botUserId: UserId,
     channelRegistry: ChannelRegistryManager
 ): Promise<{ isDM: boolean, isMention: boolean, isReplyToBot: boolean, shouldRespond: boolean }> {
-    const isDM = !message.guild; // DM channels have no guild
+    const isDM = isDmScope(scopeOf(message));
     const isMention = message.content.includes(`<@${botUserId}>`) || message.content.includes(`<@!${botUserId}>`);
     const channelId = createChannelId(message.channel.id);
 
@@ -449,7 +449,7 @@ export function dispatchToCoordinator(
     // Stryker disable next-line llm: extractAttachmentMetadata always returns an array, so the || [] fallback is unreachable.
     const attachments = extractAttachmentMetadata(message);
     const context: DiscordMessageContext = {
-        guildId:     createGuildId(message.guild?.id ?? 'DM'),
+        guildId:     scopeOf(message),
         channelId:   createChannelId(message.channel.id),
         userId:      createUserId(message.author.id),
         // Stryker disable next-line llm: User.username is a non-nullable string in discord.js 14, so the ?? '' fallback is unreachable.
@@ -645,7 +645,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         logger.debug({
             authorId:  message.author.id,
             channelId: message.channel.id,
-            isDM:      !message.guild,
+            isDM:      isDmScope(scopeOf(message)),
             msg:       `Message received from ${message.author.tag}`,
         });
 

@@ -9,7 +9,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
     let backend: ChannelRegistryBackend;
     let client: Client;
     let manager: ChannelRegistryManager;
-    const homeGuildId = createGuildId('home-guild');
+    const homeGuildId = createGuildId('111222333444555666');
 
     const createMockChannel = (overrides: Partial<ChannelMetadata> = {}): ChannelMetadata => ({
         channelId:    createChannelId('channel-1'),
@@ -52,7 +52,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
             getChannel:          mock(() => Promise.resolve(null)),
             upsertChannel:       mock(() => Promise.resolve()),
             deleteChannel:       mock(() => Promise.resolve()),
-            getChannelsByGuild:  mock(() => Promise.resolve([])),
+            getChannelsByScope:  mock(() => Promise.resolve([])),
             getWellKnownChannel: mock(() => Promise.resolve(null)),
             muteChannel:         mock(() => Promise.resolve()),
             unmuteChannel:       mock(() => Promise.resolve()),
@@ -83,7 +83,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
     describe('well-known channel tracking', () => {
         it('should track well-known channels during warmCache', async () => {
             const wellKnown = createMockChannel({ isWellKnown: 'general' });
-            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord({ isWellKnown: 'general' })]));
+            backend.getChannelsByScope = mock(() => Promise.resolve([createMockStorageRecord({ isWellKnown: 'general' })]));
 
             await manager.warmCache();
 
@@ -138,80 +138,80 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
             const channel = createMockChannel({ guildId: homeGuildId });
 
             // Cache is cold - should use backend
-            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
-            await manager.getChannelsByGuild(homeGuildId);
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(1);
+            backend.getChannelsByScope = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
+            await manager.getChannelsByScope(homeGuildId);
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(1);
 
-            // Warm the cache - warmCache calls getChannelsByGuild twice (homeGuildId + DM)
+            // Warm the cache - warmCache calls getChannelsByScope twice (homeGuildId + DM)
             await manager.warmCache();
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(3); // 1 cold + 2 from warmCache
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(3); // 1 cold + 2 from warmCache
 
             // Now should use cache
-            await manager.getChannelsByGuild(homeGuildId);
+            await manager.getChannelsByScope(homeGuildId);
             // Backend should NOT be called again
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(3); // Still only 3 calls
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(3); // Still only 3 calls
         });
 
         it('should transition from warmed to cold cache', async () => {
             const channel = createMockChannel({ guildId: homeGuildId });
-            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
+            backend.getChannelsByScope = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
             await manager.warmCache();
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(2); // warmCache calls homeGuildId + DM
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(2); // warmCache calls homeGuildId + DM
 
-            // Cache is warmed - uses cache for getChannelsByGuild
-            await manager.getChannelsByGuild(homeGuildId);
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(2); // Still only 2 from warmCache
+            // Cache is warmed - uses cache for getChannelsByScope
+            await manager.getChannelsByScope(homeGuildId);
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(2); // Still only 2 from warmCache
 
             // Clear cache
             manager.clearCache();
 
             // Now should use backend
-            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
-            await manager.getChannelsByGuild(homeGuildId);
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(1);
+            backend.getChannelsByScope = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
+            await manager.getChannelsByScope(homeGuildId);
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(1);
         });
     });
 
     describe('empty loop cases', () => {
         it('should handle empty warmCache', async () => {
-            backend.getChannelsByGuild = mock(() => Promise.resolve([]));
+            backend.getChannelsByScope = mock(() => Promise.resolve([]));
 
             await manager.warmCache();
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(2); // warmCache calls homeGuildId + DM
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(2); // warmCache calls homeGuildId + DM
 
             // Cache should be warmed even with no channels
-            const results = await manager.getChannelsByGuild(homeGuildId);
+            const results = await manager.getChannelsByScope(homeGuildId);
             expect(results).toHaveLength(0);
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(2); // Still only 2 from warmCache
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(2); // Still only 2 from warmCache
         });
 
-        it('should handle empty backend result in getChannelsByGuild', async () => {
-            backend.getChannelsByGuild = mock(() => Promise.resolve([]));
+        it('should handle empty backend result in getChannelsByScope', async () => {
+            backend.getChannelsByScope = mock(() => Promise.resolve([]));
 
-            const results = await manager.getChannelsByGuild(homeGuildId);
+            const results = await manager.getChannelsByScope(homeGuildId);
 
             expect(results).toHaveLength(0);
         });
 
         it('should handle empty backend result in getUnmutedChannels', async () => {
-            backend.getChannelsByGuild = mock(() => Promise.resolve([]));
+            backend.getChannelsByScope = mock(() => Promise.resolve([]));
 
             const results = await manager.getUnmutedChannels();
 
             expect(results).toHaveLength(0);
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(1);
-            expect(backend.getChannelsByGuild).toHaveBeenCalledWith(homeGuildId);
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(1);
+            expect(backend.getChannelsByScope).toHaveBeenCalledWith(homeGuildId);
         });
 
         it('should verify empty for loops do work when not empty', async () => {
-            // Verify getChannelsByGuild backend fallback loop actually adds to cache
+            // Verify getChannelsByScope backend fallback loop actually adds to cache
             const channel1 = createMockChannel({ channelId: createChannelId('ch1'), guildId: homeGuildId });
             const channel2 = createMockChannel({ channelId: createChannelId('ch2'), guildId: homeGuildId });
 
             mockDiscordChannels([channel1, channel2]);
-            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel1), createMockStorageRecord(channel2)]));
+            backend.getChannelsByScope = mock(() => Promise.resolve([createMockStorageRecord(channel1), createMockStorageRecord(channel2)]));
 
-            await manager.getChannelsByGuild(homeGuildId);
+            await manager.getChannelsByScope(homeGuildId);
 
             // Verify channels were cached by checking cache hit
             const cached1 = await manager.getChannel(channel1.channelId);
@@ -224,7 +224,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
             const channel2 = createMockChannel({ channelId: createChannelId('ch2'), isMuted: true });
 
             mockDiscordChannels([channel1, channel2]);
-            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel1), createMockStorageRecord(channel2)]));
+            backend.getChannelsByScope = mock(() => Promise.resolve([createMockStorageRecord(channel1), createMockStorageRecord(channel2)]));
 
             const results = await manager.getUnmutedChannels();
 
@@ -245,20 +245,20 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
     describe('conditional expression mutations', () => {
         it('should test clearCache sets cacheWarmed to exactly false', async () => {
             const channel = createMockChannel({ guildId: homeGuildId });
-            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
+            backend.getChannelsByScope = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
             await manager.warmCache();
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(2); // warmCache queries homeGuildId + DM
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(2); // warmCache queries homeGuildId + DM
 
-            // Cache is warmed - getChannelsByGuild uses cache
-            await manager.getChannelsByGuild(homeGuildId);
-            expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(2); // Still 2, used cache
+            // Cache is warmed - getChannelsByScope uses cache
+            await manager.getChannelsByScope(homeGuildId);
+            expect(backend.getChannelsByScope).toHaveBeenCalledTimes(2); // Still 2, used cache
 
             manager.clearCache();
 
             // If cacheWarmed was set to true instead of false, this would fail
-            backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
-            await manager.getChannelsByGuild(homeGuildId);
-            expect(backend.getChannelsByGuild).toHaveBeenCalled();
+            backend.getChannelsByScope = mock(() => Promise.resolve([createMockStorageRecord(channel)]));
+            await manager.getChannelsByScope(homeGuildId);
+            expect(backend.getChannelsByScope).toHaveBeenCalled();
         });
     });
 
@@ -283,12 +283,12 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
                 const muted = createMockChannel({ channelId: createChannelId('muted'), isMuted: true });
 
                 mockDiscordChannels([unmuted1, muted]);
-                backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(unmuted1), createMockStorageRecord(muted)]));
+                backend.getChannelsByScope = mock(() => Promise.resolve([createMockStorageRecord(unmuted1), createMockStorageRecord(muted)]));
                 await manager.warmCache();
-                expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(2); // warmCache queries homeGuildId + DM
+                expect(backend.getChannelsByScope).toHaveBeenCalledTimes(2); // warmCache queries homeGuildId + DM
 
                 // Reset the mock to verify backend is NOT called again
-                backend.getChannelsByGuild = mock(() => Promise.resolve([createMockStorageRecord(unmuted1), createMockStorageRecord(muted)]));
+                backend.getChannelsByScope = mock(() => Promise.resolve([createMockStorageRecord(unmuted1), createMockStorageRecord(muted)]));
 
                 // Kills mutant: if(this.cacheWarmed) BlockStatement -> {}
                 // If block was empty, backend would be called
@@ -297,7 +297,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
                 expect(results).toHaveLength(1);
                 expect(results.map(r => r.channelId)).toContain(unmuted1.channelId);
                 // Backend should NOT be called (proves cache block executed)
-                expect(backend.getChannelsByGuild).not.toHaveBeenCalled();
+                expect(backend.getChannelsByScope).not.toHaveBeenCalled();
             });
         });
 

@@ -64,7 +64,7 @@ describe('formatBytes', () => {
 
 describe('addAttachmentInfoToContexts', () => {
     const createContext = (content: string, messageId = 'msg1'): DiscordMessageContext => ({
-        guildId:   createGuildId('guild1'),
+        guildId:   createGuildId('111222333444555666'),
         channelId: createChannelId('channel1'),
         userId:    createUserId('user1'),
         messageId,

@@ -15,7 +15,7 @@ import {
 } from '@/config/schemas';
 
 const agent = { oauthToken: 'x' };
-const discord = { botToken: 'x', applicationId: 'x', homeGuildId: 'x' };
+const discord = { botToken: 'x', applicationId: 'x', homeGuildId: '111222333444555666' };
 const email = { user: 'x', password: 'x', adminDiscordChannelId: 'x', wildDuckApiUrl: 'https://example.com' };
 const bsky = { handle: 'x', appPassword: 'x' };
 const config = { app: { nodeEnv: 'test', port: 1 }, agent, discord, adminDiscordUserId: 'x' };

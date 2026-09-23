@@ -221,7 +221,7 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
             discord: {
                 botToken:      'bot-token-123',
                 applicationId: 'app-id-456',
-                homeGuildId:   createGuildId('home-guild-123'),
+                homeGuildId:   createGuildId('111222333444555666'),
                 presence:      {
                     updateThrottleMs:      2000,
                     idleTimeoutMs:         60_000,
@@ -510,7 +510,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -577,7 +577,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -736,7 +736,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -1744,7 +1744,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -1890,7 +1890,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -2038,7 +2038,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -2193,7 +2193,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -2299,7 +2299,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -2368,7 +2368,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -2440,7 +2440,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -2507,7 +2507,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,
@@ -2671,7 +2671,7 @@ describe('createApp', () => {
                 discord: {
                     botToken:      'bot-token-123',
                     applicationId: 'app-id-456',
-                    homeGuildId:   createGuildId('home-guild-123'),
+                    homeGuildId:   createGuildId('111222333444555666'),
                     presence:      {
                         updateThrottleMs:      2000,
                         idleTimeoutMs:         60_000,

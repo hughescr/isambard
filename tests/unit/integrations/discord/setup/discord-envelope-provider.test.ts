@@ -12,7 +12,7 @@ import {
     resolveNames,
     toEnvelopeInput
 } from '@/integrations/discord/setup/discord-envelope-provider';
-import { createChannelId, createGuildId, createUserId, type DiscordMessageContext } from '@/integrations/discord/types';
+import { DM_SCOPE, createChannelId, createGuildId, createUserId, type DiscordMessageContext } from '@/integrations/discord/types';
 
 function makeRegistry(overrides: Partial<ChannelRegistryManager> = {}): ChannelRegistryManager {
     return {
@@ -37,7 +37,7 @@ function makeChannel(overrides: Partial<Parameters<typeof createChannelMetadata>
     const now = new Date(0).toISOString();
     return createChannelMetadata({
         channelId:    'chan-1',
-        guildId:      'guild-1',
+        guildId:      '111222333444555666',
         channelName:  'general',
         isMuted:      false,
         discoveredAt: now,
@@ -49,7 +49,7 @@ function makeChannel(overrides: Partial<Parameters<typeof createChannelMetadata>
 
 function makeContext(overrides: Partial<DiscordMessageContext> = {}): DiscordMessageContext {
     return {
-        guildId:   createGuildId('guild-1'),
+        guildId:   createGuildId('111222333444555666'),
         channelId: createChannelId('chan-1'),
         userId:    createUserId('user-1'),
         username:  'craig',
@@ -75,14 +75,14 @@ describe('channelListProvider', () => {
     it('formats unmuted channels only, with a guild suffix and a well-known annotation', async () => {
         const registry = makeRegistry({
             getUnmutedChannels: mock(() => Promise.resolve([
-                makeChannel({ channelId: 'c1', guildId: 'g1', channelName: 'general' }),
+                makeChannel({ channelId: 'c1', guildId: '222333444555666777', channelName: 'general' }),
                 makeChannel({
-                    channelId: 'c2', guildId: 'g1', channelName: 'catch-up', isWellKnown: 'catch-up',
+                    channelId: 'c2', guildId: '222333444555666777', channelName: 'catch-up', isWellKnown: 'catch-up',
                 }),
-                makeChannel({ channelId: 'c3', guildId: 'DM', channelName: 'DM with Bob' }),
+                makeChannel({ channelId: 'c3', guildId: DM_SCOPE, channelName: 'DM with Bob' }),
             ])),
         });
-        const client = makeClient({ g1: 'My Guild' });
+        const client = makeClient({ '222333444555666777': 'My Guild' });
 
         const list = await channelListProvider(registry, client)();
 
@@ -108,7 +108,7 @@ describe('channelListProvider', () => {
 
     it('omits the guild suffix when the client has no cached guild for that id', async () => {
         const registry = makeRegistry({
-            getUnmutedChannels: mock(() => Promise.resolve([makeChannel({ guildId: 'unknown-guild' })])),
+            getUnmutedChannels: mock(() => Promise.resolve([makeChannel({ guildId: '333444555666777888' })])),
         });
         const client = makeClient();
 
@@ -121,11 +121,11 @@ describe('channelListProvider', () => {
 describe('resolveNames', () => {
     it('resolves channel name from the registry and guild name from the client for a guild message', async () => {
         const registry = makeRegistry({
-            getChannel: mock(() => Promise.resolve(makeChannel({ channelName: 'general', guildId: 'g1' }))),
+            getChannel: mock(() => Promise.resolve(makeChannel({ channelName: 'general', guildId: '222333444555666777' }))),
         });
-        const client = makeClient({ g1: 'My Guild' });
+        const client = makeClient({ '222333444555666777': 'My Guild' });
 
-        const names = await resolveNames(registry, client)(makeContext({ guildId: createGuildId('g1') }));
+        const names = await resolveNames(registry, client)(makeContext({ guildId: createGuildId('222333444555666777') }));
 
         expect(names).toEqual({
             channelName: 'general', guildName: 'My Guild', authorName: 'craig', isDM: false,
@@ -134,11 +134,11 @@ describe('resolveNames', () => {
 
     it('reports isDM and skips guild lookup when the context guildId is the DM sentinel', async () => {
         const registry = makeRegistry({
-            getChannel: mock(() => Promise.resolve(makeChannel({ channelName: 'DM with Bob', guildId: 'DM' }))),
+            getChannel: mock(() => Promise.resolve(makeChannel({ channelName: 'DM with Bob', guildId: DM_SCOPE }))),
         });
         const client = makeClient();
 
-        const names = await resolveNames(registry, client)(makeContext({ guildId: createGuildId('DM') }));
+        const names = await resolveNames(registry, client)(makeContext({ guildId: DM_SCOPE }));
 
         expect(names).toEqual({
             channelName: 'DM with Bob', guildName: undefined, authorName: 'craig', isDM: true,

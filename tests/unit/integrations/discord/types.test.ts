@@ -10,6 +10,10 @@ import {
     isGuildId,
     isChannelId,
     isUserId,
+    channelScopeSchema,
+    DM_SCOPE,
+    isDmScope,
+    scopeOf,
     type GuildId,
     type ChannelId,
     type UserId
@@ -109,6 +113,39 @@ describe('discordMessageContextSchema', () => {
         for(const timestamp of timestamps) {
             expect(discordMessageContextSchema.safeParse({ ...validContext, timestamp }).success).toBe(true);
         }
+    });
+});
+
+describe('channel scopes', () => {
+    test('parses guild and DM scope schema arms', () => {
+        expect(channelScopeSchema.parse('123456789012345678')).toBe(createGuildId('123456789012345678'));
+        expect(channelScopeSchema.parse(DM_SCOPE)).toBe(DM_SCOPE);
+    });
+
+    test('recognizes only the DM scope sentinel', () => {
+        expect(isDmScope(DM_SCOPE)).toBe(true);
+        expect(isDmScope(createGuildId('123456789012345678'))).toBe(false);
+    });
+
+    test('derives scope from guild and DM message doubles', () => {
+        expect(scopeOf({ guild: { id: '123456789012345678' } } as never)).toBe(createGuildId('123456789012345678'));
+        expect(scopeOf({ guild: null } as never)).toBe(DM_SCOPE);
+    });
+
+    test('rejects DM sentinel as a GuildId', () => {
+        expect(() => createGuildId(DM_SCOPE)).toThrow();
+    });
+
+    test('accepts a DM scope in Discord message context', () => {
+        expect(discordMessageContextSchema.safeParse({
+            guildId:   DM_SCOPE,
+            channelId: createChannelId('987654321098765432'),
+            userId:    createUserId('111222333444555666'),
+            botUserId: createUserId('999999999999999999'),
+            messageId: '999888777666555444',
+            content:   'Hello, world!',
+            timestamp: '2024-01-15T10:30:00.000Z',
+        }).success).toBe(true);
     });
 });
 

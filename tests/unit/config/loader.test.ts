@@ -16,7 +16,7 @@ function createMockResources(
         Port:                  { value: '3000' },
         DiscordBotToken:       { value: 'bot-token-123' },
         DiscordApplicationId:  { value: 'app-id-456' },
-        DiscordHomeGuildId:    { value: 'home-guild-123' },
+        DiscordHomeGuildId:    { value: '111222333444555666' },
         ClaudeCodeOAuthToken:  { value: 'test-oauth-token-12345' },
         IsambardMainModel:     { value: 'sonnet' },
         IsambardFallbackModel: { value: 'sonnet' },
