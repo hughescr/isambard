@@ -15,7 +15,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { logger, type Logger } from '@hughescr/logger';
 import type { ChannelId } from '../types';
 import { type ActivityPhase, phaseFromFrame } from './activity-phase';
-import type { ContextUsageSummary, EnvelopeKind, EnvelopeMeta, SessionRole } from './types';
+import type { ContextUsageSummary, EnvelopeKind, EnvelopeMeta, EnvelopeOrigin, SessionRole } from './types';
 
 /**
  * How many finished tasks a {@link Ledger} keeps. The task board renders finished rows from them,
@@ -32,6 +32,8 @@ export interface LedgerTurn {
     queuedAt?:     Date
     envelopeId?:   string
     channelId?:    ChannelId
+    /** The submitting envelope's {@link import('./types').Envelope.origin}, carried through for symmetry with {@link EnvelopeMeta.origin}. No current reader consumes this — the ledger's `queued.human` accounting reads {@link EnvelopeMeta.origin} directly, before this turn exists. */
+    origin?:       EnvelopeOrigin
     phase:         ActivityPhase | null
     firstTokenAt?: Date
     interrupting:  boolean
@@ -165,7 +167,7 @@ export interface Ledger {
 /** Every fact the conductor can fold into a {@link Ledger}. Every member carries `at: Date`. */
 export type LedgerEvent
     = | { type: 'sdk_frame', frame: SDKMessage, at: Date }
-      | { type: 'envelope_queued', kind: EnvelopeKind, at: Date }
+      | { type: 'envelope_queued', kind: EnvelopeKind, origin?: EnvelopeOrigin, at: Date }
       | { type: 'turn_submitted', envelope: EnvelopeMeta, at: Date }
       | { type: 'interrupt_requested', at: Date }
       /*
@@ -945,13 +947,13 @@ function reduceSdkFrame(ledger: Ledger, frame: SDKMessage, at: Date): Ledger {
     return applyPhaseToOpenTurn(afterSideEffects, frame, at);
 }
 
-/** `kind === 'discord'` is the ledger's one "human" queue; every other kind is `'other'`. */
-function isHumanKind(kind: EnvelopeKind): boolean {
-    return kind === 'discord';
+/** `origin?.role === 'human'` is the ledger's one "human" queue; every other envelope is `'other'`. */
+function isHumanTurn(origin: EnvelopeOrigin | undefined): boolean {
+    return origin?.role === 'human';
 }
 
-function reduceEnvelopeQueued(ledger: Ledger, kind: EnvelopeKind): Ledger {
-    const queued = isHumanKind(kind)
+function reduceEnvelopeQueued(ledger: Ledger, origin: EnvelopeOrigin | undefined): Ledger {
+    const queued = isHumanTurn(origin)
         ? { ...ledger.queued, human: ledger.queued.human + 1 }
         : { ...ledger.queued, other: ledger.queued.other + 1 };
     return { ...ledger, queued };
@@ -972,7 +974,7 @@ function reduceSpontaneousTurnOpened(ledger: Ledger, turnId: string, at: Date): 
 }
 
 function reduceTurnSubmitted(ledger: Ledger, envelope: EnvelopeMeta, at: Date): Ledger {
-    const queued = isHumanKind(envelope.kind)
+    const queued = isHumanTurn(envelope.origin)
         ? { ...ledger.queued, human: Math.max(0, ledger.queued.human - 1) }
         : { ...ledger.queued, other: Math.max(0, ledger.queued.other - 1) };
     const turn: LedgerTurn = {
@@ -982,6 +984,7 @@ function reduceTurnSubmitted(ledger: Ledger, envelope: EnvelopeMeta, at: Date): 
         queuedAt:     envelope.queuedAt,
         envelopeId:   envelope.id,
         channelId:    envelope.channelId,
+        origin:       envelope.origin,
         phase:        null,
         interrupting: false,
         seed:         envelope.seed,
@@ -1134,8 +1137,7 @@ export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
             return reduceSdkFrame(ledger, event.frame, event.at);
         }
         case 'envelope_queued': {
-            // Stryker disable next-line llm: EnvelopeKind is nonempty, and the reducer only distinguishes discord from every other value.
-            return reduceEnvelopeQueued(ledger, event.kind);
+            return reduceEnvelopeQueued(ledger, event.origin);
         }
         case 'turn_submitted': {
             return reduceTurnSubmitted(ledger, event.envelope, event.at);

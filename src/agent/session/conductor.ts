@@ -1,7 +1,7 @@
 /**
  * The long-lived session conductor (design doc section 6): the only writer into a session's
  * {@link InputQueue}. Owns resume-or-fresh session opening, a host-side priority queue of
- * {@link Envelope}s, the one-turn-in-flight invariant, the Discord human-wait/interrupt rows,
+ * {@link Envelope}s, the one-turn-in-flight invariant, the human-wait/interrupt rows,
  * the host-driven `/compact` submission (via {@link CompactionGuard}), `is_error` retry per the
  * injected `retryPolicy`, and a bounded shutdown sequence. Every timing decision goes through the
  * injected {@link Clock} — this module never reads a real timer.
@@ -56,6 +56,7 @@ import type {
     AdoptedPeerEnvelope,
     Clock,
     EnvelopeMeta,
+    EnvelopeOrigin,
     QueryEnvelope,
     SessionOpenCause,
     SessionOpenOutcome,
@@ -586,6 +587,8 @@ interface ActiveTurn {
     channelId?:       ChannelId
     /** The turn's originating envelope author (R2) — see {@link ConductorStatus.turn}. */
     authorId?:        UserId
+    /** The turn's originating envelope origin, read by {@link routeIncoming}'s same-channel pre-emption instead of `kind`. */
+    origin?:          EnvelopeOrigin
     tracker:          StreamTracker
     /** Who first asked for this turn to be interrupted; `undefined` while nobody has. Set once by {@link interruptCurrentTurnInternal}. */
     interruptSource?: CancellationSource
@@ -630,7 +633,7 @@ function computeBackoffDelayMs(policy: RetryPolicy, attemptNumber: number): numb
  * (`routeIncoming`) and interrupted-turn continuation-note injection
  * (`injectContinuationNoteIfInterruptedBackgroundTurn`) treat all three identically — enqueue behind
  * them and arm the human-wait escalation, rather than interrupting immediately the way a
- * same-channel `discord` turn is.
+ * same-channel human turn is.
  */
 function isBackgroundKind(kind: TurnKind): boolean {
     return kind === 'notification' || kind === 'task' || kind === 'peer';
@@ -982,7 +985,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         } else {
             pendingQueue.push(item);
         }
-        ledgerStore.dispatch({ type: 'envelope_queued', kind: item.envelope.kind, at: now() });
+        ledgerStore.dispatch({ type: 'envelope_queued', kind: item.envelope.kind, origin: item.envelope.origin, at: now() });
     }
 
     function beginTurn(item: QueuedItem): void {
@@ -992,10 +995,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
         const at = now();
         currentTurn = {
-            id: item.envelope.id, item, kind: item.envelope.kind, channelId: item.envelope.channelId, authorId: item.envelope.authorId, tracker: new StreamTracker(), escalationArmed: false,
+            id: item.envelope.id, item, kind: item.envelope.kind, channelId: item.envelope.channelId, authorId: item.envelope.authorId, origin: item.envelope.origin, tracker: new StreamTracker(), escalationArmed: false,
         };
         const meta: EnvelopeMeta = {
-            id: item.envelope.id, kind: item.envelope.kind, queuedAt: at, channelId: item.envelope.channelId, seed: item.envelope.synopsisSeed,
+            id: item.envelope.id, kind: item.envelope.kind, queuedAt: at, channelId: item.envelope.channelId, seed: item.envelope.synopsisSeed, origin: item.envelope.origin,
         };
         ledgerStore.dispatch({ type: 'turn_submitted', envelope: meta, at });
         journal.append({
@@ -1089,14 +1092,14 @@ export function createConductor(params: CreateConductorParams): Conductor {
             processQueue();
             return;
         }
-        // Stryker disable llm: `!== undefined` and the truthy test differ only for an empty-string channel id, which no discord caller can produce (both sides are non-empty snowflakes)
-        if(item.priority === 'urgent' && currentTurn.kind === 'discord'
-          && item.requestingChannelId !== undefined && item.requestingChannelId === currentTurn.channelId) {
+        // Stryker disable next-line llm: `!== undefined` and the truthy test differ only for an empty-string channel id, which no discord caller can produce (both sides are non-empty snowflakes)
+        const requestingChannelIsSet = item.requestingChannelId !== undefined;
+        if(item.priority === 'urgent' && currentTurn.origin?.role === 'human'
+          && requestingChannelIsSet && item.requestingChannelId === currentTurn.channelId) {
             enqueue(item);
             void interruptCurrentTurnInternal('human_preempt', 'human envelope for the running channel');
             return;
         }
-        // Stryker restore llm
         if(item.priority === 'urgent' && isBackgroundKind(currentTurn.kind)) {
             enqueue(item);
             armHumanWaitEscalation();

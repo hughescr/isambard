@@ -455,7 +455,7 @@ describe('buildDiscordEnvelope', () => {
         });
 
         expect(envelope.kind).toBe('discord');
-        expect(envelope.origin).toEqual({ kind: 'human' });
+        expect(envelope.origin).toEqual({ role: 'human', platform: 'discord' });
         expect(envelope.channelId).toBe(createChannelId('chan-9'));
         expect(envelope.authorId).toBe(createUserId('author-9'));
         expect(envelope.mode).toBe('query');

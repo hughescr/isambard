@@ -2,8 +2,8 @@
  * Shared types for the long-lived session core (src/agent/session/**).
  *
  * This module is the SOLE owner of `SessionRole`, `EnvelopeKind` (the full 10-member union
- * used by envelopes and the ledger), `Envelope`/`EnvelopeMeta`, `TurnKind`, and the
- * `JournalEntry` discriminated union (plan amendment A1). Downstream packages (P4-P8) import
+ * used by envelopes and the ledger), `EnvelopeOrigin`, `Envelope`/`EnvelopeMeta`, `TurnKind`, and
+ * the `JournalEntry` discriminated union (plan amendment A1). Downstream packages (P4-P8) import
  * from here rather than redeclaring any of these.
  *
  * @module agent/session/types
@@ -53,13 +53,26 @@ export type SessionQuery = Pick<Query, 'interrupt' | 'close' | 'stopTask' | 'str
 export type SessionQueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>, options: Options }) => SessionQuery;
 
 /**
- * The full set of envelope kinds the ledger and conductor key off of. `queued.human` in the
- * ledger keys on `kind === 'discord'`; every other kind increments `queued.other`.
+ * The full set of envelope kinds the ledger and conductor key off of. See {@link EnvelopeOrigin}
+ * for the separate "is a human waiting on this" concept the ledger's `queued.human` and the
+ * conductor's same-channel pre-emption actually key on.
  */
 export type EnvelopeKind = 'discord' | 'perch' | 'notification' | 'catchup' | 'wrapup' | 'continuation' | 'compact' | 'boot' | 'task' | 'peer';
 
 /** Every {@link EnvelopeKind} member, for table-driven tests that must stay exhaustive as the union grows. */
 export const ENVELOPE_KINDS: readonly EnvelopeKind[] = ['discord', 'perch', 'notification', 'catchup', 'wrapup', 'continuation', 'compact', 'boot', 'task', 'peer'];
+
+/**
+ * Marks an envelope (and the turn/ledger accounting it feeds) as one a human is synchronously
+ * waiting on, independent of {@link EnvelopeKind}: the ledger's `queued.human` count and the
+ * conductor's same-channel pre-emption test `role === 'human'` rather than `kind === 'discord'`.
+ * `platform` is a single-member union today; extend it the day a second human-facing platform
+ * exists rather than overloading `role`.
+ */
+export interface EnvelopeOrigin {
+    role:     'human'
+    platform: 'discord'
+}
 
 /**
  * The minimal envelope shape the ledger keys `turn_submitted` events on — distinct from
@@ -74,6 +87,8 @@ export interface EnvelopeMeta {
     channelId?: ChannelId
     /** The submitting {@link Envelope.synopsisSeed}, carried through to `LedgerTurn.seed` so the presence synopsis attachment can seed a generation without reaching back for the envelope. */
     seed?:      string
+    /** The submitting {@link Envelope.origin}, read by the ledger's `queued.human` accounting instead of `kind`. */
+    origin?:    EnvelopeOrigin
     perch?: {
         slot:   string
         endsAt: Date
@@ -128,8 +143,8 @@ export interface DiscordQueryEnvelope extends EnvelopeBase {
     kind:      'discord'
     channelId: ChannelId
     authorId?: UserId
-    /** The human origin forwarded to the SDK's `SDKUserMessage.origin`. */
-    origin:    { kind: 'human' }
+    /** The human origin the ledger and conductor key off of; projected (not forwarded verbatim) onto the SDK's `SDKUserMessage.origin` by `toSdkUserMessage`. */
+    origin:    EnvelopeOrigin
     peer?:     never
 }
 

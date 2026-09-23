@@ -202,7 +202,7 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Discor
         images,
         channelId,
         authorId,
-        origin:       { kind: 'human' },
+        origin:       { role: 'human', platform: 'discord' },
         createdAt:    now,
         synopsisSeed: toSynopsisSeed(messageText),
     };
@@ -495,6 +495,6 @@ export function toSdkUserMessage(envelope: Envelope): SDKUserMessage {
         message:            { role: 'user', content: buildMultimodalContent(envelope.text, envelope.images) },
         parent_tool_use_id: null,
         shouldQuery:        envelope.mode !== 'append',
-        ...(envelope.origin ? { origin: envelope.origin } : {}),
+        ...(envelope.origin?.role === 'human' ? { origin: { kind: 'human' } } : {}),
     };
 }

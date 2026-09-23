@@ -45,7 +45,7 @@ function discordEnvelope(overrides: Partial<DiscordQueryEnvelope> = {}): Discord
         text:      `discord text ${idCounter}`,
         channelId: createChannelId('chan-1'),
         authorId:  createUserId('user-1'),
-        origin:    { kind: 'human' },
+        origin:    { role: 'human', platform: 'discord' },
         createdAt: new Date(0),
         ...overrides,
     };
@@ -1204,6 +1204,27 @@ describe('createConductor', () => {
             await secondPromise;
             h.instances[0].emit(frames.resultSuccess());
             await thirdPromise;
+        });
+
+        it('does not pre-empt on kind alone: a discord-kind turn with no human origin is not pre-empted', async () => {
+            const h = build();
+            await openWith(h);
+            // A discord-kind envelope with no human origin is unrepresentable since #45 (origin is
+            // required on DiscordQueryEnvelope); the Partial override slips it past the compiler,
+            // same precedent as 'does not pre-empt an unscoped discord turn...' below. This is the
+            // one black-box-observable proof that routeIncoming reads origin.role, not kind.
+            const first = h.conductor.submit(discordEnvelope({ channelId: createChannelId('chan-1'), origin: undefined }), { priority: 'urgent', requestingChannelId: createChannelId('chan-1') });
+            await flush();
+
+            const second = h.conductor.submit(discordEnvelope({ channelId: createChannelId('chan-1') }), { priority: 'urgent', requestingChannelId: createChannelId('chan-1') });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(0);
+            h.instances[0].emit(frames.resultSuccess());
+            await first;
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await second;
         });
 
         it('does not pre-empt a discord turn for other priority or for a human without a requesting channel', async () => {

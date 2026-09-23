@@ -45,8 +45,20 @@ function deepFreeze<T>(value: T): T {
     return value;
 }
 
+/**
+ * Defaults `origin` to a human origin exactly when the effective `kind` (an override's, or the
+ * 'discord' default) is `'discord'` — mirroring how every real `discord` envelope is built — so
+ * the existing `envelope()`-based assertions below keep testing the human/other split they always
+ * meant to, now that the reducer reads `origin` instead of `kind`. An explicit `origin` override
+ * (including `undefined`) always wins, since it is spread last.
+ */
 function envelope(overrides: Partial<EnvelopeMeta> = {}): EnvelopeMeta {
-    return deepFreeze({ id: 'env-1', kind: 'discord', queuedAt: T1, ...overrides });
+    const kind = overrides.kind ?? 'discord';
+    return deepFreeze({
+        id: 'env-1', kind, queuedAt: T1,
+        ...(kind === 'discord' ? { origin: { role: 'human' as const, platform: 'discord' as const } } : {}),
+        ...overrides,
+    });
 }
 
 function frozenEvent(event: LedgerEvent): LedgerEvent {
@@ -76,8 +88,8 @@ describe('initialLedger', () => {
 });
 
 describe('reduceLedger: envelope_queued', () => {
-    it('increments queued.human for kind discord', () => {
-        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'discord', at: T1 }));
+    it('increments queued.human for kind discord with a human origin', () => {
+        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T1 }));
 
         expect(ledger.queued).toEqual({ human: 1, other: 0 });
     });
@@ -87,11 +99,23 @@ describe('reduceLedger: envelope_queued', () => {
 
         expect(ledger.queued).toEqual({ human: 0, other: 1 });
     });
+
+    it('does not increment queued.human for kind discord without a human origin', () => {
+        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'discord', at: T1 }));
+
+        expect(ledger.queued).toEqual({ human: 0, other: 1 });
+    });
+
+    it('increments queued.human for a non-discord kind carrying a human origin', () => {
+        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'perch', origin: { role: 'human', platform: 'discord' }, at: T1 }));
+
+        expect(ledger.queued).toEqual({ human: 1, other: 0 });
+    });
 });
 
 describe('reduceLedger: turn_submitted', () => {
     it('decrements queued.human for a discord envelope and opens the turn', () => {
-        const queued = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'discord', at: T1 }));
+        const queued = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T1 }));
 
         const ledger = reduceLedger(queued, frozenEvent({ type: 'turn_submitted', envelope: envelope({ queuedAt: T1, channelId: createChannelId('chan-1') }), at: T2 }));
 
@@ -103,18 +127,27 @@ describe('reduceLedger: turn_submitted', () => {
             queuedAt:     T1,
             envelopeId:   'env-1',
             channelId:    createChannelId('chan-1'),
+            origin:       { role: 'human', platform: 'discord' },
             phase:        null,
             interrupting: false,
         });
     });
 
     it('consumes exactly one of two queued human envelopes when the first one starts', () => {
-        const onceQueued = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'discord', at: T1 }));
-        const twiceQueued = reduceLedger(onceQueued, frozenEvent({ type: 'envelope_queued', kind: 'discord', at: T2 }));
+        const onceQueued = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T1 }));
+        const twiceQueued = reduceLedger(onceQueued, frozenEvent({ type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T2 }));
 
         const started = reduceLedger(twiceQueued, frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T3 }));
 
         expect(started.queued).toEqual({ human: 1, other: 0 });
+    });
+
+    it('decrements queued.other, not queued.human, for a discord-kind envelope with no human origin', () => {
+        const queued = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'discord', at: T1 }));
+
+        const ledger = reduceLedger(queued, frozenEvent({ type: 'turn_submitted', envelope: envelope({ origin: undefined }), at: T2 }));
+
+        expect(ledger.queued).toEqual({ human: 0, other: 0 });
     });
 
     it('consumes exactly one of two queued non-human envelopes when the first one starts', () => {

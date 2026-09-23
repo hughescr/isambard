@@ -107,7 +107,7 @@ describe('envelope contracts (#60)', () => {
     it('rejects a discord envelope carrying peer metadata', () => {
         // @ts-expect-error -- peer metadata belongs only to the adopted peer contract
         const discordWithPeer: Envelope = {
-            id: 'd1', mode: 'query', kind: 'discord', text: 't', channelId: createChannelId('c'), authorId: createUserId('a'), origin: { kind: 'human' }, createdAt, peer: { from: 'uds:/tmp/cc-socks/1.sock' },
+            id: 'd1', mode: 'query', kind: 'discord', text: 't', channelId: createChannelId('c'), authorId: createUserId('a'), origin: { role: 'human', platform: 'discord' }, createdAt, peer: { from: 'uds:/tmp/cc-socks/1.sock' },
         };
 
         expect<unknown>(discordWithPeer).toHaveProperty('peer');
@@ -124,7 +124,7 @@ describe('envelope contracts (#60)', () => {
 
     it('allows a replayed discord envelope without an author ID', () => {
         const replay: Envelope = {
-            id: 'd2', mode: 'query', kind: 'discord', text: 't', channelId: createChannelId('c'), origin: { kind: 'human' }, createdAt,
+            id: 'd2', mode: 'query', kind: 'discord', text: 't', channelId: createChannelId('c'), origin: { role: 'human', platform: 'discord' }, createdAt,
         };
 
         expect(replay).not.toHaveProperty('authorId');

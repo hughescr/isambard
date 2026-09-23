@@ -27,7 +27,7 @@ describe('createLedgerStore', () => {
     it('dispatch folds the event via reduceLedger and updates get()', () => {
         const store = createLedgerStore('conversation', { logger: mockLogger });
 
-        store.dispatch({ type: 'envelope_queued', kind: 'discord', at: T1 });
+        store.dispatch({ type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T1 });
 
         expect(store.get().queued).toEqual({ human: 1, other: 0 });
     });
@@ -37,7 +37,7 @@ describe('createLedgerStore', () => {
         const listener = jest.fn();
         store.subscribe(listener);
 
-        const event = { type: 'envelope_queued', kind: 'discord', at: T1 } as const;
+        const event = { type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T1 } as const;
         store.dispatch(event);
 
         expect(listener).toHaveBeenCalledTimes(1);
@@ -60,7 +60,7 @@ describe('createLedgerStore', () => {
         const unsubscribe = store.subscribe(listener);
 
         unsubscribe();
-        store.dispatch({ type: 'envelope_queued', kind: 'discord', at: T1 });
+        store.dispatch({ type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T1 });
 
         expect(listener).not.toHaveBeenCalled();
     });
@@ -75,7 +75,7 @@ describe('createLedgerStore', () => {
         store.subscribe(throwing);
         store.subscribe(other);
 
-        store.dispatch({ type: 'envelope_queued', kind: 'discord', at: T1 });
+        store.dispatch({ type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T1 });
 
         expect(other).toHaveBeenCalledTimes(1);
         expect(mockLogger.error).toHaveBeenCalledTimes(1);
@@ -89,14 +89,14 @@ describe('createLedgerStore', () => {
         store.subscribe(() => {
             if(!reentered) {
                 reentered = true;
-                store.dispatch({ type: 'envelope_queued', kind: 'discord', at: T1 });
+                store.dispatch({ type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T1 });
             }
         });
         store.subscribe((ledger) => {
             seenByB.push(ledger.queued.human);
         });
 
-        store.dispatch({ type: 'envelope_queued', kind: 'discord', at: T1 });
+        store.dispatch({ type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T1 });
 
         // Reentrant dispatch (human: 1 -> 2) notifies both subscribers immediately with ledger(2);
         // the outer dispatch's own loop then reaches subscriber B with the snapshot IT captured
@@ -111,7 +111,7 @@ describe('createLedgerStore', () => {
         store.subscribe(first);
         store.subscribe(second);
 
-        store.dispatch({ type: 'envelope_queued', kind: 'discord', at: T1 });
+        store.dispatch({ type: 'envelope_queued', kind: 'discord', origin: { role: 'human', platform: 'discord' }, at: T1 });
 
         expect(first).toHaveBeenCalledTimes(1);
         expect(second).toHaveBeenCalledTimes(1);

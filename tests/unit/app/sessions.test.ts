@@ -455,7 +455,7 @@ describe('createConversationConductor', () => {
 
         const submitPromise = conductor.submit(
             {
-                id: 'env-1', mode: 'query', kind: 'discord', text: 'hi', channelId: createChannelId('chan-1'), authorId: createUserId('user-42'), origin: { kind: 'human' }, createdAt: new Date(0),
+                id: 'env-1', mode: 'query', kind: 'discord', text: 'hi', channelId: createChannelId('chan-1'), authorId: createUserId('user-42'), origin: { role: 'human', platform: 'discord' }, createdAt: new Date(0),
             },
             { priority: 'urgent', requestingChannelId: createChannelId('chan-1') }
         );
@@ -1016,7 +1016,7 @@ describe('createConversationConductor', () => {
                     {
                         // Replayed Discord envelopes can lack the historical author's ID;
                         // this pins recordRecentAuthor's undefined guard.
-                        id: envelopeId, mode: 'query', kind: 'discord', text: 'hi', channelId: createChannelId('chan-1'), authorId, origin: { kind: 'human' }, createdAt: new Date(0),
+                        id: envelopeId, mode: 'query', kind: 'discord', text: 'hi', channelId: createChannelId('chan-1'), authorId, origin: { role: 'human', platform: 'discord' }, createdAt: new Date(0),
                     },
                     { priority: 'urgent', requestingChannelId: createChannelId('chan-1') }
                 );
@@ -1121,7 +1121,7 @@ describe('createConversationConductor', () => {
 
         function discordEnvelope(overrides: Partial<DiscordQueryEnvelope> = {}): DiscordQueryEnvelope {
             return {
-                id: 'discord-1', mode: 'query', kind: 'discord', text: 'hello', channelId: createChannelId('chan-C'), authorId: createUserId('user-U'), origin: { kind: 'human' }, createdAt: new Date(0), ...overrides,
+                id: 'discord-1', mode: 'query', kind: 'discord', text: 'hello', channelId: createChannelId('chan-C'), authorId: createUserId('user-U'), origin: { role: 'human', platform: 'discord' }, createdAt: new Date(0), ...overrides,
             };
         }
 

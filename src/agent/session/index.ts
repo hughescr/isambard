@@ -13,6 +13,7 @@ export type {
     SessionQueryFn,
     SessionOpenCause,
     EnvelopeKind,
+    EnvelopeOrigin,
     Envelope,
     QueryEnvelope,
     DiscordQueryEnvelope,
