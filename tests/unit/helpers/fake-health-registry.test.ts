@@ -35,7 +35,7 @@ describe('makeHealthRegistry', () => {
 
         const all = registry.getAll();
 
-        expect(all.bluesky).toEqual(makeHealthEntry());
+        expect(all.bsky).toEqual(makeHealthEntry());
     });
 
     test('getEntry and getState read the same per-service data as getAll', () => {

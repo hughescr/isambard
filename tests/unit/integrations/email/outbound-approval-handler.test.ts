@@ -2,11 +2,12 @@ import { describe, test, expect, beforeEach, mock, spyOn } from 'bun:test';
 import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
 import type { AllowlistInteractionHandler } from '../../../../src/integrations/discord/allowlist-interaction-handler';
 import { DRAFT_STATE_FLAG } from '../../../../src/integrations/email/draft-review-state';
-import { OutboundApprovalHandler, type OutboundApprovalHandlerDeps  } from '../../../../src/integrations/email/outbound-approval-handler';
+import { EmailOutboundApprovalHandler, type EmailOutboundApprovalHandlerDeps  } from '../../../../src/integrations/email/outbound-approval-handler';
 import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
 import type { ApprovalSagaBackend } from '../../../../src/services/approval-saga/backend';
 import { mockLogger } from '../../../setup';
 import type { NotifyParams } from '@/agent';
+import { BaseOutboundApprovalHandler } from '@/services';
 
 const ADMIN_USER_ID = '222222222222222222';
 
@@ -77,7 +78,7 @@ function makeSelectMenuInteraction(customId: string, selectedValues: string[] = 
     return { interaction, deferUpdate, editReply };
 }
 
-function makeDeps(overrides: Partial<OutboundApprovalHandlerDeps> = {}): OutboundApprovalHandlerDeps {
+function makeDeps(overrides: Partial<EmailOutboundApprovalHandlerDeps> = {}): EmailOutboundApprovalHandlerDeps {
     const mockWildDuck: WildDuckClient = {
         submitMessage:         mock(async () => { /* intentionally empty */ }),
         updateMessageMetadata: mock(async () => { /* intentionally empty */ }),
@@ -118,12 +119,19 @@ function makeDeferred(): { promise: Promise<void>, resolve: () => void } {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('OutboundApprovalHandler', () => {
+describe('EmailOutboundApprovalHandler', () => {
     beforeEach(() => {
         mockLogger.warn.mockClear();
         mockLogger.error.mockClear();
         mockLogger.info.mockClear();
         mockLogger.debug.mockClear();
+    });
+
+    test('is both an EmailOutboundApprovalHandler and a BaseOutboundApprovalHandler', () => {
+        const handler = new EmailOutboundApprovalHandler(makeDeps());
+
+        expect(handler).toBeInstanceOf(EmailOutboundApprovalHandler);
+        expect(handler).toBeInstanceOf(BaseOutboundApprovalHandler);
     });
 
     describe('async completion contracts', () => {
@@ -135,7 +143,7 @@ describe('OutboundApprovalHandler', () => {
                 started.resolve();
                 await gate.promise;
             });
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42');
             const operation = handler.handleModalSubmit(interaction);
 
@@ -156,7 +164,7 @@ describe('OutboundApprovalHandler', () => {
             const gate = makeDeferred();
             const started = makeDeferred();
             const deps = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, deferUpdate } = makeSelectMenuInteraction('email-allowlist-select:42', []);
             deferUpdate.mockImplementation(async () => {
                 started.resolve();
@@ -193,7 +201,7 @@ describe('OutboundApprovalHandler', () => {
                     handleModalSubmit: mock(async () => {}),
                 } as unknown as AllowlistInteractionHandler,
             });
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', ['target@example.com']);
             const operation = handler.handleSelectMenu(interaction);
 
@@ -212,7 +220,7 @@ describe('OutboundApprovalHandler', () => {
             const started = makeDeferred();
             const notify = mock((_params: NotifyParams) => true);
             const deps = makeDeps({ notify });
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
             editReply.mockImplementation(async () => {
                 started.resolve();
@@ -250,7 +258,7 @@ describe('OutboundApprovalHandler', () => {
             } else {
                 (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({ id: 42, to: [], cc: [] });
             }
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
             const operation = handler.handleButton(interaction);
 
@@ -268,7 +276,7 @@ describe('OutboundApprovalHandler', () => {
             const gate = makeDeferred();
             const started = makeDeferred();
             const deps = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
             editReply.mockImplementation(async () => {
                 started.resolve();
@@ -292,7 +300,7 @@ describe('OutboundApprovalHandler', () => {
         const acknowledgement = Promise.withResolvers<void>();
         const acknowledgementStarted = Promise.withResolvers<void>();
         const deps = makeDeps();
-        const handler = new OutboundApprovalHandler(deps);
+        const handler = new EmailOutboundApprovalHandler(deps);
         const { interaction, deferUpdate } = makeButtonInteraction('email-send-approve:42');
         deferUpdate.mockImplementation(async () => {
             acknowledgementStarted.resolve();
@@ -315,7 +323,7 @@ describe('OutboundApprovalHandler', () => {
     describe('handleButton()', () => {
         test('should return early for unknown prefix', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const parseId = spyOn(handler as unknown as { parseId: (raw: string) => number | null }, 'parseId');
             const { interaction, deferUpdate } = makeButtonInteraction('email-other:42');
 
@@ -328,7 +336,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should return early for malformed customId with no colon', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const parseId = spyOn(handler as unknown as { parseId: (raw: string) => number | null }, 'parseId');
             const { interaction, deferUpdate } = makeButtonInteraction('email-send-approve');
 
@@ -341,7 +349,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should return early for invalid UID', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, deferUpdate } = makeButtonInteraction('email-send-approve:notanumber');
 
             await handler.handleButton(interaction);
@@ -351,7 +359,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should read the customId uid as decimal, never as a 0x-prefixed hexadecimal number', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeButtonInteraction('email-send-approve:0x2a');
 
             await handler.handleButton(interaction);
@@ -367,7 +375,7 @@ describe('OutboundApprovalHandler', () => {
         describe('approve (email-send-approve)', () => {
             test('should deferUpdate, create saga, show success embed', async () => {
                 const deps    = makeDeps();
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, deferUpdate, editReply } = makeButtonInteraction('email-send-approve:42');
 
                 await handler.handleButton(interaction);
@@ -384,7 +392,7 @@ describe('OutboundApprovalHandler', () => {
                     throw activityError;
                 }) };
                 const deps    = makeDeps({ activityLogger });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approve:42');
 
                 await handler.handleButton(interaction);
@@ -402,7 +410,7 @@ describe('OutboundApprovalHandler', () => {
 
             test('should create saga with correct type and uid param', async () => {
                 const deps    = makeDeps();
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approve:99');
 
                 await handler.handleButton(interaction);
@@ -419,7 +427,7 @@ describe('OutboundApprovalHandler', () => {
 
             test('should NOT call allowlist interaction handler on plain approve', async () => {
                 const deps    = makeDeps();
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approve:42');
 
                 await handler.handleButton(interaction);
@@ -429,7 +437,7 @@ describe('OutboundApprovalHandler', () => {
 
             test('should show "Approved ✓" embed in green after successful approve', async () => {
                 const deps    = makeDeps();
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
 
                 await handler.handleButton(interaction);
@@ -449,7 +457,7 @@ describe('OutboundApprovalHandler', () => {
                     return true;
                 });
                 const deps    = makeDeps({ notify });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
                 editReply.mockImplementation(async () => {
                     order.push('editReply');
@@ -472,7 +480,7 @@ describe('OutboundApprovalHandler', () => {
                     throw new Error('notify boom');
                 });
                 const deps    = makeDeps({ notify });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
 
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
@@ -487,7 +495,7 @@ describe('OutboundApprovalHandler', () => {
             test('should still notify wake:true when the Discord editReply fails (approval is already persisted)', async () => {
                 const notify = mock((_params: NotifyParams) => true);
                 const deps    = makeDeps({ notify });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
                 editReply.mockRejectedValue(new Error('Discord timeout'));
 
@@ -515,7 +523,7 @@ describe('OutboundApprovalHandler', () => {
                     to: [{ address: 'target@example.com' }],
                     cc: [{ address: 'cc1@example.com' }, { address: 'cc2@example.com' }],
                 });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await handler.handleButton(interaction);
@@ -530,7 +538,7 @@ describe('OutboundApprovalHandler', () => {
 
             test('should call getMessage to get draft recipients for select menu', async () => {
                 const deps    = makeDeps();
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await handler.handleButton(interaction);
@@ -541,7 +549,7 @@ describe('OutboundApprovalHandler', () => {
             test('should fall back to simple approve when getMessage returns null (no recipients)', async () => {
                 const deps = makeDeps();
                 (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(null);
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
@@ -553,7 +561,7 @@ describe('OutboundApprovalHandler', () => {
             test('should fall back to simple approve when getMessage throws', async () => {
                 const deps = makeDeps();
                 (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockRejectedValue(new Error('fetch failed'));
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
@@ -569,7 +577,7 @@ describe('OutboundApprovalHandler', () => {
                     to: [],
                     cc: [],
                 });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
@@ -585,7 +593,7 @@ describe('OutboundApprovalHandler', () => {
                     to: [{ address: 'duplicate@example.com' }],
                     cc: [{ address: 'duplicate@example.com' }, { address: 'other@example.com' }],
                 });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await handler.handleButton(interaction);
@@ -614,7 +622,7 @@ describe('OutboundApprovalHandler', () => {
                     id: 42,
                     to: [{ address: 'recipient@example.com' }],
                 });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await handler.handleButton(interaction);
@@ -631,7 +639,7 @@ describe('OutboundApprovalHandler', () => {
                     to: [{ address: 'recipient@example.com' }],
                     cc: [],
                 });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await handler.handleButton(interaction);
@@ -655,7 +663,7 @@ describe('OutboundApprovalHandler', () => {
                     to: [{ address: 'to@example.com' }, { name: 'To Without Address' }],
                     cc: [{ address: 'cc@example.com' }, { name: 'Cc Without Address' }],
                 });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await handler.handleButton(interaction);
@@ -672,7 +680,7 @@ describe('OutboundApprovalHandler', () => {
                     to: [{ address: 'to1@example.com' }, { address: 'to2@example.com' }],
                     cc: [{ address: 'cc1@example.com' }],
                 });
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await handler.handleButton(interaction);
@@ -686,7 +694,7 @@ describe('OutboundApprovalHandler', () => {
                 const error = new Error('fetch failed');
                 const deps = makeDeps();
                 (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockRejectedValue(error);
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await handler.handleButton(interaction);
@@ -702,7 +710,7 @@ describe('OutboundApprovalHandler', () => {
         describe('reject (email-send-reject)', () => {
             test('should show a modal for rejection reason without deferUpdate', async () => {
                 const deps    = makeDeps();
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, deferUpdate, showModal } = makeButtonInteraction('email-send-reject:42');
 
                 await handler.handleButton(interaction);
@@ -714,7 +722,7 @@ describe('OutboundApprovalHandler', () => {
 
             test('should show modal with customId containing uid', async () => {
                 const deps    = makeDeps();
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, showModal } = makeButtonInteraction('email-send-reject:99');
 
                 await handler.handleButton(interaction);
@@ -726,7 +734,7 @@ describe('OutboundApprovalHandler', () => {
 
             test('should set rejection reason text input as not required', async () => {
                 const deps    = makeDeps();
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, showModal } = makeButtonInteraction('email-send-reject:42');
 
                 await handler.handleButton(interaction);
@@ -749,7 +757,7 @@ describe('OutboundApprovalHandler', () => {
             test('should call editReply with error message when sagaBackend.create fails', async () => {
                 const deps = makeDeps();
                 (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB write failed'));
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
 
                 await handler.handleButton(interaction);
@@ -764,7 +772,7 @@ describe('OutboundApprovalHandler', () => {
             test('should call editReply with embeds and components cleared on error', async () => {
                 const deps = makeDeps();
                 (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
 
                 await handler.handleButton(interaction);
@@ -780,7 +788,7 @@ describe('OutboundApprovalHandler', () => {
                 (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
                 editReply.mockRejectedValue(new Error('Discord error'));
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
 
                 await handler.handleButton(interaction);
 
@@ -793,7 +801,7 @@ describe('OutboundApprovalHandler', () => {
             test('should NOT call editReply when reject path (showModal) throws', async () => {
                 // Reject path does not defer, so editReply must not be called on error
                 const deps = makeDeps();
-                const handler = new OutboundApprovalHandler(deps);
+                const handler = new EmailOutboundApprovalHandler(deps);
                 const { interaction, editReply, showModal } = makeButtonInteraction('email-send-reject:42');
                 showModal.mockRejectedValue(new Error('modal failed'));
 
@@ -809,7 +817,7 @@ describe('OutboundApprovalHandler', () => {
     describe('handleModalSubmit()', () => {
         test('should return early for unknown prefix', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, deferUpdate } = makeModalInteraction('email-other-modal:42');
 
             await handler.handleModalSubmit(interaction);
@@ -820,7 +828,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should return early for malformed customId with no colon', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const parseId = spyOn(handler as unknown as { parseId: (raw: string) => number | null }, 'parseId');
             const { interaction, deferUpdate } = makeModalInteraction('email-send-reject-reason');
 
@@ -833,7 +841,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should return early for invalid UID', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, deferUpdate } = makeModalInteraction('email-send-reject-reason:notanumber');
 
             await handler.handleModalSubmit(interaction);
@@ -843,7 +851,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should deferUpdate, call updateMessageMetadata with reason, set flag via wildDuck, update embed, log info', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, deferUpdate, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
 
             await handler.handleModalSubmit(interaction);
@@ -871,7 +879,7 @@ describe('OutboundApprovalHandler', () => {
                 throw activityError;
             }) };
             const deps    = makeDeps({ activityLogger });
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42');
 
             await handler.handleModalSubmit(interaction);
@@ -889,7 +897,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should include rejectedAt timestamp in updateMessageMetadata call', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', 'Bad content');
 
             await handler.handleModalSubmit(interaction);
@@ -900,7 +908,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should NOT include to or subject in updateMessageMetadata call (stored as message fields)', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', 'Bad content');
 
             await handler.handleModalSubmit(interaction);
@@ -912,7 +920,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should NOT call getMessage during rejection (no metadata preservation needed)', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', 'Bad content');
 
             await handler.handleModalSubmit(interaction);
@@ -922,7 +930,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should show "Rejected" title with reason in description after reject', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Off topic');
 
             await handler.handleModalSubmit(interaction);
@@ -939,7 +947,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should use "No reason given" when reason is empty', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', '');
 
             await expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
@@ -950,7 +958,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should set flag via wildDuckClient.updateMessageFlags after rejection', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
 
             await handler.handleModalSubmit(interaction);
@@ -960,7 +968,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should NOT submit message after rejection (draft stays in Drafts)', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
 
             await handler.handleModalSubmit(interaction);
@@ -971,7 +979,7 @@ describe('OutboundApprovalHandler', () => {
         test('should log error and show error embed with original buttons when updateMessageMetadata fails', async () => {
             const deps = makeDeps();
             (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck error'));
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const originalComponents = [{ type: 1, components: [] }];
             const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate', {
                 embeds:     [{ data: { title: 'Pending Approval', description: 'please approve' } }],
@@ -1001,7 +1009,7 @@ describe('OutboundApprovalHandler', () => {
         test('should log error twice when WildDuck fails and error editReply also fails', async () => {
             const deps = makeDeps();
             (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck error'));
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42');
             editReply.mockRejectedValue(new Error('Discord also down'));
 
@@ -1020,7 +1028,7 @@ describe('OutboundApprovalHandler', () => {
                 return true;
             });
             const deps    = makeDeps({ notify });
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
             editReply.mockImplementation(async () => {
                 order.push('editReply');
@@ -1043,7 +1051,7 @@ describe('OutboundApprovalHandler', () => {
                 throw new Error('notify boom');
             });
             const deps    = makeDeps({ notify });
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
 
             await expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
@@ -1059,7 +1067,7 @@ describe('OutboundApprovalHandler', () => {
         test('should not fail the rejection when notify returns false', async () => {
             const notify = mock((_params: NotifyParams) => false);
             const deps    = makeDeps({ notify });
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
 
             await expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
@@ -1069,7 +1077,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should log warn and info with discordUpdated:false when editReply fails after WildDuck persist succeeds', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
             editReply.mockRejectedValue(new Error('Discord timeout'));
 
@@ -1089,7 +1097,7 @@ describe('OutboundApprovalHandler', () => {
     describe('handleSelectMenu()', () => {
         test('should return early for unknown prefix', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, deferUpdate } = makeSelectMenuInteraction('email-other-select:42', []);
 
             await handler.handleSelectMenu(interaction);
@@ -1100,7 +1108,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should return early for malformed customId with no colon', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, deferUpdate } = makeSelectMenuInteraction('email-allowlist-select', []);
 
             await handler.handleSelectMenu(interaction);
@@ -1111,7 +1119,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should return early for invalid UID', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, deferUpdate } = makeSelectMenuInteraction('email-allowlist-select:notanumber', []);
 
             await handler.handleSelectMenu(interaction);
@@ -1121,7 +1129,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should deferUpdate, create saga, update embed to Approved when recipients selected', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, deferUpdate, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', ['addr@example.com']);
 
             await handler.handleSelectMenu(interaction);
@@ -1138,7 +1146,7 @@ describe('OutboundApprovalHandler', () => {
                 throw activityError;
             }) };
             const deps    = makeDeps({ activityLogger });
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', ['addr@example.com']);
 
             await handler.handleSelectMenu(interaction);
@@ -1156,7 +1164,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should create saga with correct type and uid param', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:99', ['a@example.com']);
 
             await handler.handleSelectMenu(interaction);
@@ -1173,7 +1181,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should read the customId uid as decimal, never as a 0x-prefixed hexadecimal number', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:0x2a', []);
 
             await handler.handleSelectMenu(interaction);
@@ -1187,7 +1195,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should create the saga with a fresh UUID id, not the id parsed from the customId', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com']);
 
             await handler.handleSelectMenu(interaction);
@@ -1199,7 +1207,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should stamp the saga createdAt and updatedAt as ISO-8601 timestamps', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com']);
 
             await handler.handleSelectMenu(interaction);
@@ -1211,7 +1219,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should create saga and kick off allowlist saga for each selected recipient (person-based saga flow)', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com', 'b@example.com']);
 
             await handler.handleSelectMenu(interaction);
@@ -1222,7 +1230,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should create saga and not call startFromApproval when no recipients selected', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
             await handler.handleSelectMenu(interaction);
@@ -1234,7 +1242,7 @@ describe('OutboundApprovalHandler', () => {
         test('should show error editReply when sagaBackend.create throws', async () => {
             const deps = makeDeps();
             (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
             await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
@@ -1251,7 +1259,7 @@ describe('OutboundApprovalHandler', () => {
         test('should log error when editReply fails after sagaBackend.create error', async () => {
             const deps = makeDeps();
             (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
             editReply.mockRejectedValue(new Error('Discord error'));
 
@@ -1265,7 +1273,7 @@ describe('OutboundApprovalHandler', () => {
 
         test('should show Sent embed with no components on success', async () => {
             const deps    = makeDeps();
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
             await handler.handleSelectMenu(interaction);
@@ -1283,7 +1291,7 @@ describe('OutboundApprovalHandler', () => {
                 return true;
             });
             const deps    = makeDeps({ notify });
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com', 'b@example.com']);
             editReply.mockImplementation(async () => {
                 order.push('editReply');
@@ -1306,7 +1314,7 @@ describe('OutboundApprovalHandler', () => {
                 throw new Error('notify boom');
             });
             const deps    = makeDeps({ notify });
-            const handler = new OutboundApprovalHandler(deps);
+            const handler = new EmailOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
             await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();

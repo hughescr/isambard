@@ -110,7 +110,7 @@ describe('createHealthMCPServer', () => {
                     discord:                    makeHealthEntry({ state: 'offline' }),
                     'discord-channel-registry': makeHealthEntry({ state: 'disabled' }),
                     email:                      makeHealthEntry({ state: 'offline' }),
-                    bluesky:                    makeHealthEntry({ state: 'disabled' }),
+                    bsky:                       makeHealthEntry({ state: 'disabled' }),
                     caldav:                     makeHealthEntry({ state: 'offline' }),
                     dynamodb:                   makeHealthEntry({ state: 'disabled' }),
                 },
@@ -123,7 +123,7 @@ describe('createHealthMCPServer', () => {
             expect(result.isError).toBeFalsy();
             const parsed = JSON.parse(textContent(result.content[0])) as { services: Record<string, { state: string }> };
             expect(parsed.services.discord.state).toBe('offline');
-            expect(parsed.services.bluesky.state).toBe('disabled');
+            expect(parsed.services.bsky.state).toBe('disabled');
             expect(parsed.services.dynamodb.state).toBe('disabled');
         });
 

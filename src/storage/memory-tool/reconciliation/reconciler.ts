@@ -873,7 +873,7 @@ async function runPhaseC(
 /**
  * Run complete tag index reconciliation (Phase A + Phase B + Phase C)
  */
-export async function runReconciliation(
+export async function runTagIndexReconciliation(
     deps: ReconcilerDeps,
     options: ReconcilerOptions
 ): Promise<ReconciliationResult> {

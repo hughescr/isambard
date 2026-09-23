@@ -40,7 +40,7 @@ import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 import * as vecStoreModule from '@/storage/memory-vec-store';
 import type { IndexerJob } from '@/storage/memory-vec-store/types';
-import * as taskSessionModule from '@/storage/task-session';
+import * as sessionResumeModule from '@/storage/session-resume';
 
 const sessionConfig: SessionConfig = {
     compactThresholdPercent: 60,
@@ -239,7 +239,7 @@ describe('Vector feature wiring', () => {
                     updateMetadataOnly: mock(async () => ({})),
                 })),
                 // @ts-expect-error -- mocking constructor
-                spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})),
+                spyOn(sessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({})),
                 spyOn(vecStoreModule.VectorIndex, 'open').mockResolvedValue(
                     mockVectorIndex as unknown as Awaited<ReturnType<typeof vecStoreModule.VectorIndex.open>>
                 )

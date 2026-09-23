@@ -9,9 +9,9 @@ import { mockLogger } from '../../../../setup';
 import type { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { ReconcilerDeps, ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import {
-    createReconciliationScheduler,
-    type ReconciliationScheduler,
-    type ReconciliationSchedulerDeps
+    createTagIndexReconciliationScheduler,
+    type TagIndexReconciliationScheduler,
+    type TagIndexReconciliationSchedulerDeps
 } from '@/storage/memory-tool/reconciliation/scheduler';
 import type { ReconciliationConfig, ReconciliationResult } from '@/storage/memory-tool/reconciliation/types';
 import type { MemoryToolItemData } from '@/storage/memory-tool/types';
@@ -28,10 +28,10 @@ function makePhaseC(): ReconciliationResult['phaseC'] {
     };
 }
 
-describe('ReconciliationScheduler', () => {
+describe('TagIndexReconciliationScheduler', () => {
     let mockRunReconciliation: ReturnType<typeof mock>;
     let mockReconcilerDeps: ReconcilerDeps;
-    let scheduler: ReconciliationScheduler | null;
+    let scheduler: TagIndexReconciliationScheduler | null;
 
     beforeEach(() => {
         jest.useFakeTimers();
@@ -104,13 +104,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for scheduled trigger to fire
@@ -122,7 +122,7 @@ describe('ReconciliationScheduler', () => {
             expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Starting scheduled reconciliation' });
             expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ msg: 'Reconciliation complete' }));
             expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({ msg: 'Next reconciliation scheduled' }));
-            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ msg: 'Reconciliation scheduler started' }));
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({ msg: 'Tag index reconciliation scheduler started' }));
         });
 
         test('reports the armed delay and next trigger time', async () => {
@@ -134,7 +134,7 @@ describe('ReconciliationScheduler', () => {
                 scanPageSize:     25,
                 backoff:          { baseDelayMs: 100, maxAttempts: 3 },
             };
-            scheduler = createReconciliationScheduler({
+            scheduler = createTagIndexReconciliationScheduler({
                 config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps,
             });
 
@@ -164,13 +164,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait to ensure nothing happens
@@ -179,7 +179,7 @@ describe('ReconciliationScheduler', () => {
 
             // Should not have called reconciliation
             expect(mockRunReconciliation).not.toHaveBeenCalled();
-            expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Reconciliation scheduler disabled' });
+            expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Tag index reconciliation scheduler disabled' });
         });
     });
 
@@ -199,13 +199,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for immediate trigger (with small init delay)
@@ -214,7 +214,7 @@ describe('ReconciliationScheduler', () => {
 
             // Should have called reconciliation
             expect(mockRunReconciliation).toHaveBeenCalled();
-            expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Reconciliation scheduler in test mode - triggering on startup' });
+            expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Tag index reconciliation scheduler in test mode - triggering on startup' });
         });
 
         test('should NOT trigger immediately when testMode is present but triggerOnStartup is false', async () => {
@@ -232,13 +232,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Past the test-mode startup delay; a falsy triggerOnStartup must not fire it
@@ -262,13 +262,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Stop immediately
@@ -280,7 +280,7 @@ describe('ReconciliationScheduler', () => {
 
             // Should not have called reconciliation
             expect(mockRunReconciliation).not.toHaveBeenCalled();
-            expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Reconciliation scheduler stopped' });
+            expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Tag index reconciliation scheduler stopped' });
         });
 
         test('should abort running reconciliation via AbortSignal', async () => {
@@ -335,13 +335,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliationWithDelay,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for reconciliation to start
@@ -408,13 +408,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliationCapture,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
 
             // Run to completion (not aborted) — finishRun must clear the tracked
             // controller back to null so a later, unrelated stop() has nothing to abort.
@@ -441,13 +441,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for reconciliation to start
@@ -475,13 +475,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
 
             const state = scheduler.getState();
             expect(state.isRunning).toBe(false);
@@ -536,13 +536,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliationWithDelay,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for reconciliation to start
@@ -575,13 +575,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
 
             const result = await scheduler.triggerNow();
 
@@ -638,13 +638,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliationWithDelay,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for reconciliation to start
@@ -676,7 +676,7 @@ describe('ReconciliationScheduler', () => {
                 scanPageSize:     25,
                 backoff:          { baseDelayMs: 100, maxAttempts: 3 },
             };
-            scheduler = createReconciliationScheduler({
+            scheduler = createTagIndexReconciliationScheduler({
                 config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps,
             });
             scheduler.start();
@@ -701,7 +701,7 @@ describe('ReconciliationScheduler', () => {
                 scanPageSize:     25,
                 backoff:          { baseDelayMs: 100, maxAttempts: 3 },
             };
-            scheduler = createReconciliationScheduler({
+            scheduler = createTagIndexReconciliationScheduler({
                 config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps,
             });
             scheduler.start();
@@ -762,13 +762,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliationWithDelay,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait longer than 2 intervals but reconciliation hasn't completed
@@ -797,13 +797,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for first cycle (at 50ms)
@@ -833,13 +833,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for first cycle (at 50ms)
@@ -868,13 +868,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // No reconciliation at 5ms (well before 10000ms interval)
@@ -909,13 +909,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             // Do NOT call start()
 
             scheduler.notifyDrift();
@@ -938,13 +938,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start(); // start() returns early for disabled
 
             scheduler.notifyDrift();
@@ -967,13 +967,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Call notifyDrift three times in a row
@@ -1035,13 +1035,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliationWithDelay,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for reconciliation to start
@@ -1078,13 +1078,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // First drift hint → fires immediately
@@ -1118,13 +1118,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliationWithError,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // First drift hint → fires immediately (but reconciliation will error)
@@ -1153,13 +1153,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Without calling notifyDrift, it should still fire at normal interval
@@ -1190,13 +1190,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // In triggerOnStartup mode, notifyDrift should not cause a second trigger
@@ -1225,13 +1225,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliationWithError,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for trigger
@@ -1266,13 +1266,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliationWithError,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for first cycle (at 50ms)
@@ -1301,13 +1301,13 @@ describe('ReconciliationScheduler', () => {
                 },
             };
 
-            const deps: ReconciliationSchedulerDeps = {
+            const deps: TagIndexReconciliationSchedulerDeps = {
                 config,
                 runReconciliation: mockRunReconciliation,
                 reconcilerDeps:    mockReconcilerDeps,
             };
 
-            scheduler = createReconciliationScheduler(deps);
+            scheduler = createTagIndexReconciliationScheduler(deps);
             scheduler.start();
 
             // Wait for first run to complete
@@ -1350,7 +1350,7 @@ describe('ReconciliationScheduler', () => {
             scanPageSize:     25,
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
         };
-        scheduler = createReconciliationScheduler({
+        scheduler = createTagIndexReconciliationScheduler({
             config,
             runReconciliation: mockRunReconciliation,
             reconcilerDeps:    mockReconcilerDeps,
@@ -1394,7 +1394,7 @@ describe('ReconciliationScheduler', () => {
             scanPageSize:     25,
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
         };
-        scheduler = createReconciliationScheduler({
+        scheduler = createTagIndexReconciliationScheduler({
             config,
             runReconciliation: mockRunReconciliation,
             reconcilerDeps:    mockReconcilerDeps,
@@ -1422,7 +1422,7 @@ describe('ReconciliationScheduler', () => {
             enabled:          true, intervalMs:       50, operationDelayMs: 0, scanPageSize:     25,
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         const timerSpy = jest.spyOn(globalThis, 'setTimeout');
         try {
             scheduler.start();
@@ -1445,7 +1445,7 @@ describe('ReconciliationScheduler', () => {
             enabled:          true, intervalMs:       50, operationDelayMs: 0, scanPageSize:     25,
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         const timerSpy = jest.spyOn(globalThis, 'setTimeout');
         try {
             scheduler.start();
@@ -1468,7 +1468,7 @@ describe('ReconciliationScheduler', () => {
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
             testMode:         { triggerOnStartup: true },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         scheduler.start();
         // Drift replaces the startup timer with an immediate trigger bound to the first generation
         scheduler.notifyDrift();
@@ -1499,7 +1499,7 @@ describe('ReconciliationScheduler', () => {
             enabled:          true, intervalMs:       50, operationDelayMs: 0, scanPageSize:     25,
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         scheduler.start();
         jest.advanceTimersByTime(50);
         expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
@@ -1528,7 +1528,7 @@ describe('ReconciliationScheduler', () => {
             enabled:          true, intervalMs:       10_000, operationDelayMs: 0, scanPageSize:     25,
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         scheduler.start();
         const first = scheduler.triggerNow();
         scheduler.stop();
@@ -1547,7 +1547,7 @@ describe('ReconciliationScheduler', () => {
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
             testMode:         { triggerOnStartup: true },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         const timerSpy = jest.spyOn(globalThis, 'setTimeout');
         try {
             scheduler.start();
@@ -1571,7 +1571,7 @@ describe('ReconciliationScheduler', () => {
             enabled:          true, intervalMs:       10_000, operationDelayMs: 0, scanPageSize:     25,
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         scheduler.start();
         scheduler.notifyDrift();
         expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Tag index drift detected — accelerating next reconciliation cycle' });
@@ -1597,7 +1597,7 @@ describe('ReconciliationScheduler', () => {
             enabled:          true, intervalMs:       10_000, operationDelayMs: 0, scanPageSize:     25,
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         scheduler.start();
         mockLogger.info.mockClear();
         scheduler.notifyDrift();
@@ -1618,7 +1618,7 @@ describe('ReconciliationScheduler', () => {
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
             testMode:         { triggerOnStartup: true },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         const timerSpy = jest.spyOn(globalThis, 'setTimeout');
         try {
             scheduler.start();
@@ -1634,7 +1634,7 @@ describe('ReconciliationScheduler', () => {
             enabled:          true, intervalMs:       10_000, operationDelayMs: 0, scanPageSize:     25,
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         scheduler.start();
         const timerSpy = jest.spyOn(globalThis, 'setTimeout');
         try {
@@ -1657,7 +1657,7 @@ describe('ReconciliationScheduler', () => {
             enabled:          true, intervalMs:       50, operationDelayMs: 0, scanPageSize:     25,
             backoff:          { baseDelayMs: 100, maxAttempts: 3 },
         };
-        scheduler = createReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
+        scheduler = createTagIndexReconciliationScheduler({ config, runReconciliation: mockRunReconciliation, reconcilerDeps: mockReconcilerDeps });
         scheduler.start();
         jest.advanceTimersByTime(50);
         expect(mockRunReconciliation).toHaveBeenCalledTimes(1);

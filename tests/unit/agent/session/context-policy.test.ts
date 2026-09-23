@@ -604,7 +604,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
     });
 
     test('a disabled service produces no note, exactly like an online one', () => {
-        const healthRegistry = makeHealthRegistry({ entries: makeEntries({ bluesky: { state: 'disabled' } }), summary: undefined });
+        const healthRegistry = makeHealthRegistry({ entries: makeEntries({ bsky: { state: 'disabled' } }), summary: undefined });
         const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         expect(policy.healthNote()).toBeUndefined();
@@ -649,10 +649,10 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
 
         policy.healthNote();
         policy.markHealthSeen();
-        jest.spyOn(healthRegistry, 'getAll').mockReturnValue(makeEntries({ email: { state: 'offline' }, bluesky: { state: 'offline' } }));
-        jest.spyOn(healthRegistry, 'buildStatusSummary').mockReturnValue('email: offline\nbluesky: offline');
+        jest.spyOn(healthRegistry, 'getAll').mockReturnValue(makeEntries({ email: { state: 'offline' }, bsky: { state: 'offline' } }));
+        jest.spyOn(healthRegistry, 'buildStatusSummary').mockReturnValue('email: offline\nbsky: offline');
 
-        expect(policy.healthNote()).toBe('email: offline\nbluesky: offline');
+        expect(policy.healthNote()).toBe('email: offline\nbsky: offline');
     });
 
     test('a different lastError code for an already-offline service still counts as a real state change', () => {
@@ -708,13 +708,13 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
     });
 
     test('healthStateKey joins multi-service entries with | rather than concatenating them (a dropped separator must not let a two-service key collide with an unrelated single-service key)', () => {
-        // bluesky has no lastError (code falls back to ''), caldav's code is 'A'. Correctly
-        // joined with '|' the key is 'bluesky:offline:|caldav:offline:A'. If the '|' join were
+        // bsky has no lastError (code falls back to ''), caldav's code is 'A'. Correctly
+        // joined with '|' the key is 'bsky:offline:|caldav:offline:A'. If the '|' join were
         // ever weakened to '' (concatenation), the key would instead be
-        // 'bluesky:offline:caldav:offline:A' -- indistinguishable from a single bluesky entry
+        // 'bsky:offline:caldav:offline:A' -- indistinguishable from a single bsky entry
         // whose own lastError.code happens to be the literal text 'caldav:offline:A' below.
         const healthRegistry = makeHealthRegistry({
-            entries: makeEntries({ bluesky: { state: 'offline' }, caldav: { state: 'offline', lastError: { code: 'A', message: 'x' } } }),
+            entries: makeEntries({ bsky: { state: 'offline' }, caldav: { state: 'offline', lastError: { code: 'A', message: 'x' } } }),
             summary: 'two offline',
         });
         const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
@@ -722,7 +722,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
         policy.healthNote();
         policy.markHealthSeen();
 
-        jest.spyOn(healthRegistry, 'getAll').mockReturnValue(makeEntries({ bluesky: { state: 'offline', lastError: { code: 'caldav:offline:A', message: 'y' } } }));
+        jest.spyOn(healthRegistry, 'getAll').mockReturnValue(makeEntries({ bsky: { state: 'offline', lastError: { code: 'caldav:offline:A', message: 'y' } } }));
         jest.spyOn(healthRegistry, 'buildStatusSummary').mockReturnValue('one offline');
 
         // A real two-services-to-one-service transition must still be reported as a change --
@@ -741,29 +741,29 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
         ['the literal fallback candidate "unknown"', 'unknown'],
         ['the literal fallback candidate "undefined"', 'undefined'],
     ])('healthStateKey falls back to an empty string, never %s, when an entry has no lastError.code', (_label, craftedCode) => {
-        const healthRegistry = makeHealthRegistry({ entries: makeEntries({ bluesky: { state: 'offline' } }), summary: 'bluesky offline, no code' });
+        const healthRegistry = makeHealthRegistry({ entries: makeEntries({ bsky: { state: 'offline' } }), summary: 'bsky offline, no code' });
         const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         policy.healthNote();
         policy.markHealthSeen();
 
-        jest.spyOn(healthRegistry, 'getAll').mockReturnValue(makeEntries({ bluesky: { state: 'offline', lastError: { code: craftedCode, message: 'z' } } }));
-        jest.spyOn(healthRegistry, 'buildStatusSummary').mockReturnValue('bluesky offline, coded');
+        jest.spyOn(healthRegistry, 'getAll').mockReturnValue(makeEntries({ bsky: { state: 'offline', lastError: { code: craftedCode, message: 'z' } } }));
+        jest.spyOn(healthRegistry, 'buildStatusSummary').mockReturnValue('bsky offline, coded');
 
-        expect(policy.healthNote()).toBe('bluesky offline, coded');
+        expect(policy.healthNote()).toBe('bsky offline, coded');
     });
 
     test('healthStateKey builds lines in iteration (sorted) order, not reversed -- a shrinking outage must not collide with the prior multi-service key', () => {
-        // bluesky offline (no code) + caldav offline (code 'A') sorts as
-        // ["bluesky:offline:", "caldav:offline:A"]. Correctly pushed and joined with '|' that is
-        // "bluesky:offline:|caldav:offline:A". If `lines.push` were ever swapped for
-        // `lines.unshift`, the same two entries would instead build "caldav:offline:A|bluesky:offline:"
-        // (caldav's line first). bluesky then recovers (a real, must-report change) while caldav's
-        // lastError.code is crafted to read literally "A|bluesky:offline:" -- under the reversed
+        // bsky offline (no code) + caldav offline (code 'A') sorts as
+        // ["bsky:offline:", "caldav:offline:A"]. Correctly pushed and joined with '|' that is
+        // "bsky:offline:|caldav:offline:A". If `lines.push` were ever swapped for
+        // `lines.unshift`, the same two entries would instead build "caldav:offline:A|bsky:offline:"
+        // (caldav's line first). bsky then recovers (a real, must-report change) while caldav's
+        // lastError.code is crafted to read literally "A|bsky:offline:" -- under the reversed
         // build this single remaining line is byte-identical to the old two-line reversed key, so
         // a reversed `lines` array would wrongly report no change at all.
         const healthRegistry = makeHealthRegistry({
-            entries: makeEntries({ bluesky: { state: 'offline' }, caldav: { state: 'offline', lastError: { code: 'A', message: 'x' } } }),
+            entries: makeEntries({ bsky: { state: 'offline' }, caldav: { state: 'offline', lastError: { code: 'A', message: 'x' } } }),
             summary: 'two offline',
         });
         const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
@@ -771,10 +771,10 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
         policy.healthNote();
         policy.markHealthSeen();
 
-        jest.spyOn(healthRegistry, 'getAll').mockReturnValue(makeEntries({ caldav: { state: 'offline', lastError: { code: 'A|bluesky:offline:', message: 'y' } } }));
-        jest.spyOn(healthRegistry, 'buildStatusSummary').mockReturnValue('bluesky recovered');
+        jest.spyOn(healthRegistry, 'getAll').mockReturnValue(makeEntries({ caldav: { state: 'offline', lastError: { code: 'A|bsky:offline:', message: 'y' } } }));
+        jest.spyOn(healthRegistry, 'buildStatusSummary').mockReturnValue('bsky recovered');
 
-        expect(policy.healthNote()).toBe('bluesky recovered');
+        expect(policy.healthNote()).toBe('bsky recovered');
     });
 
     test('healthStateKey separates lines with | rather than , (a weakened separator must not let a shrinking outage collide with a crafted single-line key)', () => {

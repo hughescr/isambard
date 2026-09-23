@@ -133,7 +133,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     feedName: z.string().optional().describe("Feed name: 'for-you' (default), 'following', 'discover', or a raw at:// URI"),
                     ...FEED_PAGINATION_SCHEMA,
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('getFeed', async (args): Promise<CallToolResult> => {
                         const feedName = args.feedName ?? 'for-you';
                         const result   = await client.getFeed(feedName, args.limit, args.cursor);
@@ -157,7 +157,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     cursor:           z.string().optional().describe('Pagination cursor from previous response'),
                     includeProcessed: z.boolean().optional().default(false).describe('Include already-processed notifications (default: false)'),
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('getNotifications', async (args): Promise<CallToolResult> => {
                         const result = await client.getNotifications(args.limit, args.cursor);
 
@@ -197,7 +197,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     limit:  z.number().int().positive().optional().describe('Maximum number of results to return'),
                     cursor: z.string().optional().describe('Pagination cursor from previous response'),
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('searchPosts', async (args): Promise<CallToolResult> => {
                         const result = await client.searchPosts(args.query, args.limit, args.cursor);
                         return mcpJsonResult(result);
@@ -211,7 +211,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 {
                     uri: z.string().describe('AT URI of the post (e.g., at://did:plc:abc123/app.bsky.feed.post/xyz)'),
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('getPost', async (args): Promise<CallToolResult> => {
                         const result = await client.getPost(args.uri);
                         return mcpJsonResult(result);
@@ -225,7 +225,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 {
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('getProfile', async (args): Promise<CallToolResult> => {
                         const result = await client.getProfile(args.actor);
                         return mcpJsonResult(result);
@@ -240,7 +240,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                     ...FEED_PAGINATION_SCHEMA,
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('getAuthorFeed', async (args): Promise<CallToolResult> => {
                         const result = await client.getAuthorFeed(args.actor, args.limit, args.cursor);
 
@@ -266,7 +266,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     uri: z.string().describe('AT URI of the post to like'),
                     cid: z.string().describe('CID of the post to like'),
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('likePost', async (args): Promise<CallToolResult> => {
                         const post = await client.getPost(args.uri);
                         if(post.viewer?.like) {
@@ -284,7 +284,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 {
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('follow', async (args): Promise<CallToolResult> => {
                         const result = await client.follow(args.actor);
                         if(result.alreadyFollowing) {
@@ -301,7 +301,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 {
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('unfollow', async (args): Promise<CallToolResult> => {
                         const result = await client.unfollow(args.actor);
                         if(!result.wasFollowing) {
@@ -318,7 +318,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 {
                     text: z.string().describe('The text content of the post'),
                 },
-                withWriteHealthGuard(options.healthRegistry, 'bluesky', 'discord', options.reconnectionLoop,
+                withWriteHealthGuard(options.healthRegistry, 'bsky', 'discord', options.reconnectionLoop,
                     withToolErrorHandling('sendPost', async (args): Promise<CallToolResult> => {
                         const result           = await client.sendPost(args.text);
                         const rateLimitWarning = buildRateLimitWarning();
@@ -342,7 +342,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         cid: z.string().describe('CID of the thread root post'),
                     }).optional().describe('The thread root post (auto-resolved from parent for nested replies; only needed to override)'),
                 },
-                withWriteHealthGuard(options.healthRegistry, 'bluesky', 'discord', options.reconnectionLoop,
+                withWriteHealthGuard(options.healthRegistry, 'bsky', 'discord', options.reconnectionLoop,
                     withToolErrorHandling('replyToPost', async (args): Promise<CallToolResult> => {
                         // Fetch parent post to determine the target author and resolve thread root
                         const parentPost   = await client.getPost(args.parent.uri);
@@ -399,7 +399,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     readState: z.string().optional().describe("Filter by read state: 'unread' for only unread conversations"),
                     status:    z.string().optional().describe("Filter by status: 'request' or 'accepted'"),
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('listConversations', async (args): Promise<CallToolResult> => {
                         const result          = await client.listConversations(args.limit, args.cursor, args.readState, args.status);
                         const conversations   = result.conversations.map(convo => transformConversation(convo));
@@ -416,7 +416,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     limit:      z.number().int().positive().optional().describe('Maximum number of messages to return'),
                     cursor:     z.string().optional().describe('Pagination cursor from previous response'),
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('getDirectMessages', async (args): Promise<CallToolResult> => {
                         // Resolve each handle → DID
                         const resolvedRecipients = await Promise.all(
@@ -468,7 +468,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     recipients: z.array(z.string()).min(1).describe("Handles of the recipients (e.g., ['alice.bsky.social'])"),
                     text:       z.string().describe('The text content of the message'),
                 },
-                withWriteHealthGuard(options.healthRegistry, 'bluesky', 'discord', options.reconnectionLoop,
+                withWriteHealthGuard(options.healthRegistry, 'bsky', 'discord', options.reconnectionLoop,
                     withToolErrorHandling('sendDirectMessage', async (args): Promise<CallToolResult> => {
                         // Resolve each handle → profile
                         const resolvedRecipients = await Promise.all(
@@ -521,7 +521,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'listRejectedPosts',
                 'List Bluesky posts and DMs that were rejected by admin. Shows rejection reason and all parameters needed to retry with revised content.',
                 {},
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('listRejectedPosts', async (): Promise<CallToolResult> => {
                         if(!options.rejectionBackend) {
                             return mcpErrorResult('Rejection tracking is not configured');
@@ -541,7 +541,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 {
                     uuid: z.uuid().describe('UUID of the rejection to clear (from listRejectedPosts)'),
                 },
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('clearRejection', async (input): Promise<CallToolResult> => {
                         if(!options.rejectionBackend) {
                             return mcpErrorResult('Rejection tracking is not configured');
@@ -556,7 +556,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'clearAllRejections',
                 'Clear all rejected posts/DMs after reviewing them.',
                 {},
-                withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
+                withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('clearAllRejections', async (): Promise<CallToolResult> => {
                         if(!options.rejectionBackend) {
                             return mcpErrorResult('Rejection tracking is not configured');

@@ -20,7 +20,7 @@ export {
 
 // Reconciliation
 export {
-    runReconciliation,
-    createReconciliationScheduler,
-    type ReconciliationScheduler
+    runTagIndexReconciliation,
+    createTagIndexReconciliationScheduler,
+    type TagIndexReconciliationScheduler
 } from './reconciliation';

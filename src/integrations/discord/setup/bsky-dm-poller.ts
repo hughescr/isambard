@@ -4,7 +4,7 @@
  * `start()`/`stop()` shape: a second `start()` while running is a no-op, and `stop()` before any
  * `start()` is a no-op.
  *
- * Each tick is fully self-contained: skip entirely when `!healthRegistry.isAvailable('bluesky')`,
+ * Each tick is fully self-contained: skip entirely when `!healthRegistry.isAvailable('bsky')`,
  * otherwise list unread conversations and hand them to
  * `BskyCheckpointManager.processDirectMessages` — which does the dedupe work AND persists the
  * checkpoint itself, so this module never touches the checkpoint directly. When the batch of
@@ -67,7 +67,7 @@ export function createBskyDmPoller(options: BskyDmPollerOptions): BskyDmPoller {
     let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
     async function tick(): Promise<void> {
-        if(!healthRegistry.isAvailable('bluesky')) {
+        if(!healthRegistry.isAvailable('bsky')) {
             return;
         }
         try {
@@ -76,7 +76,7 @@ export function createBskyDmPoller(options: BskyDmPollerOptions): BskyDmPoller {
             if(newConvos.length > 0) {
                 const newestId = newestMessageId(newConvos);
                 const delivered = notify({
-                    source:    'bluesky-dm',
+                    source:    'bsky-dm',
                     text:      `${newConvos.length} new unread Bluesky conversation(s)`,
                     wake:      false,
                     dedupeKey: `bsky-dm:${newestId}`,

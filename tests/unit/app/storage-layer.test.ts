@@ -18,11 +18,11 @@ import type { ContactReconciliationScheduler } from '@/storage/contacts/reconcil
 import * as staticContactReconciliationModule from '@/storage/contacts/reconciliation/scheduler';
 import * as staticMemoryToolModule from '@/storage/memory-tool';
 import * as staticReconciliationModule from '@/storage/memory-tool/reconciliation';
-import type { ReconciliationScheduler } from '@/storage/memory-tool/reconciliation/scheduler';
+import type { TagIndexReconciliationScheduler } from '@/storage/memory-tool/reconciliation/scheduler';
 import * as staticVecStoreModule from '@/storage/memory-vec-store';
 import type { SessionJournalBackend } from '@/storage/session-journal';
 import * as staticSessionJournalModule from '@/storage/session-journal';
-import * as staticTaskSessionModule from '@/storage/task-session';
+import * as staticSessionResumeModule from '@/storage/session-resume';
 
 describe('createStorageLayer', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -80,21 +80,21 @@ describe('createStorageLayer', () => {
         spies.push(MemoryToolBackendSpy);
 
         // Mock reconciliation scheduler
-        const mockReconciliationScheduler = {
+        const mockTagIndexReconciliationScheduler = {
             start:       mock(() => {}),
             stop:        mock(() => {}),
             getState:    mock(() => ({ isRunning: false, currentPhase: null })),
             triggerNow:  mock(async () => undefined),
             notifyDrift: mock(() => {}),
         };
-        const createReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createReconciliationScheduler').mockReturnValue(mockReconciliationScheduler);
-        spies.push(createReconciliationSchedulerSpy);
+        const createTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue(mockTagIndexReconciliationScheduler);
+        spies.push(createTagIndexReconciliationSchedulerSpy);
 
         // Mock task persistence components
-        const mockTaskSessionBackend = {};
+        const mockSessionResumeBackend = {};
         // @ts-expect-error - Mocking constructor
-        const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => mockTaskSessionBackend);
-        spies.push(TaskSessionBackendSpy);
+        const SessionResumeBackendSpy = spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => mockSessionResumeBackend);
+        spies.push(SessionResumeBackendSpy);
 
         // Mock the P8 session journal backend
         const mockSessionJournalBackend = {} as unknown as SessionJournalBackend;
@@ -110,7 +110,7 @@ describe('createStorageLayer', () => {
         expect(result).toHaveProperty('holder');
         expect(result).toHaveProperty('tableName');
         expect(result).toHaveProperty('memoryBackend');
-        expect(result).toHaveProperty('reconciliationScheduler');
+        expect(result).toHaveProperty('tagIndexReconciliationScheduler');
         expect(result).toHaveProperty('sessionJournalBackend');
         expect(result).toHaveProperty('createJournal');
         expect(result).toHaveProperty('createResumeStore');
@@ -121,7 +121,7 @@ describe('createStorageLayer', () => {
         expect(result.holder.getDocClient()).toBe(mockDocClient);
         expect(result.tableName).toBe('TestTable');
         expect(result.memoryBackend).toBeDefined();
-        expect(result.reconciliationScheduler).toBeDefined();
+        expect(result.tagIndexReconciliationScheduler).toBeDefined();
         expect(result.sessionJournalBackend).toBe(mockSessionJournalBackend);
         expect(typeof result.createJournal).toBe('function');
         expect(typeof result.createResumeStore).toBe('function');
@@ -146,8 +146,8 @@ describe('createStorageLayer', () => {
             // @ts-expect-error - Mocking constructor
             const memoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => mockMemoryBackend);
             // @ts-expect-error - Mocking constructor
-            const taskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}));
-            spies.push(memoryToolBackendSpy, taskSessionBackendSpy);
+            const sessionResumeBackendSpy = spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}));
+            spies.push(memoryToolBackendSpy, sessionResumeBackendSpy);
         }
 
         test('sessionJournalBackend is constructed with the holder and tableName', async () => {
@@ -182,11 +182,11 @@ describe('createStorageLayer', () => {
             expect(journal).toBe(mockJournal);
         });
 
-        test('createResumeStore(role) builds a resume store bound to that role over taskSessionBackend', async () => {
+        test('createResumeStore(role) builds a resume store bound to that role over sessionResumeBackend', async () => {
             mockCommonDeps();
-            const mockTaskSessionBackend = {};
+            const mockSessionResumeBackend = {};
             // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => mockTaskSessionBackend));
+            spies.push(spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => mockSessionResumeBackend));
             const mockResumeStore = { load: mock(async () => undefined), save: mock(async () => undefined), clear: mock(async () => undefined) };
             const createResumeStoreSpy = spyOn(staticAgentSessionModule, 'createResumeStore').mockReturnValue(mockResumeStore);
             spies.push(createResumeStoreSpy);
@@ -194,7 +194,7 @@ describe('createStorageLayer', () => {
             const result = await staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig);
             const store = result.createResumeStore('perch');
 
-            expect(createResumeStoreSpy).toHaveBeenCalledWith(mockTaskSessionBackend, 'perch');
+            expect(createResumeStoreSpy).toHaveBeenCalledWith(mockSessionResumeBackend, 'perch');
             expect(store).toBe(mockResumeStore);
         });
     });
@@ -215,7 +215,7 @@ describe('createStorageLayer', () => {
                 updateMetadataOnly: mock(async () => ({})),
             })),
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         // Import and call createStorageLayer
@@ -246,7 +246,7 @@ describe('createStorageLayer', () => {
         spies.push(
             MemoryToolBackendSpy,
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         // Import and call createStorageLayer
@@ -284,11 +284,11 @@ describe('createStorageLayer', () => {
         // @ts-expect-error - Mocking constructor
         spies.push(spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => mockMemoryBackend));
 
-        const createReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createReconciliationScheduler').mockReturnValue({} as unknown as ReconciliationScheduler);
+        const createTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
         spies.push(
-            createReconciliationSchedulerSpy,
+            createTagIndexReconciliationSchedulerSpy,
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         // Import and call createStorageLayer with reconciliation enabled
@@ -296,8 +296,13 @@ describe('createStorageLayer', () => {
         const result = await createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig);
 
         // Verify reconciliation scheduler was created
-        expect(createReconciliationSchedulerSpy).toHaveBeenCalled();
-        expect(result.reconciliationScheduler).toBeDefined();
+        expect(createTagIndexReconciliationSchedulerSpy).toHaveBeenCalled();
+        expect(result.tagIndexReconciliationScheduler).toBeDefined();
+        // The scheduler factory's generic `runReconciliation` deps slot must be bound to the
+        // tag-index reconciler's own function by reference, not merely "some function".
+        expect(createTagIndexReconciliationSchedulerSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ runReconciliation: staticReconciliationModule.runTagIndexReconciliation })
+        );
     });
 
     test('should NOT create reconciliation scheduler when config is undefined', async () => {
@@ -316,11 +321,11 @@ describe('createStorageLayer', () => {
             }))
         );
 
-        const createReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createReconciliationScheduler').mockReturnValue({} as unknown as ReconciliationScheduler);
+        const createTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
         spies.push(
-            createReconciliationSchedulerSpy,
+            createTagIndexReconciliationSchedulerSpy,
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         // Import and call createStorageLayer without reconciliation config
@@ -328,8 +333,8 @@ describe('createStorageLayer', () => {
         const result = await createStorageLayer(mockDynamoDBConfig);
 
         // Verify reconciliation scheduler was NOT created
-        expect(createReconciliationSchedulerSpy).not.toHaveBeenCalled();
-        expect(result.reconciliationScheduler).toBeUndefined();
+        expect(createTagIndexReconciliationSchedulerSpy).not.toHaveBeenCalled();
+        expect(result.tagIndexReconciliationScheduler).toBeUndefined();
     });
 
     test('should NOT create reconciliation scheduler when config.enabled is false', async () => {
@@ -348,11 +353,11 @@ describe('createStorageLayer', () => {
             }))
         );
 
-        const createReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createReconciliationScheduler').mockReturnValue({} as unknown as ReconciliationScheduler);
+        const createTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
         spies.push(
-            createReconciliationSchedulerSpy,
+            createTagIndexReconciliationSchedulerSpy,
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         // Import and call createStorageLayer with reconciliation disabled
@@ -364,8 +369,8 @@ describe('createStorageLayer', () => {
         const result = await createStorageLayer(mockDynamoDBConfig, configWithDisabledReconciliation);
 
         // Verify reconciliation scheduler was NOT created
-        expect(createReconciliationSchedulerSpy).not.toHaveBeenCalled();
-        expect(result.reconciliationScheduler).toBeUndefined();
+        expect(createTagIndexReconciliationSchedulerSpy).not.toHaveBeenCalled();
+        expect(result.tagIndexReconciliationScheduler).toBeUndefined();
     });
 
     test('should throw when createDynamoDBClient throws', async () => {
@@ -478,10 +483,10 @@ describe('createStorageLayer', () => {
             }),
             // @ts-expect-error -- mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({ getTagIndexBackend: mock(() => ({})) })),
-            spyOn(staticReconciliationModule, 'createReconciliationScheduler').mockReturnValue(scheduler as unknown as ReconciliationScheduler),
+            spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue(scheduler as unknown as TagIndexReconciliationScheduler),
             spyOn(staticContactReconciliationModule, 'createContactReconciliationScheduler').mockReturnValue(contactScheduler as unknown as ContactReconciliationScheduler),
             // @ts-expect-error -- deliberate constructor failure
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => { throw failure; })
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => { throw failure; })
         );
         await expect(staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig, {
             enabled: true, intervalMs: 60_000, operationDelayMs: 0, scanPageSize: 25, strayLookupAgeThresholdMs: 300_000,
@@ -504,7 +509,7 @@ describe('createStorageLayer', () => {
                 updateMetadataOnly: mock(async () => ({})),
             })),
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         const { createStorageLayer } = staticStorageLayerModule;
@@ -529,7 +534,7 @@ describe('createStorageLayer', () => {
                 updateMetadataOnly: mock(async () => ({})),
             })),
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         const { createStorageLayer } = staticStorageLayerModule;
@@ -559,7 +564,7 @@ describe('createStorageLayer', () => {
                 updateMetadataOnly: mock(async () => ({})),
             })),
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         const { createStorageLayer } = staticStorageLayerModule;
@@ -589,7 +594,7 @@ describe('createStorageLayer', () => {
                 updateMetadataOnly: mock(async () => ({})),
             })),
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         // Mock VectorIndex.open to avoid real SQLite file creation
@@ -654,7 +659,7 @@ describe('createStorageLayer', () => {
 
         // Create a mock reconciliation scheduler with a notifyDrift spy
         const mockNotifyDrift = mock(() => {});
-        const mockReconciliationScheduler: ReconciliationScheduler = {
+        const mockTagIndexReconciliationScheduler: TagIndexReconciliationScheduler = {
             start:       mock(() => {}),
             stop:        mock(() => {}),
             getState:    mock(() => ({ isRunning: false as const, currentPhase: null, lastCompletedAt: undefined })),
@@ -662,9 +667,9 @@ describe('createStorageLayer', () => {
             notifyDrift: mockNotifyDrift,
         };
         spies.push(
-            spyOn(staticReconciliationModule, 'createReconciliationScheduler').mockReturnValue(mockReconciliationScheduler),
+            spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue(mockTagIndexReconciliationScheduler),
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         const { createStorageLayer } = staticStorageLayerModule;
@@ -693,7 +698,7 @@ describe('createStorageLayer', () => {
                 updateMetadataOnly: mock(async () => ({})),
             })),
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         // Spy on createContactReconciliationScheduler
@@ -746,7 +751,7 @@ describe('createStorageLayer', () => {
                     updateMetadataOnly: mock(async () => ({})),
                 })),
                 // @ts-expect-error -- mocking constructor
-                spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+                spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
             );
 
             let capturedSleep: ((ms: number, signal?: AbortSignal) => Promise<void>) | undefined;
@@ -904,7 +909,7 @@ describe('createStorageLayer', () => {
                 updateMetadataOnly: mock(async () => ({})),
             })),
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         const createContactSchedulerSpy = spyOn(staticContactReconciliationModule, 'createContactReconciliationScheduler').mockReturnValue({} as unknown as ContactReconciliationScheduler);
@@ -935,7 +940,7 @@ describe('createStorageLayer', () => {
                 updateMetadataOnly: mock(async () => ({})),
             })),
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})),
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({})),
             spyOn(staticVecStoreModule.VectorIndex, 'open').mockResolvedValue({
                 close: mock(() => {}),
             } as unknown as typeof staticVecStoreModule.VectorIndex.prototype)
@@ -954,7 +959,7 @@ describe('createStorageLayer', () => {
     });
 
     test('propagates a missing notifyDrift() on the reconciliation scheduler rather than silently succeeding', async () => {
-        // ReconciliationScheduler.notifyDrift is a required method, so a conforming scheduler
+        // TagIndexReconciliationScheduler.notifyDrift is a required method, so a conforming scheduler
         // always has one. This deliberately-nonconforming double proves the drift callback
         // really does call `reconciliationScheduler.notifyDrift()` unguarded.
         spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
@@ -985,11 +990,11 @@ describe('createStorageLayer', () => {
             stop:       mock(() => {}),
             getState:   mock(() => ({ isRunning: false as const, currentPhase: null, lastCompletedAt: undefined })),
             triggerNow: mock(async () => undefined),
-        } as unknown as ReconciliationScheduler;
+        } as unknown as TagIndexReconciliationScheduler;
         spies.push(
-            spyOn(staticReconciliationModule, 'createReconciliationScheduler').mockReturnValue(brokenScheduler),
+            spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue(brokenScheduler),
             // @ts-expect-error - Mocking constructor
-            spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}))
+            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
 
         const { createStorageLayer } = staticStorageLayerModule;

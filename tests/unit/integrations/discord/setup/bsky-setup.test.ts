@@ -67,7 +67,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
                 handleModalSubmit: mock(async () => {}),
             } as unknown as AllowlistInteractionHandler,
             memoryBackend:  makeMockMemoryBackend(),
-            healthRegistry: makeHealthRegistry({ available: { bluesky: true } }),
+            healthRegistry: makeHealthRegistry({ available: { bsky: true } }),
             notify:         mock((_params: NotifyParams) => true),
             _deps:          { sleep: noopSleep },
         };
@@ -258,7 +258,7 @@ describe('setupBsky — Q8 DM poller and notify threading', () => {
                 handleModalSubmit: mock(async () => {}),
             } as unknown as AllowlistInteractionHandler,
             memoryBackend:  makeMockMemoryBackend(),
-            healthRegistry: makeHealthRegistry({ available: { bluesky: true } }),
+            healthRegistry: makeHealthRegistry({ available: { bsky: true } }),
             notify:         mock((_params: NotifyParams) => true),
             _deps:          { sleep: noopSleep },
         };
@@ -297,7 +297,7 @@ describe('setupBsky — Q8 DM poller and notify threading', () => {
 
         expect(options.notify).toHaveBeenCalledTimes(1);
         expect((options.notify as ReturnType<typeof mock>).mock.calls[0]?.[0]).toMatchObject({
-            source: 'bluesky-dm', text: '1 new unread Bluesky conversation(s)', wake: false, dedupeKey: 'bsky-dm:msg-1',
+            source: 'bsky-dm', text: '1 new unread Bluesky conversation(s)', wake: false, dedupeKey: 'bsky-dm:msg-1',
         });
 
         result.dmPoller.stop();

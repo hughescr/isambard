@@ -59,7 +59,7 @@ export const DEFAULT_NOTIFICATION_DEDUPE_CAPACITY = 200;
 
 /** One notification submission — the shared contract every notification source conforms to (plan amendment B2). */
 export interface NotifyParams {
-    /** Short source tag, e.g. `'health'`, `'email'`, `'bluesky-dm'` — rendered into the envelope's `[NOTIFICATION · {source} · ...]` header. */
+    /** Short source tag, e.g. `'health'`, `'email'`, `'bsky-dm'` — rendered into the envelope's `[NOTIFICATION · {source} · ...]` header. */
     source:    string
     /** Human-readable notification body. */
     text:      string

@@ -7,11 +7,11 @@
 
 // Reconciler exports
 export {
-    runReconciliation
+    runTagIndexReconciliation
 } from './reconciler';
 
 // Scheduler exports
 export {
-    createReconciliationScheduler,
-    type ReconciliationScheduler
+    createTagIndexReconciliationScheduler,
+    type TagIndexReconciliationScheduler
 } from './scheduler';

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import {
-    runReconciliation,
+    runTagIndexReconciliation,
     type ReconcilerDeps,
     type ReconcilerOptions
 } from '@/storage/memory-tool/reconciliation/reconciler';
@@ -109,7 +109,7 @@ function launchAbortScenario(
         controller.abort();
     }
 
-    const promise = runReconciliation(deps, options);
+    const promise = runTagIndexReconciliation(deps, options);
     if(scenario === 'phase-a-pre-aborted') {
         onAbortBoundary();
     }
@@ -141,7 +141,7 @@ async function expectAbortBeforeMarker(
     expect(calls).toEqual(expectedCalls);
 }
 
-describe('runReconciliation abort settlement order', () => {
+describe('runTagIndexReconciliation abort settlement order', () => {
     test('Phase A pre-abort rejects before the second boundary microtask', async () => {
         expect.hasAssertions();
         // The outer throw wins at depth 2; delegating to async scanLayer loses this race.

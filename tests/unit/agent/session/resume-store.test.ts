@@ -1,6 +1,6 @@
 import { describe, test, expect, mock } from 'bun:test';
 import { createResumeStore } from '@/agent/session/resume-store';
-import type { TaskSessionBackend } from '@/storage/task-session/backend';
+import type { SessionResumeBackend } from '@/storage/session-resume/backend';
 
 const SESSION_ID_A = '550e8400-e29b-41d4-a716-446655440000';
 const SESSION_ID_B = '660e8400-e29b-41d4-a716-446655440001';
@@ -28,7 +28,7 @@ describe('createResumeStore', () => {
     // `sessionId` parameter. See the module doc on RoleResumeStore for the full explanation.
     test('returns a role-bound store exposing load/save/clear with no role parameter', () => {
         const backend = createFakeBackend();
-        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+        const store = createResumeStore(backend as unknown as SessionResumeBackend, 'conversation');
 
         expect(typeof store.load).toBe('function');
         expect(store.load).toHaveLength(0);
@@ -37,14 +37,14 @@ describe('createResumeStore', () => {
 
     test('load() resolves undefined when nothing was ever saved', async () => {
         const backend = createFakeBackend();
-        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+        const store = createResumeStore(backend as unknown as SessionResumeBackend, 'conversation');
 
         await expect(store.load()).resolves.toBeUndefined();
     });
 
     test('save() then load() round-trips the id', async () => {
         const backend = createFakeBackend();
-        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+        const store = createResumeStore(backend as unknown as SessionResumeBackend, 'conversation');
 
         await store.save(SESSION_ID_A);
 
@@ -54,7 +54,7 @@ describe('createResumeStore', () => {
 
     test('save() with the role baked in writes under that role, not another', async () => {
         const backend = createFakeBackend();
-        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'perch');
+        const store = createResumeStore(backend as unknown as SessionResumeBackend, 'perch');
 
         await store.save(SESSION_ID_A);
 
@@ -63,7 +63,7 @@ describe('createResumeStore', () => {
 
     test('a repeated save() of the same id is a no-op against the backend', async () => {
         const backend = createFakeBackend();
-        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+        const store = createResumeStore(backend as unknown as SessionResumeBackend, 'conversation');
         await store.save(SESSION_ID_A);
 
         await store.save(SESSION_ID_A);
@@ -73,7 +73,7 @@ describe('createResumeStore', () => {
 
     test('save() of a different id after an earlier save writes through again', async () => {
         const backend = createFakeBackend();
-        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+        const store = createResumeStore(backend as unknown as SessionResumeBackend, 'conversation');
         await store.save(SESSION_ID_A);
 
         await store.save(SESSION_ID_B);
@@ -84,7 +84,7 @@ describe('createResumeStore', () => {
 
     test('clear() deletes the stored id for this store\'s own role', async () => {
         const backend = createFakeBackend();
-        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+        const store = createResumeStore(backend as unknown as SessionResumeBackend, 'conversation');
         await store.save(SESSION_ID_A);
 
         await store.clear();
@@ -95,7 +95,7 @@ describe('createResumeStore', () => {
 
     test('a save() after clear() writes through again (not suppressed as a repeat)', async () => {
         const backend = createFakeBackend();
-        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+        const store = createResumeStore(backend as unknown as SessionResumeBackend, 'conversation');
         await store.save(SESSION_ID_A);
         await store.clear();
 
@@ -107,7 +107,7 @@ describe('createResumeStore', () => {
     test('save() propagates a backend write rejection to its caller', async () => {
         const backend = createFakeBackend();
         backend.setSessionIdForRole.mockImplementationOnce(() => Promise.reject(new Error('write boom')));
-        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+        const store = createResumeStore(backend as unknown as SessionResumeBackend, 'conversation');
 
         await expect(store.save(SESSION_ID_A)).rejects.toThrow('write boom');
     });
@@ -115,7 +115,7 @@ describe('createResumeStore', () => {
     test('clear() propagates a backend clear rejection to its caller', async () => {
         const backend = createFakeBackend();
         backend.clearSessionIdForRole.mockImplementationOnce(() => Promise.reject(new Error('clear boom')));
-        const store = createResumeStore(backend as unknown as TaskSessionBackend, 'conversation');
+        const store = createResumeStore(backend as unknown as SessionResumeBackend, 'conversation');
 
         await expect(store.clear()).rejects.toThrow('clear boom');
     });

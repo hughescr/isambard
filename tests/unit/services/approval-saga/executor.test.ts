@@ -104,7 +104,7 @@ describe('createSagaExecutor', () => {
             expect(executors.bsky_reply).not.toHaveBeenCalled();
             expect(backend.updateState).not.toHaveBeenCalled();
             expect(logger.info).toHaveBeenCalledWith(
-                expect.objectContaining({ sagaId: SAGA_UUID, service: 'bluesky' }),
+                expect.objectContaining({ sagaId: SAGA_UUID, service: 'bsky' }),
                 expect.stringContaining('unavailable')
             );
         });
@@ -261,8 +261,8 @@ describe('createSagaExecutor', () => {
 
     describe('getRequiredService mapping', () => {
         test.each([
-            ['bsky_reply', 'bluesky'],
-            ['bsky_dm',    'bluesky'],
+            ['bsky_reply', 'bsky'],
+            ['bsky_dm',    'bsky'],
             ['email_send', 'email'],
             ['email_reply', 'email'],
         ] as const)('%s maps to service %s', async (sagaType, expectedService) => {

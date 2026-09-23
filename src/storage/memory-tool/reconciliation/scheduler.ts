@@ -17,7 +17,7 @@ import type { ReconciliationConfig, ReconciliationState, ReconciliationResult } 
 /**
  * Dependencies for the reconciliation scheduler.
  */
-export interface ReconciliationSchedulerDeps {
+export interface TagIndexReconciliationSchedulerDeps {
     /** Configuration */
     config:            ReconciliationConfig
     /** The reconciler function to call */
@@ -29,7 +29,7 @@ export interface ReconciliationSchedulerDeps {
 /**
  * Interface for the reconciliation scheduler.
  */
-export interface ReconciliationScheduler {
+export interface TagIndexReconciliationScheduler {
     /** Start the scheduler */
     start(): void
     /** Stop the scheduler (cancels running reconciliation) */
@@ -61,9 +61,9 @@ export interface ReconciliationScheduler {
  * 5. Tracks state (isRunning, runStartedAt, lastCompletedAt)
  *
  * @param deps - Scheduler dependencies
- * @returns ReconciliationScheduler instance
+ * @returns TagIndexReconciliationScheduler instance
  */
-export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps): ReconciliationScheduler {
+export function createTagIndexReconciliationScheduler(deps: TagIndexReconciliationSchedulerDeps): TagIndexReconciliationScheduler {
     const { config, runReconciliation, reconcilerDeps } = deps;
 
     // Internal state
@@ -237,7 +237,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
         start(): void {
             // Stryker disable next-line llm: config.enabled is a required boolean (zod schema default), so !config.enabled and config.enabled === false are equivalent for every value
             if(!config.enabled) {
-                logger.info({ msg: 'Reconciliation scheduler disabled' });
+                logger.info({ msg: 'Tag index reconciliation scheduler disabled' });
                 return;
             }
 
@@ -247,7 +247,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
             // Check for test mode
             // Stryker disable next-line llm: testMode.triggerOnStartup is boolean|undefined (zod optional), so this truthy check and === true are equivalent for every value
             if(config.testMode?.triggerOnStartup) {
-                logger.info({ msg: 'Reconciliation scheduler in test mode - triggering on startup' });
+                logger.info({ msg: 'Tag index reconciliation scheduler in test mode - triggering on startup' });
                 // Small delay to ensure initialization
                 const runGeneration = generation;
                 schedulerTimeout = setTimeout(() => {
@@ -266,7 +266,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
 
             logger.info({
                 intervalMs: config.intervalMs,
-                msg:        'Reconciliation scheduler started',
+                msg:        'Tag index reconciliation scheduler started',
             });
         },
 
@@ -294,7 +294,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
 
             driftPending = false;
 
-            logger.info({ msg: 'Reconciliation scheduler stopped' });
+            logger.info({ msg: 'Tag index reconciliation scheduler stopped' });
         },
 
         getState(): Readonly<ReconciliationState> {

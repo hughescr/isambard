@@ -34,7 +34,7 @@ function getRequiredService(type: ApprovalSagaType): ServiceName {
     switch(type) {
         case 'bsky_reply':
         case 'bsky_dm': {
-            return 'bluesky';
+            return 'bsky';
         }
         case 'email_send':
         case 'email_reply': {

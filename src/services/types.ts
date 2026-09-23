@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ServiceLifecycleState } from './lifecycle-orchestrator';
 
-export const serviceNameSchema = z.enum(['discord', 'discord-channel-registry', 'email', 'bluesky', 'caldav', 'dynamodb']);
+export const serviceNameSchema = z.enum(['discord', 'discord-channel-registry', 'email', 'bsky', 'caldav', 'dynamodb']);
 export type ServiceName = z.infer<typeof serviceNameSchema>;
 
 export type HealthState = ServiceLifecycleState;

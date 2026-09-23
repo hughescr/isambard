@@ -82,7 +82,7 @@ describe('mcpServiceUnavailableResult', () => {
 
     test('state=offline → message contains "retry"', () => {
         const entry = makeEntry({ state: 'offline' });
-        const result = mcpServiceUnavailableResult('bluesky', entry);
+        const result = mcpServiceUnavailableResult('bsky', entry);
         expect(result.isError).toBe(true);
         const text = (result.content[0] as { text: string }).text;
         expect(text).toContain('retry');
@@ -90,7 +90,7 @@ describe('mcpServiceUnavailableResult', () => {
 
     test('state=recovering → treated as offline, message contains "retry"', () => {
         const entry = makeEntry({ state: 'recovering' });
-        const result = mcpServiceUnavailableResult('bluesky', entry);
+        const result = mcpServiceUnavailableResult('bsky', entry);
         const text = (result.content[0] as { text: string }).text;
         expect(text).toContain('retry');
     });
@@ -174,9 +174,9 @@ describe('mcpServiceUnavailableResult', () => {
     });
 
     test('message includes the service name', () => {
-        const result = mcpServiceUnavailableResult('bluesky', makeEntry({ state: 'offline' }));
+        const result = mcpServiceUnavailableResult('bsky', makeEntry({ state: 'offline' }));
         const text = (result.content[0] as { text: string }).text;
-        expect(text).toContain('bluesky');
+        expect(text).toContain('bsky');
     });
 
     test('message starts with "The <service> service is currently <state>"', () => {
@@ -286,31 +286,31 @@ describe('checkServiceHealth', () => {
 describe('checkWriteServiceHealth', () => {
     test('when both available → returns undefined', () => {
         const registry = makeRegistry(
-            { bluesky: true, discord: true },
-            { bluesky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'online' }) }
+            { bsky: true, discord: true },
+            { bsky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'online' }) }
         );
-        const result = checkWriteServiceHealth(registry, 'bluesky', 'discord');
+        const result = checkWriteServiceHealth(registry, 'bsky', 'discord');
         expect(result).toBeUndefined();
     });
 
     test('when primary unavailable → returns error about primary service', () => {
         const registry = makeRegistry(
-            { bluesky: false, discord: true },
-            { bluesky: makeEntry({ state: 'offline' }), discord: makeEntry({ state: 'online' }) }
+            { bsky: false, discord: true },
+            { bsky: makeEntry({ state: 'offline' }), discord: makeEntry({ state: 'online' }) }
         );
-        const result = checkWriteServiceHealth(registry, 'bluesky', 'discord');
+        const result = checkWriteServiceHealth(registry, 'bsky', 'discord');
         expect(result).toBeDefined();
         expect(result!.isError).toBe(true);
         const text = (result!.content[0] as { text: string }).text;
-        expect(text).toContain('bluesky');
+        expect(text).toContain('bsky');
     });
 
     test('when primary available but approval unavailable → error mentioning approval service', () => {
         const registry = makeRegistry(
-            { bluesky: true, discord: false },
-            { bluesky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'offline' }) }
+            { bsky: true, discord: false },
+            { bsky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'offline' }) }
         );
-        const result = checkWriteServiceHealth(registry, 'bluesky', 'discord');
+        const result = checkWriteServiceHealth(registry, 'bsky', 'discord');
         expect(result).toBeDefined();
         expect(result!.isError).toBe(true);
         const text = (result!.content[0] as { text: string }).text;
@@ -321,32 +321,32 @@ describe('checkWriteServiceHealth', () => {
 
     test('approval unavailable message also mentions primary service being online', () => {
         const registry = makeRegistry(
-            { bluesky: true, discord: false },
-            { bluesky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'offline' }) }
+            { bsky: true, discord: false },
+            { bsky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'offline' }) }
         );
-        const result = checkWriteServiceHealth(registry, 'bluesky', 'discord');
+        const result = checkWriteServiceHealth(registry, 'bsky', 'discord');
         const text = (result!.content[0] as { text: string }).text;
-        expect(text).toContain('bluesky');
+        expect(text).toContain('bsky');
         expect(text).toContain('online');
     });
 
     test('passes reconnectionLoop to primary check', () => {
         const registry = makeRegistry(
-            { bluesky: false, discord: true },
-            { bluesky: makeEntry({ state: 'offline' }), discord: makeEntry({ state: 'online' }) }
+            { bsky: false, discord: true },
+            { bsky: makeEntry({ state: 'offline' }), discord: makeEntry({ state: 'online' }) }
         );
         const loop = makeLoop();
-        checkWriteServiceHealth(registry, 'bluesky', 'discord', loop);
+        checkWriteServiceHealth(registry, 'bsky', 'discord', loop);
         expect(loop.triggerNow).toHaveBeenCalledTimes(1);
     });
 
     test('reconnectionLoop NOT triggered when primary available and approval unavailable', () => {
         const registry = makeRegistry(
-            { bluesky: true, discord: false },
-            { bluesky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'offline' }) }
+            { bsky: true, discord: false },
+            { bsky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'offline' }) }
         );
         const loop = makeLoop();
-        checkWriteServiceHealth(registry, 'bluesky', 'discord', loop);
+        checkWriteServiceHealth(registry, 'bsky', 'discord', loop);
         // Primary check passes (available), so loop is not triggered
         expect(loop.triggerNow).not.toHaveBeenCalled();
     });
@@ -411,7 +411,7 @@ describe('withHealthGuard', () => {
 describe('withWriteHealthGuard', () => {
     test('when healthRegistry is undefined → handler is called directly', async () => {
         const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
-        const wrapped = withWriteHealthGuard(undefined, 'bluesky', 'discord', undefined, handler);
+        const wrapped = withWriteHealthGuard(undefined, 'bsky', 'discord', undefined, handler);
         const result = await wrapped({ x: 1 });
         expect(handler).toHaveBeenCalledTimes(1);
         expect(handler).toHaveBeenCalledWith({ x: 1 });
@@ -420,11 +420,11 @@ describe('withWriteHealthGuard', () => {
 
     test('when both services healthy → handler is called', async () => {
         const registry = makeRegistry(
-            { bluesky: true, discord: true },
-            { bluesky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'online' }) }
+            { bsky: true, discord: true },
+            { bsky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'online' }) }
         );
         const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
-        const wrapped = withWriteHealthGuard(registry, 'bluesky', 'discord', undefined, handler);
+        const wrapped = withWriteHealthGuard(registry, 'bsky', 'discord', undefined, handler);
         const result = await wrapped({ x: 2 });
         expect(handler).toHaveBeenCalledTimes(1);
         expect(handler).toHaveBeenCalledWith({ x: 2 });
@@ -433,25 +433,25 @@ describe('withWriteHealthGuard', () => {
 
     test('when primary service unhealthy → health error returned, handler not called', async () => {
         const registry = makeRegistry(
-            { bluesky: false, discord: true },
-            { bluesky: makeEntry({ state: 'offline' }), discord: makeEntry({ state: 'online' }) }
+            { bsky: false, discord: true },
+            { bsky: makeEntry({ state: 'offline' }), discord: makeEntry({ state: 'online' }) }
         );
         const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
-        const wrapped = withWriteHealthGuard(registry, 'bluesky', 'discord', undefined, handler);
+        const wrapped = withWriteHealthGuard(registry, 'bsky', 'discord', undefined, handler);
         const result = await wrapped({ x: 3 });
         expect(handler).not.toHaveBeenCalled();
         expect(result.isError).toBe(true);
         const text = (result.content[0] as { text: string }).text;
-        expect(text).toContain('bluesky');
+        expect(text).toContain('bsky');
     });
 
     test('when primary healthy but approval service unhealthy → error returned, handler not called', async () => {
         const registry = makeRegistry(
-            { bluesky: true, discord: false },
-            { bluesky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'offline' }) }
+            { bsky: true, discord: false },
+            { bsky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'offline' }) }
         );
         const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
-        const wrapped = withWriteHealthGuard(registry, 'bluesky', 'discord', undefined, handler);
+        const wrapped = withWriteHealthGuard(registry, 'bsky', 'discord', undefined, handler);
         const result = await wrapped({ x: 4 });
         expect(handler).not.toHaveBeenCalled();
         expect(result.isError).toBe(true);
@@ -462,12 +462,12 @@ describe('withWriteHealthGuard', () => {
 
     test('when primary unhealthy with reconnectionLoop → loop is triggered', async () => {
         const registry = makeRegistry(
-            { bluesky: false, discord: true },
-            { bluesky: makeEntry({ state: 'offline' }), discord: makeEntry({ state: 'online' }) }
+            { bsky: false, discord: true },
+            { bsky: makeEntry({ state: 'offline' }), discord: makeEntry({ state: 'online' }) }
         );
         const loop = makeLoop();
         const handler = mock(async (_args: unknown) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
-        const wrapped = withWriteHealthGuard(registry, 'bluesky', 'discord', loop, handler);
+        const wrapped = withWriteHealthGuard(registry, 'bsky', 'discord', loop, handler);
         await wrapped({});
         expect(loop.triggerNow).toHaveBeenCalledTimes(1);
         expect(handler).not.toHaveBeenCalled();

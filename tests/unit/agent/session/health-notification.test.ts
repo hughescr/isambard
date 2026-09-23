@@ -111,13 +111,13 @@ describe('createHealthOutageCoalescer', () => {
         const coalescer = createHealthOutageCoalescer({ clock, notify });
 
         // online -> offline (epoch 1)
-        coalescer.report(change({ service: 'bluesky', previousState: 'online', newState: 'offline', epoch: 1 }));
+        coalescer.report(change({ service: 'bsky', previousState: 'online', newState: 'offline', epoch: 1 }));
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
         expect(notify).toHaveBeenCalledTimes(1);
 
         // ... recovering -> offline again, same epoch (CONNECT_FAIL never increments epoch)
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS * 10);
-        coalescer.report(change({ service: 'bluesky', previousState: 'recovering', newState: 'offline', epoch: 1 }));
+        coalescer.report(change({ service: 'bsky', previousState: 'recovering', newState: 'offline', epoch: 1 }));
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
 
         expect(notify).toHaveBeenCalledTimes(1);
@@ -126,12 +126,12 @@ describe('createHealthOutageCoalescer', () => {
     test('a genuinely new epoch for the same service notifies again', () => {
         const coalescer = createHealthOutageCoalescer({ clock, notify });
 
-        coalescer.report(change({ service: 'bluesky', epoch: 1 }));
+        coalescer.report(change({ service: 'bsky', epoch: 1 }));
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
         expect(notify).toHaveBeenCalledTimes(1);
 
         // CONNECTION_LOST bumped the epoch: a genuinely new outage episode.
-        coalescer.report(change({ service: 'bluesky', epoch: 2 }));
+        coalescer.report(change({ service: 'bsky', epoch: 2 }));
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
         expect(notify).toHaveBeenCalledTimes(2);
     });
@@ -185,20 +185,20 @@ describe('createHealthOutageCoalescer', () => {
         notify.mockReturnValueOnce(false);
         const coalescer = createHealthOutageCoalescer({ clock, notify });
 
-        coalescer.report(change({ service: 'bluesky', epoch: 1 }));
+        coalescer.report(change({ service: 'bsky', epoch: 1 }));
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
         expect(notify).toHaveBeenCalledTimes(1);
 
         // Still offline, same epoch (e.g. a subsequent reconnect attempt failing again): since
         // the first flush was never actually delivered, this reopens a batch and retries instead
         // of being suppressed by "already reported" memory that was never actually earned.
-        coalescer.report(change({ service: 'bluesky', epoch: 1 }));
+        coalescer.report(change({ service: 'bsky', epoch: 1 }));
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
         expect(notify).toHaveBeenCalledTimes(2);
 
         // The second flush DID deliver (default mock), so a further same-epoch repeat is
         // suppressed as usual.
-        coalescer.report(change({ service: 'bluesky', epoch: 1 }));
+        coalescer.report(change({ service: 'bsky', epoch: 1 }));
         clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
         expect(notify).toHaveBeenCalledTimes(2);
     });
@@ -206,7 +206,7 @@ describe('createHealthOutageCoalescer', () => {
     describe('stop()', () => {
         test('cancels a pending flush timer: notify is never called even long after the window elapses, and the clock has no timer left pending', () => {
             const coalescer = createHealthOutageCoalescer({ clock, notify });
-            coalescer.report(change({ service: 'bluesky', epoch: 1 }));
+            coalescer.report(change({ service: 'bsky', epoch: 1 }));
             expect(clock.pending()).toBe(1);
 
             coalescer.stop();
@@ -226,10 +226,10 @@ describe('createHealthOutageCoalescer', () => {
 
         test('does not otherwise disable the coalescer: a report() after stop() opens a fresh batch as usual', () => {
             const coalescer = createHealthOutageCoalescer({ clock, notify });
-            coalescer.report(change({ service: 'bluesky', epoch: 1 }));
+            coalescer.report(change({ service: 'bsky', epoch: 1 }));
             coalescer.stop();
 
-            coalescer.report(change({ service: 'bluesky', epoch: 1 }));
+            coalescer.report(change({ service: 'bsky', epoch: 1 }));
             clock.advance(DEFAULT_HEALTH_OUTAGE_WINDOW_MS);
 
             expect(notify).toHaveBeenCalledTimes(1);
@@ -307,7 +307,7 @@ describe('createHealthNotificationListener', () => {
     test('a predicate-rejected offline -> online recovery notifies accumulate', () => {
         predicate.mockReturnValue(false);
         const listener = buildListener();
-        const input = change({ previousState: 'offline', newState: 'online', service: 'bluesky', epoch: 3 });
+        const input = change({ previousState: 'offline', newState: 'online', service: 'bsky', epoch: 3 });
 
         listener(input);
 
@@ -316,10 +316,10 @@ describe('createHealthNotificationListener', () => {
         const [params] = notify.mock.calls[0];
         expect(params.wake).toBe(false);
         expect(params.source).toBe('health');
-        expect(params.dedupeKey).toBe('health:bluesky:3:online');
+        expect(params.dedupeKey).toBe('health:bsky:3:online');
         // Review finding: pins the exact accumulate body so a StringLiteral mutant emptying it
         // (or an LLM mutant swapping previousState/newState) is caught here rather than surviving
         // unasserted.
-        expect(params.text).toBe('bluesky: offline -> online');
+        expect(params.text).toBe('bsky: offline -> online');
     });
 });

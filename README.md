@@ -390,9 +390,9 @@ src/
 │   │       ├── types.ts             # Reconciliation config, state, and result types
 │   │       ├── reconciler.ts        # Three-phase reconciler implementation
 │   │       └── scheduler.ts         # Interval-based reconciliation scheduler with abort support
-│   ├── task-session/                # Claude Agent SDK session ID persistence
-│   │   ├── types.ts                 # SessionId branded type and TaskSessionItem DynamoDB record
-│   │   └── backend.ts               # TaskSessionBackend: singleton for storing/retrieving session ID
+│   ├── session-resume/              # Claude Agent SDK session ID persistence
+│   │   ├── types.ts                 # SessionId branded type and SessionResumeItem DynamoDB record
+│   │   └── backend.ts               # SessionResumeBackend: role-keyed store for storing/retrieving session ID
 │   └── utils/                       # Storage utilities
 │       └── strip-keys.ts            # Strips DynamoDB internal keys
 ├── app/                             # Application composition root

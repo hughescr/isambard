@@ -57,7 +57,7 @@ describe('bsky-dm-poller', () => {
             client:            { listConversations } as unknown as BlueskyClient,
             checkpointManager: { processDirectMessages, unprocessDirectMessages } as unknown as BskyCheckpointManager,
             notify,
-            healthRegistry:    makeHealthRegistry({ available: { bluesky: true } }),
+            healthRegistry:    makeHealthRegistry({ available: { bsky: true } }),
             intervalMs:        1000,
         };
     });
@@ -66,8 +66,8 @@ describe('bsky-dm-poller', () => {
         jest.useRealTimers();
     });
 
-    it('skips the tick entirely when bluesky is unavailable', async () => {
-        options.healthRegistry = makeHealthRegistry({ available: { bluesky: false } });
+    it('skips the tick entirely when bsky is unavailable', async () => {
+        options.healthRegistry = makeHealthRegistry({ available: { bsky: false } });
         const poller = createBskyDmPoller(options);
 
         poller.start();
@@ -101,7 +101,7 @@ describe('bsky-dm-poller', () => {
         expect(listConversations).toHaveBeenCalledWith(undefined, undefined, 'unread');
         expect(notify).toHaveBeenCalledTimes(1);
         expect(notify.mock.calls[0]?.[0]).toMatchObject({
-            source:    'bluesky-dm',
+            source:    'bsky-dm',
             text:      '3 new unread Bluesky conversation(s)',
             wake:      false,
             dedupeKey: 'bsky-dm:msg-new',

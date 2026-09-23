@@ -3,7 +3,7 @@ import {
     sessionIdSchema,
     createSessionId,
     isSessionId
-} from '@/storage/task-session/types';
+} from '@/storage/session-resume/types';
 
 describe.concurrent('sessionIdSchema', () => {
     test('should accept valid UUID', () => {

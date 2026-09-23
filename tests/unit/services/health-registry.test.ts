@@ -34,7 +34,7 @@ describe('ServiceHealthRegistryImpl', () => {
             expect(registry.getState('discord')).toBe('disabled');
             expect(registry.getState('discord-channel-registry')).toBe('disabled');
             expect(registry.getState('email')).toBe('disabled');
-            expect(registry.getState('bluesky')).toBe('disabled');
+            expect(registry.getState('bsky')).toBe('disabled');
             expect(registry.getState('caldav')).toBe('disabled');
             expect(registry.getState('dynamodb')).toBe('disabled');
         });
@@ -64,7 +64,7 @@ describe('ServiceHealthRegistryImpl', () => {
 
             expect(registry.getState('discord')).toBe('online');
             expect(registry.getState('email')).toBe('starting');
-            expect(registry.getState('bluesky')).toBe('disabled');
+            expect(registry.getState('bsky')).toBe('disabled');
         });
     });
 
@@ -97,10 +97,10 @@ describe('ServiceHealthRegistryImpl', () => {
         });
 
         test('should return entry with failure details after CONNECT_FAIL', () => {
-            registry.sendEvent('bluesky', { type: 'CONFIGURE' });
-            registry.sendEvent('bluesky', { type: 'CONNECT_FAIL', error: 'Auth failed' });
+            registry.sendEvent('bsky', { type: 'CONFIGURE' });
+            registry.sendEvent('bsky', { type: 'CONNECT_FAIL', error: 'Auth failed' });
 
-            const entry = registry.getEntry('bluesky');
+            const entry = registry.getEntry('bsky');
             expect(entry.state).toBe('offline');
             expect(entry.failureCount).toBe(1);
             expect(entry.lastOfflineAt).toBeInstanceOf(Date);
@@ -121,7 +121,7 @@ describe('ServiceHealthRegistryImpl', () => {
             expect(Object.keys(all)).toContain('discord');
             expect(Object.keys(all)).toContain('discord-channel-registry');
             expect(Object.keys(all)).toContain('email');
-            expect(Object.keys(all)).toContain('bluesky');
+            expect(Object.keys(all)).toContain('bsky');
             expect(Object.keys(all)).toContain('caldav');
             expect(Object.keys(all)).toContain('dynamodb');
             expect(Object.keys(all)).toHaveLength(6);
@@ -155,7 +155,7 @@ describe('ServiceHealthRegistryImpl', () => {
                 'discord',
                 'discord-channel-registry',
                 'email',
-                'bluesky',
+                'bsky',
                 'caldav',
                 'dynamodb',
             ];
@@ -225,7 +225,7 @@ describe('ServiceHealthRegistryImpl', () => {
 
             expect(registry.getState('discord')).toBe('online');
             expect(registry.getState('email')).toBe('starting');
-            expect(registry.getState('bluesky')).toBe('disabled');
+            expect(registry.getState('bsky')).toBe('disabled');
             expect(registry.getState('caldav')).toBe('disabled');
         });
 
@@ -395,7 +395,7 @@ describe('ServiceHealthRegistryImpl', () => {
 
     describe('buildStatusSummary()', () => {
         test('should return undefined when all services are in online state', () => {
-            for(const service of ['discord', 'email', 'bluesky', 'caldav'] as ServiceName[]) {
+            for(const service of ['discord', 'email', 'bsky', 'caldav'] as ServiceName[]) {
                 registry.sendEvent(service, { type: 'CONFIGURE' });
                 registry.sendEvent(service, { type: 'CONNECT_SUCCESS' });
             }
@@ -423,13 +423,13 @@ describe('ServiceHealthRegistryImpl', () => {
             registry.sendEvent('discord', { type: 'CONFIGURE' });
             registry.sendEvent('discord', { type: 'CONNECT_SUCCESS' });
 
-            // email/bluesky/caldav are disabled — also excluded
+            // email/bsky/caldav are disabled — also excluded
             const summary = registry.buildStatusSummary();
             expect(summary).toBeUndefined();
         });
 
         test('should return undefined when all services are online', () => {
-            for(const service of ['discord', 'email', 'bluesky', 'caldav'] as ServiceName[]) {
+            for(const service of ['discord', 'email', 'bsky', 'caldav'] as ServiceName[]) {
                 registry.sendEvent(service, { type: 'CONFIGURE' });
                 registry.sendEvent(service, { type: 'CONNECT_SUCCESS' });
             }

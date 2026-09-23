@@ -1,6 +1,6 @@
 /**
  * A convenience role-bound store over the P8 role-keyed `TASK_SESSION#<role>` rows
- * (src/storage/task-session/backend.ts), for callers that already know which role they mean
+ * (src/storage/session-resume/backend.ts), for callers that already know which role they mean
  * (e.g. src/index.ts's conductor build sites, which call `storage.createResumeStore(role)` — see
  * `storage.createResumeStore` in src/app/storage-layer.ts — to wire each conductor's resume
  * lookup).
@@ -19,7 +19,7 @@
  * @module agent/session/resume-store
  */
 import type { SessionRole } from './types';
-import { createSessionId, type TaskSessionBackend } from '@/storage';
+import { createSessionId, type SessionResumeBackend } from '@/storage';
 
 /** The role-bound resume store {@link createResumeStore} returns — see the module doc for why this is not the `ResumeStore` port. */
 export interface RoleResumeStore {
@@ -30,10 +30,10 @@ export interface RoleResumeStore {
 
 /**
  * Creates a {@link RoleResumeStore} bound to `role`, backed by `backend`'s role-keyed rows.
- * @param backend The DynamoDB-backed task-session store.
+ * @param backend The DynamoDB-backed session-resume store.
  * @param role    The role this instance's `load`/`save`/`clear` always act on.
  */
-export function createResumeStore(backend: Pick<TaskSessionBackend, 'getSessionIdForRole' | 'setSessionIdForRole' | 'clearSessionIdForRole'>, role: SessionRole): RoleResumeStore {
+export function createResumeStore(backend: Pick<SessionResumeBackend, 'getSessionIdForRole' | 'setSessionIdForRole' | 'clearSessionIdForRole'>, role: SessionRole): RoleResumeStore {
     let lastSaved: string | undefined;
 
     return {

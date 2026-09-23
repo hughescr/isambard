@@ -5,7 +5,7 @@ import {
 } from '@/agent';
 import type { DynamoDBConfig, ReconciliationConfig, ContactReconciliationConfig, VectorIndexConfig } from '@/config';
 import {
-    DynamoDBClientHolder, type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation, ContactBackend, createContactReconciliationScheduler, runContactReconciliation, type ContactReconciliationScheduler, VectorIndex, AsyncIndexer, type EmbedderLike,
+    DynamoDBClientHolder, type TagIndexReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, SessionResumeBackend, createTagIndexReconciliationScheduler, runTagIndexReconciliation, ContactBackend, createContactReconciliationScheduler, runContactReconciliation, type ContactReconciliationScheduler, VectorIndex, AsyncIndexer, type EmbedderLike,
     SessionJournalBackend
 } from '@/storage';
 
@@ -42,38 +42,38 @@ export interface StorageLayer {
      *
      * @internal
      */
-    holder:                          DynamoDBClientHolder
-    tableName:                       string
-    memoryBackend:                   MemoryToolBackend
-    contactBackend:                  ContactBackend
+    holder:                           DynamoDBClientHolder
+    tableName:                        string
+    memoryBackend:                    MemoryToolBackend
+    contactBackend:                   ContactBackend
     /** Write-through backend for the SESSION_JOURNAL#<role> partition (P8). Prefer {@link createJournal} over constructing a {@link SessionJournal} against this directly. */
-    sessionJournalBackend:           SessionJournalBackend
+    sessionJournalBackend:            SessionJournalBackend
     /** Builds a {@link SessionJournal} bound to `role`, backed by {@link sessionJournalBackend}. */
-    createJournal:                   (role: SessionRole, clock: Clock) => SessionJournal
-    /** Builds a role-bound resume store over the shared `taskSessionBackend`'s TASK_SESSION#<role> rows. */
-    createResumeStore:               (role: SessionRole) => RoleResumeStore
-    reconciliationScheduler?:        ReconciliationScheduler
-    contactReconciliationScheduler?: ContactReconciliationScheduler
+    createJournal:                    (role: SessionRole, clock: Clock) => SessionJournal
+    /** Builds a role-bound resume store over the shared `sessionResumeBackend`'s TASK_SESSION#<role> rows. */
+    createResumeStore:                (role: SessionRole) => RoleResumeStore
+    tagIndexReconciliationScheduler?: TagIndexReconciliationScheduler
+    contactReconciliationScheduler?:  ContactReconciliationScheduler
     /**
      * Vector index for semantic search queries.
      * Undefined when vector indexing is disabled.
      * @internal
      */
-    vectorIndex?:                    VectorIndex
+    vectorIndex?:                     VectorIndex
     /**
      * Async indexer for background vector embedding.
      * Undefined when vector indexing is disabled.
      * Call `asyncIndexer.close()` on shutdown.
      * @internal
      */
-    asyncIndexer?:                   AsyncIndexer
+    asyncIndexer?:                    AsyncIndexer
 }
 
 async function releaseFailedStorage(
     holder: DynamoDBClientHolder,
     vectorIndex: VectorIndex | undefined,
     asyncIndexer: AsyncIndexer | undefined,
-    reconciliationScheduler: ReconciliationScheduler | undefined,
+    tagIndexReconciliationScheduler: TagIndexReconciliationScheduler | undefined,
     contactReconciliationScheduler: ContactReconciliationScheduler | undefined
 ): Promise<void> {
     // Unwind dependencies in order and attempt every release.
@@ -87,7 +87,7 @@ async function releaseFailedStorage(
         contactReconciliationScheduler?.stop();
     } catch{ /* Preserve the construction error. */ }
     try {
-        reconciliationScheduler?.stop();
+        tagIndexReconciliationScheduler?.stop();
     } catch{ /* Preserve the construction error. */ }
     try {
         holder.destroy();
@@ -126,7 +126,7 @@ export async function createStorageLayer(
     // Optionally create vector index and async indexer
     let vectorIndex:  VectorIndex  | undefined;
     let asyncIndexer: AsyncIndexer | undefined;
-    let reconciliationScheduler: ReconciliationScheduler | undefined;
+    let tagIndexReconciliationScheduler: TagIndexReconciliationScheduler | undefined;
     let contactReconciliationScheduler: ContactReconciliationScheduler | undefined;
     try {
         if(vectorIndexConfig?.enabled && embedder) {
@@ -149,13 +149,13 @@ export async function createStorageLayer(
             logger.info(`Vector index initialized at ${vectorIndexConfig.dbPath}`);
         }
 
-        // Declare reconciliationScheduler before memoryBackend so the drift callback closure
+        // Declare tagIndexReconciliationScheduler before memoryBackend so the drift callback closure
         // can reference it by binding (late-binding: value is assigned below, after memoryBackend).
         // Create memory backend (with optional async indexer).
-        // The drift callback is a late-binding closure that reads reconciliationScheduler at
+        // The drift callback is a late-binding closure that reads tagIndexReconciliationScheduler at
         // call time — the scheduler is assigned after memoryBackend is constructed.
         const memoryBackend = new MemoryToolBackend(holder, tableName, asyncIndexer, () => {
-            reconciliationScheduler?.notifyDrift();
+            tagIndexReconciliationScheduler?.notifyDrift();
         }, onIdentityWrite);
 
         // Create contact backend
@@ -165,10 +165,10 @@ export async function createStorageLayer(
 
         // Create reconciliation scheduler if enabled
         if(reconciliationConfig?.enabled) {
-            reconciliationScheduler = createReconciliationScheduler({
-                config:         reconciliationConfig,
-                runReconciliation,
-                reconcilerDeps: {
+            tagIndexReconciliationScheduler = createTagIndexReconciliationScheduler({
+                config:            reconciliationConfig,
+                runReconciliation: runTagIndexReconciliation,
+                reconcilerDeps:    {
                     docClient:            holder,
                     tableName,
                     tagIndex:             memoryBackend.getTagIndexBackend(),
@@ -213,14 +213,14 @@ export async function createStorageLayer(
             logger.info('Contact reconciliation scheduler configured');
         }
 
-        // Task session backend: role-keyed resume-store rows (SESSION journal/resume, P8/P13b).
-        const taskSessionBackend = new TaskSessionBackend(holder, tableName);
+        // Session resume backend: role-keyed resume-store rows (SESSION journal/resume, P8/P13b).
+        const sessionResumeBackend = new SessionResumeBackend(holder, tableName);
         // P8: write-through session journal (SESSION_JOURNAL#<role> partition) and its role-bound convenience factories
         const sessionJournalBackend = new SessionJournalBackend(holder, tableName);
         const createJournal = (role: SessionRole, clock: Clock): SessionJournal => createSessionJournal({
             backend: sessionJournalBackend, role, clock, logger,
         });
-        const createResumeStoreForRole = (role: SessionRole): RoleResumeStore => createResumeStore(taskSessionBackend, role);
+        const createResumeStoreForRole = (role: SessionRole): RoleResumeStore => createResumeStore(sessionResumeBackend, role);
 
         return {
             holder,
@@ -230,7 +230,7 @@ export async function createStorageLayer(
             sessionJournalBackend,
             createJournal,
             createResumeStore: createResumeStoreForRole,
-            reconciliationScheduler,
+            tagIndexReconciliationScheduler,
             contactReconciliationScheduler,
             vectorIndex,
             asyncIndexer,
@@ -238,7 +238,7 @@ export async function createStorageLayer(
     } catch (error) {
         // The caller has not received ownership yet. Unwind in dependency order,
         // attempting every release while retaining the construction failure.
-        await releaseFailedStorage(holder, vectorIndex, asyncIndexer, reconciliationScheduler, contactReconciliationScheduler);
+        await releaseFailedStorage(holder, vectorIndex, asyncIndexer, tagIndexReconciliationScheduler, contactReconciliationScheduler);
         throw error;
     }
 }

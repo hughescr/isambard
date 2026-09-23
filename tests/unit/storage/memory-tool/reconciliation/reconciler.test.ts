@@ -3,7 +3,7 @@ import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, Delete
 import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../../setup';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
-import { runReconciliation, delay, retryWithBackoff, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
+import { runTagIndexReconciliation, delay, retryWithBackoff, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import type { MemoryPath, MemoryToolItemData, TagIndexItem, TagIndexReadItem } from '@/storage/memory-tool/types';
 
 function namedError(name: string): Error {
@@ -154,7 +154,7 @@ describe('retryWithBackoff', () => {
     });
 });
 
-describe('runReconciliation', () => {
+describe('runTagIndexReconciliation', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let tagIndex: MemoryToolBackendTagIndex;
     let getMemory: ReturnType<typeof mock>;
@@ -261,7 +261,7 @@ describe('runReconciliation', () => {
             mockEmptyLayers();
             mockEmptyPhaseB();
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
 
             const queryCalls = ddbMock.commandCalls(QueryCommand);
             const gsi1Calls = queryCalls.filter(call =>
@@ -306,7 +306,7 @@ describe('runReconciliation', () => {
             });
             tagIndex.createTagIndexItems = createSpy;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.indexItemsCreated).toBe(1);
             expect(createSpy).toHaveBeenCalledWith(
@@ -361,7 +361,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.indexItemsCreated).toBe(2); // Two tags
         });
@@ -412,7 +412,7 @@ describe('runReconciliation', () => {
             tagIndex.refreshTagIndexItems = refreshSpy;
             tagIndex.createTagIndexItems = createSpy;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.indexItemsRefreshed).toBe(1);
             // Should call refreshTagIndexItems, not createTagIndexItems
@@ -472,7 +472,7 @@ describe('runReconciliation', () => {
             tagIndex.refreshTagIndexItems = refreshSpy;
             tagIndex.createTagIndexItems = createSpy;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.indexItemsRefreshed).toBe(1);
             expect(result.phaseA.indexItemsCreated).toBe(0);
@@ -481,7 +481,7 @@ describe('runReconciliation', () => {
             );
             expect(createSpy).not.toHaveBeenCalled();
 
-            const secondResult = await runReconciliation(deps, options);
+            const secondResult = await runTagIndexReconciliation(deps, options);
 
             expect(secondResult.phaseA.indexItemsRefreshed).toBe(0);
             expect(secondResult.phaseA.indexItemsCreated).toBe(0);
@@ -530,7 +530,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.indexItemsRefreshed).toBe(1);
         });
@@ -574,7 +574,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.indexItemsRefreshed).toBeGreaterThanOrEqual(1);
         });
@@ -618,7 +618,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.indexItemsRefreshed).toBeGreaterThanOrEqual(1);
         });
@@ -646,7 +646,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             // Should NOT process tags for item with undefined tags
             expect(result.phaseA.itemsScanned).toBe(1);
@@ -708,7 +708,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             // Should NOT refresh the fresh indices
             expect(result.phaseA.indexItemsRefreshed).toBe(0);
@@ -743,7 +743,7 @@ describe('runReconciliation', () => {
             tagIndex.createTagIndexItems = createSpy;
             tagIndex.refreshTagIndexItems = refreshSpy;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.itemsScanned).toBe(1);
             expect(result.phaseA.indexItemsCreated).toBe(0);
@@ -782,7 +782,7 @@ describe('runReconciliation', () => {
             tagIndex.createTagIndexItems = createSpy;
             tagIndex.refreshTagIndexItems = refreshSpy;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.itemsScanned).toBe(1);
             expect(result.phaseA.indexItemsCreated).toBe(0);
@@ -809,7 +809,7 @@ describe('runReconciliation', () => {
             mockLayerQuery('state', []);
             mockLayerQuery('events', []);
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.itemsScanned).toBe(1);
             expect(result.phaseA.metadataCleaned).toBe(0);
             expect(updateMemoryMetadata).not.toHaveBeenCalled();
@@ -865,7 +865,7 @@ describe('runReconciliation', () => {
                 metadata: {},
             });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.metadataCleaned).toBe(1);
             expect(updateMemoryMetadata).toHaveBeenCalled();
@@ -919,7 +919,7 @@ describe('runReconciliation', () => {
                 Key: { PK: 'TAG#test', SK: 'PATH#/identity/old-name.md' },
             }).resolves({ Item: { PK: 'TAG#test', SK: 'PATH#/identity/old-name.md' } }); // Still exists
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.metadataCleaned).toBe(0);
             expect(updateMemoryMetadata).not.toHaveBeenCalled();
@@ -964,7 +964,7 @@ describe('runReconciliation', () => {
                 ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
             }).rejectsOnce(new Error('InternalServerError'));
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             // Should NOT clean previouslyKnownAs since we couldn't confirm old indices are gone
             expect(result.phaseA.metadataCleaned).toBe(0);
@@ -1019,7 +1019,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.itemsScanned).toBeGreaterThanOrEqual(2);
             const layerCalls = ddbMock.commandCalls(QueryCommand).filter(call => call.args[0].input.IndexName === 'GSI1');
@@ -1034,7 +1034,7 @@ describe('runReconciliation', () => {
             // Abort immediately
             controller.abort();
 
-            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            const rejected = runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
             await expect(rejected).rejects.toBeInstanceOf(DOMException);
             await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
@@ -1054,7 +1054,7 @@ describe('runReconciliation', () => {
                 return Promise.resolve({ Items: [] });
             });
 
-            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            const rejected = runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
             await expect(rejected).rejects.toBeInstanceOf(DOMException);
             await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
@@ -1074,7 +1074,7 @@ describe('runReconciliation', () => {
                     });
                 });
 
-            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            const rejected = runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
             await expect(rejected).rejects.toBeInstanceOf(DOMException);
             await expect(rejected).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
         });
@@ -1140,7 +1140,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.itemsScanned).toBe(2);
             expect(result.phaseA.indexItemsCreated).toBeGreaterThanOrEqual(1);
@@ -1180,7 +1180,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
 
             // When checkTagIndexExists fails (returns undefined), code treats it as missing
             // and tries to create via createTagIndexItems, which succeeds. So no error is counted.
@@ -1221,7 +1221,7 @@ describe('runReconciliation', () => {
             const createSpy = mock(() => Promise.resolve());
             tagIndex.createTagIndexItems = createSpy;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             // Should create the missing index item
             expect(result.phaseA.indexItemsCreated).toBe(1);
@@ -1262,7 +1262,7 @@ describe('runReconciliation', () => {
             });
             tagIndex.createTagIndexItems = createSpy;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.errors).toBeGreaterThan(0);
             expect(createSpy).toHaveBeenCalled();
@@ -1319,7 +1319,7 @@ describe('runReconciliation', () => {
             // Make updateMemoryMetadata throw
             updateMemoryMetadata.mockRejectedValue(new Error('Failed to update metadata'));
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.errors).toBeGreaterThan(0);
             expect(updateMemoryMetadata).toHaveBeenCalled();
@@ -1365,7 +1365,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             // Should NOT clean because old path index still exists
             expect(result.phaseA.metadataCleaned).toBe(0);
@@ -1404,7 +1404,7 @@ describe('runReconciliation', () => {
                 metadata: { someOtherKey: 'preserved' },
             });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             // Empty previouslyKnownAsTags → immediately clean (no GetItem needed)
             expect(result.phaseA.metadataCleaned).toBe(1);
@@ -1467,7 +1467,7 @@ describe('runReconciliation', () => {
                 metadata: {},
             });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.metadataCleaned).toBe(1);
             expect(updateMemoryMetadata).toHaveBeenCalled();
@@ -1554,7 +1554,7 @@ describe('runReconciliation', () => {
             });
 
             // Start reconciliation without awaiting — so we can observe mid-flight state
-            const reconciliationPromise = runReconciliation(deps, options);
+            const reconciliationPromise = runTagIndexReconciliation(deps, options);
 
             // Let microtasks run until both GetCommands are in-flight
             // Flush event loop turns until both calls are recorded or we time out
@@ -1628,7 +1628,7 @@ describe('runReconciliation', () => {
                 metadata: {},
             });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.metadataCleaned).toBe(1);
             // GSI2 TAG_COUNTS was queried (fallback path for Phase A) + Phase B
@@ -1683,7 +1683,7 @@ describe('runReconciliation', () => {
                 metadata: { someOtherKey: 'preserved' },
             });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.metadataCleaned).toBe(1);
             // Verify updateMemoryMetadata was called with metadata that has NEITHER previouslyKnownAs NOR previouslyKnownAsTags
@@ -1704,7 +1704,7 @@ describe('runReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
 
             // Phase B should query GSI2 with TAG_COUNTS partition key
             const queryCalls = ddbMock.commandCalls(QueryCommand);
@@ -1735,7 +1735,7 @@ describe('runReconciliation', () => {
             const deleteSpy = mock(async () => {});
             tagIndex.deleteTagIndexItems = deleteSpy;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseB.indexItemsDeleted).toBe(1);
             expect(deleteSpy).toHaveBeenCalledWith('/identity/deleted.md', new Set(['orphan']));
@@ -1777,7 +1777,7 @@ describe('runReconciliation', () => {
             const deleteSpy = mock(async () => {});
             tagIndex.deleteTagIndexItems = deleteSpy;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseB.indexItemsDeleted).toBe(1);
             expect(deleteSpy).toHaveBeenCalledWith('/identity/updated.md', new Set(['removed']));
@@ -1817,7 +1817,7 @@ describe('runReconciliation', () => {
 
             getMemory.mockResolvedValue(memory);
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseB.indexItemsDeleted).toBe(0);
         });
@@ -1882,7 +1882,7 @@ describe('runReconciliation', () => {
                 contentPreview: 'content',
             });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseB.itemsScanned).toBeGreaterThanOrEqual(2);
         });
@@ -1895,7 +1895,7 @@ describe('runReconciliation', () => {
             // Abort before Phase B
             controller.abort();
 
-            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            const rejected = runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
             await expect(rejected).rejects.toBeInstanceOf(DOMException);
             await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
@@ -1910,7 +1910,7 @@ describe('runReconciliation', () => {
             // Abort before Phase B starts - the abort check at the start of the for loop will catch it
             controller.abort();
 
-            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            const rejected = runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
             await expect(rejected).rejects.toBeInstanceOf(DOMException);
             await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
@@ -1933,7 +1933,7 @@ describe('runReconciliation', () => {
                 return Promise.resolve({ Items: [], LastEvaluatedKey: { PK: 'TAG#test', SK: 'PATH#next' } });
             });
 
-            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            const rejected = runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
             await expect(rejected).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
         });
 
@@ -1978,7 +1978,7 @@ describe('runReconciliation', () => {
                     contentPreview: 'content',
                 });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseB.itemsScanned).toBe(2);
             expect(result.phaseB.indexItemsDeleted).toBe(1);
@@ -2003,7 +2003,7 @@ describe('runReconciliation', () => {
 
             getMemory.mockRejectedValue(new Error('DynamoDB error'));
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseB.errors).toBeGreaterThan(0);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
@@ -2040,7 +2040,7 @@ describe('runReconciliation', () => {
                 contentPreview: 'content',
             });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             // Should only process the PATH# item
             expect(result.phaseB.itemsScanned).toBe(1);
@@ -2074,7 +2074,7 @@ describe('runReconciliation', () => {
                 ExpressionAttributeValues: { ':pk': 'TAG#fail-tag', ':skPrefix': 'PATH#' },
             }).rejects(new Error('InternalServerError'));
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             // scanTagItems should increment errors and break out of its loop
             expect(result.phaseB.errors).toBeGreaterThanOrEqual(1);
@@ -2095,7 +2095,7 @@ describe('runReconciliation', () => {
                 ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
             }).rejects(new Error('InternalServerError'));
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             // runPhaseB should increment errors and return early (no tags processed)
             expect(result.phaseB.errors).toBeGreaterThanOrEqual(1);
@@ -2142,7 +2142,7 @@ describe('runReconciliation', () => {
                 Items: tagIndexItems,
             });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseC.countsVerified).toBe(1);
             expect(result.phaseC.countsCorrected).toBe(0);
@@ -2168,7 +2168,7 @@ describe('runReconciliation', () => {
             // Mock UpdateCommand
             ddbMock.on(UpdateCommand).resolves({});
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseC.countsVerified).toBe(1);
             expect(result.phaseC.countsCorrected).toBe(1);
@@ -2217,7 +2217,7 @@ describe('runReconciliation', () => {
             // Mock DeleteCommand (direct delete)
             ddbMock.on(DeleteCommand).resolves({});
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseC.countsVerified).toBe(1);
             expect(result.phaseC.countsDeleted).toBe(1);
@@ -2250,10 +2250,10 @@ describe('runReconciliation', () => {
             deps.tagIndex.listTagCounts = listTagCountsMock;
 
             // Abort signal is checked before each tag is processed (line 753 in runPhaseC)
-            // We abort synchronously before runReconciliation starts
+            // We abort synchronously before runTagIndexReconciliation starts
             controller.abort();
 
-            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            const rejected = runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
             await expect(rejected).rejects.toBeInstanceOf(DOMException);
             await expect(rejected).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
         });
@@ -2267,7 +2267,7 @@ describe('runReconciliation', () => {
                 return [{ tag: 'tag1', count: 1 }];
             });
 
-            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            const rejected = runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
             await expect(rejected).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
         });
 
@@ -2275,7 +2275,7 @@ describe('runReconciliation', () => {
             // This test verifies the core bug fix: when an abort signal fires while delay() is
             // sleeping (simulating a rate-limit sleep between DynamoDB operations), the thrown
             // DOMException AbortError must NOT be counted as an operational error — it should
-            // propagate up and cause runReconciliation to reject cleanly.
+            // propagate up and cause runTagIndexReconciliation to reject cleanly.
             //
             // We use operationDelayMs: 1 (non-zero) so that delay() enters the Promise path and
             // checks signal.aborted. The abort fires during the DynamoDB query just before the
@@ -2318,7 +2318,7 @@ describe('runReconciliation', () => {
             mockEmptyPhaseB();
 
             // Use operationDelayMs: 1 so delay() enters the Promise path where it checks signal.aborted
-            const rejected = runReconciliation(deps, { ...options, operationDelayMs: 1, signal: controller.signal });
+            const rejected = runTagIndexReconciliation(deps, { ...options, operationDelayMs: 1, signal: controller.signal });
 
             // Must reject as DOMException AbortError — not resolve with errors > 0
             await expect(rejected).rejects.toBeInstanceOf(DOMException);
@@ -2343,7 +2343,7 @@ describe('runReconciliation', () => {
                 Count: 1,
             });
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
 
             // Verify Query was called with correct parameters
             const queryCalls = ddbMock.commandCalls(QueryCommand);
@@ -2371,7 +2371,7 @@ describe('runReconciliation', () => {
                 KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
             }).rejects(new Error('DynamoDB error'));
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseC.countsVerified).toBe(1);
             expect(result.phaseC.errors).toBe(1);
@@ -2398,7 +2398,7 @@ describe('runReconciliation', () => {
                 return mockLogger;
             });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseC.errors).toBe(1);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
@@ -2421,7 +2421,7 @@ describe('runReconciliation', () => {
                 KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
             }).resolves({ Items: [] });
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
 
             const queries = ddbMock.commandCalls(QueryCommand).map(call => call.args[0].input);
             const tagPages = queries.filter(input => input.IndexName === 'GSI2');
@@ -2447,7 +2447,7 @@ describe('runReconciliation', () => {
             const createSpy = mock(async () => {});
             deps.tagIndex.createTagIndexItems = createSpy;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.indexItemsCreated).toBe(1);
             expect(createSpy).toHaveBeenCalledWith('/legacy/core.md', new Set(['legacy']),
                 '2024-01-01T00:00:00.000Z', 'legacy content', 'unknown');
@@ -2460,7 +2460,7 @@ describe('runReconciliation', () => {
             mockEmptyPhaseB();
             deps.tagIndex.listTagCounts = mock(async () => []);
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.itemsScanned).toBe(1);
             expect(result.phaseA.errors).toBe(0);
             expect(updateMemoryMetadata).not.toHaveBeenCalled();
@@ -2485,7 +2485,7 @@ describe('runReconciliation', () => {
             }).resolves({ Item: { PK: 'TAG#fallback', SK: 'PATH#/identity/old.md' } });
             deps.tagIndex.listTagCounts = mock(async () => []);
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.metadataCleaned).toBe(0);
             expect(updateMemoryMetadata).not.toHaveBeenCalled();
             expect(ddbMock.commandCalls(GetCommand).map(call => call.args[0].input.Key?.PK)).toEqual(['TAG#fallback']);
@@ -2512,7 +2512,7 @@ describe('runReconciliation', () => {
                 .rejects(new Error('lookup failed'));
             mockEmptyPhaseB();
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 context: 'checkTagIndexExists:known:/identity/current.md',
             }));
@@ -2530,7 +2530,7 @@ describe('runReconciliation', () => {
             });
             mockEmptyPhaseB();
 
-            await expect(runReconciliation(deps, options)).rejects.toMatchObject({
+            await expect(runTagIndexReconciliation(deps, options)).rejects.toMatchObject({
                 name: 'AbortError', message: 'Aborted',
             });
         });
@@ -2539,7 +2539,7 @@ describe('runReconciliation', () => {
             ddbMock.on(QueryCommand, { IndexName: 'GSI1' }).rejects(new Error('scan failed'));
             mockEmptyPhaseB();
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'scanLayer:identity' }));
         });
 
@@ -2547,7 +2547,7 @@ describe('runReconciliation', () => {
             mockEmptyLayers();
             ddbMock.on(QueryCommand, { IndexName: 'GSI2' }).rejects(new Error('enumeration failed'));
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'getAllTagNames' }));
         });
 
@@ -2557,7 +2557,7 @@ describe('runReconciliation', () => {
             ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)' })
                 .rejects(new Error('tag scan failed'));
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'scanTagItems:known' }));
         });
 
@@ -2568,7 +2568,7 @@ describe('runReconciliation', () => {
                 .resolves({ Items: [{ PK: 'TAG#known', SK: 'PATH#/identity/current.md' }] });
             getMemory.mockRejectedValue(new DOMException('Aborted', 'AbortError'));
 
-            await expect(runReconciliation(deps, options)).rejects.toMatchObject({
+            await expect(runTagIndexReconciliation(deps, options)).rejects.toMatchObject({
                 name: 'AbortError', message: 'Aborted',
             });
         });
@@ -2582,7 +2582,7 @@ describe('runReconciliation', () => {
             ddbMock.on(GetCommand).rejects(new Error('old path probe failed'));
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 context: 'checkOldPathIndicesClean:known:/identity/old.md',
             }));
@@ -2599,7 +2599,7 @@ describe('runReconciliation', () => {
             updateMemoryMetadata.mockRejectedValue(new DOMException('Aborted', 'AbortError'));
             mockEmptyPhaseB();
 
-            await expect(runReconciliation(deps, options)).rejects.toMatchObject({
+            await expect(runTagIndexReconciliation(deps, options)).rejects.toMatchObject({
                 name: 'AbortError', message: 'Aborted',
             });
         });
@@ -2618,7 +2618,7 @@ describe('runReconciliation', () => {
             }).resolves({ Item: { PK: 'TAG#still-present', SK: 'PATH#/identity/old.md' } });
             mockEmptyPhaseB();
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.metadataCleaned).toBe(0);
             expect(updateMemoryMetadata).not.toHaveBeenCalled();
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(2);
@@ -2633,7 +2633,7 @@ describe('runReconciliation', () => {
                 .resolves({ Items: [] });
             ddbMock.on(GetCommand).rejects(new Error('old path probe failed'));
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 context: 'checkOldPathIndicesClean:fallback:/identity/old.md',
             }));
@@ -2648,7 +2648,7 @@ describe('runReconciliation', () => {
             ddbMock.on(QueryCommand, { KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)' })
                 .rejects(new Error('count failed'));
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'getActualTagCount:known' }));
         });
 
@@ -2668,7 +2668,7 @@ describe('runReconciliation', () => {
                     return Promise.resolve({ Count: 9 });
                 });
 
-            const result = await runReconciliation(deps, { ...options, signal: controller.signal });
+            const result = await runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
             expect(countQueries).toBe(1);
             expect(result.phaseC.errors).toBe(1);
             expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
@@ -2685,7 +2685,7 @@ describe('runReconciliation', () => {
                     return Promise.resolve({ Count: 1 });
                 });
 
-            await expect(runReconciliation(deps, { ...options, operationDelayMs: 1, signal: controller.signal }))
+            await expect(runTagIndexReconciliation(deps, { ...options, operationDelayMs: 1, signal: controller.signal }))
                 .rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
         });
 
@@ -2697,7 +2697,7 @@ describe('runReconciliation', () => {
                 .resolves({ Count: 2 });
             ddbMock.on(UpdateCommand).rejects(new Error('update failed'));
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'updateMetaCount:known' }));
         });
 
@@ -2709,7 +2709,7 @@ describe('runReconciliation', () => {
                 .resolves({ Count: 0 });
             ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
 
-            await runReconciliation(deps, options);
+            await runTagIndexReconciliation(deps, options);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ context: 'deleteMetaCount:known' }));
         });
     });
@@ -2718,7 +2718,7 @@ describe('runReconciliation', () => {
         test('should run both phases and return complete result', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result).toHaveProperty('success');
             expect(result).toHaveProperty('phaseA');
@@ -2743,7 +2743,7 @@ describe('runReconciliation', () => {
         test('should report success when no errors', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.success).toBe(true);
         });
@@ -2751,7 +2751,7 @@ describe('runReconciliation', () => {
         test('should report failure when errors occurred in Phase A', async () => {
             ddbMock.on(QueryCommand).rejects(new Error('DynamoDB error'));
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.success).toBe(false);
             expect(result.phaseA.errors).toBeGreaterThan(0);
@@ -2772,7 +2772,7 @@ describe('runReconciliation', () => {
             // Phase C: listTagCounts returns empty (no tags to verify)
             deps.tagIndex.listTagCounts = mock(() => Promise.resolve([]));
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.success).toBe(false);
             expect(result.phaseA.errors).toBeGreaterThan(0);
@@ -2803,7 +2803,7 @@ describe('runReconciliation', () => {
             // Ensure Phase C doesn't process any tags (so Phase C stays error-free)
             deps.tagIndex.listTagCounts = mock(() => Promise.resolve([]));
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.success).toBe(false);
             expect(result.phaseA.errors).toBe(0);
@@ -2819,7 +2819,7 @@ describe('runReconciliation', () => {
             const listTagCountsMock = mock(() => Promise.reject(new Error('DynamoDB error')));
             deps.tagIndex.listTagCounts = listTagCountsMock;
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.success).toBe(false);
             expect(result.phaseA.errors).toBe(0);
@@ -2833,7 +2833,7 @@ describe('runReconciliation', () => {
         test('should measure total duration', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-            const result = await runReconciliation(deps, options);
+            const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.totalDurationMs).toBeGreaterThanOrEqual(0);
             expect(result.totalDurationMs).toBeLessThan(10_000); // Should complete in less than 10s

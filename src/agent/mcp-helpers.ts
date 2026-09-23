@@ -41,7 +41,7 @@ export function mcpTextResult(text: string): CallToolResult {
  * Derives an error category from the health state, includes last error and
  * offline duration, and optionally triggers an immediate reconnection attempt.
  *
- * @param service          - The service name (e.g. 'bluesky', 'email')
+ * @param service          - The service name (e.g. 'bsky', 'email')
  * @param entry            - The current health entry for the service
  * @param reconnectionLoop - Optional reconnection loop to trigger immediately
  * @returns CallToolResult with isError: true and a human-readable description
@@ -119,7 +119,7 @@ export function checkServiceHealth(
  * only the approval service is down.
  *
  * @param registry         - The service health registry
- * @param primaryService   - The service performing the write (e.g. 'bluesky')
+ * @param primaryService   - The service performing the write (e.g. 'bsky')
  * @param approvalService  - The service needed for admin approval (e.g. 'discord')
  * @param reconnectionLoop - Optional reconnection loop to trigger if primary is offline
  * @returns `undefined` if both available, otherwise an error {@link CallToolResult}
@@ -179,7 +179,7 @@ export function withHealthGuard<T>(
  * Returns early with a health error if the primary service or approval service is unhealthy.
  *
  * @param healthRegistry   - Optional service health registry; if undefined, guard is skipped
- * @param primaryService   - The service performing the write (e.g. 'bluesky', 'email')
+ * @param primaryService   - The service performing the write (e.g. 'bsky', 'email')
  * @param approvalService  - The service needed for admin approval (e.g. 'discord')
  * @param reconnectionLoop - Optional reconnection loop to trigger if primary is offline
  * @param handler          - The tool handler to wrap

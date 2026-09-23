@@ -35,9 +35,10 @@ interface TaskListReader {
 }
 
 /**
- * Task shape as stored by Claude Agent SDK.
+ * Task-list-item shape as stored by Claude Agent SDK, distinct from this codebase's own
+ * `TaskLaunch`/`LedgerTask` background-job types.
  */
-interface Task {
+interface SdkTodoItem {
     id:        string
     subject:   string
     status:    'pending' | 'in_progress' | 'completed'
@@ -63,10 +64,10 @@ interface TaskListReaderOptions {
 }
 
 /**
- * Validates a parsed task value and returns a Task, or undefined if invalid.
+ * Validates a parsed task value and returns a SdkTodoItem, or undefined if invalid.
  */
 
-function validateTaskFile(parsed: unknown): Task | undefined {
+function validateTaskFile(parsed: unknown): SdkTodoItem | undefined {
     // Validate task shape - check parsed is non-null and has required fields
     if(typeof parsed !== 'object' || parsed === null
       || !('id' in parsed) || typeof parsed.id !== 'string'
@@ -76,13 +77,13 @@ function validateTaskFile(parsed: unknown): Task | undefined {
         return undefined;
     }
 
-    return parsed as Task;
+    return parsed as SdkTodoItem;
 }
 
 /**
  * Builds the summary sections array from a capped task list.
  */
-function buildSummarySections(cappedTasks: Task[]): string[] {
+function buildSummarySections(cappedTasks: SdkTodoItem[]): string[] {
     const inProgressTasks = cappedTasks.filter(task => task.status === 'in_progress');
     const pendingTasks = cappedTasks.filter(task => task.status === 'pending');
     const completedTasks = cappedTasks.filter(task => task.status === 'completed');
@@ -155,7 +156,7 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                         return undefined;
                     }
                 })));
-                const tasks: Task[] = parsedTasks.flatMap(result => (result.status === 'fulfilled' && result.value !== undefined ? [result.value] : []));
+                const tasks: SdkTodoItem[] = parsedTasks.flatMap(result => (result.status === 'fulfilled' && result.value !== undefined ? [result.value] : []));
 
                 // Filter tasks: all non-completed + recently completed (last 2 hours)
                 const now = Date.now();

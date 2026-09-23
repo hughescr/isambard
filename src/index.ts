@@ -310,7 +310,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     registerCleanup({ name: 'DynamoDB client holder', run: () => storage.holder.destroy() });
     registerCleanup({ name: 'vector index', run: () => storage.vectorIndex?.close() });
     registerCleanup({ name: 'async indexer', run: () => storage.asyncIndexer?.close() });
-    registerCleanup({ name: 'tag reconciliation scheduler', run: () => storage.reconciliationScheduler?.stop() });
+    registerCleanup({ name: 'tag reconciliation scheduler', run: () => storage.tagIndexReconciliationScheduler?.stop() });
     registerCleanup({ name: 'contact reconciliation scheduler', run: () => storage.contactReconciliationScheduler?.stop() });
 
     const { dynamoDBReconnectionLoop, unsubscribeDynamoDBReconnect, dynamoDBProbeInterval } = await wireDynamoDBHealth(storage, dynamoDBConfig, healthRegistry, registerCleanup);
@@ -536,7 +536,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     let unsubscribeBskyReconnect: (() => void) | undefined;
     async function initializeBlueskyIntegration(): Promise<void> {
         if(config.bsky) {
-            healthRegistry.sendEvent('bluesky', { type: 'CONFIGURE' });
+            healthRegistry.sendEvent('bsky', { type: 'CONFIGURE' });
 
             // Create client eagerly so reconnection loop can capture a stable reference.
             bskyClient = new BlueskyClient({
@@ -552,7 +552,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
             // Create reconnection loop eagerly so post-connect drops are also handled.
             bskyReconnectionLoop = createReconnectionLoop({
-                service:   'bluesky',
+                service:   'bsky',
                 registry:  healthRegistry,
                 connectFn: async () => {
                     await stableBskyClient.login();
@@ -562,7 +562,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
             // Subscribe to health changes: auto-start reconnection loop when bluesky goes offline
             unsubscribeBskyReconnect = healthRegistry.subscribe((change) => {
-                if(change.service === 'bluesky' && change.newState === 'offline' && bskyReconnectionLoop && !bskyReconnectionLoop.isRunning()) {
+                if(change.service === 'bsky' && change.newState === 'offline' && bskyReconnectionLoop && !bskyReconnectionLoop.isRunning()) {
                     bskyReconnectionLoop.start();
                 }
             });
@@ -571,10 +571,10 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             try {
                 logger.info('Logging into Bluesky...');
                 await bskyClient.login();
-                healthRegistry.sendEvent('bluesky', { type: 'CONNECT_SUCCESS' });
+                healthRegistry.sendEvent('bsky', { type: 'CONNECT_SUCCESS' });
                 logger.info('Bluesky login successful');
             } catch (err) {
-                healthRegistry.sendEvent('bluesky', { type: 'CONNECT_FAIL', error: err instanceof Error ? err.message : String(err) });
+                healthRegistry.sendEvent('bsky', { type: 'CONNECT_FAIL', error: err instanceof Error ? err.message : String(err) });
                 logger.error({
                     error: err instanceof Error ? err.message : String(err),
                     msg:   'Bluesky login failed, starting reconnection loop',
@@ -621,7 +621,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         // disable Bluesky for the current session to prevent unguarded posting.
         // If login failed (health!=online), bskyClient is kept alive for reconnection; safety rails
         // will remain unavailable until a restart, so write tools stay disabled via approval-flow checks.
-        if(bskyClient && !bskySetup && healthRegistry.isAvailable('bluesky')) {
+        if(bskyClient && !bskySetup && healthRegistry.isAvailable('bsky')) {
             logger.warn({ msg: 'Bluesky client available but safety rails not configured — disabling Bluesky writes for this session' });
             bskyClient = undefined;
         }
@@ -1152,7 +1152,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         }
 
         const sagaTypes: ApprovalSagaType[] = [];
-        if(change.service === 'bluesky') {
+        if(change.service === 'bsky') {
             sagaTypes.push('bsky_reply', 'bsky_dm');
         }
         if(change.service === 'email') {
@@ -1268,8 +1268,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             }
 
             // These start regardless of Discord availability
-            if(storage.reconciliationScheduler) {
-                storage.reconciliationScheduler.start();
+            if(storage.tagIndexReconciliationScheduler) {
+                storage.tagIndexReconciliationScheduler.start();
                 logger.info('Tag index reconciliation scheduler started');
             }
 
@@ -1325,8 +1325,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 { name: 'email reconnect subscription', run: () => unsubscribeEmailReconnect?.(), onFailure: 'propagate' },
                 { name: 'Bluesky reconnect subscription', run: () => unsubscribeBskyReconnect?.(), onFailure: 'propagate' },
                 { name: 'tag reconciliation scheduler',     run:  () => {
-                    if(storage.reconciliationScheduler) {
-                        storage.reconciliationScheduler.stop();
+                    if(storage.tagIndexReconciliationScheduler) {
+                        storage.tagIndexReconciliationScheduler.stop();
                         logger.info('Tag index reconciliation scheduler stopped');
                     }
                 }, onFailure: 'propagate' },

@@ -20,7 +20,7 @@ import {
     EmailFolder,
     formatMailboxMessageRef,
     WildDuckClient,
-    OutboundApprovalHandler,
+    EmailOutboundApprovalHandler,
     type ProcessEmailCallbacks
 } from '@/integrations/email';
 import { TokenBucketRateLimiter, type ApprovalSagaBackend, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
@@ -87,7 +87,7 @@ export interface EmailSetupResult {
     listener:                     WildDuckListener
     reviewHandler:                ReviewHandler
     emailMcpServer:               McpServerConfig
-    outboundApprovalHandler:      OutboundApprovalHandler
+    outboundApprovalHandler:      EmailOutboundApprovalHandler
     wildDuckClient:               WildDuckClient
     /** The person allowlist — exposed so the caller can wire it into AllowlistCommandHandler */
     allowlist:                    PersonAllowlist
@@ -338,7 +338,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     });
 
     // Create outbound approval handler (handles email-send-* button/modal interactions)
-    const outboundApprovalHandler = new OutboundApprovalHandler({
+    const outboundApprovalHandler = new EmailOutboundApprovalHandler({
         wildDuckClient,
         sagaBackend:                 options.approvalSagaBackend,
         activityLogger:              options.activityLogger,

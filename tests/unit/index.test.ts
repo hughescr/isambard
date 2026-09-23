@@ -57,7 +57,7 @@ import type { ApprovalSaga } from '@/services/approval-saga/types';
 import * as staticPersonAllowlistModule from '@/storage';
 import * as staticStorageClientModule from '@/storage/client';
 import * as staticMemoryToolModule from '@/storage/memory-tool';
-import * as staticTaskSessionModule from '@/storage/task-session';
+import * as staticSessionResumeModule from '@/storage/session-resume';
 
 // Captured as a plain variable (not a live ES-module binding) at file-load time, before any
 // spyOn() call ever runs — mirrors tests/setup.ts's "capture functions as local variables
@@ -181,9 +181,9 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
         // @ts-expect-error - Mocking constructor
         spyOn(staticCheckpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.InboxManager>)),
         // @ts-expect-error - Mocking constructor
-        spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({
+        spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({
             getSessionIdForRole, setSessionIdForRole: mock(async () => undefined), clearSessionIdForRole: mock(async () => undefined),
-        } as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>)),
+        } as unknown as InstanceType<typeof staticSessionResumeModule.SessionResumeBackend>)),
         // @ts-expect-error - Mocking constructor
         spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>)),
         // @ts-expect-error - Mocking constructor
@@ -676,8 +676,8 @@ describe('createApp', () => {
             spies.push(InboxManagerSpy);
 
             // @ts-expect-error - Mocking constructor
-            const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
-            spies.push(TaskSessionBackendSpy);
+            const SessionResumeBackendSpy = spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticSessionResumeModule.SessionResumeBackend>));
+            spies.push(SessionResumeBackendSpy);
 
             // @ts-expect-error - Mocking constructor
             const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));
@@ -1684,8 +1684,8 @@ describe('createApp', () => {
             spies.push(InboxManagerSpy);
 
             // @ts-expect-error - Mocking constructor
-            const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
-            spies.push(TaskSessionBackendSpy);
+            const SessionResumeBackendSpy = spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticSessionResumeModule.SessionResumeBackend>));
+            spies.push(SessionResumeBackendSpy);
 
             // @ts-expect-error - Mocking constructor
             const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));
@@ -2611,8 +2611,8 @@ describe('createApp', () => {
             spies.push(InboxManagerSpy);
 
             // @ts-expect-error - Mocking constructor
-            const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
-            spies.push(TaskSessionBackendSpy);
+            const SessionResumeBackendSpy = spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticSessionResumeModule.SessionResumeBackend>));
+            spies.push(SessionResumeBackendSpy);
 
             // @ts-expect-error - Mocking constructor
             const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));

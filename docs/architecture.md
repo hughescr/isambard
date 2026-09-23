@@ -9,7 +9,7 @@ Isambard is a self-improving agentic thought partner built on the Claude Agent S
 | `src/utils/` | Pure utilities: time, text, filename, path security, retry, media processing. No domain knowledge. | Foundation |
 | `src/errors/` | Centralized error hierarchy (`IsambardError` base; `StorageError`, `DiscordError`, `EmailError`, `BskyError`, `CaldavError`, and `BrowserError` subtrees; direct-`IsambardError` exceptions `MediaProcessingError`, `ConfigValidationError`, `MemoryVecError`; `ErrorCode` enum). | Foundation |
 | `src/config/` | Zod-validated configuration loading from environment variables. | Foundation |
-| `src/storage/` | DynamoDB client, repository base, memory tool subsystem, contacts, person allowlist, task session persistence. | Data |
+| `src/storage/` | DynamoDB client, repository base, memory tool subsystem, contacts, person allowlist, session resume persistence. | Data |
 | `src/services/` | Resilience infrastructure: health registry, reconnection loop, lifecycle orchestrator, outbox, approval saga, allowlist saga. | Infrastructure |
 | `src/agent/` | Platform-agnostic Claude agent: MCP servers, perch scheduler, answer classifier, question registry, stream tracker, context builder, history providers. | Agent |
 | `src/integrations/discord/` | Discord bot: channel registry, inbox, catch-up, ledger-composed presence, live task-board embeds, message history, attachments, slash commands. | Integration |

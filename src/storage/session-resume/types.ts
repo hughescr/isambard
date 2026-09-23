@@ -27,12 +27,14 @@ export function isSessionId(value: unknown): value is SessionId {
 }
 
 /**
- * DynamoDB item structure for task session tracking.
- * Uses singleton pattern: one record for the "current" session.
+ * DynamoDB item structure for session-resume records.
+ * Role-keyed: one record per conductor role, PK=SK=`TASK_SESSION#<role>` (see
+ * {@link import('./backend').SessionResumeBackend}'s `roleKey()` — the `TASK_SESSION#` prefix
+ * is kept for physical-key compatibility with existing rows, not because this is a singleton).
  */
-export interface TaskSessionItem extends Record<string, unknown> {
-    PK:        string       // TASK_SESSION#CURRENT
-    SK:        string       // TASK_SESSION#CURRENT
+export interface SessionResumeItem extends Record<string, unknown> {
+    PK:        string       // TASK_SESSION#<role>
+    SK:        string       // TASK_SESSION#<role>
     sessionId: string
     updatedAt: string  // ISO 8601
 }

@@ -8,7 +8,7 @@ import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
 import { encodeCustomId, parseCustomId } from '@/utils';
 
-export interface OutboundApprovalHandlerDeps {
+export interface EmailOutboundApprovalHandlerDeps {
     wildDuckClient:              WildDuckClient
     sagaBackend:                 SagaWriter
     activityLogger?:             ApprovalActivityLogger
@@ -35,11 +35,11 @@ export interface OutboundApprovalHandlerDeps {
  * No in-code user ID check is needed because only admins have access to that channel.
  * Discord channel-level ACL is the enforcement boundary.
  */
-export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number> {
+export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<number> {
     private readonly wildDuckClient: WildDuckClient;
     private readonly notify:         NotifyFn;
 
-    constructor(deps: OutboundApprovalHandlerDeps) {
+    constructor(deps: EmailOutboundApprovalHandlerDeps) {
         super({
             sagaBackend:                 deps.sagaBackend,
             activityLogger:              deps.activityLogger,

@@ -2,10 +2,10 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { DynamoDBDocumentClient, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
-import { runReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
+import { runTagIndexReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import type { MemoryToolItemData } from '@/storage/memory-tool/types';
 
-describe('runReconciliation - Phase C (META_COUNT verification)', () => {
+describe('runTagIndexReconciliation - Phase C (META_COUNT verification)', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let tagIndex: MemoryToolBackendTagIndex;
     let getMemory: ReturnType<typeof mock>;
@@ -75,7 +75,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             Count: 5, // Actual count matches
         });
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
 
         expect(result.phaseC).toBeDefined();
         expect(result.phaseC.countsVerified).toBe(1);
@@ -116,7 +116,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
         // Mock UpdateCommand for correction
         ddbMock.on(UpdateCommand).resolves({});
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
 
         expect(result.phaseC.countsVerified).toBe(1);
         expect(result.phaseC.countsCorrected).toBe(1);
@@ -160,7 +160,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
         // Mock DeleteCommand (direct delete)
         ddbMock.on(DeleteCommand).resolves({});
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
 
         expect(result.phaseC.countsVerified).toBe(1);
         expect(result.phaseC.countsDeleted).toBe(1);
@@ -197,7 +197,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
         // Abort after Phase B
         controller.abort();
 
-        const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+        const rejected = runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
         await expect(rejected).rejects.toBeInstanceOf(DOMException);
         await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
     });
@@ -231,7 +231,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
         // Abort after first tag is processed (the abort check at start of for-loop next iteration will catch it)
         controller.abort();
 
-        const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+        const rejected = runTagIndexReconciliation(deps, { ...options, signal: controller.signal });
         await expect(rejected).rejects.toBeInstanceOf(DOMException);
         await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
     });
@@ -266,7 +266,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
         }).resolves({ Count: 10 }); // Matches stored count, no error
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
 
         // No errors expected when counts match
         expect(result.phaseC.errors).toBe(0);
@@ -297,7 +297,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
         }).rejects(new Error('DynamoDB error'));
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
 
         expect(result.phaseC.errors).toBeGreaterThan(0);
     });
@@ -336,7 +336,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
         // Mock DeleteCommand to fail with non-throttling error (exhausts retries)
         ddbMock.on(DeleteCommand).rejects(new Error('DynamoDB error'));
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
 
         expect(result.phaseC.countsVerified).toBe(1);
         expect(result.phaseC.countsDeleted).toBe(0); // Delete failed
@@ -377,7 +377,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
         // Mock UpdateCommand to fail with non-throttling error (exhausts retries)
         ddbMock.on(UpdateCommand).rejects(new Error('DynamoDB error'));
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
 
         expect(result.phaseC.countsVerified).toBe(1);
         expect(result.phaseC.countsCorrected).toBe(0); // Update failed
@@ -414,7 +414,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             ExpressionAttributeValues: { ':pk': 'TAG#tag2', ':skPrefix': 'PATH#' },
         }).resolves({ Count: 3 }); // tag2 matches
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
 
         expect(result.phaseC.countsVerified).toBe(2);
         expect(result.phaseC.countsCorrected).toBe(0);
@@ -458,7 +458,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
                 Count: 500,
             });
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
 
         expect(result.phaseC.countsVerified).toBe(1);
         expect(result.phaseC.countsCorrected).toBe(0); // Total matches: 1000 + 500 = 1500

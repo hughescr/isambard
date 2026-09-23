@@ -6,16 +6,16 @@ import {
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { TaskSessionBackend } from '@/storage/task-session/backend';
-import { createSessionId } from '@/storage/task-session/types';
+import { SessionResumeBackend } from '@/storage/session-resume/backend';
+import { createSessionId } from '@/storage/session-resume/types';
 
-describe('TaskSessionBackend', () => {
+describe('SessionResumeBackend', () => {
     let ddbMock: ReturnType<typeof mockClient>;
-    let backend: TaskSessionBackend;
+    let backend: SessionResumeBackend;
 
     beforeEach(() => {
         ddbMock = mockClient(DynamoDBDocumentClient);
-        backend = new TaskSessionBackend(
+        backend = new SessionResumeBackend(
             ddbMock as unknown as DynamoDBDocumentClient,
             'TestTable'
         );

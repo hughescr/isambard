@@ -37,8 +37,8 @@ export {
 export { ReviewHandler } from './review-handler';
 export { WildDuckClient } from './wildduck-client';
 export type { WildDuckAttachment, WildDuckAttachmentMeta } from './wildduck-client';
-export { OutboundApprovalHandler } from './outbound-approval-handler';
-export type { OutboundApprovalHandlerDeps } from './outbound-approval-handler';
+export { EmailOutboundApprovalHandler } from './outbound-approval-handler';
+export type { EmailOutboundApprovalHandlerDeps } from './outbound-approval-handler';
 export { EmailHistoryProvider } from './history-provider';
 export { DRAFT_STATE_FLAG, searchDraftsByReviewState, markDraftReviewState } from './draft-review-state';
 export type { DraftReviewState } from './draft-review-state';

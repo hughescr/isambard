@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { type DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
-import { runReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
+import { runTagIndexReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import type { MemoryPath, MemoryToolItem, MemoryToolItemData } from '@/storage/memory-tool/types';
 
 function controlledPromise<T>(): { promise: Promise<T>, started: Promise<void>, start: () => void, resolve: (value: T) => void } {
@@ -66,7 +66,7 @@ describe('reconciler public progress and producer contracts', () => {
             return { Items: [] };
         });
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
 
         expect(result.phaseA).toMatchObject({
             itemsScanned:        0, indexItemsCreated:   0, indexItemsRefreshed: 0,
@@ -105,7 +105,7 @@ describe('reconciler public progress and producer contracts', () => {
             return { Items: [] };
         });
 
-        await runReconciliation(deps, options);
+        await runTagIndexReconciliation(deps, options);
 
         expect(inputs).toContainEqual(expect.objectContaining({
             KeyConditionExpression: 'PK = :pk AND SK = :sk',
@@ -146,7 +146,7 @@ describe('reconciler public progress and producer contracts', () => {
         });
 
         let completed = false;
-        const completion = runReconciliation(deps, options).finally(() => {
+        const completion = runTagIndexReconciliation(deps, options).finally(() => {
             completed = true;
         });
         try {
@@ -188,7 +188,7 @@ describe('reconciler public progress and producer contracts', () => {
         });
 
         let completed = false;
-        const completion = runReconciliation(deps, options).finally(() => {
+        const completion = runTagIndexReconciliation(deps, options).finally(() => {
             completed = true;
         });
         try {
@@ -220,7 +220,7 @@ describe('reconciler public progress and producer contracts', () => {
         }, { getMemory: mock(async () => ({ ...memoryItem, tags: new Set(['alpha']) })) });
 
         let completed = false;
-        const completion = runReconciliation(deps, { ...options, operationDelayMs: 20 }).finally(() => {
+        const completion = runTagIndexReconciliation(deps, { ...options, operationDelayMs: 20 }).finally(() => {
             completed = true;
         });
         await Bun.sleep(0);
@@ -240,7 +240,7 @@ describe('reconciler public progress and producer contracts', () => {
             return {};
         });
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
         expect(result.phaseB.errors).toBe(1);
     });
 
@@ -267,7 +267,7 @@ describe('reconciler public progress and producer contracts', () => {
             } as unknown as MemoryToolBackendTagIndex,
         });
 
-        const result = await runReconciliation(deps, options);
+        const result = await runTagIndexReconciliation(deps, options);
         expect(result.phaseC.countsVerified).toBe(1);
         expect(result.phaseC.countsCorrected).toBe(0);
         expect(update).not.toHaveBeenCalled();
@@ -296,7 +296,7 @@ describe('reconciler public progress and producer contracts', () => {
             return { Items: [] };
         });
 
-        await runReconciliation(deps, options);
+        await runTagIndexReconciliation(deps, options);
 
         expect(gsi2Calls).toHaveLength(1); // Only Phase B's unconditional tag enumeration
     });
@@ -315,7 +315,7 @@ describe('reconciler public progress and producer contracts', () => {
             return { Items: [] };
         });
 
-        await runReconciliation(deps, { ...options, scanPageSize: 7 });
+        await runTagIndexReconciliation(deps, { ...options, scanPageSize: 7 });
 
         const gsi1Query = inputs.find(input => input.IndexName === 'GSI1');
         expect(gsi1Query?.Limit).toBe(7);
@@ -341,7 +341,7 @@ describe('reconciler phase A layer coverage', () => {
             return { Items: [] };
         });
 
-        await runReconciliation(deps, options);
+        await runTagIndexReconciliation(deps, options);
 
         expect(scannedPartitions).toEqual(['LAYER#identity', 'LAYER#state', 'LAYER#events']);
     });

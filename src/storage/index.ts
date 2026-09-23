@@ -10,8 +10,8 @@ export { createPrefixedKey, parsePrefixedKey, stripDynamoKeys } from './utils';
 // Base repository
 export { BaseRepository } from './repositories/base';
 
-// Task Session
-export { TaskSessionBackend, createSessionId, type SessionId } from './task-session';
+// Session Resume
+export { SessionResumeBackend, createSessionId, type SessionId } from './session-resume';
 
 // Session Journal
 export { SessionJournalBackend, journalEntrySchema, type SessionJournalItem } from './session-journal';

@@ -161,7 +161,7 @@ Follow the patterns in `src/agent/bsky-mcp-server.ts` or `src/agent/email-mcp-se
 - Use `createSdkMcpServer` and `tool` from `@anthropic-ai/claude-agent-sdk`
 - Return results via `mcpTextResult`, `mcpJsonResult`, `mcpErrorResult` from `src/agent/mcp-helpers.ts`
 - Accept human-readable identifiers (names, handles) — resolve to internal IDs internally, never expose them to the agent
-- For outbound actions that need admin approval, build a Discord embed and route through `OutboundApprovalHandler` (see `src/integrations/email/outbound-approval-handler.ts` or `src/integrations/bsky/outbound-approval-handler.ts`)
+- For outbound actions that need admin approval, build a Discord embed and route through `BaseOutboundApprovalHandler` (see `EmailOutboundApprovalHandler` in `src/integrations/email/outbound-approval-handler.ts` or `BskyOutboundApprovalHandler` in `src/integrations/bsky/outbound-approval-handler.ts`)
 
 ### 5. Activity Logger Hooks
 

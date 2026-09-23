@@ -53,7 +53,7 @@ export interface BskySetupOptions {
     allowlistInteractionHandler: AllowlistInteractionHandler
     /** Backend for the Q8 DM checkpoint manager (same backend as every other memory-tool consumer) */
     memoryBackend:               MemoryToolBackend
-    /** Health registry the Q8 DM poller gates its tick on ('bluesky' service) */
+    /** Health registry the Q8 DM poller gates its tick on ('bsky' service) */
     healthRegistry:              ServiceHealthRegistry
     /** Notification bridge's `notify` — threaded into both the outbound approval handler (rejection wake) and the DM poller (accumulate) */
     notify:                      NotifyFn
