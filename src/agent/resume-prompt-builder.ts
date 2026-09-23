@@ -7,7 +7,7 @@
  * {@link buildResumeNote}); that module builds the long-lived session core's short resume note.
  */
 import type { StreamProgress } from './stream-tracker';
-import type { MessageContext } from './types';
+import type { EnvelopeSourceMessage } from './types';
 
 /**
  * Context needed to build a resume prompt after an interruption.
@@ -16,7 +16,7 @@ export interface ResumeContext {
     /** Partial work captured from interrupted stream */
     partialWork: StreamProgress
     /** New messages that arrived during processing */
-    newMessages: MessageContext[]
+    newMessages: EnvelopeSourceMessage[]
 }
 
 /**

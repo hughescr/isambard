@@ -1,24 +1,7 @@
 import type { Client } from 'discord.js';
 import { DM_SCOPE, type ChannelId, type UserId, createChannelId, createUserId  } from '../types';
 import type { ChannelRegistryManager } from './manager';
-
-/**
- * Information about a resolved Discord user (without internal Discord ID).
- */
-export interface ResolvedUser {
-    userId:      UserId
-    username:    string
-    displayName: string
-    nickname:    string | null
-}
-
-/**
- * Result of attempting to resolve a human-readable name to a Discord user.
- */
-export type UserResolveResult
-    = | { status: 'resolved',  user: ResolvedUser                      }
-      | { status: 'ambiguous', matches: Omit<ResolvedUser, 'userId'>[] }
-      | { status: 'not_found'                                          };
+import type { ResolvedUser, UserResolveResult } from '@/agent';
 
 /**
  * Formats a DM channel name from a username.

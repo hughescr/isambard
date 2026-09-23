@@ -120,7 +120,7 @@ export function resolveNames(registry: ChannelRegistryManager, client: Client): 
  * {@link resolveNames}, attachment processing, and {@link channelListProvider}). The envelope's
  * `content` joins every batched context's text — multiple contexts arrive together only after
  * the coordinator's debounce merges a channel's pending messages into one turn — and
- * `messageId`/`channelId`/`createdAt` are the batch's FIRST context's, the same
+ * `messageId`/`channelId` are the batch's FIRST context's, the same
  * single-message-representative convention `EnvelopeMeta` uses elsewhere in this codebase.
  * @param contexts One channel's batched Discord message contexts (non-empty).
  * @param names This batch's resolved display names, from {@link resolveNames}.
@@ -149,7 +149,6 @@ export function toEnvelopeInput(
         authorId:    first.userId,
         authorName:  names.authorName,
         content:     contexts.map(ctx => ctx.content).join('\n\n'),
-        createdAt:   new Date(first.timestamp),
         images:      images.length > 0 ? images : undefined,
         isDM:        names.isDM,
         channelList,

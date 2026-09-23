@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { Client, DMChannel } from 'discord.js';
-import { DMTracker, formatDMChannelName, isDMChannelName, type ResolvedUser, type UserResolveResult } from '../../../../../src/integrations/discord/channel-registry/dm-tracker';
+import type { ResolvedUser, UserResolveResult } from '../../../../../src/agent/types';
+import { DMTracker, formatDMChannelName, isDMChannelName } from '../../../../../src/integrations/discord/channel-registry/dm-tracker';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
 import { createChannelId, createUserId } from '../../../../../src/integrations/discord/types';
 

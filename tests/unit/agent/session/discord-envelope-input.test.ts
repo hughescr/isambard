@@ -16,7 +16,6 @@ describe('DiscordEnvelopeInput', () => {
             authorId:    'user-1',
             authorName:  'Craig',
             content:     'hello',
-            createdAt:   new Date(0),
             images:      [{
                 filename: 'a.png', mediaType: 'image/png', base64Data: 'AA==', originalSize: 2,
             }],
@@ -35,7 +34,6 @@ describe('DiscordEnvelopeInput', () => {
             authorId:    'user-2',
             authorName:  'Someone',
             content:     'hi',
-            createdAt:   new Date(0),
             isDM:        true,
             channelList: [],
         };
@@ -50,7 +48,7 @@ describe('DiscordEnvelopeInput', () => {
         // barrel actually re-exports it rather than shadowing it with something structurally
         // similar declared elsewhere.
         const fromDirectImport: DiscordEnvelopeInput = {
-            messageId: 'x', channelId: 'c', channelName: 'c', authorId: 'a', authorName: 'a', content: '', createdAt: new Date(0), isDM: false, channelList: [],
+            messageId: 'x', channelId: 'c', channelName: 'c', authorId: 'a', authorName: 'a', content: '', isDM: false, channelList: [],
         };
         const viaBarrel: agentBarrel.DiscordEnvelopeInput = fromDirectImport;
 

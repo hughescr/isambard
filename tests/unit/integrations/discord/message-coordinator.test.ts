@@ -1793,8 +1793,7 @@ describe('MessageCoordinator', () => {
             expect(receivedContexts[1].messageId).toBe('msg-002'); // New
 
             // Resume context should have only the new message
-            expect(resumeContextReceived!.newMessages).toHaveLength(1);
-            expect(resumeContextReceived!.newMessages[0].messageId).toBe('msg-002');
+            expect(resumeContextReceived!.newMessages).toEqual([{ messageId: 'msg-002', content: 'Second' }]);
         });
 
         it('should correctly build contexts from lodash map operations', async () => {

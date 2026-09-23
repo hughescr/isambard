@@ -180,7 +180,6 @@ describe('toEnvelopeInput', () => {
             authorId:    'user-1',
             authorName:  'Craig',
             content:     'first\n\nsecond',
-            createdAt:   new Date(0),
             images,
             isDM:        false,
             channelList: ['general', 'random'],

@@ -128,7 +128,6 @@ function makeEnvelopeProvider(overrides: Partial<DiscordEnvelopeDeps> = {}): Dis
             authorId:    first.userId,
             authorName:  names.authorName,
             content:     contexts.map(c => c.content).join('\n\n'),
-            createdAt:   new Date(first.timestamp),
             images:      images.length > 0 ? images : undefined,
             isDM:        names.isDM,
             channelList,
@@ -226,21 +225,20 @@ describe('createConductorProcessor', () => {
         expect(contextBuilder.loadUserMemories).toHaveBeenCalledWith('user-1');
     });
 
-    it('builds the envelope with the current time and the message timestamp in ISO format', async () => {
+    it('builds the envelope with the current time and exactly the source ID and text', async () => {
         const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
         const now = new Date('2026-04-05T06:07:08.901Z');
-        const messageTimestamp = '2025-03-04T05:06:07.890Z';
         jest.setSystemTime(now);
 
         coordinator.handleMessage(
-            makeContext({ timestamp: messageTimestamp }),
+            makeContext({ messageId: 'source-msg', content: 'source text' }),
             makeDiscordMessage('chan-1', 'msg-1', 'hello')
         );
         await flush();
 
         expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({
             now,
-            messages: [expect.objectContaining({ timestamp: messageTimestamp })],
+            messages: [{ messageId: 'source-msg', content: 'source text' }],
         }));
     });
 

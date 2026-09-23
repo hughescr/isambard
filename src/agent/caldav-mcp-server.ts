@@ -2,6 +2,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpJsonResult, withHealthGuard, withToolErrorHandling } from './mcp-helpers';
+import type { UserId, UserResolveResult } from './types';
 import type { CalDAVClient, CalendarRegistryBackend, CalendarEvent } from '@/integrations/caldav';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 
@@ -25,19 +26,10 @@ function serializeEvent(event: CalendarEvent): Record<string, unknown> {
     return { ...event, time };
 }
 
-/**
- * Result of resolving a user name to a Discord user ID.
- * Mirrors UserResolveResult from DMTracker without importing from the discord module.
- */
-export type UserResolveResult
-    = | { status: 'resolved',  user: { userId: string, username: string, displayName: string, nickname: string | null } }
-      | { status: 'ambiguous', matches: Omit<{ userId: string, username: string, displayName: string, nickname: string | null }, 'userId'>[] }
-      | { status: 'not_found' };
-
 interface CaldavMCPServerOptions {
     client:            CalDAVClient
     registry:          CalendarRegistryBackend
-    resolveUser?:      (name: string) => Promise<UserResolveResult>
+    resolveUser:       (name: string) => Promise<UserResolveResult>
     healthRegistry?:   ServiceHealthRegistry
     reconnectionLoop?: ReconnectionLoop
 }
@@ -59,17 +51,12 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
 
     /**
      * Resolves a user name to a Discord user ID for registry lookup.
-     * Returns either the resolved userId string, or a CallToolResult to return to the agent.
+     * Returns either the resolved branded user ID, or a CallToolResult to return to the agent.
      */
-    async function resolveUserId(user: string): Promise<string | CallToolResult> {
-        if(!resolveUser) {
-            // No resolver provided (e.g., in tests) — use raw input
-            return user;
-        }
+    async function resolveUserId(user: string): Promise<UserId | CallToolResult> {
         const result = await resolveUser(user);
         switch(result.status) {
             case 'resolved': {
-                // Stryker disable next-line llm: `?? ''` is unreachable — UserResolveResult declares userId: string and dm-tracker always supplies createUserId(...); only a type-violating cast could observe it
                 return result.user.userId;
             }
             case 'ambiguous': {

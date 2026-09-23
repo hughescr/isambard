@@ -186,15 +186,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         const calendarAgendaText = formatCalendarContext(calendarDelta.events, now, timezone);
 
         const envelope = buildDiscordEnvelope({
-            messages: [{
-                channelId: input.channelId,
-                userId:    input.authorId,
-                messageId: input.messageId,
-                content:   input.content,
-                timestamp: input.createdAt.toISOString(),
-                botUserId: first.botUserId,
-                guildId:   first.guildId,
-            }],
+            messages:        [{ messageId: input.messageId, content: input.content }],
             authorId:        input.authorId,
             authorName:      input.authorName,
             channelId:       input.channelId,

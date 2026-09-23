@@ -35,6 +35,20 @@ export const userIdSchema = z
 
 export type UserId = z.infer<typeof userIdSchema>;
 
+/** Information about a resolved user, including the validated platform ID. */
+export interface ResolvedUser {
+    userId:      UserId
+    username:    string
+    displayName: string
+    nickname:    string | null
+}
+
+/** Result of resolving a human-readable name to a user. */
+export type UserResolveResult
+    = | { status: 'resolved', user: ResolvedUser }
+      | { status: 'ambiguous', matches: Omit<ResolvedUser, 'userId'>[] }
+      | { status: 'not_found' };
+
 /**
  * Creates a validated ChannelId from a string.
  * @throws {z.ZodError} If the channel ID is invalid
@@ -195,34 +209,10 @@ export interface SystemEvent {
     }
 }
 
-/**
- * Attachment metadata for platform-agnostic message handling.
- * Renamed from AttachmentMetadata to disambiguate from Discord's AttachmentMetadata.
- * Structurally equivalent but decouples the agent module from platform-specific types.
- * @internal Used only within MessageContext; no external file imports this by name.
- */
-interface PlatformAttachmentMetadata {
-    url:         string
-    filename:    string
-    contentType: string
-    size:        number
-    width?:      number
-    height?:     number
-}
-
-/**
- * Platform-agnostic message context for agent input.
- * Replaces DiscordMessageContext in the agent module.
- */
-export interface MessageContext {
-    channelId:    string
-    userId:       string
-    messageId:    string
-    content:      string
-    timestamp:    string  // ISO 8601
-    botUserId:    string
-    guildId?:     string
-    attachments?: PlatformAttachmentMetadata[]
+/** Only the source fields consumed by the Discord envelope builder and resume context. */
+export interface EnvelopeSourceMessage {
+    messageId: string
+    content:   string
 }
 
 /**

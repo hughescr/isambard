@@ -533,6 +533,7 @@ describe('runConductorInboxInit', () => {
         const inboxManager = makeFakeInboxManager({
             replayUnhandled: mock(async () => [
                 { id: '100', channelId: 'chan-1', channelName: 'general', guildId: 'guild-1', author: 'alice', content: 'hi', timestamp: new Date(0).toISOString(), isRead: false },
+                { id: '101', channelId: 'chan-1', channelName: 'general', guildId: 'guild-1', author: 'alice', content: 'again', timestamp: new Date(1).toISOString(), isRead: false },
                 { id: '200', channelId: 'chan-2', channelName: 'DM with Bob', guildId: 'DM', author: 'bob', content: 'yo', timestamp: new Date(0).toISOString(), isRead: false },
             ]),
         });
@@ -542,7 +543,10 @@ describe('runConductorInboxInit', () => {
         const discordSubmissions = conductor.submit.mock.calls.filter(([envelope]: [{ kind: string }]) => envelope.kind === 'discord');
         expect(discordSubmissions).toHaveLength(2);
         const replayTexts = (discordSubmissions as unknown as [{ text: string }][]).map(([envelope]) => envelope.text);
-        expect(replayTexts.some(text => text.includes('alice: hi'))).toBe(true);
+        expect(replayTexts.find(text => text.startsWith('[DISCORD #general'))).toContain('messageIds=[100, 101]');
+        expect(replayTexts.find(text => text.startsWith('[DISCORD #general'))).toMatch(/alice: hi[\s\S]*alice: again/);
+        expect(replayTexts.find(text => text.startsWith('[DISCORD #general'))?.match(/alice: hi/g)).toHaveLength(1);
+        expect(replayTexts.find(text => text.startsWith('[DISCORD #general'))?.match(/alice: again/g)).toHaveLength(1);
         expect(replayTexts.some(text => text.includes('bob: yo'))).toBe(true);
         expect(replayTexts.some(text => text.startsWith('[DISCORD #general'))).toBe(true);
         expect(replayTexts.some(text => text.startsWith('[DISCORD DM'))).toBe(true);

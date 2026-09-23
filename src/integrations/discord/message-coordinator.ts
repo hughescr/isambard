@@ -363,7 +363,7 @@ export class MessageCoordinator {
         const resumeContext: ResumeContext | null = state.partialWork
             ? {
                 partialWork: state.partialWork,
-                newMessages: newMessages.map(msg => msg.context),
+                newMessages: newMessages.map(({ context }) => ({ messageId: context.messageId, content: context.content })),
             }
             : null;
 

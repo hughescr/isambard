@@ -13,20 +13,16 @@ import {
     toSdkUserMessage
 } from '../../../../src/agent/session/envelope';
 import type { Envelope } from '../../../../src/agent/session/types';
-import type { MessageContext, PlatformImage } from '../../../../src/agent/types';
+import type { EnvelopeSourceMessage, PlatformImage } from '../../../../src/agent/types';
 
 const now = new Date('2026-09-04T22:07:00Z');
 const timezone = 'America/Los_Angeles';
 const timeHeader = '## Current Time\n- Izzy: 2026-09-04T14:07:00 America/Los_Angeles (Friday afternoon)';
 
-function makeMessage(overrides: Partial<MessageContext> = {}): MessageContext {
+function makeMessage(overrides: Partial<EnvelopeSourceMessage> = {}): EnvelopeSourceMessage {
     return {
-        channelId: 'chan-1',
-        userId:    'user-1',
         messageId: 'msg-1',
         content:   'hello there',
-        timestamp: '2026-09-04T22:06:00Z',
-        botUserId: 'bot-1',
         ...overrides,
     };
 }

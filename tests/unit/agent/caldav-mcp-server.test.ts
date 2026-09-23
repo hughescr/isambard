@@ -3,7 +3,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { createCaldavMCPServer, type UserResolveResult } from '../../../src/agent/caldav-mcp-server';
+import { createCaldavMCPServer as createServer } from '../../../src/agent/caldav-mcp-server';
+import { createUserId, type UserResolveResult } from '../../../src/agent/types';
 import { createLocalDate, createLocalDateTime, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, type CalendarEventsResult } from '../../../src/integrations/caldav';
 import type { CalendarServerEntry } from '../../../src/integrations/caldav/calendar-registry/types';
 import { textContent } from '../../setup';
@@ -15,6 +16,15 @@ interface RegisteredTool {
     annotations: Record<string, boolean>
 }
 interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool>, server: { _serverInfo: { version: string } } }
+
+// Existing tool tests use a distinct resolved test ID unless they explicitly exercise resolution.
+const defaultResolveUser: Parameters<typeof createServer>[0]['resolveUser'] = async name => ({
+    status: 'resolved',
+    user:   { userId: createUserId(`id:${name}`), username: name, displayName: name, nickname: null },
+});
+function createServerWithStubResolver(options: Omit<Parameters<typeof createServer>[0], 'resolveUser'> & { resolveUser?: Parameters<typeof createServer>[0]['resolveUser'] }): ReturnType<typeof createServer> {
+    return createServer({ ...options, resolveUser: options.resolveUser ?? defaultResolveUser });
+}
 
 // Helpers to build test data
 
@@ -65,7 +75,7 @@ describe.concurrent('createCaldavMCPServer', () => {
     });
 
     // Helper to get tool handler from server instance
-    const getToolHandler = (server: ReturnType<typeof createCaldavMCPServer>, toolName: string): ((args: Record<string, unknown>) => Promise<CallToolResult>) => {
+    const getToolHandler = (server: ReturnType<typeof createServerWithStubResolver>, toolName: string): ((args: Record<string, unknown>) => Promise<CallToolResult>) => {
         const registered = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
         // The SDK parses tool inputs before invoking a handler, including Zod defaults.
         return async args => registered.handler(z.object(registered.inputSchema.shape).parse(args));
@@ -73,7 +83,7 @@ describe.concurrent('createCaldavMCPServer', () => {
 
     describe('createCaldavMCPServer function', () => {
         test('should create MCP server with correct properties', () => {
-            const server = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
 
             expect(server).toBeDefined();
             expect(server.name).toBe('caldav');
@@ -87,7 +97,7 @@ describe.concurrent('createCaldavMCPServer', () => {
             ['getUpcomingEvents', 'Get upcoming calendar events over the next N days (default 7). Each event.time is all_day (dates, exclusive end), floating (zone-less local times), or timed (ISO instants and source timezone).'],
             ['listUserCalendars', 'List all calendar labels configured for a user. Shows calendar names grouped by server, without exposing URLs or credentials.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
-            const server = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             expect(registeredTool.description).toBe(expectedDescription);
@@ -98,7 +108,7 @@ describe.concurrent('createCaldavMCPServer', () => {
             ['getUpcomingEvents', ['user', 'days']],
             ['listUserCalendars', ['user']],
         ])('should have %s tool with correct input schema fields', (toolName, expectedFields) => {
-            const server = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             for(const field of expectedFields) {
@@ -111,7 +121,7 @@ describe.concurrent('createCaldavMCPServer', () => {
             ['getUpcomingEvents'],
             ['listUserCalendars'],
         ])('should have %s tool with readOnlyHint and idempotentHint annotations', (toolName) => {
-            const server = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             expect(registeredTool.annotations.readOnlyHint).toBe(true);
@@ -119,7 +129,7 @@ describe.concurrent('createCaldavMCPServer', () => {
         });
 
         test('accepts one-character user lookups but rejects empty names for every calendar tool', () => {
-            const tools = (createCaldavMCPServer({ client: mockClient, registry: mockRegistry }).instance as unknown as RegisteredToolInstance)._registeredTools;
+            const tools = (createServerWithStubResolver({ client: mockClient, registry: mockRegistry }).instance as unknown as RegisteredToolInstance)._registeredTools;
 
             for(const toolName of ['getCalendarEvents', 'getUpcomingEvents', 'listUserCalendars']) {
                 const tool = tools[toolName];
@@ -130,7 +140,7 @@ describe.concurrent('createCaldavMCPServer', () => {
         });
 
         test('accepts a one-day lookahead but rejects zero and negative days', () => {
-            const tools = (createCaldavMCPServer({ client: mockClient, registry: mockRegistry }).instance as unknown as RegisteredToolInstance)._registeredTools;
+            const tools = (createServerWithStubResolver({ client: mockClient, registry: mockRegistry }).instance as unknown as RegisteredToolInstance)._registeredTools;
             const days  = tools.getUpcomingEvents.inputSchema.shape.days as z.ZodOptional<z.ZodNumber>;
 
             expect(days.safeParse(1).success).toBe(true);
@@ -145,7 +155,7 @@ describe.concurrent('createCaldavMCPServer', () => {
             mockEvent({ uid: 'floating', time: { kind: 'floating', start: createLocalDateTime('2026-03-01T09:00:00'), end: createLocalDateTime('2026-03-01T10:00:00') } }),
             mockEvent({ uid: 'timed', time: { kind: 'timed', start: new Date('2026-03-01T09:00:00Z'), end: new Date('2026-03-01T10:00:00Z'), timezone: 'Etc/UTC' } }),
         ], failed: [] });
-        const server = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+        const server = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
         const handler = getToolHandler(server, toolName);
         const result = await handler({ user: 'user-123', startDate: '2026-03-01', endDate: '2026-03-02' });
         const parsed = JSON.parse(textContent(result.content[0])) as { events: { uid: string, time: Record<string, unknown> }[] };
@@ -159,7 +169,7 @@ describe.concurrent('createCaldavMCPServer', () => {
 
     describe('getCalendarEvents tool', () => {
         test('should return events for a user with calendars', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getCalendarEvents');
 
             const result = await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
@@ -174,12 +184,12 @@ describe.concurrent('createCaldavMCPServer', () => {
         });
 
         test('should pass servers and parsed dates to client.getEvents', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getCalendarEvents');
 
             await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
 
-            expect(mockRegistry.getAllCalendars).toHaveBeenCalledWith('user-123');
+            expect(mockRegistry.getAllCalendars).toHaveBeenCalledWith('id:user-123');
             expect(mockClient.getEvents).toHaveBeenCalledWith(
                 [mockServerEntry()],
                 new Date('2026-03-18'),
@@ -192,7 +202,7 @@ describe.concurrent('createCaldavMCPServer', () => {
                 events: [mockEvent()],
                 failed: [{ uid: 'bad-event', reason: 'Malformed RRULE' }],
             }));
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getCalendarEvents');
 
             const result = await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
@@ -207,7 +217,7 @@ describe.concurrent('createCaldavMCPServer', () => {
         });
 
         test('should serialize event dates to ISO strings', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getCalendarEvents');
 
             const result = await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
@@ -223,7 +233,7 @@ describe.concurrent('createCaldavMCPServer', () => {
                 events: [mockEvent({ uid: 'uid-preserved', summary: 'Calendar identity', calendarLabel: 'Shared', location: 'Room 4', timezone: 'America/Los_Angeles' })],
                 failed: [],
             });
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getCalendarEvents');
 
             const result = await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
@@ -247,7 +257,7 @@ describe.concurrent('createCaldavMCPServer', () => {
                 events: [mockEvent({ end: new Date('undefined') })],
                 failed: [],
             });
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getCalendarEvents');
 
             const result = await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
@@ -258,7 +268,7 @@ describe.concurrent('createCaldavMCPServer', () => {
 
         test('should return empty events with message when no calendars configured', async () => {
             (mockRegistry.getAllCalendars as ReturnType<typeof mock>).mockImplementation(async () => []);
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getCalendarEvents');
 
             const result = await handler({ user: 'user-with-no-calendars', startDate: '2026-03-18', endDate: '2026-03-25' });
@@ -275,7 +285,7 @@ describe.concurrent('createCaldavMCPServer', () => {
             (mockClient.getEvents as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('CalDAV connection failed');
             });
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getCalendarEvents');
 
             const result = await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
@@ -291,7 +301,7 @@ describe.concurrent('createCaldavMCPServer', () => {
             const getEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [mockEvent()], failed: [] }));
             const client = { getEvents } as unknown as CalDAVClient;
             const registry = { getAllCalendars: mock(async () => [mockServerEntry()]) } as unknown as CalendarRegistryBackend;
-            const server = createCaldavMCPServer({ client, registry });
+            const server = createServerWithStubResolver({ client, registry });
             const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
             const mcpClient = new Client({ name: 'caldav-contract-test', version: '1.0.0' });
 
@@ -318,7 +328,7 @@ describe.concurrent('createCaldavMCPServer', () => {
         });
 
         test('should return upcoming events with default 7 days', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getUpcomingEvents');
 
             const result = await handler({ user: 'user-123' });
@@ -338,7 +348,7 @@ describe.concurrent('createCaldavMCPServer', () => {
                 events: [],
                 failed: [{ uid: 'bad-weekly', reason: 'Unsupported BYDAY' }, { uid: 'bad-monthly', reason: 'Invalid COUNT' }],
             }));
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getUpcomingEvents');
 
             const result = await handler({ user: 'user-123' });
@@ -350,7 +360,7 @@ describe.concurrent('createCaldavMCPServer', () => {
         });
 
         test('should accept custom days parameter', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getUpcomingEvents');
 
             const result = await handler({ user: 'user-123', days: 14 });
@@ -361,7 +371,7 @@ describe.concurrent('createCaldavMCPServer', () => {
         });
 
         test('should pass the correct date range to client based on days', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getUpcomingEvents');
 
             await handler({ user: 'user-123', days: 7 });
@@ -374,7 +384,7 @@ describe.concurrent('createCaldavMCPServer', () => {
 
         test('should return empty events when no calendars configured', async () => {
             (mockRegistry.getAllCalendars as ReturnType<typeof mock>).mockImplementation(async () => []);
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getUpcomingEvents');
 
             const result = await handler({ user: 'user-with-no-calendars' });
@@ -391,7 +401,7 @@ describe.concurrent('createCaldavMCPServer', () => {
             (mockRegistry.getAllCalendars as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Registry unavailable');
             });
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getUpcomingEvents');
 
             const result = await handler({ user: 'user-123' });
@@ -402,7 +412,7 @@ describe.concurrent('createCaldavMCPServer', () => {
         });
 
         test('should serialize event dates to ISO strings', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getUpcomingEvents');
 
             const result = await handler({ user: 'user-123' });
@@ -418,7 +428,7 @@ describe.concurrent('createCaldavMCPServer', () => {
                 events: [mockEvent({ uid: 'upcoming-uid', summary: 'Upcoming identity', calendarLabel: 'Work' })],
                 failed: [{ uid: 'one-failed-event', reason: 'Malformed RRULE' }],
             });
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'getUpcomingEvents');
 
             const result = await handler({ user: 'user-123' });
@@ -432,7 +442,7 @@ describe.concurrent('createCaldavMCPServer', () => {
 
     describe('listUserCalendars tool', () => {
         test('should return calendar labels grouped by server description', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'listUserCalendars');
 
             const result = await handler({ user: 'user-123' });
@@ -447,7 +457,7 @@ describe.concurrent('createCaldavMCPServer', () => {
         });
 
         test('should strip credentials from output', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'listUserCalendars');
 
             const result = await handler({ user: 'user-123' });
@@ -464,7 +474,7 @@ describe.concurrent('createCaldavMCPServer', () => {
         });
 
         test('should include calendar path in output', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'listUserCalendars');
 
             const result = await handler({ user: 'user-123' });
@@ -482,7 +492,7 @@ describe.concurrent('createCaldavMCPServer', () => {
                     calendars:   [{ calendarPath: '/work/calendars/work/', label: 'Work' }],
                 }),
             ]);
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'listUserCalendars');
 
             const result = await handler({ user: 'user-123' });
@@ -494,7 +504,7 @@ describe.concurrent('createCaldavMCPServer', () => {
 
         test('should return empty when no calendars configured', async () => {
             (mockRegistry.getAllCalendars as ReturnType<typeof mock>).mockImplementation(async () => []);
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'listUserCalendars');
 
             const result = await handler({ user: 'user-with-no-calendars' });
@@ -510,7 +520,7 @@ describe.concurrent('createCaldavMCPServer', () => {
             (mockRegistry.getAllCalendars as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('DynamoDB timeout');
             });
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry });
             const handler = getToolHandler(server, 'listUserCalendars');
 
             const result = await handler({ user: 'user-123' });
@@ -522,21 +532,21 @@ describe.concurrent('createCaldavMCPServer', () => {
     });
 
     describe('user resolution', () => {
-        test('should resolve user name to userId and fetch calendars', async () => {
+        test.each(['getCalendarEvents', 'getUpcomingEvents', 'listUserCalendars'] as const)('resolves user name to branded ID for %s', async (toolName) => {
             const resolveUser = mock(async (): Promise<UserResolveResult> => ({
                 status: 'resolved',
-                user:   { userId: 'discord-123', username: 'craig', displayName: 'Craig', nickname: null },
+                user:   { userId: createUserId('discord-123'), username: 'craig', displayName: 'Craig', nickname: null },
             }));
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry, resolveUser });
-            const handler = getToolHandler(server, 'getUpcomingEvents');
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry, resolveUser });
+            const handler = getToolHandler(server, toolName);
 
-            await handler({ user: 'Craig' });
+            await handler({ user: 'Craig', startDate: '2026-03-18', endDate: '2026-03-25' });
 
             expect(resolveUser).toHaveBeenCalledWith('Craig');
             expect(mockRegistry.getAllCalendars).toHaveBeenCalledWith('discord-123');
         });
 
-        test('should return ambiguous matches when multiple users found', async () => {
+        test.each(['getCalendarEvents', 'getUpcomingEvents', 'listUserCalendars'] as const)('returns ambiguous matches without calendar lookup for %s', async (toolName) => {
             const resolveUser = mock(async (): Promise<UserResolveResult> => ({
                 status:  'ambiguous',
                 matches: [
@@ -544,10 +554,10 @@ describe.concurrent('createCaldavMCPServer', () => {
                     { username: 'craig2', displayName: 'Craig S', nickname: null },
                 ],
             }));
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry, resolveUser });
-            const handler = getToolHandler(server, 'getUpcomingEvents');
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry, resolveUser });
+            const handler = getToolHandler(server, toolName);
 
-            const result = await handler({ user: 'Craig' });
+            const result = await handler({ user: 'Craig', startDate: '2026-03-18', endDate: '2026-03-25' });
 
             expect(result.isError).toBeUndefined();
             const text   = textContent(result.content[0]);
@@ -558,14 +568,14 @@ describe.concurrent('createCaldavMCPServer', () => {
             expect(mockRegistry.getAllCalendars).not.toHaveBeenCalled();
         });
 
-        test('should return not_found when no user matches', async () => {
+        test.each(['getCalendarEvents', 'getUpcomingEvents', 'listUserCalendars'] as const)('returns not_found without calendar lookup for %s', async (toolName) => {
             const resolveUser = mock(async (): Promise<UserResolveResult> => ({
                 status: 'not_found',
             }));
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry, resolveUser });
-            const handler = getToolHandler(server, 'getUpcomingEvents');
+            const server  = createServerWithStubResolver({ client: mockClient, registry: mockRegistry, resolveUser });
+            const handler = getToolHandler(server, toolName);
 
-            const result = await handler({ user: 'Unknown' });
+            const result = await handler({ user: 'Unknown', startDate: '2026-03-18', endDate: '2026-03-25' });
 
             const text   = textContent(result.content[0]);
             const parsed = JSON.parse(text) as { error: string, message: string };
@@ -574,13 +584,12 @@ describe.concurrent('createCaldavMCPServer', () => {
             expect(mockRegistry.getAllCalendars).not.toHaveBeenCalled();
         });
 
-        test('should fall back to raw input when resolveUser not provided', async () => {
-            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
-            const handler = getToolHandler(server, 'getUpcomingEvents');
-
-            await handler({ user: 'raw-id-123' });
-
-            expect(mockRegistry.getAllCalendars).toHaveBeenCalledWith('raw-id-123');
+        test('requires a resolver with a branded user ID on the production constructor', () => {
+            // @ts-expect-error -- unresolved human names must never be accepted as platform IDs
+            const missingResolver: Parameters<typeof createServer>[0] = { client: mockClient, registry: mockRegistry };
+            // @ts-expect-error -- the resolver cannot return an unbranded string as a user ID
+            const rawUser: Extract<UserResolveResult, { status: 'resolved' }> = { status: 'resolved', user: { userId: 'raw-id', username: 'a', displayName: 'a', nickname: null } };
+            expect({ keys: Object.keys(missingResolver), id: rawUser.user.userId }).toMatchObject({ keys: ['client', 'registry'], id: 'raw-id' });
         });
     });
 });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { MediaFetchMetadata } from '@/utils';
 
 // Re-export generic media types from utils
 export {
@@ -22,8 +23,16 @@ export const AttachmentMetadataSchema = z.object({
     size:        z.number().int().positive(),
     width:       z.number().int().positive().optional(),
     height:      z.number().int().positive().optional(),
-});
+}) satisfies z.ZodType<MediaFetchMetadata>;
 export type AttachmentMetadata = z.infer<typeof AttachmentMetadataSchema>;
+
+// `satisfies` alone is one-way: check surplus keys and optional/required drift too.
+type AssertNever<T extends never> = T;
+export type AttachmentMetadataShapeContract = [
+    AssertNever<Exclude<keyof AttachmentMetadata, keyof MediaFetchMetadata>>,
+    AssertNever<Exclude<keyof MediaFetchMetadata, keyof AttachmentMetadata>>,
+    AssertNever<Exclude<MediaFetchMetadata, AttachmentMetadata>>
+];
 
 // Schema for non-image attachments stored to disk
 export const StoredAttachmentSchema = z.object({

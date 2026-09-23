@@ -1804,7 +1804,7 @@ describe('Discord Event Handlers', () => {
                 expect(envelope.text).toContain(`[DISCORD #${PERCH_CHANNEL_ID}`);
                 expect(envelope.text).toContain('messageIds=[555555555555555555]');
                 expect(envelope.text).toContain('authorId=111111111111111111');
-                expect(envelope.text).toContain('Test message');
+                expect(envelope.text).toContain('testuser: Test message');
                 expect(submitOptions.priority).toBe('other');
 
                 expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();

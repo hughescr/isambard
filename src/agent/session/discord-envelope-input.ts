@@ -24,7 +24,6 @@ export interface DiscordEnvelopeInput {
     authorId:    string
     authorName:  string
     content:     string
-    createdAt:   Date
     images?:     PlatformImage[]
     isDM:        boolean
     /**

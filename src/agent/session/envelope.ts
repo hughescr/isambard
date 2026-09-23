@@ -15,7 +15,7 @@
  * populate `createdAt` without reaching for `new Date()` inside a "pure builder" module.
  *
  * Imports are deliberately narrow (nothing from src/integrations/**): './catchup-text',
- * '../multimodal-message-builder', '../types' (MessageContext/PlatformImage — the
+ * '../multimodal-message-builder', '../types' (EnvelopeSourceMessage/PlatformImage — the
  * platform-agnostic leaf types, not this module's own EnvelopeKind/Envelope), '@/utils', and
  * the SDK's own message types.
  *
@@ -23,7 +23,7 @@
  */
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { buildMultimodalContent } from '../multimodal-message-builder';
-import type { MessageContext, PlatformImage } from '../types';
+import type { EnvelopeSourceMessage, PlatformImage } from '../types';
 import { buildCatchupText } from './catchup-text';
 import type { AccumulationEnvelope, AdoptedPeerEnvelope, DiscordQueryEnvelope, Envelope, QueryEnvelope } from './types';
 import { formatEnvelopeStamp } from '@/utils';
@@ -114,7 +114,7 @@ function formatDiscordChannelSegment(isDM: boolean, channelName: string, guildNa
 
 /** Inputs to {@link buildDiscordEnvelope}. */
 export interface BuildDiscordEnvelopeParams {
-    messages:         MessageContext[]
+    messages:         EnvelopeSourceMessage[]
     authorId:         string
     authorName:       string
     channelId:        string

@@ -368,14 +368,8 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
         const newest = channelMessages[channelMessages.length - 1]!;
         const envelope = buildDiscordEnvelope({
             messages: channelMessages.map(message => ({
-                // Stryker disable next-line llm: buildDiscordEnvelope never reads messages[].channelId, so this field has no observable effect.
-                channelId: message.channelId,
-                // Stryker disable next-line llm: buildDiscordEnvelope never reads messages[].userId, so this field's fallback order has no observable effect.
-                userId:    message.authorId ?? message.author,
                 messageId: message.id,
                 content:   `${message.author}: ${message.content}`,
-                timestamp: message.timestamp,
-                botUserId: readyClient.user!.id,
             })),
             authorId:    newest.authorId ?? newest.author,
             authorName:  newest.author,

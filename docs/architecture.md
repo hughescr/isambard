@@ -34,7 +34,7 @@ The composition root (`src/app/`) is the only module allowed to import from all 
 
 Platform integrations (Discord, Email, Bluesky) each own their own setup concerns. Discord is the hub for approval UI (buttons, modals) and routes approvals back to email and Bluesky outbound handlers. CalDAV is independent of the agent module — it provides data but does not call agent APIs.
 
-`src/agent/` does not import from `src/integrations/discord/`. The Discord integration calls into the agent, never the reverse. Boundary mapping — translating Discord-specific types to the agent's `MessageContext`/`PlatformImage` — happens in `src/integrations/discord/setup/coordinator-setup.ts`.
+`src/agent/` does not import from `src/integrations/discord/`. The Discord integration calls into the agent, never the reverse. At the envelope boundary, Discord producers project source messages to `EnvelopeSourceMessage` (`messageId` and `content` only); `PlatformImage` remains agent-owned. User-name resolution shares the agent-owned `UserResolveResult` with a branded `UserId`, and the CalDAV MCP server requires a resolver rather than treating a name as an ID. Discord's validated attachment schema is constrained to the canonical `MediaFetchMetadata` shape in `src/utils/media/`.
 
 ## Module Boundaries
 
@@ -113,7 +113,7 @@ The **task board** (`presence`'s sibling, `src/integrations/discord/task-board/`
 
 The registry's `CalendarRegistryScope` distinguishes `personal` from `shared` without a pseudo-user. `CalendarRegistryKeyGenerator` owns the persisted form: the unchanged `CALCAL#{userId}` / `CALCAL#SHARED` PKs, `parseScope` to decode them, and the single `SHARED` literal. Reads derive the scope from the authoritative PK, so pre-scope rows need no backfill and a conflicting body `userId`/`scope` is ignored. Every write keeps the legacy `userId` body attribute (`SHARED` for the shared record), so a pre-scope build can still read the row during rollout or after a rollback. That attribute can be dropped once no such build can run.
 
-Boundary mapping between Discord-specific types and the agent's platform-agnostic types happens in `src/integrations/discord/setup/coordinator-setup.ts`. The other platform setups (`email-setup.ts`, `bsky-setup.ts`, etc.) handle their own initialization and wire approval callbacks back into the Discord approval infrastructure.
+Discord's setup producers project their message inputs to the two-field agent envelope contract at each call to `buildDiscordEnvelope`; `coordinator-setup.ts` separately handles attachment processing and other coordinator wiring. The other platform setups (`email-setup.ts`, `bsky-setup.ts`, etc.) handle their own initialization and wire approval callbacks back into the Discord approval infrastructure.
 
 ## Services Layer
 

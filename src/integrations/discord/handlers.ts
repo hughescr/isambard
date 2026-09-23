@@ -480,7 +480,6 @@ export function dispatchToCoordinator(
  */
 async function submitPerchChannelMessage(
     message: Message,
-    botUserId: UserId,
     perch: PerchRoutingDeps,
     inboxManager?: InboxManager
 ): Promise<void> {
@@ -494,13 +493,8 @@ async function submitPerchChannelMessage(
 
     const envelope = buildDiscordEnvelope({
         messages: [{
-            channelId: message.channel.id,
-            userId:    message.author.id,
             messageId: message.id,
             content:   `${message.author.username}: ${message.cleanContent}`,
-            timestamp: message.createdAt.toISOString(),
-            botUserId,
-            guildId:   message.guild?.id,
         }],
         authorId:    message.author.id,
         authorName:  message.author.username,
@@ -597,7 +591,7 @@ interface DispatchAdmittedMessageOptions {
  * idle-status ring-buffer entry for every replayed message, not just the ones this function
  * actually gets called for.
  * @param message The admitted Discord message.
- * @param botUserId The bot's own user id (mention detection upstream; envelope authorship here).
+ * @param botUserId The bot's own user id, used for mention detection and coordinator routing.
  * @param coordinator The (conversation) message coordinator — untouched for a perch-channel message.
  * @param options See {@link DispatchAdmittedMessageOptions}.
  */
@@ -630,7 +624,7 @@ export async function dispatchAdmittedMessage(
             logger.error({ err, channelId: message.channel.id, msg: 'Failed to resolve the well-known perch-time channel; routing to the coordinator instead' });
         }
         if(perchChannel !== null && perchChannel.channelId === message.channel.id) {
-            await submitPerchChannelMessage(message, botUserId, perch, inboxManager);
+            await submitPerchChannelMessage(message, perch, inboxManager);
             return;
         }
     }

@@ -59,8 +59,9 @@ test('MCP tool catalog exposes stable descriptions, input help, and annotations'
     const unusedBackend = {} as Parameters<typeof createMemoryMCPServer>[0];
     const servers = {
         caldav: serverMetadata(createCaldavMCPServer({
-            client:   unusedBackend as unknown as Parameters<typeof createCaldavMCPServer>[0]['client'],
-            registry: unusedBackend as unknown as Parameters<typeof createCaldavMCPServer>[0]['registry'],
+            client:      unusedBackend as unknown as Parameters<typeof createCaldavMCPServer>[0]['client'],
+            registry:    unusedBackend as unknown as Parameters<typeof createCaldavMCPServer>[0]['registry'],
+            resolveUser: async () => ({ status: 'not_found' }),
         })),
         contacts: serverMetadata(createContactsMCPServer({ backend: unusedBackend as unknown as Parameters<typeof createContactsMCPServer>[0]['backend'] })),
         inbox:    serverMetadata(createInboxMCPServer(
@@ -83,8 +84,9 @@ test('MCP input schemas enforce the documented nonempty and bounded inputs', () 
     const unusedBackend = {} as Parameters<typeof createMemoryMCPServer>[0];
     const tools = (server: { instance: unknown }) => (server.instance as ServerInstance)._registeredTools;
     const caldav = tools(createCaldavMCPServer({
-        client:   unusedBackend as unknown as Parameters<typeof createCaldavMCPServer>[0]['client'],
-        registry: unusedBackend as unknown as Parameters<typeof createCaldavMCPServer>[0]['registry'],
+        client:      unusedBackend as unknown as Parameters<typeof createCaldavMCPServer>[0]['client'],
+        registry:    unusedBackend as unknown as Parameters<typeof createCaldavMCPServer>[0]['registry'],
+        resolveUser: async () => ({ status: 'not_found' }),
     }));
     expect(caldav.getCalendarEvents.inputSchema.shape.user.safeParse('').success).toBe(false);
     expect(caldav.getCalendarEvents.inputSchema.shape.user.safeParse('Craig').success).toBe(true);
