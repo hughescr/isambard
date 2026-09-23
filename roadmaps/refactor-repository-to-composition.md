@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-`BaseRepository` uses classical inheritance, but this pattern creates awkward coupling when used with helper classes. `MemoryToolBackend` extends `BaseRepository` and passes inherited methods as callbacks via `.bind(this)` to specialized helper classes (`MemoryToolBackendCore`, `MemoryToolBackendQuery`, `MemoryToolBackendTagIndex`). This is a leaky abstraction that exposes internal implementation details.
+`DynamoTableAccess` (this document's proposed Phase 1 rename has already landed, in #88) uses classical inheritance, but this pattern creates awkward coupling when used with helper classes. `MemoryToolBackend` extends `DynamoTableAccess` and passes inherited methods as callbacks via `.bind(this)` to specialized helper classes (`MemoryToolBackendCore`, `MemoryToolBackendQuery`, `MemoryToolBackendTagIndex`). This is a leaky abstraction that exposes internal implementation details.
 
 **Key issues:**
 - `.bind(this)` callbacks are verbose and error-prone
@@ -13,22 +13,22 @@
 
 ## Current Pattern
 
-**BaseRepository (src/storage/repositories/base.ts):**
+**DynamoTableAccess (src/storage/repositories/base.ts):**
 ```typescript
-export abstract class BaseRepository<_T> {
+export abstract class DynamoTableAccess {
     protected readonly docClient: DynamoDBDocumentClient;
     protected readonly tableName: string;
 
     protected async putItem(item: Record<string, unknown>): Promise<void> { ... }
-    protected async getItem<R>(key: DynamoDBKey): Promise<R | undefined> { ... }
+    protected async getItem(key: DynamoDBKey): Promise<Record<string, unknown> | undefined> { ... }
     protected async deleteItem(key: DynamoDBKey): Promise<void> { ... }
-    protected async query<R>(params: Omit<QueryCommandInput, 'TableName'>): Promise<R[]> { ... }
+    protected async query(params: Omit<QueryCommandInput, 'TableName'>): Promise<Record<string, unknown>[]> { ... }
 }
 ```
 
-**MemoryToolBackend extends BaseRepository:**
+**MemoryToolBackend extends DynamoTableAccess:**
 ```typescript
-export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
+export class MemoryToolBackend extends DynamoTableAccess {
     private readonly coreOps: MemoryToolBackendCore;
 
     constructor(docClient: DynamoDBDocumentClient, tableName: string) {
@@ -67,62 +67,58 @@ export class MemoryToolBackendCore {
         private readonly docClient: DynamoDBDocumentClient,
         private readonly tableName: string,
         private readonly putItem: (item: Record<string, unknown>) => Promise<void>,  // Callback
-        private readonly getItem: <R>(key: DynamoDBKey) => Promise<R | undefined>,  // Callback
-        private readonly deleteItem: (key: DynamoDBKey) => Promise<void>,          // Callback
-        private readonly stripKeys: (item: MemoryToolItem) => MemoryToolItemData
+        private readonly getItem: (key: DynamoDBKey) => Promise<Record<string, unknown> | undefined>,  // Callback
+        private readonly deleteItem: (key: DynamoDBKey) => Promise<void>          // Callback
     ) {}
 }
 ```
 
 ## Proposed Pattern
 
-Rename `BaseRepository` to `DynamoDBOperations` and use composition instead of inheritance.
+Use composition instead of inheritance, keeping the `DynamoTableAccess` name #88 already established.
 
-**DynamoDBOperations (src/storage/repositories/base.ts):**
+**DynamoTableAccess as a composed collaborator (src/storage/repositories/base.ts):**
 ```typescript
 /**
  * Low-level DynamoDB operations wrapper.
  * Provides common CRUD operations for DynamoDB tables.
  * Intended for composition, not inheritance.
  */
-export class DynamoDBOperations {
+export class DynamoTableAccess {
     constructor(
         private readonly docClient: DynamoDBDocumentClient,
         private readonly tableName: string
     ) {}
 
     async putItem(item: Record<string, unknown>): Promise<void> { ... }
-    async getItem<R>(key: DynamoDBKey): Promise<R | undefined> { ... }
+    async getItem(key: DynamoDBKey): Promise<Record<string, unknown> | undefined> { ... }
     async deleteItem(key: DynamoDBKey): Promise<void> { ... }
-    async query<R>(params: Omit<QueryCommandInput, 'TableName'>): Promise<R[]> { ... }
+    async query(params: Omit<QueryCommandInput, 'TableName'>): Promise<Record<string, unknown>[]> { ... }
 }
 ```
 
-**MemoryToolBackend composes DynamoDBOperations:**
+**MemoryToolBackend composes DynamoTableAccess:**
 ```typescript
 export class MemoryToolBackend {
-    private readonly dynamo: DynamoDBOperations;
+    private readonly dynamo: DynamoTableAccess;
     private readonly coreOps: MemoryToolBackendCore;
     private readonly queryOps: MemoryToolBackendQuery;
     private readonly tagIndexOps: MemoryToolBackendTagIndex;
 
     constructor(docClient: DynamoDBDocumentClient, tableName: string) {
-        this.dynamo = new DynamoDBOperations(docClient, tableName);
+        this.dynamo = new DynamoTableAccess(docClient, tableName);
 
         // Clean: passing the dynamo instance directly
         this.coreOps = new MemoryToolBackendCore(
-            this.dynamo,        // ✅ Clear interface
-            stripDynamoKeys
+            this.dynamo        // ✅ Clear interface
         );
 
         this.queryOps = new MemoryToolBackendQuery(
-            this.dynamo,        // ✅ Clear interface
-            stripDynamoKeys
+            this.dynamo        // ✅ Clear interface
         );
 
         this.tagIndexOps = new MemoryToolBackendTagIndex(
             this.dynamo,        // ✅ Clear interface
-            stripDynamoKeys,
             this.listByLayer.bind(this)  // Still needed - listByLayer delegates to queryOps
         );
     }
@@ -144,8 +140,7 @@ export class MemoryToolBackend {
 ```typescript
 export class MemoryToolBackendCore {
     constructor(
-        private readonly dynamo: DynamoDBOperations,  // Clear dependency
-        private readonly stripKeys: (item: MemoryToolItem) => MemoryToolItemData
+        private readonly dynamo: DynamoTableAccess  // Clear dependency
     ) {}
 
     async create(input: CreateMemoryToolItemInput): Promise<MemoryToolItemData> {
@@ -159,58 +154,55 @@ export class MemoryToolBackendCore {
 
 ## Changes Required
 
-### 1. Rename BaseRepository
+### 1. Rename to DynamoTableAccess (done — #88)
 - **File:** `src/storage/repositories/base.ts`
-- **Action:** Rename class `BaseRepository<T>` → `DynamoDBOperations`
-- **Action:** Remove abstract class pattern, make it concrete
-- **Action:** Remove generic `<T>` parameter (not used)
-- **Action:** Change method visibility from `protected` to `public`
+- The class has no type parameter (#88); `getItem`/`query`/`scan` return raw `Record<string, unknown>` and every subclass validates what it reads. It is still `abstract` and still extended by all ten backends — inheritance itself is unchanged, only the name and the type-safety of the raw operations. The composition switch below (concrete class, `protected` → `public`, extended by no one) is still future work.
 
 ### 2. Update MemoryToolBackend
 - **File:** `src/storage/memory-tool/backend.ts`
-- **Action:** Remove `extends BaseRepository<MemoryToolItemData>`
-- **Action:** Add `private readonly dynamo: DynamoDBOperations`
-- **Action:** Initialize `this.dynamo = new DynamoDBOperations(docClient, tableName)`
+- **Action:** Remove `extends DynamoTableAccess`
+- **Action:** Add `private readonly dynamo: DynamoTableAccess`
+- **Action:** Initialize `this.dynamo = new DynamoTableAccess(docClient, tableName)`
 - **Action:** Pass `this.dynamo` to helper constructors instead of individual callbacks
 
 ### 3. Update MemoryToolBackendCore
 - **File:** `src/storage/memory-tool/backend-core.ts`
-- **Action:** Change constructor signature to accept `dynamo: DynamoDBOperations`
+- **Action:** Change constructor signature to accept `dynamo: DynamoTableAccess`
 - **Action:** Replace callback parameters (`putItem`, `getItem`, `deleteItem`) with `this.dynamo` calls
-- **Action:** Keep `stripKeys` callback (utility function, not DynamoDB operation)
+- **Action:** No `stripKeys` callback to carry over — #88 already moved row decoding into `decodeStoredMemoryToolItem` (`./decode-stored-item.ts`), called directly rather than injected
 
 ### 4. Update MemoryToolBackendQuery
 - **File:** `src/storage/memory-tool/backend-query.ts`
-- **Action:** Change constructor to accept `dynamo: DynamoDBOperations`
+- **Action:** Change constructor to accept `dynamo: DynamoTableAccess`
 - **Action:** Replace direct `docClient` and `tableName` usage with `this.dynamo` where applicable
 - **Action:** Some methods use `QueryCommand` directly - these can stay as-is or use dynamo.query()
 
 ### 5. Update MemoryToolBackendTagIndex
 - **File:** `src/storage/memory-tool/backend-tag-index.ts`
-- **Action:** Change constructor to accept `dynamo: DynamoDBOperations`
+- **Action:** Change constructor to accept `dynamo: DynamoTableAccess`
 - **Action:** Replace direct `docClient` and `tableName` usage with `this.dynamo`
 - **Action:** Keep `listByLayer` callback (cross-module dependency to queryOps)
 
 ### 6. Check for Other Usages
-- **Action:** Search for `extends BaseRepository` across the codebase
+- **Action:** Search for `extends DynamoTableAccess` across the codebase
 - **Action:** Update any other repositories to use composition pattern
-- **Action:** Note: `MemoryRepository` does not currently exist in `src/storage/repositories/` (only `base.ts` and `.gitkeep`)
+- **Action:** Note: `MemoryRepository` does not currently exist in `src/storage/repositories/` (only `base.ts`, `types.ts`, and `.gitkeep`)
 
 ## Testing Strategy
 
 ### Unit Test Updates
-- Mock `DynamoDBOperations` instead of mocking DynamoDB client
+- Mock `DynamoTableAccess` instead of mocking DynamoDB client
 - Easier to verify method calls without dealing with SDK types
 - Example:
 ```typescript
-const mockDynamo: DynamoDBOperations = {
+const mockDynamo: DynamoTableAccess = {
     putItem: vi.fn(),
     getItem: vi.fn().mockResolvedValue(mockItem),
     deleteItem: vi.fn(),
     query: vi.fn(),
 };
 
-const backend = new MemoryToolBackendCore(mockDynamo, stripDynamoKeys);
+const backend = new MemoryToolBackendCore(mockDynamo);
 await backend.create(input);
 
 expect(mockDynamo.putItem).toHaveBeenCalledWith(expectedItem);
@@ -228,29 +220,29 @@ expect(mockDynamo.putItem).toHaveBeenCalledWith(expectedItem);
 
 ### Cleaner API
 - No more `.bind(this)` boilerplate
-- Clear interface: helpers receive `DynamoDBOperations` instead of callbacks
+- Clear interface: helpers receive `DynamoTableAccess` instead of callbacks
 - Easier to understand dependencies
 
 ### Better Testability
-- Mock `DynamoDBOperations` interface instead of DynamoDB client
+- Mock `DynamoTableAccess` interface instead of DynamoDB client
 - Simpler test setup
 - More focused unit tests
 
 ### Improved Maintainability
 - Composition is more flexible than inheritance
-- Easier to add new operations to `DynamoDBOperations`
+- Easier to add new operations to `DynamoTableAccess`
 - No coupling between backend lifecycle and DynamoDB client
 
 ### Type Safety
-- TypeScript enforces `DynamoDBOperations` interface
+- TypeScript enforces `DynamoTableAccess` interface
 - No risk of forgetting `.bind(this)` or passing wrong context
 
 ## Migration Path
 
-1. **Phase 1:** Rename `BaseRepository` → `DynamoDBOperations` (no behavior change)
-2. **Phase 2:** Update tests to use mocked `DynamoDBOperations`
+1. **Phase 1:** Rename to `DynamoTableAccess` (done — #88; no behavior change)
+2. **Phase 2:** Update tests to use mocked `DynamoTableAccess`
 3. **Phase 3:** Refactor `MemoryToolBackend` to use composition
-4. **Phase 4:** Update helper classes to accept `DynamoDBOperations`
+4. **Phase 4:** Update helper classes to accept `DynamoTableAccess`
 5. **Phase 5:** Run full test suite, verify mutation score
 6. **Phase 6:** Remove any remaining inheritance patterns
 

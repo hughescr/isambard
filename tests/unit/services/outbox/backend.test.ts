@@ -8,6 +8,7 @@ import {
 import { mockClient } from 'aws-sdk-client-mock';
 import { OutboxBackend } from '@/services/outbox/backend';
 import type { OutboxItem } from '@/services/outbox/types';
+import { createEpochSeconds } from '@/storage/repositories/types';
 
 const ITEM_ID    = 'aaaaaaaa-1111-4222-8333-444444444444';
 const DEDUPE_KEY = 'dedup-abc';
@@ -82,7 +83,7 @@ describe('OutboxBackend', () => {
 
         test('uses custom TTL from item.ttl when provided', async () => {
             ddbMock.on(PutCommand).resolves({});
-            const customTtl = 9_999_999;
+            const customTtl = createEpochSeconds(9_999_999);
             const item = makeItem({ ttl: customTtl });
 
             await backend.enqueue(item);
@@ -282,7 +283,7 @@ describe('OutboxBackend', () => {
 
         test('uses custom TTL when item.ttl is provided', async () => {
             ddbMock.on(PutCommand).resolves({});
-            const item = makeItem({ ttl: 1_234_567 });
+            const item = makeItem({ ttl: createEpochSeconds(1_234_567) });
 
             await backend.markFailed(item, 'err');
 

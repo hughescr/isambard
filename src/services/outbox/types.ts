@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { serializedDiscordPayloadSchema } from './discord-payload';
+import { epochSecondsSchema } from '@/storage';
 
 const outboxItemTypeSchema = z.enum([
     'agent_response',
@@ -33,6 +34,6 @@ export const outboxItemSchema = z.object({
     dedupeKey:   z.string(),
     progress:    outboxProgressSchema,
     epoch:       z.number().int().min(0),
-    ttl:         z.number().int().optional(),
+    ttl:         epochSecondsSchema.optional(),
 });
 export type OutboxItem = z.infer<typeof outboxItemSchema>;

@@ -139,7 +139,7 @@ async function wireDynamoDBHealth(
     registerCleanup({ name: 'DynamoDB reconnect subscription', run: unsubscribeDynamoDBReconnect });
 
     // Wire the DynamoDB health notifier so any network-classified errors thrown by
-    // withDynamoTimeout (in BaseRepository) also signal CONNECTION_LOST to the
+    // withDynamoTimeout (in DynamoTableAccess) also signal CONNECTION_LOST to the
     // health registry — triggering the reconnection loop without waiting for the
     // next periodic probe.
     setDynamoHealthNotifier((err) => {

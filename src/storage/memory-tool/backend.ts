@@ -2,8 +2,7 @@ import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder } from '../client-holder';
 import type { IndexerJob } from '../memory-vec-store/types.js';
-import { BaseRepository } from '../repositories/base';
-import { stripDynamoKeys } from '../utils/index.js';
+import { DynamoTableAccess } from '../repositories/base';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
 import { MemoryToolBackendQuery, type ListOptions, type ListResult, type ScoredMemoryItem } from './backend-query';
 import { MemoryToolBackendTagIndex } from './backend-tag-index';
@@ -29,7 +28,7 @@ export interface MemoryIndexer {
  * Memory tool backend facade that delegates to specialized modules.
  * Provides a unified API for all memory tool operations.
  */
-export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
+export class MemoryToolBackend extends DynamoTableAccess {
     private readonly coreOps:          MemoryToolBackendCore;
     private readonly queryOps:         MemoryToolBackendQuery;
     private readonly tagIndexOps:      MemoryToolBackendTagIndex;
@@ -52,8 +51,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             tableName,
             this.putItem.bind(this),
             this.getItem.bind(this),
-            this.deleteItem.bind(this),
-            stripDynamoKeys
+            this.deleteItem.bind(this)
         );
 
         this.tagIndexOps = new MemoryToolBackendTagIndex(
@@ -65,7 +63,6 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         this.queryOps = new MemoryToolBackendQuery(
             docClientOrHolder,
             tableName,
-            stripDynamoKeys,
             this.tagIndexOps
         );
     }

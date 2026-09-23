@@ -1,4 +1,6 @@
 import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
+import { z } from 'zod';
 import { createChannelId, type ChannelId, type ChannelScope } from '../types';
 import { ChannelRegistryKeyGenerator, type ChannelRegistryKeys } from './key-generator';
 import {
@@ -8,13 +10,15 @@ import {
     WELL_KNOWN_CHANNELS
 } from './types';
 import { InvariantViolationError, ItemNotFoundError, ValidationError } from '@/errors';
-import { BaseRepository, type DynamoDBClientHolder, stripDynamoKeys } from '@/storage';
+import { DynamoTableAccess, type DynamoDBClientHolder, stripDynamoKeys } from '@/storage';
+
+const pkOnlyRowSchema = z.object({ PK: z.string() });
 
 /**
  * DynamoDB backend for Discord channel registry.
  * Provides CRUD operations for channel metadata with well-known channel support.
  */
-export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord> {
+export class ChannelRegistryBackend extends DynamoTableAccess {
     constructor(
         docClient: DynamoDBDocumentClient | DynamoDBClientHolder,
         tableName: string,
@@ -60,7 +64,7 @@ export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord>
             };
         }
 
-        // boundary cast: BaseRepository.putItem requires Record<string,unknown> but ChannelStorageItem carries branded ChannelId/GuildId; runtime shapes are compatible
+        // boundary cast: DynamoTableAccess.putItem requires Record<string,unknown> but ChannelStorageItem carries branded ChannelId/GuildId; runtime shapes are compatible
         await this.putItem(item as unknown as Record<string, unknown>, 'ChannelRegistry.upsertChannel');
     }
 
@@ -78,13 +82,18 @@ export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord>
             SK: 'METADATA',
         };
 
-        const result = await this.getItem<Record<string, unknown>>(key, 'ChannelRegistry.getChannel');
+        const result = await this.getItem(key, 'ChannelRegistry.getChannel');
 
         if(!result) {
             return null;
         }
 
-        return stripDynamoKeys(result) as ChannelStorageRecord;
+        const parsed = channelStorageRecordSchema.safeParse(stripDynamoKeys(result));
+        if(!parsed.success) {
+            logger.warn({ channelId, issues: parsed.error.issues }, 'ChannelRegistryBackend.getChannel: stored row failed validation');
+            return null;
+        }
+        return parsed.data;
     }
 
     /**
@@ -96,7 +105,7 @@ export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord>
      * @returns Array of channel storage records
      */
     async getChannelsByScope(scope: ChannelScope): Promise<ChannelStorageRecord[]> {
-        const items = await this.query<Record<string, unknown>>(
+        const items = await this.query(
             {
                 IndexName:                 'GSI1',
                 KeyConditionExpression:    'GSI1PK = :scopePk AND begins_with(GSI1SK, :channelPrefix)',
@@ -108,7 +117,16 @@ export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord>
             'ChannelRegistry.getChannelsByScope'
         );
 
-        return items.map(item => stripDynamoKeys(item) as ChannelStorageRecord);
+        const results: ChannelStorageRecord[] = [];
+        for(const item of items) {
+            const parsed = channelStorageRecordSchema.safeParse(stripDynamoKeys(item));
+            if(parsed.success) {
+                results.push(parsed.data);
+            } else {
+                logger.warn({ scope, issues: parsed.error.issues }, 'ChannelRegistryBackend.getChannelsByScope: skipping invalid row');
+            }
+        }
+        return results;
     }
 
     /**
@@ -121,7 +139,7 @@ export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord>
      */
     async getWellKnownChannel(type: WellKnownChannel): Promise<ChannelStorageRecord | null> {
         // Step 1: Query GSI2 to find the channel PK
-        const items = await this.query<Record<string, unknown>>(
+        const items = await this.query(
             {
                 IndexName:                 'GSI2',
                 KeyConditionExpression:    'GSI2PK = :wellKnownPk AND GSI2SK = :channelSk',
@@ -144,8 +162,12 @@ export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord>
             // Stryker disable next-line StringLiteral: invariant violation message — debug context only
             throw new InvariantViolationError('getWellKnownChannelByType', 'items[0] undefined despite items.length !== 0');
         }
-        const pk = firstItem.PK as string;
-        const channelId = createChannelId(pk.replace('CHANNEL#', ''));
+        const pkResult = pkOnlyRowSchema.safeParse(firstItem);
+        if(!pkResult.success) {
+            logger.warn({ type, issues: pkResult.error.issues }, 'ChannelRegistryBackend.getWellKnownChannel: GSI2 row failed validation');
+            return null;
+        }
+        const channelId = createChannelId(pkResult.data.PK.replace('CHANNEL#', ''));
 
         return this.getChannel(channelId);
     }

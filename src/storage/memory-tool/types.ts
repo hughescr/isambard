@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { epochSecondsSchema } from '../repositories/types';
 
 /**
  * MemoryPath is a branded type representing a valid filesystem-like path.
@@ -77,8 +78,24 @@ export interface MemoryToolItem extends MemoryToolItemData {
 /** DynamoDB may still contain legacy rows with absent or null metadata. */
 export type StoredMemoryToolItem = Omit<MemoryToolItem, 'metadata'> & { metadata?: Record<string, unknown> | null };
 
-/** Apply only the schema's metadata default at the DynamoDB read boundary. */
-export function normalizeStoredMemoryToolItem(item: StoredMemoryToolItem): MemoryToolItem {
+/**
+ * Validates a raw DynamoDB record as a full memory tool row before it is trusted. Extends
+ * {@link memoryToolItemSchema} with the DynamoDB key fields (always present on a real row) and
+ * the raw `TTL` attribute (optional, epoch seconds) — `TTL` is a DDB-level attribute, not part
+ * of the domain {@link MemoryToolItemData} shape, but must survive validation rather than being
+ * silently stripped: {@link MemoryToolBackendCore.update} reads it back off an already-decoded
+ * row to preserve TTL across an update.
+ */
+export const storedMemoryToolItemSchema = memoryToolItemSchema.extend({
+    PK:     z.string(),
+    SK:     z.string(),
+    GSI1PK: z.string(),
+    GSI1SK: z.string(),
+    TTL:    epochSecondsSchema.optional(),
+});
+
+/** Apply only the schema's metadata default at the DynamoDB read boundary, on a raw record. */
+export function normalizeStoredMemoryToolItem(item: Record<string, unknown>): Record<string, unknown> {
     return { ...item, metadata: item.metadata ?? {} };
 }
 

@@ -25,6 +25,12 @@ export interface SagaWriter {
     create(saga: ApprovalSaga): Promise<void>
 }
 
+/**
+ * No `ttl` field: the persisted DynamoDB `TTL` attribute is written directly by
+ * {@link ApprovalSagaBackend.create} via `DynamoTableAccess.expiresAt`, never through this
+ * domain schema — a `ttl` field here would never be populated or read, an unbranded footgun
+ * with no actual write path. See issue #88.
+ */
 export const approvalSagaSchema = z.object({
     id:                z.uuid(),
     state:             approvalSagaStateSchema,
@@ -37,6 +43,5 @@ export const approvalSagaSchema = z.object({
     lastError:         z.string().optional(),
     createdAt:         z.iso.datetime(),
     updatedAt:         z.iso.datetime(),
-    ttl:               z.number().int().optional(),
 });
 export type ApprovalSaga = z.infer<typeof approvalSagaSchema>;

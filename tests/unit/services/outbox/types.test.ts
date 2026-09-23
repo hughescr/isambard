@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { serializedDiscordPayloadSchema } from '@/services/outbox/discord-payload';
-import { outboxItemSchema } from '@/services/outbox/types';
+import { outboxItemSchema, type OutboxItem } from '@/services/outbox/types';
 
 const validItem = {
     id:          'aaaaaaaa-1111-4222-8333-444444444444',
@@ -18,6 +18,17 @@ describe('outboxItemSchema', () => {
     test('accepts epoch zero and rejects negative epochs', () => {
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0 }).success).toBe(true);
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: -1 }).success).toBe(false);
+    });
+
+    test('ttl accepts a valid epoch-seconds integer and rejects a negative one', () => {
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, ttl: 1_700_000_000 }).success).toBe(true);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, ttl: -1 }).success).toBe(false);
+    });
+
+    test('ttl must be branded EpochSeconds, not a bare number', () => {
+        // @ts-expect-error - ttl must be EpochSeconds, not a bare number
+        const invalid: OutboxItem = { ...(validItem as unknown as OutboxItem), ttl: 1_700_000_000 };
+        expect(invalid.ttl as unknown as number).toBe(1_700_000_000);
     });
 });
 

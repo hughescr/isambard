@@ -3,7 +3,6 @@ import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendQuery } from '@/storage/memory-tool/backend-query';
 import type { LayerName, MemoryPath, MemoryToolItem } from '@/storage/memory-tool/types';
-import { stripDynamoKeys } from '@/storage/utils/strip-dynamo-keys';
 
 const START_TIME = '2024-01-01T00:00:00.000Z';
 const END_TIME = '2024-12-31T23:59:59.999Z';
@@ -37,8 +36,7 @@ describe('MemoryToolBackendQuery mutation contracts', () => {
         ddbMock.reset();
         queryOps = new MemoryToolBackendQuery(
             ddbMock as unknown as DynamoDBDocumentClient,
-            'TestTable',
-            stripDynamoKeys
+            'TestTable'
         );
     });
 

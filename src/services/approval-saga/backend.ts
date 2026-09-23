@@ -1,6 +1,6 @@
 import { logger } from '@hughescr/logger';
 import { approvalSagaSchema, type ApprovalSaga, type ApprovalSagaState } from './types';
-import { BaseRepository, createPrefixedKey } from '@/storage';
+import { DynamoTableAccess, createPrefixedKey } from '@/storage';
 
 const SAGA_PK        = 'APPROVAL#SAGA';
 const SAGA_SK_PREFIX = 'SAGA';
@@ -15,7 +15,7 @@ function sagaSK(id: string): string {
  * DynamoDB backend for persisting approval saga state.
  * Makes admin approval workflows durable across service outages.
  */
-export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
+export class ApprovalSagaBackend extends DynamoTableAccess {
     /**
      * Persist a new approval saga with a 30-day TTL.
      */
@@ -24,7 +24,7 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
             PK:  SAGA_PK,
             SK:  sagaSK(saga.id),
             ...saga,
-            TTL: ApprovalSagaBackend.ttlFromDays(TTL_DAYS),
+            TTL: ApprovalSagaBackend.expiresAt(Date.now(), { days: TTL_DAYS }),
         });
     }
 
@@ -32,7 +32,7 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
      * Retrieve a saga by ID. Returns undefined if not found.
      */
     async get(id: string): Promise<ApprovalSaga | undefined> {
-        const item = await this.getItem<Record<string, unknown>>({
+        const item = await this.getItem({
             PK: SAGA_PK,
             SK: sagaSK(id),
         });
@@ -75,7 +75,7 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
      * List all sagas that are in the given state.
      */
     async listByState(state: ApprovalSagaState): Promise<ApprovalSaga[]> {
-        const items = await this.query<Record<string, unknown>>({
+        const items = await this.query({
             KeyConditionExpression:    '#pk = :pk',
             FilterExpression:          '#state = :state',
             ExpressionAttributeNames:  { '#pk': 'PK', '#state': 'state' },

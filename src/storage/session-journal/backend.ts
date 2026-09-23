@@ -3,7 +3,7 @@ import {
     type QueryCommandInput
 } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import { BaseRepository } from '../repositories/base';
+import { DynamoTableAccess } from '../repositories/base';
 import { journalEntrySchema, type JournalEntry, type SessionJournalItem, type SessionRole } from './types';
 
 const SEQ_PAD_WIDTH = 6;
@@ -14,7 +14,7 @@ const SEQ_PAD_WIDTH = 6;
  * never see a journal row — the deliberate deviation from design 3.2/7.3 documented on
  * {@link SessionJournalItem}.
  */
-export class SessionJournalBackend extends BaseRepository<SessionJournalItem> {
+export class SessionJournalBackend extends DynamoTableAccess {
     /**
      * Per-instance monotonic counter disambiguating rows written in the same millisecond,
      * reset each process start. Astronomically unlikely to collide with a prior process's rows
@@ -38,7 +38,7 @@ export class SessionJournalBackend extends BaseRepository<SessionJournalItem> {
             ...entry,
             PK:  `SESSION_JOURNAL#${role}`,
             SK:  `${ts}#${String(seq).padStart(SEQ_PAD_WIDTH, '0')}`,
-            TTL: BaseRepository.ttlFromDays(ttlDays),
+            TTL: DynamoTableAccess.expiresAt(Date.now(), { days: ttlDays }),
             at:  ts,
         };
         await this.putItem(item);

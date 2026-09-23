@@ -7,6 +7,7 @@ import {
     UpdateCommand,
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
 import { ItemNotFoundError, ValidationError } from '@/errors/storage';
 import { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
@@ -218,6 +219,31 @@ describe('ChannelRegistryBackend', () => {
             expect(result).not.toHaveProperty('GSI2PK');
             expect(result).not.toHaveProperty('GSI2SK');
         });
+
+        test('returns null and logs when the stored row fails schema validation', async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            ddbMock.on(GetCommand).resolves({
+                Item: {
+                    channelId: '', // Invalid — channelIdSchema rejects empty strings
+                    guildId,
+                    isMuted:   false,
+                    createdAt: '2025-01-01T00:00:00.000Z',
+                    updatedAt: '2025-01-01T00:00:00.000Z',
+                    PK:        `CHANNEL#${channelId}`,
+                    SK:        'METADATA',
+                },
+            });
+
+            const result = await backend.getChannel(channelId);
+
+            expect(result).toBeNull();
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ channelId }),
+                'ChannelRegistryBackend.getChannel: stored row failed validation'
+            );
+
+            warnSpy.mockRestore();
+        });
     });
 
     describe('getChannelsByScope', () => {
@@ -270,6 +296,29 @@ describe('ChannelRegistryBackend', () => {
             const result = await backend.getChannelsByScope(guildId);
 
             expect(result).toEqual([]);
+        });
+
+        test('skips an invalid row and returns the valid ones', async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            const validChannel = createStorageRecord({ channelId: createChannelId('111') });
+            const invalidChannel = { guildId, isMuted: false, createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z' }; // missing channelId
+
+            ddbMock.on(QueryCommand).resolves({
+                Items: [
+                    { ...validChannel, PK: `CHANNEL#${validChannel.channelId}`, SK: 'METADATA', GSI1PK: `GUILD#${guildId}` },
+                    { ...invalidChannel, PK: 'CHANNEL#missing', SK: 'METADATA', GSI1PK: `GUILD#${guildId}` },
+                ],
+            });
+
+            const result = await backend.getChannelsByScope(guildId);
+
+            expect(result).toEqual([validChannel]);
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ scope: guildId }),
+                'ChannelRegistryBackend.getChannelsByScope: skipping invalid row'
+            );
+
+            warnSpy.mockRestore();
         });
     });
 
@@ -343,6 +392,23 @@ describe('ChannelRegistryBackend', () => {
             const result = await backend.getWellKnownChannel('catch-up');
 
             expect(result).toBeNull();
+        });
+
+        test('returns null and logs when the GSI2 row has no PK', async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            ddbMock.on(QueryCommand).resolves({
+                Items: [{ GSI2PK: 'WELLKNOWN#general', GSI2SK: 'CHANNEL' }], // missing PK
+            });
+
+            const result = await backend.getWellKnownChannel('general');
+
+            expect(result).toBeNull();
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'general' }),
+                'ChannelRegistryBackend.getWellKnownChannel: GSI2 row failed validation'
+            );
+
+            warnSpy.mockRestore();
         });
 
         test('should return null when Items is undefined', async () => {

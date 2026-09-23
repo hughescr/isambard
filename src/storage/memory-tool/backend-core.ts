@@ -1,14 +1,14 @@
 import { DateTime } from 'luxon';
 import { type DynamoDBKey } from '../repositories/base';
+import { type EpochSeconds } from '../repositories/types';
+import { decodeStoredMemoryToolItem } from './decode-stored-item';
 import { MemoryToolKeyGenerator, generateContentPreview } from './key-generator';
 import {
     memoryToolItemSchema,
     type MemoryPath,
     type ContentType,
     type MemoryToolItemData,
-    type MemoryToolItem,
-    type StoredMemoryToolItem,
-    normalizeStoredMemoryToolItem
+    type MemoryToolItem
 } from './types';
 import { ItemNotFoundError, ValidationError } from '@/errors';
 
@@ -18,7 +18,7 @@ export interface CreateMemoryToolItemInput {
     contentType: ContentType
     metadata?:   Record<string, unknown>
     tags?:       Set<string>
-    ttl?:        number   // DynamoDB TTL attribute (epoch seconds). When set, the item will be expired by DDB.
+    ttl?:        EpochSeconds   // DynamoDB TTL attribute. When set, the item will be expired by DDB.
 }
 
 export interface UpdateMemoryToolItemInput {
@@ -26,7 +26,7 @@ export interface UpdateMemoryToolItemInput {
     metadata?:          Record<string, unknown>
     tags?:              Set<string>
     preserveUpdatedAt?: boolean
-    ttl?:               number   // DynamoDB TTL attribute (epoch seconds). When set, overrides the existing TTL (or adds one if absent). When omitted, existing TTL is preserved.
+    ttl?:               EpochSeconds   // DynamoDB TTL attribute. When set, overrides the existing TTL (or adds one if absent). When omitted, existing TTL is preserved.
 }
 
 /**
@@ -37,9 +37,8 @@ export class MemoryToolBackendCore {
     constructor(
         private readonly tableName: string,
         private readonly putItem: (item: Record<string, unknown>) => Promise<void>,
-        private readonly getItem: <R>(key: DynamoDBKey) => Promise<R | undefined>,
-        private readonly deleteItem: (key: DynamoDBKey) => Promise<void>,
-        private readonly stripKeys: (item: MemoryToolItem) => MemoryToolItemData
+        private readonly getItem: (key: DynamoDBKey) => Promise<Record<string, unknown> | undefined>,
+        private readonly deleteItem: (key: DynamoDBKey) => Promise<void>
     ) {}
 
     private buildUpdatedItem(updated: MemoryToolItemData): MemoryToolItem {
@@ -98,12 +97,12 @@ export class MemoryToolBackendCore {
             SK: keys.SK,
         };
 
-        const item = await this.getItem<StoredMemoryToolItem>(key);
-        if(!item) {
+        const raw = await this.getItem(key);
+        if(!raw) {
             return undefined;
         }
 
-        return this.stripKeys(normalizeStoredMemoryToolItem(item));
+        return decodeStoredMemoryToolItem(raw);
     }
 
     async update(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<MemoryToolItemData> {
@@ -134,7 +133,7 @@ export class MemoryToolBackendCore {
         // value of `existing` even though MemoryToolItemData has no TTL field. Without explicit
         // re-attachment, the Zod schema parse strips it and PutItem silently clears the expiration.
         // input.ttl takes priority (caller is refreshing the TTL); otherwise carry forward existing.
-        const ttlToWrite = input.ttl ?? (existing as { TTL?: number }).TTL;
+        const ttlToWrite = input.ttl ?? (existing as { TTL?: EpochSeconds }).TTL;
 
         const result = memoryToolItemSchema.safeParse(updatedData);
         if(!result.success) {

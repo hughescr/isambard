@@ -5,7 +5,6 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendQuery } from '@/storage/memory-tool/backend-query';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryToolItem, MemoryPath, StoredMemoryToolItem, LayerName } from '@/storage/memory-tool/types';
-import { stripDynamoKeys } from '@/storage/utils/strip-dynamo-keys';
 
 describe('MemoryToolBackendQuery - list', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -21,7 +20,6 @@ describe('MemoryToolBackendQuery - list', () => {
         queryOps = new MemoryToolBackendQuery(
             ddbMock as unknown as DynamoDBDocumentClient,
             'TestTable',
-            stripDynamoKeys,
             tagIndex
         );
     });
@@ -69,6 +67,42 @@ describe('MemoryToolBackendQuery - list', () => {
             expect(items.find(item => item.path === current.path)?.metadata).toEqual({ retained: true });
             expect(items.every(item => !Object.hasOwn(item, 'PK'))).toBe(true);
             expect(legacy).not.toHaveProperty('metadata');
+        });
+
+        test(`${name} skips a row that fails schema validation and logs a warning`, async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            const valid: MemoryToolItem = {
+                PK:          'DIR#/state',
+                SK:          'FILE#valid.md',
+                GSI1PK:      'LAYER#state',
+                GSI1SK:      'UPDATED#2024-01-02T00:00:00.000Z',
+                path:        '/state/valid.md' as MemoryPath,
+                content:     'Valid',
+                contentType: 'text/markdown',
+                metadata:    {},
+                createdAt:   '2024-01-02T00:00:00.000Z',
+                updatedAt:   '2024-01-02T00:00:00.000Z',
+            };
+            const malformed = {
+                PK:     'DIR#/state',
+                SK:     'FILE#malformed.md',
+                GSI1PK: 'LAYER#state',
+                GSI1SK: 'UPDATED#2024-01-01T00:00:00.000Z',
+                // missing path/content/contentType/createdAt/updatedAt
+            };
+            ddbMock.on(QueryCommand).resolves({ Items: [malformed, valid] });
+
+            const items = await read();
+
+            expect(items).toHaveLength(1);
+            expect(items[0]).toMatchObject({ path: valid.path, content: valid.content });
+            expect(items[0]).not.toHaveProperty('PK');
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ issues: expect.anything() }),
+                'MemoryToolBackend: stored row failed schema validation, skipping'
+            );
+
+            warnSpy.mockRestore();
         });
     }
 

@@ -4,7 +4,6 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendQuery } from '@/storage/memory-tool/backend-query';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { LayerName, TagIndexItem } from '@/storage/memory-tool/types';
-import { stripDynamoKeys } from '@/storage/utils/strip-dynamo-keys';
 
 describe('MemoryToolBackendQuery - searchByTags', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -20,7 +19,6 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
         queryOps = new MemoryToolBackendQuery(
             ddbMock as unknown as DynamoDBDocumentClient,
             'TestTable',
-            stripDynamoKeys,
             tagIndex
         );
     });
@@ -30,7 +28,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
     });
 
     test('identifies the missing tag index boundary', async () => {
-        const withoutIndex = new MemoryToolBackendQuery(ddbMock as unknown as DynamoDBDocumentClient, 'TestTable', stripDynamoKeys);
+        const withoutIndex = new MemoryToolBackendQuery(ddbMock as unknown as DynamoDBDocumentClient, 'TestTable');
         try {
             await withoutIndex.searchByTags(new Set(['missing']));
             throw new Error('expected an invariant failure');
@@ -194,8 +192,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
     test('should throw error when tagIndex not configured', async () => {
         const queryOpsWithoutIndex = new MemoryToolBackendQuery(
             ddbMock as unknown as DynamoDBDocumentClient,
-            'TestTable',
-            stripDynamoKeys
+            'TestTable'
             // No tagIndex parameter
         );
 

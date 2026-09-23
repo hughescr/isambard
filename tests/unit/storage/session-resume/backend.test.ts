@@ -1,10 +1,11 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
     PutCommand,
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
 import { SessionResumeBackend } from '@/storage/session-resume/backend';
 import { createSessionId } from '@/storage/session-resume/types';
@@ -98,6 +99,58 @@ describe('SessionResumeBackend', () => {
             ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
 
             await expect(backend.clearSessionIdForRole('conversation')).rejects.toThrow('delete failed');
+        });
+
+        test('getSessionIdForRole returns undefined and logs when the stored sessionId is not a valid UUID', async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            ddbMock.on(GetCommand).resolves({
+                Item: {
+                    PK:        'TASK_SESSION#conversation',
+                    SK:        'TASK_SESSION#conversation',
+                    sessionId: 'not-a-uuid',
+                    updatedAt: '2026-01-01T00:00:00.000Z',
+                },
+            });
+
+            await expect(backend.getSessionIdForRole('conversation')).resolves.toBeUndefined();
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ role: 'conversation' }),
+                'SessionResumeBackend.getSessionIdForRole: stored row failed validation'
+            );
+
+            warnSpy.mockRestore();
+        });
+
+        test('getSessionIdForRole returns undefined when the stored row is missing sessionId', async () => {
+            ddbMock.on(GetCommand).resolves({
+                Item: {
+                    PK:        'TASK_SESSION#conversation',
+                    SK:        'TASK_SESSION#conversation',
+                    updatedAt: '2026-01-01T00:00:00.000Z',
+                },
+            });
+
+            await expect(backend.getSessionIdForRole('conversation')).resolves.toBeUndefined();
+        });
+
+        test('getSessionIdForRole returns undefined and logs when updatedAt is not a valid ISO 8601 timestamp', async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            ddbMock.on(GetCommand).resolves({
+                Item: {
+                    PK:        'TASK_SESSION#conversation',
+                    SK:        'TASK_SESSION#conversation',
+                    sessionId: sessionIdValue,
+                    updatedAt: 'not-a-date',
+                },
+            });
+
+            await expect(backend.getSessionIdForRole('conversation')).resolves.toBeUndefined();
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ role: 'conversation' }),
+                'SessionResumeBackend.getSessionIdForRole: stored row failed validation'
+            );
+
+            warnSpy.mockRestore();
         });
     });
 });

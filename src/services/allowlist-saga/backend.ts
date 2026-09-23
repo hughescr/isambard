@@ -7,7 +7,7 @@ import {
     type PendingNameAllowlistSaga,
     type PendingReviewAllowlistSaga
 } from './types';
-import { BaseRepository, createPrefixedKey, type PersonId } from '@/storage';
+import { DynamoTableAccess, createPrefixedKey, type PersonId } from '@/storage';
 
 const SAGA_PK        = 'ALLOWLIST#SAGA';
 const SAGA_SK_PREFIX = 'SAGA';
@@ -32,7 +32,7 @@ export type AllowlistSagaLookup
  * schema-validated row conditioned on the state of the saga the caller loaded,
  * so a step that raced another step fails instead of overwriting it.
  */
-export class AllowlistSagaBackend extends BaseRepository<AllowlistSaga> {
+export class AllowlistSagaBackend extends DynamoTableAccess {
     /**
      * Persist a new allowlist saga with a 30-day TTL.
      */
@@ -41,7 +41,7 @@ export class AllowlistSagaBackend extends BaseRepository<AllowlistSaga> {
             PK:  SAGA_PK,
             SK:  sagaSK(saga.id),
             ...saga,
-            TTL: AllowlistSagaBackend.ttlFromDays(TTL_DAYS),
+            TTL: AllowlistSagaBackend.expiresAt(Date.now(), { days: TTL_DAYS }),
         });
     }
 
@@ -99,10 +99,10 @@ export class AllowlistSagaBackend extends BaseRepository<AllowlistSaga> {
         const row = allowlistSagaSchema.parse({ ...next, updatedAt: new Date().toISOString() });
 
         // Recompute TTL from createdAt to match the TTL set at creation time.
-        const originalTTL = Math.floor(new Date(row.createdAt).getTime() / 1000) + (TTL_DAYS * 24 * 60 * 60);
+        const originalTTL = AllowlistSagaBackend.expiresAt(new Date(row.createdAt), { days: TTL_DAYS });
 
         // Use docClient directly to include ConditionExpression for optimistic concurrency.
-        // putItem() in BaseRepository does not support condition expressions.
+        // putItem() in DynamoTableAccess does not support condition expressions.
         await this.docClient.send(new PutCommand({
             TableName: this.tableName,
             Item:      {

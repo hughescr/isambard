@@ -4,7 +4,14 @@ import { personIdSchema } from '@/storage';
 const allowlistSagaPlatformSchema = z.enum(['email', 'bsky']);
 export type AllowlistSagaPlatform = z.infer<typeof allowlistSagaPlatformSchema>;
 
-/** Fields every saga row carries regardless of state. */
+/**
+ * Fields every saga row carries regardless of state.
+ *
+ * No `ttl` field: the persisted DynamoDB `TTL` attribute is written directly by
+ * {@link AllowlistSagaBackend.create}/`transition` via `DynamoTableAccess.expiresAt`, never
+ * through this domain schema — a `ttl` field here would never be populated or read, an
+ * unbranded footgun with no actual write path. See issue #88.
+ */
 const allowlistSagaBaseSchema = z.object({
     id:              z.uuid(),
     platform:        allowlistSagaPlatformSchema,
@@ -13,7 +20,6 @@ const allowlistSagaBaseSchema = z.object({
     addedBy:         z.string(),              // 'outbound-approval'
     createdAt:       z.iso.datetime(),
     updatedAt:       z.iso.datetime(),
-    ttl:             z.number().int().optional(),
 });
 
 /** Waiting for the admin to provide a display name. */

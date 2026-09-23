@@ -1,15 +1,16 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
     PutCommand,
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
 import { ValidationError } from '@/errors';
 import { MemoryToolBackendCore } from '@/storage/memory-tool/backend-core';
 import type { MemoryToolItem, MemoryPath, MemoryToolItemData } from '@/storage/memory-tool/types';
-import { stripDynamoKeys } from '@/storage/utils/index.js';
+import { createEpochSeconds } from '@/storage/repositories/types';
 
 describe('MemoryToolBackendCore', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -27,12 +28,12 @@ describe('MemoryToolBackendCore', () => {
             }));
         };
 
-        const getItem = async <R>(key: { PK: string, SK: string }): Promise<R | undefined> => {
+        const getItem = async (key: { PK: string, SK: string }): Promise<Record<string, unknown> | undefined> => {
             const result = await client.send(new GetCommand({
                 TableName: 'TestTable',
                 Key:       key,
             }));
-            return result.Item as R | undefined;
+            return result.Item;
         };
 
         const deleteItem = async (key: { PK: string, SK: string }) => {
@@ -46,8 +47,7 @@ describe('MemoryToolBackendCore', () => {
             'TestTable',
             putItem,
             getItem,
-            deleteItem,
-            stripDynamoKeys
+            deleteItem
         );
     });
 
@@ -267,6 +267,29 @@ describe('MemoryToolBackendCore', () => {
             expect(sentKey).toEqual({ PK: 'DIR#/test', SK: 'FILE#file.md' });
         });
 
+        test('get() returns undefined and logs when the stored row fails schema validation', async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            ddbMock.on(GetCommand).resolves({
+                Item: {
+                    PK:     'DIR#/test',
+                    SK:     'FILE#malformed.md',
+                    GSI1PK: 'LAYER#test',
+                    GSI1SK: 'UPDATED#2024-01-01T00:00:00.000Z',
+                    // missing path/content/contentType/createdAt/updatedAt
+                },
+            });
+
+            const result = await backend.get('/test/malformed.md' as MemoryPath);
+
+            expect(result).toBeUndefined();
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ issues: expect.anything() }),
+                'MemoryToolBackend: stored row failed schema validation, skipping'
+            );
+
+            warnSpy.mockRestore();
+        });
+
         test('normalizes only missing metadata on a legacy DynamoDB row before get and update', async () => {
             const legacyItem = {
                 PK:          'DIR#/state',
@@ -414,7 +437,7 @@ describe('MemoryToolBackendCore', () => {
     describe('TTL support', () => {
         test('putItem receives TTL attribute when input.ttl is set', async () => {
             ddbMock.on(PutCommand).resolves({});
-            const epochTtl = 1_700_000_000;
+            const epochTtl = createEpochSeconds(1_700_000_000);
 
             await backend.create({
                 path:        '/test/with-ttl.md' as MemoryPath,
@@ -522,7 +545,7 @@ describe('MemoryToolBackendCore', () => {
 
         test('update() can accept a new ttl to refresh expiration', async () => {
             const oldTtl = 1_700_000_000;
-            const newTtl = 1_800_000_000;
+            const newTtl = createEpochSeconds(1_800_000_000);
             const itemWithTtl = { ...ttlItemBase, TTL: oldTtl } as unknown as MemoryToolItem;
             ddbMock.on(GetCommand).resolves({ Item: itemWithTtl });
             ddbMock.on(PutCommand).resolves({});
@@ -536,7 +559,7 @@ describe('MemoryToolBackendCore', () => {
         });
 
         test('update() can set a ttl on a row that had none', async () => {
-            const newTtl = 1_800_000_000;
+            const newTtl = createEpochSeconds(1_800_000_000);
             ddbMock.on(GetCommand).resolves({ Item: ttlItemBase });
             ddbMock.on(PutCommand).resolves({});
 
@@ -553,7 +576,7 @@ describe('MemoryToolBackendCore', () => {
             ddbMock.on(GetCommand).resolves({ Item: itemWithTtl });
             ddbMock.on(PutCommand).resolves({});
 
-            await backend.update(ttlItemBase.path, { content: 'Updated content', ttl: 0 });
+            await backend.update(ttlItemBase.path, { content: 'Updated content', ttl: createEpochSeconds(0) });
 
             const written = ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item as Record<string, unknown>;
             expect(written.TTL).toBe(0);

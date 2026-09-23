@@ -10,16 +10,17 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoTimeoutError } from '@/storage/dynamo-retry';
-import { BaseRepository, type DynamoDBKey } from '@/storage/repositories/base';
+import { DynamoTableAccess, type DynamoDBKey } from '@/storage/repositories/base';
+import { createEpochSeconds, type EpochSeconds } from '@/storage/repositories/types';
 
 // Concrete implementation for testing abstract class
-class TestRepository extends BaseRepository<{ id: string, name: string }> {
+class TestRepository extends DynamoTableAccess {
     async testPut(item: Record<string, unknown>) {
         return this.putItem(item);
     }
 
     async testGet(key: DynamoDBKey) {
-        return this.getItem<{ id: string, name: string }>(key);
+        return this.getItem(key);
     }
 
     async testDelete(key: DynamoDBKey) {
@@ -27,7 +28,7 @@ class TestRepository extends BaseRepository<{ id: string, name: string }> {
     }
 
     async testQuery(pk: string) {
-        return this.query<{ id: string, name: string }>({
+        return this.query({
             KeyConditionExpression:    'PK = :pk',
             ExpressionAttributeValues: { ':pk': pk },
         });
@@ -37,11 +38,12 @@ class TestRepository extends BaseRepository<{ id: string, name: string }> {
         return this.updateItem(params, operation);
     }
 
-    static testTtlFromDays(days: number): number { return TestRepository.ttlFromDays(days); }
-    static testTtlFromHours(hours: number): number { return TestRepository.ttlFromHours(hours); }
+    static testExpiresAt(base: Date | number, duration: { days?: number, hours?: number }): EpochSeconds {
+        return TestRepository.expiresAt(base, duration);
+    }
 }
 
-describe('BaseRepository', () => {
+describe('DynamoTableAccess', () => {
     let ddbMock: ReturnType<typeof mockClient>;
     let repository: TestRepository;
 
@@ -211,57 +213,34 @@ describe('BaseRepository', () => {
         });
     });
 
-    describe('ttlFromDays', () => {
-        beforeEach(() => {
-            jest.useFakeTimers();
+    describe('expiresAt', () => {
+        test('days only: floors a Date base to seconds and adds days * 86400', () => {
+            const base = new Date('2024-01-01T00:00:00.000Z');
+            expect(TestRepository.testExpiresAt(base, { days: 30 })).toBe(createEpochSeconds(1_704_067_200 + 30 * 86_400));
         });
 
-        afterEach(() => {
-            jest.useRealTimers();
+        test('hours only: floors a Date base to seconds and adds hours * 3600', () => {
+            const base = new Date('2024-01-01T00:00:00.000Z');
+            expect(TestRepository.testExpiresAt(base, { hours: 24 })).toBe(createEpochSeconds(1_704_067_200 + 24 * 3600));
         });
 
-        test('should return epoch seconds plus days * 86400', () => {
-            jest.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
-            const expected = 1_704_067_200 + 30 * 86_400;
-            expect(TestRepository.testTtlFromDays(30)).toBe(expected);
+        test('combines days and hours in one duration', () => {
+            const base = new Date('2024-01-01T00:00:00.000Z');
+            expect(TestRepository.testExpiresAt(base, { days: 1, hours: 12 }))
+                .toBe(createEpochSeconds(1_704_067_200 + 1 * 86_400 + 12 * 3600));
         });
 
-        test('should work with 1 day', () => {
-            jest.setSystemTime(new Date('2024-06-15T12:00:00.000Z'));
-            const expectedBase = Math.floor(new Date('2024-06-15T12:00:00.000Z').getTime() / 1000);
-            expect(TestRepository.testTtlFromDays(1)).toBe(expectedBase + 86_400);
+        test('accepts an epoch-millisecond number base and floors its fractional second', () => {
+            expect(TestRepository.testExpiresAt(1_700_000_000_123, { days: 1 })).toBe(createEpochSeconds(1_700_086_400));
         });
 
-        test('should work with 0 days', () => {
-            jest.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
-            expect(TestRepository.testTtlFromDays(0)).toBe(1_704_067_200);
-        });
-    });
-
-    describe('ttlFromHours', () => {
-        beforeEach(() => {
-            jest.useFakeTimers();
+        test('empty duration returns the floored base unchanged', () => {
+            const base = new Date('2024-01-01T00:00:00.000Z');
+            expect(TestRepository.testExpiresAt(base, {})).toBe(createEpochSeconds(1_704_067_200));
         });
 
-        afterEach(() => {
-            jest.useRealTimers();
-        });
-
-        test('should return epoch seconds plus hours * 3600', () => {
-            jest.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
-            const expected = 1_704_067_200 + 24 * 3600;
-            expect(TestRepository.testTtlFromHours(24)).toBe(expected);
-        });
-
-        test('should work with 1 hour', () => {
-            jest.setSystemTime(new Date('2024-06-15T12:00:00.000Z'));
-            const expectedBase = Math.floor(new Date('2024-06-15T12:00:00.000Z').getTime() / 1000);
-            expect(TestRepository.testTtlFromHours(1)).toBe(expectedBase + 3600);
-        });
-
-        test('should work with 0 hours', () => {
-            jest.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
-            expect(TestRepository.testTtlFromHours(0)).toBe(1_704_067_200);
+        test('accepts an epoch-millisecond number base with hours only', () => {
+            expect(TestRepository.testExpiresAt(1_704_067_200_000, { hours: 1 })).toBe(createEpochSeconds(1_704_067_200 + 3600));
         });
     });
 });

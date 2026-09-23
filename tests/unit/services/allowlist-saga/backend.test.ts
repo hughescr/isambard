@@ -98,6 +98,17 @@ describe('AllowlistSagaBackend', () => {
             expect(item.TTL as number).toBeLessThanOrEqual(after + thirtyDays);
         });
 
+        test('TTL equals AllowlistSagaBackend.expiresAt(now, { days: 30 })', async () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date(FAKE_NOW));
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.create(BASE_SAGA);
+
+            const item = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item!;
+            expect(item.TTL).toBe(AllowlistSagaBackend.expiresAt(Date.now(), { days: 30 }));
+        });
+
         test('stores the display-name hint of a pending_name saga', async () => {
             ddbMock.on(PutCommand).resolves({});
 

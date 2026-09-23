@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn, jest, type mock } from 'bun:test';
 import { DynamoDBDocumentClient, PutCommand, GetCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoTimeoutError } from '@/errors';
 import { CalendarRegistryBackend } from '@/integrations/caldav/calendar-registry/backend';
@@ -142,6 +143,29 @@ describe('CalendarRegistryBackend', () => {
                 expect.any(Function),
                 expect.objectContaining({ operation: 'CalendarRegistry.getRecord' })
             );
+        });
+
+        test('returns null and logs when the stored row fails schema validation', async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            ddbMock.on(GetCommand).resolves({
+                Item: {
+                    servers:   [{ serverId: VALID_UUID_1 }], // missing required calendarServerEntrySchema fields
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-01T00:00:00.000Z',
+                    PK:        'CALCAL#user-123',
+                    SK:        'CALENDARS',
+                },
+            });
+
+            const result = await backend.getUserRecord('user-123');
+
+            expect(result).toBeNull();
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ pk: 'CALCAL#user-123' }),
+                'CalendarRegistryBackend.getRecord: stored row failed validation'
+            );
+
+            warnSpy.mockRestore();
         });
     });
 
@@ -892,6 +916,26 @@ describe('CalendarRegistryBackend', () => {
                 },
                 ProjectionExpression: 'PK',
             });
+        });
+
+        test('skips a row with no PK and logs a warning', async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            ddbMock.on(ScanCommand).resolves({
+                Items: [
+                    { PK: 'CALCAL#user-alice' },
+                    {}, // no PK
+                ],
+            });
+
+            const result = await backend.listRegisteredUserIds();
+
+            expect(result).toEqual(['user-alice']);
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ issues: expect.anything() }),
+                'CalendarRegistryBackend.listRegisteredUserIds: skipping row with invalid PK'
+            );
+
+            warnSpy.mockRestore();
         });
     });
 

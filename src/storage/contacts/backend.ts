@@ -1,5 +1,6 @@
 import { type BatchWriteCommandInput, type BatchWriteCommandOutput, BatchWriteCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import pLimit from 'p-limit';
+import { z } from 'zod';
 import { ContactKeyGenerator } from './key-generator';
 import {
     contactIdentifierKey,
@@ -12,7 +13,9 @@ import {
     type PlatformType
 } from './types';
 import { BatchWriteExhaustedError, ContactLastIdentifierError, ContactNoIdentifiersError, ContactNotFoundError } from '@/errors';
-import { BaseRepository } from '@/storage';
+import { DynamoTableAccess } from '@/storage';
+
+const skOnlyRowSchema = z.object({ SK: z.string() });
 
 /** Native SDK request and retry response shapes. */
 type BatchWriteRequest = NonNullable<NonNullable<BatchWriteCommandInput['RequestItems']>[string]>[number];
@@ -62,7 +65,7 @@ function splitIntoBatches<T>(items: T[], size: number): T[][] {
  *   Profile:  PK=CONTACT#{personId}          SK=PROFILE
  *   Lookup:   PK and SK from ContactKeyGenerator.createLookupKeys (identifier → personId)
  */
-export class ContactBackend extends BaseRepository<Contact> {
+export class ContactBackend extends DynamoTableAccess {
     /**
      * Executes a batch of write requests with retry for UnprocessedItems.
      * Throws if items remain unprocessed after all retries.
@@ -119,7 +122,7 @@ export class ContactBackend extends BaseRepository<Contact> {
      */
     async getContact(personId: PersonId): Promise<Contact | undefined> {
         const keys = ContactKeyGenerator.createProfileKeys(personId);
-        const item = await this.getItem<Record<string, unknown>>(keys);
+        const item = await this.getItem(keys);
         if(!item) {
             return undefined;
         }
@@ -299,7 +302,7 @@ export class ContactBackend extends BaseRepository<Contact> {
      * Returns an array (may be multiple for common names).
      */
     async resolveIdentifier(platform: PlatformType, value: string): Promise<Contact[]> {
-        const lookupItems = await this.query<{ SK: string }>({
+        const lookupItems = await this.query({
             KeyConditionExpression:    '#pk = :pk',
             ExpressionAttributeNames:  { '#pk': 'PK' },
             ExpressionAttributeValues: {
@@ -309,7 +312,8 @@ export class ContactBackend extends BaseRepository<Contact> {
 
         const limit = pLimit(CONTACT_IO_CONCURRENCY);
         const contacts = await Promise.all(lookupItems.map((item) => {
-            const personId = ContactKeyGenerator.parsePersonIdFromLookupSK(item.SK);
+            const { SK } = skOnlyRowSchema.parse(item);
+            const personId = ContactKeyGenerator.parsePersonIdFromLookupSK(SK);
             return limit(async () => this.getContact(personId));
         }));
         return contacts.filter((contact): contact is Contact => contact !== undefined);

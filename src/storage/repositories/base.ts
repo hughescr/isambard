@@ -15,6 +15,7 @@ import {
     type ScanCommandInput
 } from '@aws-sdk/lib-dynamodb';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
+import { epochSecondsSchema, type EpochSeconds } from './types';
 import { withDynamoTimeout } from '@/storage/dynamo-retry';
 
 export interface DynamoDBKey {
@@ -23,7 +24,7 @@ export interface DynamoDBKey {
 }
 
 /**
- * Abstract base repository with common DynamoDB operations.
+ * Abstract base class wrapping common DynamoDB table operations.
  * Concrete repositories should extend this class.
  *
  * Accepts either a {@link DynamoDBClientHolder} (production — swappable on reconnect)
@@ -36,8 +37,12 @@ export interface DynamoDBKey {
  * When `timeoutMs` is provided to the constructor, all DynamoDB operations
  * that also receive an `operation` string will be wrapped with `withDynamoTimeout`.
  * Existing subclasses that don't pass `timeoutMs` retain original behaviour (no timeout).
+ *
+ * `getItem`/`query`/`scan` return raw `Record<string, unknown>` values — this class has no
+ * knowledge of any subclass's row shape. Subclasses are responsible for validating (typically
+ * with a zod schema) whatever they read before treating it as typed data.
  */
-export abstract class BaseRepository<_T> {
+export abstract class DynamoTableAccess {
     private readonly getDocClientFn: () => DynamoDBDocumentClient;
     protected readonly tableName:    string;
     protected readonly timeoutMs?:   number;
@@ -63,7 +68,7 @@ export abstract class BaseRepository<_T> {
             : this.docClient.send(new PutCommand(params)));
     }
 
-    protected async getItem<R>(key: DynamoDBKey, operation?: string): Promise<R | undefined> {
+    protected async getItem(key: DynamoDBKey, operation?: string): Promise<Record<string, unknown> | undefined> {
         const params: GetCommandInput = {
             TableName: this.tableName,
             Key:       key,
@@ -73,10 +78,10 @@ export abstract class BaseRepository<_T> {
                 () => this.docClient.send(new GetCommand(params)),
                 { timeoutMs: this.timeoutMs, operation }
             );
-            return result.Item as R | undefined;
+            return result.Item;
         }
         const result = await this.docClient.send(new GetCommand(params));
-        return result.Item as R | undefined;
+        return result.Item;
     }
 
     protected async deleteItem(key: DynamoDBKey, operation?: string): Promise<void> {
@@ -89,7 +94,7 @@ export abstract class BaseRepository<_T> {
             : this.docClient.send(new DeleteCommand(params)));
     }
 
-    protected async query<R>(params: Omit<QueryCommandInput, 'TableName'>, operation?: string): Promise<R[]> {
+    protected async query(params: Omit<QueryCommandInput, 'TableName'>, operation?: string): Promise<Record<string, unknown>[]> {
         const command = new QueryCommand({
             TableName: this.tableName,
             ...params,
@@ -99,10 +104,10 @@ export abstract class BaseRepository<_T> {
                 () => this.docClient.send(command),
                 { timeoutMs: this.timeoutMs, operation }
             );
-            return (result.Items ?? []) as R[];
+            return result.Items ?? [];
         }
         const result = await this.docClient.send(command);
-        return (result.Items ?? []) as R[];
+        return result.Items ?? [];
     }
 
     protected async updateItem(
@@ -120,10 +125,10 @@ export abstract class BaseRepository<_T> {
         return this.docClient.send(command);
     }
 
-    protected async scan<R>(
+    protected async scan(
         params: Omit<ScanCommandInput, 'TableName'>,
         operation: string
-    ): Promise<R[]> {
+    ): Promise<Record<string, unknown>[]> {
         // Stryker disable next-line llm: params omits TableName and tableName is a string, so reversing the spread or appending an empty string changes nothing.
         const command = new ScanCommand({ TableName: this.tableName, ...params });
         if(this.timeoutMs !== undefined) {
@@ -131,17 +136,21 @@ export abstract class BaseRepository<_T> {
                 () => this.docClient.send(command),
                 { timeoutMs: this.timeoutMs, operation }
             );
-            return (result.Items ?? []) as R[];
+            return result.Items ?? [];
         }
         const result = await this.docClient.send(command);
-        return (result.Items ?? []) as R[];
+        return result.Items ?? [];
     }
 
-    protected static ttlFromDays(days: number): number {
-        return Math.floor(Date.now() / 1000) + days * 86_400;
-    }
-
-    protected static ttlFromHours(hours: number): number {
-        return Math.floor(Date.now() / 1000) + hours * 3600;
+    /**
+     * Constructs the DynamoDB `TTL` attribute value (epoch seconds, floored) for an item that
+     * should expire `duration` after `base`. `base` may be a `Date` or an epoch-millisecond
+     * number (e.g. `Date.now()`, or a persisted row's `createdAt` to recompute the original
+     * expiry). The one shared constructor for every backend's row expiry — see EpochSeconds.
+     */
+    public static expiresAt(base: Date | number, duration: { days?: number, hours?: number }): EpochSeconds {
+        const baseMs = base instanceof Date ? base.getTime() : base;
+        const seconds = Math.floor(baseMs / 1000) + (duration.days ?? 0) * 86_400 + (duration.hours ?? 0) * 3600;
+        return epochSecondsSchema.parse(seconds);
     }
 }

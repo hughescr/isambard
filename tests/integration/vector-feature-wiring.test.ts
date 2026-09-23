@@ -512,6 +512,8 @@ describe('Vector feature wiring', () => {
                 Item: {
                     PK:          'DIR#/state',
                     SK:          'FILE#test-item',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2025-01-01T00:00:00.000Z',
                     path:        '/state/test-item',
                     content:     'original content',
                     contentType: 'text/plain',

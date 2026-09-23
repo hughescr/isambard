@@ -1,6 +1,6 @@
 import { OutboxKeyGenerator } from './key-generator';
 import { outboxItemSchema, type OutboxItem } from './types';
-import { BaseRepository } from '@/storage';
+import { DynamoTableAccess } from '@/storage';
 
 const TTL_HOURS = 24;
 
@@ -11,14 +11,14 @@ const TTL_HOURS = 24;
  * insertion time so that dequeue always returns the highest-priority oldest item
  * first (ScanIndexForward=true).
  */
-export class OutboxBackend extends BaseRepository<OutboxItem> {
+export class OutboxBackend extends DynamoTableAccess {
     /**
      * Enqueue an outbox item. Idempotent — re-enqueuing the same item
      * (same id) overwrites any existing record.
      */
     async enqueue(item: OutboxItem): Promise<void> {
         const keys = OutboxKeyGenerator.createKeys(item);
-        const ttl = item.ttl ?? OutboxBackend.ttlFromHours(TTL_HOURS);
+        const ttl = item.ttl ?? OutboxBackend.expiresAt(Date.now(), { hours: TTL_HOURS });
         await this.putItem({
             ...keys,
             ...item,
@@ -31,7 +31,7 @@ export class OutboxBackend extends BaseRepository<OutboxItem> {
      * Does not remove them from the outbox.
      */
     async dequeue(service: string, limit = 10): Promise<OutboxItem[]> {
-        const items = await this.query<Record<string, unknown>>({
+        const items = await this.query({
             KeyConditionExpression:    '#pk = :pk',
             ExpressionAttributeNames:  { '#pk': 'PK' },
             ExpressionAttributeValues: {
@@ -65,7 +65,7 @@ export class OutboxBackend extends BaseRepository<OutboxItem> {
             },
         };
         const keys = OutboxKeyGenerator.createKeys(updated);
-        const ttl = updated.ttl ?? OutboxBackend.ttlFromHours(TTL_HOURS);
+        const ttl = updated.ttl ?? OutboxBackend.expiresAt(Date.now(), { hours: TTL_HOURS });
         await this.putItem({ ...keys, ...updated, TTL: ttl });
     }
 }

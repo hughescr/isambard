@@ -12,6 +12,7 @@
  * @module storage/session-journal/types
  */
 import { z } from 'zod';
+import { type EpochSeconds } from '../repositories/types';
 // eslint-disable-next-line boundaries/dependencies -- type-only import (erased at compile time, no runtime edge): JournalEntry/SessionRole are owned solely by src/agent/session/types.ts (plan amendment A1 / P8 gap override (a)) and storage must not redeclare either
 import type { JournalEntry, SessionRole } from '@/agent';
 
@@ -117,9 +118,9 @@ export const journalEntrySchema = z.union([currentJournalEntrySchema, legacySess
  * invisible to the `LAYER#events` GSI (P8 deviation (1), docs/plans/long-lived-session-phase1.md).
  */
 export interface SessionJournalItem extends Record<string, unknown> {
-    PK:   string   // SESSION_JOURNAL#<role>
-    SK:   string   // <ts ISO>#<seq padded 6>
-    TTL:  number   // epoch seconds
+    PK:   string        // SESSION_JOURNAL#<role>
+    SK:   string        // <ts ISO>#<seq padded 6>
+    TTL:  EpochSeconds
     type: JournalEntry['type']
     at:   string   // ISO 8601 — the wire form of JournalEntry['at']
 }

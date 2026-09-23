@@ -3,17 +3,20 @@ import { logger } from '@hughescr/logger';
 import { z } from 'zod';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
 import { type MemoryToolBackendTagIndex } from './backend-tag-index';
+import { decodeStoredMemoryToolItem } from './decode-stored-item';
 import { sigmoidScore } from './sigmoid';
 import {
     type MemoryToolItemData,
-    type MemoryToolItem,
-    type StoredMemoryToolItem,
     type LayerName,
     type TagIndexReadItem,
-    createLayerName,
-    normalizeStoredMemoryToolItem
+    createLayerName
 } from './types';
 import { InvariantViolationError } from '@/errors';
+
+/** Type guard for filtering out rows `decodeStoredMemoryToolItem` skipped as malformed. */
+function isDefined<T>(item: T | undefined): item is T {
+    return item !== undefined;
+}
 
 export interface ListOptions {
     limit?:     number
@@ -46,7 +49,6 @@ export class MemoryToolBackendQuery {
     constructor(
         docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder,
         private readonly tableName: string,
-        private readonly stripKeys: (item: MemoryToolItem) => MemoryToolItemData,
         private readonly tagIndex?: MemoryToolBackendTagIndex
     ) {
         this.getDocClient = resolveDocClientGetter(docClientOrHolder);
@@ -123,7 +125,7 @@ export class MemoryToolBackendQuery {
             })
         );
 
-        let items = ((result.Items ?? []) as StoredMemoryToolItem[]).map(item => this.stripKeys(normalizeStoredMemoryToolItem(item)));
+        let items = (result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(isDefined);
 
         // Sort by createdAt ascending (oldest first, newest last)
         items = items.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -189,7 +191,7 @@ export class MemoryToolBackendQuery {
             })
         );
 
-        const items = ((result.Items ?? []) as StoredMemoryToolItem[]).map(item => this.stripKeys(normalizeStoredMemoryToolItem(item)));
+        const items = (result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(isDefined);
         const nextCursor = this.encodeCursor(result.LastEvaluatedKey);
 
         return { items, nextCursor };
@@ -232,7 +234,7 @@ export class MemoryToolBackendQuery {
         }));
 
         for(const result of layerResults) {
-            allItems.push(...((result.Items ?? []) as StoredMemoryToolItem[]).map(item => this.stripKeys(normalizeStoredMemoryToolItem(item))));
+            allItems.push(...(result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(isDefined));
         }
 
         // Items arrive newest-first per layer; merge, sort descending, take limit, reverse to ascending
@@ -282,7 +284,7 @@ export class MemoryToolBackendQuery {
         }));
 
         for(const result of layerResults) {
-            allItems.push(...((result.Items ?? []) as StoredMemoryToolItem[]).map(item => this.stripKeys(normalizeStoredMemoryToolItem(item))));
+            allItems.push(...(result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(isDefined));
         }
 
         // Items arrive newest-first per layer; merge, sort descending, take limit, reverse to ascending

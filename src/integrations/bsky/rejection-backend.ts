@@ -2,10 +2,11 @@ import { BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { z } from 'zod';
 import { type BskyReplyInput, createAtUri, createCid } from '@/integrations/bsky/types';
-import { BaseRepository, createPrefixedKey } from '@/storage';
+import { DynamoTableAccess, createPrefixedKey } from '@/storage';
 
 const REJECTION_PK        = 'BSKY#REJECTED';
 const REJECTION_SK_PREFIX = 'REJECTION';
+const pkSkOnlyRowSchema   = z.object({ PK: z.string(), SK: z.string() });
 
 const TTL_DAYS = 30;
 const MAX_RETRIES = 3;
@@ -98,7 +99,7 @@ function fromStoredReply(row: StoredBskyRejectedReply): BskyRejectedReply {
  * DynamoDB backend for storing rejected Bluesky posts/DMs.
  * Allows the agent to see rejection reasons and retry with revised content.
  */
-export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
+export class BskyRejectionBackend extends DynamoTableAccess {
     /**
      * Store a rejected Bluesky post or DM.
      */
@@ -108,7 +109,7 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
             PK:  REJECTION_PK,
             SK:  rejectionSK(item.uuid),
             ...stored,
-            TTL: BskyRejectionBackend.ttlFromDays(TTL_DAYS),
+            TTL: BskyRejectionBackend.expiresAt(Date.now(), { days: TTL_DAYS }),
         });
     }
 
@@ -121,7 +122,7 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
      * listing — one bad row must not hide every other pending rejection from context.
      */
     async listRejections(): Promise<BskyRejectionItem[]> {
-        const items = await this.query<Record<string, unknown>>({
+        const items = await this.query({
             KeyConditionExpression:    '#pk = :pk',
             ExpressionAttributeNames:  { '#pk': 'PK' },
             ExpressionAttributeValues: {
@@ -166,7 +167,7 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
      * Returns the total number of items deleted.
      */
     async clearAll(): Promise<number> {
-        const items = await this.query<{ PK: string, SK: string }>({
+        const rawItems = await this.query({
             KeyConditionExpression:    '#pk = :pk',
             ExpressionAttributeNames:  { '#pk': 'PK' },
             ExpressionAttributeValues: {
@@ -174,6 +175,7 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
             },
             ProjectionExpression: 'PK, SK',
         });
+        const items = rawItems.map(item => pkSkOnlyRowSchema.parse(item));
         const batches = Array.from(
             { length: Math.ceil(items.length / BATCH_SIZE) },
             (_, index) => items.slice(

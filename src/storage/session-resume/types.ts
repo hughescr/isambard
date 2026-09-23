@@ -38,3 +38,15 @@ export interface SessionResumeItem extends Record<string, unknown> {
     sessionId: string
     updatedAt: string  // ISO 8601
 }
+
+/**
+ * Validates a persisted session-resume row before trusting it. A malformed row (bad UUID,
+ * missing fields, corrupt timestamp) is treated as "no stored session" rather than thrown —
+ * this backs the boot-time resume lookup, which must always degrade to a fresh session.
+ */
+export const sessionResumeItemSchema = z.object({
+    PK:        z.string(),
+    SK:        z.string(),
+    sessionId: sessionIdSchema,
+    updatedAt: z.iso.datetime(),
+});

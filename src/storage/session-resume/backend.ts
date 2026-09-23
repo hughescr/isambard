@@ -1,6 +1,7 @@
+import { logger } from '@hughescr/logger';
 import { DateTime } from 'luxon';
-import { BaseRepository } from '../repositories/base';
-import { type SessionId, type SessionResumeItem, createSessionId  } from './types';
+import { DynamoTableAccess } from '../repositories/base';
+import { type SessionId, type SessionResumeItem, sessionResumeItemSchema } from './types';
 // eslint-disable-next-line boundaries/dependencies -- type-only import (erased at compile time, no runtime edge): SessionRole is owned solely by src/agent/session/types.ts (plan amendment A1 / P8 gap override (a)); storage must not redeclare it
 import type { SessionRole } from '@/agent';
 
@@ -17,17 +18,24 @@ function roleKey(role: SessionRole): { PK: string, SK: string } {
 /**
  * DynamoDB backend for session-resume persistence, keyed by conductor role.
  */
-export class SessionResumeBackend extends BaseRepository<SessionResumeItem> {
+export class SessionResumeBackend extends DynamoTableAccess {
     /**
      * Get the resumable session ID stored for `role`.
-     * @returns SessionId if found, undefined otherwise
+     * A malformed stored row is logged and treated as "no stored session" rather than thrown —
+     * this is the boot-time resume lookup, which must always degrade to a fresh session.
+     * @returns SessionId if found and valid, undefined otherwise
      */
     async getSessionIdForRole(role: SessionRole): Promise<SessionId | undefined> {
-        const item = await this.getItem<SessionResumeItem>(roleKey(role));
+        const item = await this.getItem(roleKey(role));
         if(!item) {
             return undefined;
         }
-        return createSessionId(item.sessionId);
+        const parsed = sessionResumeItemSchema.safeParse(item);
+        if(!parsed.success) {
+            logger.warn({ role, issues: parsed.error.issues }, 'SessionResumeBackend.getSessionIdForRole: stored row failed validation');
+            return undefined;
+        }
+        return parsed.data.sessionId;
     }
 
     /**

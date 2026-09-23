@@ -1,4 +1,5 @@
 import { createMemoryPath, createContentType, type MemoryToolBackend } from './memory-tool';
+import { DynamoTableAccess } from './repositories/base';
 
 /**
  * All activity types that can be logged automatically by the system.
@@ -48,7 +49,7 @@ export function createActivityLogger(backend: MemoryToolBackend): ActivityLogger
                 ? `[auto] ${entry.summary}\n\n${entry.details}`
                 : `[auto] ${entry.summary}`;
             const tags = new Set(['auto-logged', entry.type, ...(entry.tags ?? [])]);
-            const ttl = Math.floor(Date.now() / 1000) + ACTIVITY_TTL_DAYS * 86_400;
+            const ttl = DynamoTableAccess.expiresAt(Date.now(), { days: ACTIVITY_TTL_DAYS });
 
             await backend.create({
                 path,

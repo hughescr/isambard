@@ -1,17 +1,22 @@
 import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
+import { z } from 'zod';
 import { CalendarRegistryKeyGenerator, type CalendarRegistryKeys } from './key-generator';
 import {
     type CalendarRegistryRecord,
-    type CalendarServerEntry
+    type CalendarServerEntry,
+    calendarRegistryRecordSchema
 } from './types';
-import { BaseRepository, type DynamoDBClientHolder, stripDynamoKeys } from '@/storage';
+import { DynamoTableAccess, type DynamoDBClientHolder, stripDynamoKeys } from '@/storage';
+
+const pkOnlyRowSchema = z.object({ PK: z.string() });
 
 /**
  * DynamoDB backend for CalDAV calendar registry.
  * Stores per-user calendar server associations with credentials and calendar paths.
  * Also supports a shared record for public calendars available to all users.
  */
-export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryRecord> {
+export class CalendarRegistryBackend extends DynamoTableAccess {
     constructor(
         docClient: DynamoDBDocumentClient | DynamoDBClientHolder,
         tableName: string,
@@ -149,7 +154,7 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
      * Acceptable scan for a personal assistant with very few users (~1-5).
      */
     async listRegisteredUserIds(): Promise<string[]> {
-        const items = await this.scan<Record<string, unknown>>(
+        const items = await this.scan(
             {
                 FilterExpression:          'begins_with(PK, :prefix) AND SK = :sk',
                 ExpressionAttributeValues: {
@@ -161,13 +166,23 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
             'CalendarRegistry.listRegisteredUserIds'
         );
 
-        return items
-            .map(item => CalendarRegistryKeyGenerator.parseScope(item.PK as string))
-            .flatMap(scope => (scope.kind === 'personal' ? [scope.userId] : []));
+        const userIds: string[] = [];
+        for(const item of items) {
+            const parsed = pkOnlyRowSchema.safeParse(item);
+            if(!parsed.success) {
+                logger.warn({ issues: parsed.error.issues }, 'CalendarRegistryBackend.listRegisteredUserIds: skipping row with invalid PK');
+                continue;
+            }
+            const scope = CalendarRegistryKeyGenerator.parseScope(parsed.data.PK);
+            if(scope.kind === 'personal') {
+                userIds.push(scope.userId);
+            }
+        }
+        return userIds;
     }
 
     async #getRecord(keys: CalendarRegistryKeys): Promise<CalendarRegistryRecord | null> {
-        const result = await this.getItem<Record<string, unknown>>(
+        const result = await this.getItem(
             { PK: keys.PK, SK: keys.SK },
             'CalendarRegistry.getRecord'
         );
@@ -179,7 +194,13 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
         // Tolerant read: the PK is the authoritative scope. A legacy row carries only `userId`
         // (`SHARED` for the shared record), and any stored `userId`/`scope` body attribute is ignored.
         const { userId: _legacyUserId, ...body } = stripDynamoKeys(result);
-        return { ...body, scope: CalendarRegistryKeyGenerator.parseScope(keys.PK) } as CalendarRegistryRecord;
+        const candidate = { ...body, scope: CalendarRegistryKeyGenerator.parseScope(keys.PK) };
+        const parsed = calendarRegistryRecordSchema.safeParse(candidate);
+        if(!parsed.success) {
+            logger.warn({ pk: keys.PK, issues: parsed.error.issues }, 'CalendarRegistryBackend.getRecord: stored row failed validation');
+            return null;
+        }
+        return parsed.data;
     }
 
     async #putRecord(keys: CalendarRegistryKeys, record: CalendarRegistryRecord): Promise<void> {
