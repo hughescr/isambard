@@ -45,36 +45,44 @@ export type ReconciliationState = z.infer<typeof reconciliationStateSchema>;
 // Progress Tracking Types
 // ============================================================================
 
-/**
- * Progress tracking for a single reconciliation phase
- */
-export const reconciliationProgressSchema = z.object({
-    /** Which phase this progress represents */
-    phase:               reconciliationPhaseSchema,
-    /** Number of items scanned */
-    itemsScanned:        z.number().int().nonnegative(),
-    /** Number of tag index entries created */
-    indexItemsCreated:   z.number().int().nonnegative(),
-    /** Number of tag index entries refreshed (updated) */
-    indexItemsRefreshed: z.number().int().nonnegative(),
-    /** Number of tag index entries deleted */
-    indexItemsDeleted:   z.number().int().nonnegative(),
-    /** Number of memory items with previouslyKnownAs metadata cleaned */
-    metadataCleaned:     z.number().int().nonnegative(),
-    /** Number of META_COUNT items verified (Phase C only) */
-    countsVerified:      z.number().int().nonnegative().optional(),
-    /** Number of META_COUNT items corrected (Phase C only) */
-    countsCorrected:     z.number().int().nonnegative().optional(),
-    /** Number of META_COUNT items deleted (Phase C only) */
-    countsDeleted:       z.number().int().nonnegative().optional(),
+const progressBaseSchema = z.object({
     /** Number of errors encountered */
-    errors:              z.number().int().nonnegative(),
+    errors:    z.number().int().nonnegative(),
     /** When this phase started */
-    startTime:           z.date(),
+    startTime: z.date(),
     /** When this phase ended (undefined if still running) */
-    endTime:             z.date().optional(),
+    endTime:   z.date().optional(),
 });
 
+export const phaseASchema = progressBaseSchema.extend({
+    phase:               z.literal('phaseA'),
+    itemsScanned:        z.number().int().nonnegative(),
+    indexItemsCreated:   z.number().int().nonnegative(),
+    indexItemsRefreshed: z.number().int().nonnegative(),
+    metadataCleaned:     z.number().int().nonnegative(),
+});
+
+export const phaseBSchema = progressBaseSchema.extend({
+    phase:             z.literal('phaseB'),
+    itemsScanned:      z.number().int().nonnegative(),
+    indexItemsDeleted: z.number().int().nonnegative(),
+});
+
+export const phaseCSchema = progressBaseSchema.extend({
+    phase:           z.literal('phaseC'),
+    countsVerified:  z.number().int().nonnegative(),
+    countsCorrected: z.number().int().nonnegative(),
+    countsDeleted:   z.number().int().nonnegative(),
+});
+
+/** Progress tracking for one concrete reconciliation phase. */
+export const reconciliationProgressSchema = z.discriminatedUnion('phase', [
+    phaseASchema, phaseBSchema, phaseCSchema,
+]);
+
+export type PhaseAProgress = z.infer<typeof phaseASchema>;
+export type PhaseBProgress = z.infer<typeof phaseBSchema>;
+export type PhaseCProgress = z.infer<typeof phaseCSchema>;
 export type ReconciliationProgress = z.infer<typeof reconciliationProgressSchema>;
 
 /**
@@ -84,11 +92,11 @@ export const reconciliationResultSchema = z.object({
     /** Whether the reconciliation completed successfully */
     success:         z.boolean(),
     /** Progress for Phase A (scan memory items) */
-    phaseA:          reconciliationProgressSchema,
+    phaseA:          phaseASchema,
     /** Progress for Phase B (scan tag index) */
-    phaseB:          reconciliationProgressSchema,
+    phaseB:          phaseBSchema,
     /** Progress for Phase C (verify META_COUNT items) */
-    phaseC:          reconciliationProgressSchema,
+    phaseC:          phaseCSchema,
     /** Total duration of all phases in milliseconds */
     totalDurationMs: z.number().int().nonnegative(),
 });

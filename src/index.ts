@@ -87,7 +87,7 @@ async function wireDynamoDBHealth(
     storage: Awaited<ReturnType<typeof createStorageLayer>>,
     dynamoDBConfig: ReturnType<typeof loadDynamoDBConfig>,
     healthRegistry: ServiceHealthRegistryImpl,
-    registerCleanup: (step: ShutdownStep) => void
+    registerCleanup: (step: Omit<ShutdownStep, 'onFailure'>) => void
 ) {
     // Wire DynamoDB health monitoring.
     // DynamoDB is a required dependency — we probe it with DescribeTable to detect
@@ -178,11 +178,10 @@ async function wireDynamoDBHealth(
     return { dynamoDBReconnectionLoop, unsubscribeDynamoDBReconnect, dynamoDBProbeInterval };
 }
 
-interface ShutdownStep {
-    name:               string
-    run:                () => void | Promise<void>
-    bestEffortMessage?: string
-}
+type ShutdownStep = {
+    name: string
+    run:  () => void | Promise<void>
+} & ({ onFailure: 'propagate' } | { onFailure: 'log-and-continue' });
 
 /** Preserve shutdown order while allowing later owners to release resources after a failure. */
 async function runShutdownSteps(steps: readonly ShutdownStep[]): Promise<void> {
@@ -201,13 +200,18 @@ async function runShutdownSteps(steps: readonly ShutdownStep[]): Promise<void> {
 function reportShutdownFailures(failures: readonly { step: ShutdownStep, error: unknown }[]): void {
     const fatalFailures: { name: string, error: Error }[] = [];
     for(const { step, error } of failures) {
-        if(step.bestEffortMessage === undefined) {
-            fatalFailures.push({ name: step.name, error: error instanceof Error ? error : new Error(String(error)) });
-        } else {
-            logger.error({
-                error: error instanceof Error ? error.message : String(error),
-                msg:   step.bestEffortMessage,
-            });
+        switch(step.onFailure) {
+            case 'propagate': {
+                fatalFailures.push({ name: step.name, error: error instanceof Error ? error : new Error(String(error)) });
+                break;
+            }
+            case 'log-and-continue': {
+                logger.error({
+                    error: error instanceof Error ? error.message : String(error),
+                    msg:   `Best-effort shutdown failed: ${step.name}`,
+                });
+                break;
+            }
         }
     }
 
@@ -243,8 +247,8 @@ function reportShutdownFailures(failures: readonly { step: ShutdownStep, error: 
  */
 async function createAppLifecycle(): Promise<App> {
     const cleanupSteps: ShutdownStep[] = [];
-    const registerCleanup = (step: ShutdownStep): void => {
-        cleanupSteps.unshift(step);
+    const registerCleanup = (step: Omit<ShutdownStep, 'onFailure'>): void => {
+        cleanupSteps.unshift({ ...step, onFailure: 'propagate' });
     };
     try {
         return await buildAppLifecycle(registerCleanup);
@@ -262,7 +266,7 @@ async function createAppLifecycle(): Promise<App> {
     }
 }
 
-async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void): Promise<App> {
+async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onFailure'>) => void): Promise<App> {
     // Load configuration (required)
 
     const config = loadConfig(Resource);
@@ -450,6 +454,7 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                 maxBodySizeBytes: config.email.maxBodySizeBytes,
             });
             const stableWildDuckClient = eagerWildDuckClient;
+            // Construction rollback remains fatal; only graceful shutdown is best-effort.
             registerCleanup({ name: 'WildDuck client', run: shutdownEmailClient });
 
             // Create reconnection loop eagerly so post-connect drops are also handled.
@@ -494,6 +499,7 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
                     allowlistInteractionHandler,
                     notify:             notificationBridge.notify,
                 });
+                // Construction rollback remains fatal; only graceful shutdown is best-effort.
                 registerCleanup({ name: 'email listener', run: () => emailSetup?.listener.stop() });
             } catch (err) {
                 // Non-WildDuck setup failure (e.g. allowlist DynamoDB load) — log and skip email.
@@ -1298,49 +1304,49 @@ async function buildAppLifecycle(registerCleanup: (step: ShutdownStep) => void):
             logger.info('Stopping Isambard application...');
             emailStopping = true;
             const steps: ShutdownStep[] = [
-                { name: 'DynamoDB reconnection loop', run: () => dynamoDBReconnectionLoop.stop() },
-                { name: 'Discord reconnection loop', run: () => discordReconnectionLoop.stop() },
-                { name: 'email reconnection loop', run: () => emailReconnectionLoop?.stop() },
-                { name: 'Bluesky reconnection loop', run: () => bskyReconnectionLoop?.stop() },
-                { name: 'Bluesky DM poller', run: () => bskySetup?.dmPoller.stop() },
-                { name: 'outbox drainer', run: () => outboxDrainer.stop() },
-                { name: 'saga executor', run: () => sagaExecutor.stop() },
+                { name: 'DynamoDB reconnection loop', run: () => dynamoDBReconnectionLoop.stop(), onFailure: 'propagate' },
+                { name: 'Discord reconnection loop', run: () => discordReconnectionLoop.stop(), onFailure: 'propagate' },
+                { name: 'email reconnection loop', run: () => emailReconnectionLoop?.stop(), onFailure: 'propagate' },
+                { name: 'Bluesky reconnection loop', run: () => bskyReconnectionLoop?.stop(), onFailure: 'propagate' },
+                { name: 'Bluesky DM poller', run: () => bskySetup?.dmPoller.stop(), onFailure: 'propagate' },
+                { name: 'outbox drainer', run: () => outboxDrainer.stop(), onFailure: 'propagate' },
+                { name: 'saga executor', run: () => sagaExecutor.stop(), onFailure: 'propagate' },
                 // Stop usage polling and health notifications before detaching the bridge.
-                { name: 'quota poller', run: () => ambience.quotaPoller.stop() },
-                { name: 'outbox subscription', run: unsubscribeOutboxDrain },
-                { name: 'saga subscription', run: unsubscribeSagaRetry },
-                { name: 'health notification subscription', run: unsubscribeHealthNotifications },
-                { name: 'health outage coalescer', run: () => healthOutageCoalescer.stop() },
-                { name: 'notification bridge', run: () => notificationBridge.detach() },
-                { name: 'Discord recovery subscription', run: () => unsubscribeDiscordRecovery?.() },
-                { name: 'DynamoDB reconnect subscription', run: unsubscribeDynamoDBReconnect },
-                { name: 'Discord reconnect subscription', run: unsubscribeDiscordReconnect },
-                { name: 'email reconnect subscription', run: () => unsubscribeEmailReconnect?.() },
-                { name: 'Bluesky reconnect subscription', run: () => unsubscribeBskyReconnect?.() },
+                { name: 'quota poller', run: () => ambience.quotaPoller.stop(), onFailure: 'propagate' },
+                { name: 'outbox subscription', run: unsubscribeOutboxDrain, onFailure: 'propagate' },
+                { name: 'saga subscription', run: unsubscribeSagaRetry, onFailure: 'propagate' },
+                { name: 'health notification subscription', run: unsubscribeHealthNotifications, onFailure: 'propagate' },
+                { name: 'health outage coalescer', run: () => healthOutageCoalescer.stop(), onFailure: 'propagate' },
+                { name: 'notification bridge', run: () => notificationBridge.detach(), onFailure: 'propagate' },
+                { name: 'Discord recovery subscription', run: () => unsubscribeDiscordRecovery?.(), onFailure: 'propagate' },
+                { name: 'DynamoDB reconnect subscription', run: unsubscribeDynamoDBReconnect, onFailure: 'propagate' },
+                { name: 'Discord reconnect subscription', run: unsubscribeDiscordReconnect, onFailure: 'propagate' },
+                { name: 'email reconnect subscription', run: () => unsubscribeEmailReconnect?.(), onFailure: 'propagate' },
+                { name: 'Bluesky reconnect subscription', run: () => unsubscribeBskyReconnect?.(), onFailure: 'propagate' },
                 { name: 'tag reconciliation scheduler',     run:  () => {
                     if(storage.reconciliationScheduler) {
                         storage.reconciliationScheduler.stop();
                         logger.info('Tag index reconciliation scheduler stopped');
                     }
-                } },
+                }, onFailure: 'propagate' },
                 { name: 'contact reconciliation scheduler', run:  () => {
                     if(storage.contactReconciliationScheduler) {
                         storage.contactReconciliationScheduler.stop();
                         logger.info('Contact reconciliation scheduler stopped');
                     }
-                } },
-                { name: 'browser adapter', run: () => browserAdapter?.close() },
-                { name: 'email listener', run: () => emailSetup?.listener.stop(), bestEffortMessage: 'Email listener stop failed during shutdown' },
-                { name: 'WildDuck client', run: shutdownEmailClient, bestEffortMessage: 'WildDuck client shutdown failed during email teardown' },
-                { name: 'Discord bot', run: () => bot.stop() },
+                }, onFailure: 'propagate' },
+                { name: 'browser adapter', run: () => browserAdapter?.close(), onFailure: 'propagate' },
+                { name: 'email listener', run: () => emailSetup?.listener.stop(), onFailure: 'log-and-continue' },
+                { name: 'WildDuck client', run: shutdownEmailClient, onFailure: 'log-and-continue' },
+                { name: 'Discord bot', run: () => bot.stop(), onFailure: 'propagate' },
                 // Each step settles before the next starts, including after a rejection.
                 // This keeps indexer writes ahead of vector-index closure.
-                { name: 'async indexer', run: () => storage.asyncIndexer?.close() },
-                { name: 'vector index', run: () => storage.vectorIndex?.close() },
-                { name: 'DynamoDB probe', run: () => clearInterval(dynamoDBProbeInterval) },
-                { name: 'DynamoDB health notifier', run: () => setDynamoHealthNotifier(undefined) },
-                { name: 'DynamoDB client holder', run: () => storage.holder.destroy() },
-                { name: 'health registry', run: () => healthRegistry.stop() },
+                { name: 'async indexer', run: () => storage.asyncIndexer?.close(), onFailure: 'propagate' },
+                { name: 'vector index', run: () => storage.vectorIndex?.close(), onFailure: 'propagate' },
+                { name: 'DynamoDB probe', run: () => clearInterval(dynamoDBProbeInterval), onFailure: 'propagate' },
+                { name: 'DynamoDB health notifier', run: () => setDynamoHealthNotifier(undefined), onFailure: 'propagate' },
+                { name: 'DynamoDB client holder', run: () => storage.holder.destroy(), onFailure: 'propagate' },
+                { name: 'health registry', run: () => healthRegistry.stop(), onFailure: 'propagate' },
             ];
             stopPromise = runShutdownSteps(steps).then(() => {
                 isStopped = true;

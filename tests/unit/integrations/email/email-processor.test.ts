@@ -8,6 +8,16 @@ import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/type
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import type { PersonAllowlist } from '@/storage';
 
+test('makes a null verdict without an allowlist bypass unrepresentable', () => {
+    // @ts-expect-error -- a null verdict requires the allowlist-bypass arm.
+    const impossibleResult: Awaited<ReturnType<EmailProcessor['processEmail']>> = {
+        verdict:           null,
+        destinationFolder: EmailFolder.CleanInbox,
+        allowlistBypassed: false,
+    };
+    expect(impossibleResult.allowlistBypassed).toBe(false);
+});
+
 // ---------------------------------------------------------------------------
 // Test fixture helpers
 // ---------------------------------------------------------------------------

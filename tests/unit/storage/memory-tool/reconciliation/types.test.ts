@@ -229,7 +229,6 @@ describe.concurrent('reconciliationProgressSchema', () => {
             itemsScanned:        100,
             indexItemsCreated:   10,
             indexItemsRefreshed: 5,
-            indexItemsDeleted:   2,
             metadataCleaned:     3,
             errors:              0,
             startTime:           new Date('2024-01-01T00:00:00Z'),
@@ -244,14 +243,11 @@ describe.concurrent('reconciliationProgressSchema', () => {
 
     test('should accept progress without endTime', () => {
         const progress: ReconciliationProgress = {
-            phase:               'phaseB',
-            itemsScanned:        50,
-            indexItemsCreated:   5,
-            indexItemsRefreshed: 2,
-            indexItemsDeleted:   1,
-            metadataCleaned:     0,
-            errors:              1,
-            startTime:           new Date('2024-01-01T00:00:00Z'),
+            phase:             'phaseB',
+            itemsScanned:      50,
+            indexItemsDeleted: 1,
+            errors:            1,
+            startTime:         new Date('2024-01-01T00:00:00Z'),
         };
         const result = reconciliationProgressSchema.safeParse(progress);
         expect(result.success).toBe(true);
@@ -266,7 +262,6 @@ describe.concurrent('reconciliationProgressSchema', () => {
             itemsScanned:        -1,
             indexItemsCreated:   0,
             indexItemsRefreshed: 0,
-            indexItemsDeleted:   0,
             metadataCleaned:     0,
             errors:              0,
             startTime:           new Date(),
@@ -280,7 +275,6 @@ describe.concurrent('reconciliationProgressSchema', () => {
             itemsScanned:        10,
             indexItemsCreated:   -1,
             indexItemsRefreshed: 0,
-            indexItemsDeleted:   0,
             metadataCleaned:     0,
             errors:              0,
             startTime:           new Date(),
@@ -294,7 +288,6 @@ describe.concurrent('reconciliationProgressSchema', () => {
             itemsScanned:        0,
             indexItemsCreated:   0,
             indexItemsRefreshed: 0,
-            indexItemsDeleted:   0,
             metadataCleaned:     0,
             errors:              0,
             startTime:           new Date(),
@@ -309,7 +302,6 @@ describe.concurrent('reconciliationProgressSchema', () => {
             itemsScanned:        10,
             indexItemsCreated:   1,
             indexItemsRefreshed: 0,
-            indexItemsDeleted:   0,
             metadataCleaned:     0,
             errors:              0,
             startTime:           new Date(),
@@ -323,7 +315,6 @@ describe.concurrent('reconciliationProgressSchema', () => {
             itemsScanned:        10,
             indexItemsCreated:   1,
             indexItemsRefreshed: 0,
-            indexItemsDeleted:   0,
             metadataCleaned:     0,
             errors:              0,
             startTime:           'not-a-date',
@@ -341,36 +332,27 @@ describe.concurrent('reconciliationResultSchema', () => {
                 itemsScanned:        100,
                 indexItemsCreated:   10,
                 indexItemsRefreshed: 5,
-                indexItemsDeleted:   0,
                 metadataCleaned:     0,
                 errors:              0,
                 startTime:           new Date('2024-01-01T00:00:00Z'),
                 endTime:             new Date('2024-01-01T00:30:00Z'),
             },
             phaseB: {
-                phase:               'phaseB',
-                itemsScanned:        50,
-                indexItemsCreated:   0,
-                indexItemsRefreshed: 0,
-                indexItemsDeleted:   2,
-                metadataCleaned:     0,
-                errors:              0,
-                startTime:           new Date('2024-01-01T00:30:00Z'),
-                endTime:             new Date('2024-01-01T01:00:00Z'),
+                phase:             'phaseB',
+                itemsScanned:      50,
+                indexItemsDeleted: 2,
+                errors:            0,
+                startTime:         new Date('2024-01-01T00:30:00Z'),
+                endTime:           new Date('2024-01-01T01:00:00Z'),
             },
             phaseC: {
-                phase:               'phaseC',
-                itemsScanned:        0,
-                indexItemsCreated:   0,
-                indexItemsRefreshed: 0,
-                indexItemsDeleted:   0,
-                metadataCleaned:     0,
-                countsVerified:      10,
-                countsCorrected:     2,
-                countsDeleted:       1,
-                errors:              0,
-                startTime:           new Date('2024-01-01T01:00:00Z'),
-                endTime:             new Date('2024-01-01T01:15:00Z'),
+                phase:           'phaseC',
+                countsVerified:  10,
+                countsCorrected: 2,
+                countsDeleted:   1,
+                errors:          0,
+                startTime:       new Date('2024-01-01T01:00:00Z'),
+                endTime:         new Date('2024-01-01T01:15:00Z'),
             },
             totalDurationMs: 4_500_000,
         };
@@ -437,7 +419,38 @@ describe.concurrent('reconciliationResultSchema', () => {
         expect(result.success).toBe(false);
     });
 
-    test('should require both phaseA and phaseB', () => {
+    test('should reject phaseC progress missing countsVerified', () => {
+        const result = reconciliationProgressSchema.safeParse({
+            phase:           'phaseC',
+            countsCorrected: 0,
+            countsDeleted:   0,
+            errors:          0,
+            startTime:       new Date(),
+        });
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject a phaseA record in the phaseC result slot', () => {
+        const phaseA = {
+            phase:               'phaseA',
+            itemsScanned:        0,
+            indexItemsCreated:   0,
+            indexItemsRefreshed: 0,
+            metadataCleaned:     0,
+            errors:              0,
+            startTime:           new Date(),
+        };
+        const result = reconciliationResultSchema.safeParse({
+            success:         true,
+            phaseA,
+            phaseB:          { phase: 'phaseB', itemsScanned: 0, indexItemsDeleted: 0, errors: 0, startTime: new Date() },
+            phaseC:          phaseA,
+            totalDurationMs: 0,
+        });
+        expect(result.success).toBe(false);
+    });
+
+    test('should require all phase results', () => {
         const result = reconciliationResultSchema.safeParse({
             success: true,
             phaseA:  {

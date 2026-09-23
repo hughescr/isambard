@@ -104,19 +104,21 @@ const defaultPerchConfig = {
  * composition-root block actually runs.
  */
 function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false): {
-    createBotSpy:  ReturnType<typeof spyOn>
-    emailSetupSpy: ReturnType<typeof spyOn>
-    bskySetupSpy?: ReturnType<typeof spyOn>
-    dmPollerStart: ReturnType<typeof mock>
-    dmPollerStop:  ReturnType<typeof mock>
+    createBotSpy:      ReturnType<typeof spyOn>
+    emailSetupSpy:     ReturnType<typeof spyOn>
+    emailListenerStop: ReturnType<typeof mock>
+    bskySetupSpy?:     ReturnType<typeof spyOn>
+    dmPollerStart:     ReturnType<typeof mock>
+    dmPollerStop:      ReturnType<typeof mock>
 } {
     const mockDocClient = {} as unknown as DynamoDBDocumentClient;
     const getSessionIdForRole = mock(async (_role: 'conversation' | 'perch') => undefined as string | undefined);
     const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
         start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
     });
+    const emailListenerStop = mock(async () => {});
     const emailSetupSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
-        listener:                     { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+        listener:                     { start: mock(async () => {}), stop: emailListenerStop } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
         reviewHandler:                {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
         emailMcpServer:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
         outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
@@ -154,7 +156,7 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
 
     spies.push(
         spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client: {} as unknown as DynamoDBClient, docClient: mockDocClient, tableName: 'IsambardMemory',
+            client: { destroy: mock(() => undefined) } as unknown as DynamoDBClient, docClient: mockDocClient, tableName: 'IsambardMemory',
         }),
         spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]),
         createBotSpy,
@@ -238,7 +240,7 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
     );
 
     return {
-        createBotSpy, emailSetupSpy, bskySetupSpy, dmPollerStart, dmPollerStop,
+        createBotSpy, emailSetupSpy, emailListenerStop, bskySetupSpy, dmPollerStart, dmPollerStop,
     };
 }
 
@@ -263,6 +265,40 @@ describe('createApp', () => {
         }
         spies.length = 0;
         resetMockSstResource();
+    });
+
+    test('logs and continues after a best-effort email-listener shutdown failure', async () => {
+        const { emailListenerStop } = wireHappyPath(spies);
+        emailListenerStop.mockRejectedValueOnce(new Error('listener stop failed'));
+
+        const app = await staticIndexModule.createApp();
+
+        await expect(app.stop()).resolves.toBeUndefined();
+        expect(mockLogger.error).toHaveBeenCalledWith({
+            error: 'listener stop failed',
+            msg:   'Best-effort shutdown failed: email listener',
+        });
+    });
+
+    test('continues cleanup after a best-effort failure and propagates a later fatal failure', async () => {
+        const { createBotSpy, emailListenerStop } = wireHappyPath(spies);
+        const botStopError = new Error('bot stop failed');
+        const botStop = mock(async () => {
+            throw botStopError;
+        });
+        createBotSpy.mockReturnValueOnce({
+            start: mock(async () => undefined), stop: botStop, triggerCatchUp: mock(async () => undefined),
+        });
+        emailListenerStop.mockRejectedValueOnce(new Error('listener stop failed'));
+
+        const app = await staticIndexModule.createApp();
+
+        await expect(app.stop()).rejects.toBe(botStopError);
+        expect(botStop).toHaveBeenCalledTimes(1);
+        expect(mockLogger.error).toHaveBeenCalledWith({
+            error: 'listener stop failed',
+            msg:   'Best-effort shutdown failed: email listener',
+        });
     });
 
     test('closes the eager WildDuck client after setupEmail fails', async () => {

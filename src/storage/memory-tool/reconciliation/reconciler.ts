@@ -13,7 +13,7 @@ import { type DynamoDBClientHolder, resolveDocClientGetter } from '../../client-
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
 import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexReadItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema  } from '../types';
-import type { ReconciliationProgress, ReconciliationResult } from './types';
+import type { PhaseAProgress, PhaseBProgress, PhaseCProgress, ReconciliationResult } from './types';
 
 // ============================================================================
 // Dependencies & Options
@@ -147,7 +147,7 @@ export async function retryWithBackoff<T>(
 interface PhaseAContext {
     deps:     ResolvedReconcilerDeps
     options:  ReconcilerOptions
-    progress: ReconciliationProgress
+    progress: PhaseAProgress
 }
 
 /**
@@ -487,13 +487,12 @@ async function scanLayer(
 async function runPhaseA(
     deps: ResolvedReconcilerDeps,
     options: ReconcilerOptions
-): Promise<ReconciliationProgress> {
-    const progress: ReconciliationProgress = {
+): Promise<PhaseAProgress> {
+    const progress: PhaseAProgress = {
         phase:               'phaseA',
         itemsScanned:        0,
         indexItemsCreated:   0,
         indexItemsRefreshed: 0,
-        indexItemsDeleted:   0,
         metadataCleaned:     0,
         errors:              0,
         startTime:           new Date(),
@@ -529,7 +528,7 @@ async function runPhaseA(
 interface PhaseBContext {
     deps:     ResolvedReconcilerDeps
     options:  ReconcilerOptions
-    progress: ReconciliationProgress
+    progress: PhaseBProgress
 }
 
 /**
@@ -631,16 +630,13 @@ async function scanTagItems(
 async function runPhaseB(
     deps: ResolvedReconcilerDeps,
     options: ReconcilerOptions
-): Promise<ReconciliationProgress> {
-    const progress: ReconciliationProgress = {
-        phase:               'phaseB',
-        itemsScanned:        0,
-        indexItemsCreated:   0,
-        indexItemsRefreshed: 0,
-        indexItemsDeleted:   0,
-        metadataCleaned:     0,
-        errors:              0,
-        startTime:           new Date(),
+): Promise<PhaseBProgress> {
+    const progress: PhaseBProgress = {
+        phase:             'phaseB',
+        itemsScanned:      0,
+        indexItemsDeleted: 0,
+        errors:            0,
+        startTime:         new Date(),
     };
 
     const ctx: PhaseBContext = { deps, options, progress };
@@ -675,7 +671,7 @@ async function runPhaseB(
 interface PhaseCContext {
     deps:     ResolvedReconcilerDeps
     options:  ReconcilerOptions
-    progress: ReconciliationProgress
+    progress: PhaseCProgress
 }
 
 /**
@@ -784,8 +780,7 @@ async function processMetaCount(
     tag: string,
     storedCount: number
 ): Promise<void> {
-    // Stryker disable next-line llm,NumberLiteralValue: runPhaseC initializes countsVerified, so the nullish fallback is unreachable.
-    ctx.progress.countsVerified = (ctx.progress.countsVerified ?? 0) + 1;
+    ctx.progress.countsVerified++;
 
     try {
         const actualCount = await getActualTagCount(ctx, tag);
@@ -801,8 +796,7 @@ async function processMetaCount(
             // Delete META_COUNT item
             const deleted = await deleteMetaCount(ctx, tag);
             if(deleted) {
-                // Stryker disable next-line llm,NumberLiteralValue: runPhaseC initializes countsDeleted, so the nullish fallback is unreachable.
-                ctx.progress.countsDeleted = (ctx.progress.countsDeleted ?? 0) + 1;
+                ctx.progress.countsDeleted++;
                 logger.debug({ tag, msg: 'Deleted META_COUNT with zero actual count' });
             } else {
                 ctx.progress.errors++;
@@ -814,8 +808,7 @@ async function processMetaCount(
             // Correct META_COUNT item
             const updated = await updateMetaCount(ctx, tag, actualCount);
             if(updated) {
-                // Stryker disable next-line NumberLiteralValue: runPhaseC initializes countsCorrected, so the nullish fallback is unreachable.
-                ctx.progress.countsCorrected = (ctx.progress.countsCorrected ?? 0) + 1;
+                ctx.progress.countsCorrected++;
                 logger.debug({ tag, storedCount, actualCount, msg: 'Corrected META_COUNT mismatch' });
             } else {
                 ctx.progress.errors++;
@@ -838,19 +831,14 @@ async function processMetaCount(
 async function runPhaseC(
     deps: ResolvedReconcilerDeps,
     options: ReconcilerOptions
-): Promise<ReconciliationProgress> {
-    const progress: ReconciliationProgress = {
-        phase:               'phaseC',
-        itemsScanned:        0,
-        indexItemsCreated:   0,
-        indexItemsRefreshed: 0,
-        indexItemsDeleted:   0,
-        metadataCleaned:     0,
-        countsVerified:      0,
-        countsCorrected:     0,
-        countsDeleted:       0,
-        errors:              0,
-        startTime:           new Date(),
+): Promise<PhaseCProgress> {
+    const progress: PhaseCProgress = {
+        phase:           'phaseC',
+        countsVerified:  0,
+        countsCorrected: 0,
+        countsDeleted:   0,
+        errors:          0,
+        startTime:       new Date(),
     };
 
     const ctx: PhaseCContext = { deps, options, progress };

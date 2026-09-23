@@ -70,17 +70,14 @@ describe('reconciler public progress and producer contracts', () => {
 
         expect(result.phaseA).toMatchObject({
             itemsScanned:        0, indexItemsCreated:   0, indexItemsRefreshed: 0,
-            indexItemsDeleted:   0, metadataCleaned:     0, errors:              0,
+            metadataCleaned:     0, errors:              0,
         });
         expect(result.phaseA.endTime?.getTime()).toBeGreaterThan(result.phaseA.startTime.getTime());
         expect(result.phaseB).toMatchObject({
-            itemsScanned:        0, indexItemsCreated:   0, indexItemsRefreshed: 0,
-            indexItemsDeleted:   0, metadataCleaned:     0, errors:              0,
+            itemsScanned: 0, indexItemsDeleted: 0, errors: 0,
         });
         expect(result.phaseC).toMatchObject({
-            itemsScanned:        0, indexItemsCreated:   0, indexItemsRefreshed: 0,
-            indexItemsDeleted:   0, metadataCleaned:     0, countsVerified:      0,
-            countsCorrected:     0, countsDeleted:       0, errors:              0,
+            countsVerified: 0, countsCorrected: 0, countsDeleted: 0, errors: 0,
         });
     });
 

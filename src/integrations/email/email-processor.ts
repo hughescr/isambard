@@ -24,11 +24,17 @@ export interface ProcessEmailCallbacks {
     onAuthFailed?: (email: EmailMetadata) => Promise<void>
 }
 
-interface ProcessingResult {
-    verdict:           ClassifierVerdict | null
-    destinationFolder: string
-    allowlistBypassed: boolean
-}
+type ProcessingResult
+    = | {
+        verdict:           null
+        destinationFolder: typeof EmailFolder.CleanInbox
+        allowlistBypassed: true
+    }
+    | {
+        verdict:           ClassifierVerdict
+        destinationFolder: EmailFolder
+        allowlistBypassed: false
+    };
 
 export class EmailProcessor {
     private readonly allowlist:      PersonAllowlist;
@@ -135,7 +141,7 @@ export class EmailProcessor {
         };
     }
 
-    private verdictToFolder(verdict: ClassifierVerdict['verdict']): string {
+    private verdictToFolder(verdict: ClassifierVerdict['verdict']): EmailFolder {
         switch(verdict) {
             case 'safe': {      return EmailFolder.CleanInbox;
             }

@@ -16,6 +16,18 @@ import {
 import type { ReconciliationConfig, ReconciliationResult } from '@/storage/memory-tool/reconciliation/types';
 import type { MemoryToolItemData } from '@/storage/memory-tool/types';
 
+function makePhaseC(): ReconciliationResult['phaseC'] {
+    return {
+        phase:           'phaseC',
+        countsVerified:  0,
+        countsCorrected: 0,
+        countsDeleted:   0,
+        errors:          0,
+        startTime:       new Date(),
+        endTime:         new Date(),
+    };
+}
+
 describe('ReconciliationScheduler', () => {
     let mockRunReconciliation: ReturnType<typeof mock>;
     let mockReconcilerDeps: ReconcilerDeps;
@@ -53,6 +65,7 @@ describe('ReconciliationScheduler', () => {
                 startTime:           new Date(),
                 endTime:             new Date(),
             },
+            phaseC:          makePhaseC(),
             totalDurationMs: 100,
         } as ReconciliationResult));
 
@@ -305,6 +318,7 @@ describe('ReconciliationScheduler', () => {
                             startTime:           new Date(),
                             endTime:             new Date(),
                         },
+                        phaseC:          makePhaseC(),
                         totalDurationMs: 100,
                     } as ReconciliationResult;
                 }
@@ -377,6 +391,7 @@ describe('ReconciliationScheduler', () => {
                             startTime:           new Date(),
                             endTime:             new Date(),
                         },
+                        phaseC:          makePhaseC(),
                         totalDurationMs: 100,
                     } as ReconciliationResult;
                 }
@@ -505,6 +520,7 @@ describe('ReconciliationScheduler', () => {
                         startTime:           new Date(),
                         endTime:             new Date(),
                     },
+                    phaseC:          makePhaseC(),
                     totalDurationMs: 100,
                 } as ReconciliationResult;
             });
@@ -606,6 +622,7 @@ describe('ReconciliationScheduler', () => {
                         startTime:           new Date(),
                         endTime:             new Date(),
                     },
+                    phaseC:          makePhaseC(),
                     totalDurationMs: 100,
                 } as ReconciliationResult;
             });
@@ -729,6 +746,7 @@ describe('ReconciliationScheduler', () => {
                         startTime:           new Date(),
                         endTime:             new Date(),
                     },
+                    phaseC:          makePhaseC(),
                     totalDurationMs: 200,
                 } as ReconciliationResult;
             });
@@ -1001,6 +1019,7 @@ describe('ReconciliationScheduler', () => {
                         startTime:           new Date(),
                         endTime:             new Date(),
                     },
+                    phaseC:          makePhaseC(),
                     totalDurationMs: 100,
                 } as ReconciliationResult;
             });

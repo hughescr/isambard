@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { mockLogger } from '../../../setup';
+import { EmailFolder } from '@/config';
 import type { EmailProcessor } from '@/integrations/email/email-processor';
 import type { EmailMetadata } from '@/integrations/email/types';
 import type { WildDuckClient, WildDuckMessageSummary } from '@/integrations/email/wildduck-client';
@@ -73,7 +74,7 @@ function makeProcessor(result?: Error): {
 } {
     const processEmail = result
         ? mock(async () => { throw result; })
-        : mock(async () => ({ verdict: null, destinationFolder: 'CleanInbox', allowlistBypassed: false }));
+        : mock(async () => ({ verdict: null, destinationFolder: EmailFolder.CleanInbox, allowlistBypassed: true }));
 
     return {
         processor: { processEmail } as unknown as EmailProcessor,
@@ -512,7 +513,7 @@ describe('WildDuckListener', () => {
                 await classification;
                 unseen = false; // moving the email removes it from the unseen inbox query
                 activeProcessors--;
-                return { verdict: null, destinationFolder: 'CleanInbox', allowlistBypassed: false };
+                return { verdict: null, destinationFolder: EmailFolder.CleanInbox, allowlistBypassed: true };
             });
             const listener = new WildDuckListener(client, { processEmail } as unknown as EmailProcessor, DEFAULT_CONFIG);
 
@@ -840,7 +841,7 @@ describe('WildDuckListener', () => {
                 if(callCount === 1) {
                     throw new Error('Processing failed');
                 }
-                return { verdict: null, destinationFolder: 'CleanInbox', allowlistBypassed: false };
+                return { verdict: null, destinationFolder: EmailFolder.CleanInbox, allowlistBypassed: true };
             });
             const processor = { processEmail } as unknown as EmailProcessor;
 
