@@ -5,14 +5,14 @@ import { composeAmbientLines } from '@/agent/session/ambient-lines';
 import { createLedgerStore, initialLedger, type LedgerEvent } from '@/agent/session/ledger';
 import {
     DEFAULT_ANTHROPIC_USAGE_URL,
-    DEFAULT_PROVIDER_REPORT_URL,
+    DEFAULT_VENDOR_REPORT_URL,
     DEFAULT_QUOTA_REQUEST_TIMEOUT_MS,
     DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
     type CreateQuotaPollerParams,
     type QuotaFetch,
     type QuotaFetchResponse,
     createQuotaPoller,
-    parseProviderSnapshot,
+    parseVendorSnapshot,
     parseUsageWindows
 } from '@/agent/session/quota-poller';
 
@@ -115,7 +115,7 @@ function harness(overrides: Partial<CreateQuotaPollerParams> = {}): Harness {
 
 describe('provider report parsing', () => {
     it('uses the documented local report and official Anthropic fallback endpoints', () => {
-        expect(DEFAULT_PROVIDER_REPORT_URL).toBe('http://127.0.0.1:8317/utraque/providers/v2');
+        expect(DEFAULT_VENDOR_REPORT_URL).toBe('http://127.0.0.1:8317/utraque/providers/v2');
         expect(DEFAULT_ANTHROPIC_USAGE_URL).toBe('https://api.anthropic.com/api/oauth/usage');
     });
 
@@ -135,7 +135,7 @@ describe('provider report parsing', () => {
             },
         });
 
-        const snapshot = parseProviderSnapshot(body);
+        const snapshot = parseVendorSnapshot(body);
 
         expect(snapshot?.providers[0]).toMatchObject({
             freshness: { cached: true, stale: false, ageSeconds: 12 },
@@ -148,7 +148,7 @@ describe('provider report parsing', () => {
     });
 
     it('parses the live Codex quota section: slotted window, workspace credits by limit id, and a reached-only spend limit', () => {
-        const snapshot = parseProviderSnapshot(providerReport({ provider: 'codex', quota: codexQuota() }));
+        const snapshot = parseVendorSnapshot(providerReport({ provider: 'codex', quota: codexQuota() }));
 
         expect(snapshot?.providers[0]?.quota).toEqual({
             collectedAt: new Date(GENERATED),
@@ -168,10 +168,10 @@ describe('provider report parsing', () => {
     });
 
     it('parses a full Codex spend limit and an Anthropic extra-usage row that has no limit id', () => {
-        const codex = parseProviderSnapshot(providerReport({ provider: 'codex', quota:    codexQuota({ spend_limits: [{
+        const codex = parseVendorSnapshot(providerReport({ provider: 'codex', quota:    codexQuota({ spend_limits: [{
             limit_id: 'codex', limit: '50.00', used: '12.25', amount_unit: 'provider_units', used_percent: 24.5, unit: 'percent_0_100', resets_at: RESET, reached: false,
         }] }) }));
-        const anthropic = parseProviderSnapshot(providerReport({ quota: { collected_at: GENERATED, spend_limits: [{
+        const anthropic = parseVendorSnapshot(providerReport({ quota: { collected_at: GENERATED, spend_limits: [{
             enabled: true, limit: '100.00', used: '3.50', amount_unit: 'provider_units', currency: 'USD', used_percent: 3.5, unit: 'percent_0_100',
         }] } }));
 
@@ -186,7 +186,7 @@ describe('provider report parsing', () => {
     });
 
     it('keeps a spend limit row while dropping an unusable used_percent and non-object rows', () => {
-        const snapshot = parseProviderSnapshot(providerReport({ quota: { collected_at: GENERATED, spend_limits: [
+        const snapshot = parseVendorSnapshot(providerReport({ quota: { collected_at: GENERATED, spend_limits: [
             { limit_id: 'fraction', used_percent: 0.5, unit: 'fraction_0_1' },
             { limit_id: 'unitless', used_percent: 50 },
             { limit_id: 'over', used_percent: 100.01, unit: 'percent_0_100' },
@@ -202,7 +202,7 @@ describe('provider report parsing', () => {
     });
 
     it('drops a quota row that lacks a bucket or carries a kind outside the closed vocabulary', () => {
-        const snapshot = parseProviderSnapshot(providerReport({ quota: { collected_at: GENERATED, quotas:       [
+        const snapshot = parseVendorSnapshot(providerReport({ quota: { collected_at: GENERATED, quotas:       [
             { id: 'no-bucket', kind: 'session', used_percent: 1, unit: 'percent_0_100' },
             { id: 'empty-bucket', bucket: '', kind: 'session', used_percent: 2, unit: 'percent_0_100' },
             { id: 'no-kind', bucket: 'five_hour', used_percent: 3, unit: 'percent_0_100' },
@@ -223,14 +223,14 @@ describe('provider report parsing', () => {
             quotas:       [{ id: 'session', bucket: 'session', kind: 'session', group: 'session', used_percent: 31.5, unit: 'percent_0_100', name: 'Claude session' }],
         } });
 
-        expect(parseProviderSnapshot(body)?.providers[0]?.quota?.quotas[0]).toMatchObject({
+        expect(parseVendorSnapshot(body)?.providers[0]?.quota?.quotas[0]).toMatchObject({
             id:   'session',
             name: 'Claude session',
         });
     });
 
     it('parses compact history inputs and models.dev reference prices from the report contract', () => {
-        const snapshot = parseProviderSnapshot(providerReport({
+        const snapshot = parseVendorSnapshot(providerReport({
             history: historyReport(), reference_prices: referencePrices(),
         }));
 
@@ -238,7 +238,7 @@ describe('provider report parsing', () => {
             collector:    'ccusage', coverage:     'local_only', costBasis:    'calculated_api_reference_usd', recentDays:   7,
             recentTokens: { inputTokens: 100, outputTokens: 200, cacheCreationTokens: 300, cacheReadTokens: 400, totalTokens: 1000 },
             recentModels: [{ model: 'claude-sonnet-5', costUsd: 0.003 }],
-            blocks:       [{ active: true, gap: false, mixedProvider: false, costUsd: 0.0003, modelProviders: ['anthropic'] }],
+            blocks:       [{ active: true, gap: false, mixedVendor: false, costUsd: 0.0003, modelVendors: ['anthropic'] }],
         });
         expect(snapshot?.providers[0]?.prices).toEqual({
             catalog:     'models.dev', observedAt:  new Date(GENERATED), stale:       false, unit:        'usd_per_million_tokens',
@@ -263,14 +263,14 @@ describe('provider report parsing', () => {
         const prices = referencePrices();
         prices.models.push({ ...prices.models[0], model: 'claude-opus-5', input: 2 });
 
-        const parsed = parseProviderSnapshot(providerReport({ history, reference_prices: prices }))?.providers[0];
+        const parsed = parseVendorSnapshot(providerReport({ history, reference_prices: prices }))?.providers[0];
 
         expect(parsed?.history?.recentModels.map(model => model.model)).toEqual(['claude-sonnet-5', 'claude-opus-5']);
         expect(parsed?.history?.blocks.map(block => block.modelNames)).toEqual([
             ['claude-sonnet-5', 'claude-opus-5'],
             ['claude-haiku-5'],
         ]);
-        expect(parsed?.history?.blocks[0]?.modelProviders).toEqual(['anthropic', 'codex']);
+        expect(parsed?.history?.blocks[0]?.modelVendors).toEqual(['anthropic', 'codex']);
         expect(parsed?.prices?.models.map(model => model.model)).toEqual(['claude-haiku-4-5-20251001', 'claude-opus-5']);
     });
 
@@ -279,7 +279,7 @@ describe('provider report parsing', () => {
         empty.seven_days.models = [];
         const sparkOnly = historyReport('codex');
         sparkOnly.seven_days.models[0].model = 'gpt-5.3-codex-spark';
-        const parse = (history: ReturnType<typeof historyReport>) => parseProviderSnapshot(providerReport({
+        const parse = (history: ReturnType<typeof historyReport>) => parseVendorSnapshot(providerReport({
             provider: 'codex', quota: { collected_at: GENERATED }, history,
         }))?.providers[0]?.history;
 
@@ -296,7 +296,7 @@ describe('provider report parsing', () => {
             input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: 0, cost_usd: 0,
         });
 
-        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toEqual({
+        expect(parseVendorSnapshot(providerReport({ history }))?.providers[0]?.history).toEqual({
             collector:    'ccusage',
             coverage:     'local_only',
             costBasis:    'calculated_api_reference_usd',
@@ -310,21 +310,21 @@ describe('provider report parsing', () => {
                 model: 'claude-sonnet-5', tokens: { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 }, costUsd: 0,
             }],
             blocks: [{
-                startTime:      new Date('2026-09-11T17:00:00Z'),
-                endTime:        new Date(RESET),
-                active:         true,
-                gap:            false,
-                mixedProvider:  false,
-                modelNames:     ['claude-sonnet-5'],
-                modelProviders: ['anthropic'],
-                tokens:         { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 },
-                costUsd:        0,
+                startTime:    new Date('2026-09-11T17:00:00Z'),
+                endTime:      new Date(RESET),
+                active:       true,
+                gap:          false,
+                mixedVendor:  false,
+                modelNames:   ['claude-sonnet-5'],
+                modelVendors: ['anthropic'],
+                tokens:       { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 },
+                costUsd:      0,
             }],
         });
     });
 
     it('drops malformed history and reference prices without rejecting live quota', () => {
-        const snapshot = parseProviderSnapshot(providerReport({
+        const snapshot = parseVendorSnapshot(providerReport({
             history:          { ...historyReport(), seven_days: { ...historyReport().seven_days, until: '2026-09-10T00:00:00Z' } },
             reference_prices: { ...referencePrices(), models: [{ model: 'claude-haiku', input: 0, output: 5, eligible: true }] },
         }));
@@ -335,12 +335,12 @@ describe('provider report parsing', () => {
     });
 
     it('requires trusted local API-reference history and internally consistent token totals', () => {
-        const wrongCoverage = parseProviderSnapshot(providerReport({
+        const wrongCoverage = parseVendorSnapshot(providerReport({
             history: { ...historyReport(), coverage: 'remote' },
         }));
         const wrongTotal = historyReport();
         wrongTotal.seven_days.models[0].total_tokens = 999;
-        const mismatched = parseProviderSnapshot(providerReport({ history: wrongTotal }));
+        const mismatched = parseVendorSnapshot(providerReport({ history: wrongTotal }));
 
         expect(wrongCoverage?.providers[0]?.history).toBeUndefined();
         expect(mismatched?.providers[0]?.history).toBeUndefined();
@@ -351,7 +351,7 @@ describe('provider report parsing', () => {
         history.seven_days.models[0].input_tokens = -1;
         history.seven_days.models[0].total_tokens = 899;
 
-        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
     });
 
     it('filters Spark from Codex history aggregates without dropping current Codex history', () => {
@@ -360,7 +360,7 @@ describe('provider report parsing', () => {
         const sparkId = { ...current, model: 'CODEX_BENGALFOX', input_tokens: 1, total_tokens: 901 };
         const rawHistory = historyReport('codex');
         rawHistory.seven_days.models = [spark, sparkId, current];
-        const snapshot = parseProviderSnapshot(providerReport({
+        const snapshot = parseVendorSnapshot(providerReport({
             provider: 'codex',
             quota:    { collected_at: GENERATED },
             history:  rawHistory,
@@ -376,7 +376,7 @@ describe('provider report parsing', () => {
         const history = historyReport();
         history.seven_days.models[0].model = 'GPT-5.3-Codex-Spark';
 
-        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history?.recentModels.map(model => model.model))
+        expect(parseVendorSnapshot(providerReport({ history }))?.providers[0]?.history?.recentModels.map(model => model.model))
             .toEqual(['GPT-5.3-Codex-Spark']);
     });
 
@@ -386,8 +386,8 @@ describe('provider report parsing', () => {
         const negativeCost = historyReport();
         negativeCost.seven_days.models[0].cost_usd = -0.001;
 
-        expect(parseProviderSnapshot(providerReport({ history: missingStatus }))?.providers[0]?.history).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ history: negativeCost }))?.providers[0]?.history).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ history: missingStatus }))?.providers[0]?.history).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ history: negativeCost }))?.providers[0]?.history).toBeUndefined();
     });
 
     it.each([
@@ -398,7 +398,7 @@ describe('provider report parsing', () => {
         const model: Record<string, unknown> = { ...history.seven_days.models[0], cost_status: costStatus };
         history.seven_days.models = [model as typeof history.seven_days.models[number]];
 
-        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
     });
 
     it('accepts an unavailable cost status without inventing a cost sample', () => {
@@ -407,7 +407,7 @@ describe('provider report parsing', () => {
         delete model.cost_usd;
         history.seven_days.models = [model as typeof history.seven_days.models[number]];
 
-        const parsed = parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history?.recentModels[0];
+        const parsed = parseVendorSnapshot(providerReport({ history }))?.providers[0]?.history?.recentModels[0];
         expect(parsed).toEqual({
             model:   'claude-sonnet-5',
             tokens:  { inputTokens: 100, outputTokens: 200, cacheCreationTokens: 300, cacheReadTokens: 400, totalTokens: 1000 },
@@ -420,7 +420,7 @@ describe('provider report parsing', () => {
         const history = historyReport();
         history.seven_days.models[0].provider = 'codex';
 
-        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
     });
 
     it.each([
@@ -431,7 +431,7 @@ describe('provider report parsing', () => {
         history.blocks[0].start_time = startTime;
         history.blocks[0].end_time = endTime;
 
-        expect(parseProviderSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ history }))?.providers[0]?.history).toBeUndefined();
     });
 
     it('rejects reversed collection times and histories completed after report generation', () => {
@@ -440,15 +440,15 @@ describe('provider report parsing', () => {
         const future = historyReport();
         future.finished_at = '2026-09-11T20:00:02Z';
 
-        expect(parseProviderSnapshot(providerReport({ history: reversed }))?.providers[0]?.history).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ history: future }))?.providers[0]?.history).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ history: reversed }))?.providers[0]?.history).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ history: future }))?.providers[0]?.history).toBeUndefined();
     });
 
     it('parses stale price provenance and rejects malformed optional price fields', () => {
-        const stale = parseProviderSnapshot(providerReport({
+        const stale = parseVendorSnapshot(providerReport({
             reference_prices: { ...referencePrices(), stale: true },
         }));
-        const malformed = parseProviderSnapshot(providerReport({
+        const malformed = parseVendorSnapshot(providerReport({
             reference_prices: { ...referencePrices(), stale: 'yes' },
         }));
 
@@ -459,7 +459,7 @@ describe('provider report parsing', () => {
     it('rejects reference prices expressed in the wrong unit', () => {
         const prices = { ...referencePrices(), unit: 'usd_per_token' };
 
-        expect(parseProviderSnapshot(providerReport({ reference_prices: prices }))?.providers[0]?.prices).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ reference_prices: prices }))?.providers[0]?.prices).toBeUndefined();
     });
 
     it('accepts omitted cache prices without manufacturing values', () => {
@@ -467,7 +467,7 @@ describe('provider report parsing', () => {
         delete (prices.models[0] as { cache_read?: number }).cache_read;
         delete (prices.models[0] as { cache_write?: number }).cache_write;
 
-        const parsed = parseProviderSnapshot(providerReport({ reference_prices: prices }))?.providers[0]?.prices?.models[0];
+        const parsed = parseVendorSnapshot(providerReport({ reference_prices: prices }))?.providers[0]?.prices?.models[0];
         expect(parsed).toEqual({
             model: 'claude-haiku-4-5-20251001', input: 1, output: 5, cacheRead: undefined, cacheWrite: undefined, eligible: true,
         });
@@ -483,37 +483,37 @@ describe('provider report parsing', () => {
         const prices = referencePrices();
         prices.models = [{ ...prices.models[0], ...overrides }];
 
-        expect(parseProviderSnapshot(providerReport({ reference_prices: prices }))?.providers[0]?.prices).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ reference_prices: prices }))?.providers[0]?.prices).toBeUndefined();
     });
 
     it('rejects future observations and a missing reference-price sample list', () => {
         const future = { ...referencePrices(), observed_at: '2026-09-11T20:00:02Z' };
         const missingModels = { ...referencePrices(), models: undefined };
 
-        expect(parseProviderSnapshot(providerReport({ reference_prices: future }))?.providers[0]?.prices).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ reference_prices: missingModels }))?.providers[0]?.prices).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ reference_prices: future }))?.providers[0]?.prices).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ reference_prices: missingModels }))?.providers[0]?.prices).toBeUndefined();
     });
 
     it('rejects schema 1 and every other schema version, and refuses a future or negative-age reading', () => {
-        expect(parseProviderSnapshot({ ...providerReport(), schema_version: 1 })).toBeUndefined();
-        expect(parseProviderSnapshot({ ...providerReport(), schema_version: 3 })).toBeUndefined();
-        expect(parseProviderSnapshot({ ...providerReport(), schema_version: '2' })).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ source_freshness: { cached: false, stale: false, age_seconds: -1 } }))).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ last_attempt: '2026-09-11T20:00:02Z' }))).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ quota: { collected_at: '2026-09-11T20:00:02Z' } }))?.providers[0]?.quota).toBeUndefined();
+        expect(parseVendorSnapshot({ ...providerReport(), schema_version: 1 })).toBeUndefined();
+        expect(parseVendorSnapshot({ ...providerReport(), schema_version: 3 })).toBeUndefined();
+        expect(parseVendorSnapshot({ ...providerReport(), schema_version: '2' })).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ source_freshness: { cached: false, stale: false, age_seconds: -1 } }))).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ last_attempt: '2026-09-11T20:00:02Z' }))).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ quota: { collected_at: '2026-09-11T20:00:02Z' } }))?.providers[0]?.quota).toBeUndefined();
     });
 
     it('accepts an observation without a source field and keeps its reading under whichever provider carries it', () => {
-        const snapshot = parseProviderSnapshot(providerReport({ provider: 'codex', quota: { collected_at: GENERATED } }));
+        const snapshot = parseVendorSnapshot(providerReport({ provider: 'codex', quota: { collected_at: GENERATED } }));
         expect(snapshot?.providers[0]?.quota).toMatchObject({ collectedAt: new Date(GENERATED), quotas: [], balances: [], spendLimits: [] });
     });
 
     it('rejects empty or non-string required provider fields', () => {
-        expect(parseProviderSnapshot(providerReport({ provider: '' }))).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ provider: 42 }))).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ status: '' }))).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ quota: { collected_at: '' } }))?.providers[0]?.quota).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ quota: [] }))?.providers[0]?.quota).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ provider: '' }))).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ provider: 42 }))).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ status: '' }))).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ quota: { collected_at: '' } }))?.providers[0]?.quota).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ quota: [] }))?.providers[0]?.quota).toBeUndefined();
     });
 
     it('accepts one-character required strings and requires both freshness flags', () => {
@@ -524,19 +524,19 @@ describe('provider report parsing', () => {
                 { id: 'x', bucket: 'b', kind: 'other', used_percent: 1, unit: 'percent_0_100' },
             ] },
         });
-        expect(parseProviderSnapshot(oneCharacter)?.providers[0]?.quota?.quotas[0]).toMatchObject({ id: 'x', bucket: 'b', kind: 'other' });
-        expect(parseProviderSnapshot(providerReport({ source_freshness: { stale: false, age_seconds: 0 } }))).toBeUndefined();
-        expect(parseProviderSnapshot(providerReport({ source_freshness: { cached: false, age_seconds: 0 } }))).toBeUndefined();
+        expect(parseVendorSnapshot(oneCharacter)?.providers[0]?.quota?.quotas[0]).toMatchObject({ id: 'x', bucket: 'b', kind: 'other' });
+        expect(parseVendorSnapshot(providerReport({ source_freshness: { stale: false, age_seconds: 0 } }))).toBeUndefined();
+        expect(parseVendorSnapshot(providerReport({ source_freshness: { cached: false, age_seconds: 0 } }))).toBeUndefined();
     });
 
     it('rejects report-shaped arrays and callable values at the unknown input boundary', () => {
-        expect(parseProviderSnapshot(null)).toBeUndefined();
-        expect(parseProviderSnapshot(Object.assign([], providerReport()))).toBeUndefined();
-        expect(parseProviderSnapshot(Object.assign(() => undefined, providerReport()))).toBeUndefined();
+        expect(parseVendorSnapshot(null)).toBeUndefined();
+        expect(parseVendorSnapshot(Object.assign([], providerReport()))).toBeUndefined();
+        expect(parseVendorSnapshot(Object.assign(() => undefined, providerReport()))).toBeUndefined();
     });
 
     it('preserves display-name-only scopes, omits an absent scope, and validates error entries independently', () => {
-        const snapshot = parseProviderSnapshot(providerReport({
+        const snapshot = parseVendorSnapshot(providerReport({
             errors: [{ section: 'quota', code: 'expired' }, { section: '', code: 'ignored' }, null],
             quota:  {
                 collected_at: GENERATED,
@@ -554,7 +554,7 @@ describe('provider report parsing', () => {
 
     it('preserves an optional quota API retry timestamp after a rate-limited lookup', () => {
         const retryAt = '2026-09-11T20:05:00Z';
-        const snapshot = parseProviderSnapshot(providerReport({
+        const snapshot = parseVendorSnapshot(providerReport({
             status: 'partial',
             errors: [{ section: 'quota', code: 'rate_limited', retry_at: retryAt }],
         }));
@@ -566,7 +566,7 @@ describe('provider report parsing', () => {
 
     it('preserves the real upstream attempt time on a quota error, even one predating the collection', () => {
         const attemptedAt = '2026-09-11T19:58:00Z';
-        const snapshot = parseProviderSnapshot(providerReport({
+        const snapshot = parseVendorSnapshot(providerReport({
             status: 'partial',
             errors: [
                 { section: 'quota', code: 'rate_limited', retryable: true, retry_at: '2026-09-11T20:05:00Z', attempted_at: attemptedAt, message: 'provider reading unavailable' },
@@ -583,14 +583,14 @@ describe('provider report parsing', () => {
     });
 
     it('leaves retry metadata undefined when the report has no valid retry timestamp', () => {
-        const snapshot = parseProviderSnapshot(providerReport({
+        const snapshot = parseVendorSnapshot(providerReport({
             errors: [{ section: 'quota', code: 'timed_out' }, { section: 'quota', code: 'rate_limited', retry_at: 'invalid' }],
         }));
         expect(snapshot?.providers[0]?.errors.map(error => error.retryAt)).toEqual([undefined, undefined]);
     });
 
     it('accepts inclusive percentage boundaries and drops out-of-range or wrongly-unitized quotas', () => {
-        const snapshot = parseProviderSnapshot(providerReport({ quota: {
+        const snapshot = parseVendorSnapshot(providerReport({ quota: {
             collected_at: GENERATED,
             quotas:       [
                 { id: 'empty', bucket: 'five_hour', kind: 'session', used_percent: 0, unit: 'percent_0_100' },
@@ -737,7 +737,7 @@ describe('provider polling', () => {
         poller.start();
         await poller.poll();
 
-        expect(fetch).toHaveBeenCalledWith(DEFAULT_PROVIDER_REPORT_URL, { headers: {}, signal: expect.any(AbortSignal) });
+        expect(fetch).toHaveBeenCalledWith(DEFAULT_VENDOR_REPORT_URL, { headers: {}, signal: expect.any(AbortSignal) });
         expect(poller.getSnapshot?.()?.providers[0]?.provider).toBe('anthropic');
         expect(poller.getSnapshot?.()?.expiresAt).toEqual(new Date(clock.now() + 600_000));
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith({
@@ -842,7 +842,7 @@ describe('provider polling', () => {
     });
 
     it('performs no quota HTTP request in SDK-only direct-Claude mode', async () => {
-        const { fetch, poller } = harness({ anthropicQuotaSource: 'sdk', preferProviderReport: false });
+        const { fetch, poller } = harness({ anthropicQuotaSource: 'sdk', preferVendorReport: false });
 
         poller.start();
         await poller.poll();
@@ -1015,7 +1015,7 @@ describe('provider polling', () => {
         const fetch = jest.fn<QuotaFetch>()
             .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }))
             .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) });
-        const { logger, poller } = harness({ fetch, preferProviderReport: false });
+        const { logger, poller } = harness({ fetch, preferVendorReport: false });
         poller.start();
         await poller.poll();
         await poller.poll();
@@ -1029,7 +1029,7 @@ describe('provider polling', () => {
         const fetch = jest.fn<QuotaFetch>()
             .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }))
             .mockResolvedValueOnce(ok({}));
-        const { poller } = harness({ fetch, preferProviderReport: false });
+        const { poller } = harness({ fetch, preferVendorReport: false });
         poller.start();
         await poller.poll();
         await poller.poll();
@@ -1055,7 +1055,7 @@ describe('provider polling', () => {
     });
 
     it('falls back after a missing report route and uses separate official OAuth headers', async () => {
-        const fetch = jest.fn<QuotaFetch>(async url => (url === DEFAULT_PROVIDER_REPORT_URL
+        const fetch = jest.fn<QuotaFetch>(async url => (url === DEFAULT_VENDOR_REPORT_URL
             ? { ok: false, status: 404, json: async () => ({}) }
             : ok({ five_hour: { utilization: 42 } })));
         const { ledgers, poller } = harness({ fetch, fallbackHeaders: () => ({ Authorization: 'Bearer secret', 'anthropic-beta': 'oauth-2025-04-20' }) });
@@ -1068,7 +1068,7 @@ describe('provider polling', () => {
     });
 
     it.each([405, 500])('falls back after provider report status %d', async (status) => {
-        const fetch = jest.fn<QuotaFetch>(async url => (url === DEFAULT_PROVIDER_REPORT_URL
+        const fetch = jest.fn<QuotaFetch>(async url => (url === DEFAULT_VENDOR_REPORT_URL
             ? { ok: false, status, json: async () => ({}) }
             : ok({ five_hour: { utilization: 42 } })));
         const { poller } = harness({ fetch });
@@ -1095,7 +1095,7 @@ describe('provider polling', () => {
             releaseFallback = resolve;
         });
         const fetch = jest.fn<QuotaFetch>(async (url) => {
-            if(url === DEFAULT_PROVIDER_REPORT_URL) {
+            if(url === DEFAULT_VENDOR_REPORT_URL) {
                 return { ok: false, status: 404, json: async () => ({}) };
             }
             announceFallback();
@@ -1123,8 +1123,8 @@ describe('provider polling', () => {
 
     it('warns once for invalid percentages while retaining valid fallback windows', async () => {
         const { logger, poller } = harness({
-            preferProviderReport: false,
-            fetch:                async () => ok({ five_hour: { utilization: 101 }, seven_day: { utilization: 42 } }),
+            preferVendorReport: false,
+            fetch:              async () => ok({ five_hour: { utilization: 101 }, seven_day: { utilization: 42 } }),
         });
         poller.start();
         await poller.poll();
@@ -1156,7 +1156,7 @@ describe('provider polling', () => {
             .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }));
         const logger = { debug: jest.fn<Logger['debug']>(), warn: jest.fn<Logger['warn']>(), error: jest.fn<Logger['error']>() };
         const ledger = createLedgerStore('conversation', { logger });
-        const poller = createQuotaPoller({ clock, fetch, ledgers: [ledger], logger, preferProviderReport: false });
+        const poller = createQuotaPoller({ clock, fetch, ledgers: [ledger], logger, preferVendorReport: false });
         poller.start();
         await poller.poll();
         clock.advance(60_000);
@@ -1175,7 +1175,7 @@ describe('provider polling', () => {
     it('expires reset-less direct headroom and renews it after an identical successful observation', async () => {
         const clock = new FakeClock(Date.parse(GENERATED));
         const fetch = jest.fn<QuotaFetch>(async () => ok({ five_hour: { utilization: 42 } }));
-        const { poller } = harness({ clock, fetch, preferProviderReport: false, pollIntervalMs: 60_000 });
+        const { poller } = harness({ clock, fetch, preferVendorReport: false, pollIntervalMs: 60_000 });
         poller.start();
         await poller.poll();
         poller.stop();
@@ -1275,7 +1275,7 @@ describe('provider polling', () => {
         const fetch = jest.fn<QuotaFetch>()
             .mockResolvedValueOnce(ok({ five_hour: { utilization: 42 } }))
             .mockRejectedValueOnce('direct down');
-        const { logger, poller } = harness({ fetch, preferProviderReport: false });
+        const { logger, poller } = harness({ fetch, preferVendorReport: false });
         poller.start();
         await poller.poll();
         await poller.poll();
@@ -1361,7 +1361,7 @@ describe('provider polling', () => {
         const fetch = jest.fn<QuotaFetch>()
             .mockImplementationOnce(async () => oldGate)
             .mockImplementationOnce(async () => currentGate);
-        const { ledgers, poller } = harness({ fetch, preferProviderReport: false });
+        const { ledgers, poller } = harness({ fetch, preferVendorReport: false });
         poller.start();
         const attempt = poller.poll();
         poller.stop();

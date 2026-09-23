@@ -1,4 +1,4 @@
-/** Process-wide provider quota polling via utraque, optionally with a direct Anthropic fallback. */
+/** Process-wide vendor quota polling via utraque, optionally with a direct Anthropic fallback. */
 import type { Logger } from '@hughescr/logger';
 import { type LedgerStore, type QuotaWindows, fileQuotaWindow, hasQuotaWindow } from './ledger';
 import type { Clock, TimerHandle } from './types';
@@ -6,7 +6,7 @@ import type { Clock, TimerHandle } from './types';
 export const DEFAULT_QUOTA_POLL_INTERVAL_MS = 300_000;
 export const DEFAULT_QUOTA_RESULT_DEBOUNCE_MS = 30_000;
 export const DEFAULT_QUOTA_REQUEST_TIMEOUT_MS = 100_000;
-export const DEFAULT_PROVIDER_REPORT_URL = 'http://127.0.0.1:8317/utraque/providers/v2';
+export const DEFAULT_VENDOR_REPORT_URL = 'http://127.0.0.1:8317/utraque/providers/v2';
 export const DEFAULT_ANTHROPIC_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 export type AnthropicQuotaSource = 'provider' | 'sdk';
 
@@ -17,27 +17,27 @@ export interface QuotaFetchResponse {
 }
 export type QuotaFetch = (url: string, init: { headers: Record<string, string>, signal?: AbortSignal }) => Promise<QuotaFetchResponse>;
 
-export interface ProviderScopeLabel {
+export interface VendorScopeLabel {
     id?:          string
     displayName?: string
 }
-export type ProviderQuotaKind = 'session' | 'weekly' | 'weekly_scoped' | 'other';
-const PROVIDER_QUOTA_KINDS: readonly ProviderQuotaKind[] = ['session', 'weekly', 'weekly_scoped', 'other'];
-export interface ProviderQuota {
+export type VendorQuotaKind = 'session' | 'weekly' | 'weekly_scoped' | 'other';
+const VENDOR_QUOTA_KINDS: readonly VendorQuotaKind[] = ['session', 'weekly', 'weekly_scoped', 'other'];
+export interface VendorQuota {
     id:               string
     /** The upstream identity the id is derived from (Anthropic limit kind, Codex limit id). */
     bucket:           string
-    kind:             ProviderQuotaKind
+    kind:             VendorQuotaKind
     name?:            string
     group?:           string
     slot?:            string
     usedPercent:      number
     durationSeconds?: number
     resetsAt?:        Date
-    scope?:           { model?: ProviderScopeLabel, surface?: ProviderScopeLabel }
+    scope?:           { model?: VendorScopeLabel, surface?: VendorScopeLabel }
     active?:          boolean
 }
-export interface ProviderBalance {
+export interface VendorBalance {
     kind:        string
     limitId?:    string
     currency?:   string
@@ -47,7 +47,7 @@ export interface ProviderBalance {
     unlimited?:  boolean
 }
 /** A spending ceiling and consumption against it; every field is optional because Codex and Anthropic report different subsets. */
-export interface ProviderSpendLimit {
+export interface VendorSpendLimit {
     limitId?:     string
     enabled?:     boolean
     limit?:       string
@@ -58,37 +58,37 @@ export interface ProviderSpendLimit {
     resetsAt?:    Date
     reached?:     boolean
 }
-export interface ProviderObservation {
+export interface VendorObservation {
     collectedAt: Date
-    quotas:      readonly ProviderQuota[]
-    balances:    readonly ProviderBalance[]
-    spendLimits: readonly ProviderSpendLimit[]
+    quotas:      readonly VendorQuota[]
+    balances:    readonly VendorBalance[]
+    spendLimits: readonly VendorSpendLimit[]
     available?:  boolean
 }
-export interface ProviderTokenMix {
+export interface VendorTokenMix {
     inputTokens:         number
     outputTokens:        number
     cacheCreationTokens: number
     cacheReadTokens:     number
     totalTokens:         number
 }
-export interface ProviderHistoryModel {
+export interface VendorHistoryModel {
     model:    string
-    tokens:   ProviderTokenMix
+    tokens:   VendorTokenMix
     costUsd?: number
 }
-export interface ProviderHistoryBlock {
-    startTime:      Date
-    endTime:        Date
-    active:         boolean
-    gap:            boolean
-    mixedProvider:  boolean
-    modelProviders: readonly string[]
-    modelNames:     readonly string[]
-    tokens:         ProviderTokenMix
-    costUsd?:       number
+export interface VendorHistoryBlock {
+    startTime:    Date
+    endTime:      Date
+    active:       boolean
+    gap:          boolean
+    mixedVendor:  boolean
+    modelVendors: readonly string[]
+    modelNames:   readonly string[]
+    tokens:       VendorTokenMix
+    costUsd?:     number
 }
-export interface ProviderHistory {
+export interface VendorHistory {
     collector:    'ccusage'
     coverage:     string
     costBasis:    string
@@ -97,11 +97,11 @@ export interface ProviderHistory {
     recentSince:  Date
     recentUntil:  Date
     recentDays:   number
-    recentTokens: ProviderTokenMix
-    recentModels: readonly ProviderHistoryModel[]
-    blocks:       readonly ProviderHistoryBlock[]
+    recentTokens: VendorTokenMix
+    recentModels: readonly VendorHistoryModel[]
+    blocks:       readonly VendorHistoryBlock[]
 }
-export interface ProviderReferencePrice {
+export interface VendorReferencePrice {
     model:       string
     input:       number
     output:      number
@@ -109,29 +109,29 @@ export interface ProviderReferencePrice {
     cacheWrite?: number
     eligible:    boolean
 }
-export interface ProviderReferencePrices {
+export interface VendorReferencePrices {
     catalog:     'models.dev'
     observedAt:  Date
     stale:       boolean
     unit:        'usd_per_million_tokens'
-    models:      readonly ProviderReferencePrice[]
+    models:      readonly VendorReferencePrice[]
     assumptions: readonly ('base_tier' | 'cache_write_5m')[]
 }
-export interface ProviderStatus {
+export interface VendorStatus {
     provider:    string
     status:      string
     lastAttempt: Date
     freshness:   { cached: boolean, stale: boolean, ageSeconds: number }
     errors:      readonly { section: string, code: string, retryAt?: Date, attemptedAt?: Date }[]
-    quota?:      ProviderObservation
-    history?:    ProviderHistory
-    prices?:     ProviderReferencePrices
+    quota?:      VendorObservation
+    history?:    VendorHistory
+    prices?:     VendorReferencePrices
 }
-export interface ProviderSnapshot {
+export interface VendorSnapshot {
     generatedAt:        Date
-    providers:          readonly ProviderStatus[]
+    providers:          readonly VendorStatus[]
     expiresAt?:         Date
-    previous?:          ProviderSnapshot
+    previous?:          VendorSnapshot
     anthropicFallback?: { collectedAt: Date, expiresAt: Date, windows: QuotaWindows }
 }
 
@@ -144,7 +144,7 @@ export interface CreateQuotaPollerParams {
     fallbackUrl?:          string
     headers?:              () => Record<string, string>
     fallbackHeaders?:      () => Record<string, string>
-    preferProviderReport?: boolean
+    preferVendorReport?:   boolean
     /** `sdk` deliberately excludes Anthropic provider rows, adaptation, and direct HTTP fallback. */
     anthropicQuotaSource?: AnthropicQuotaSource
     pollIntervalMs?:       number
@@ -156,7 +156,7 @@ export interface QuotaPoller {
     stop:         () => void
     noteResult:   () => void
     poll:         () => Promise<void>
-    getSnapshot?: () => ProviderSnapshot | undefined
+    getSnapshot?: () => VendorSnapshot | undefined
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -183,20 +183,20 @@ function dateValue(value: unknown): Date | undefined {
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
-function scopeLabel(value: unknown): ProviderScopeLabel | undefined {
+function scopeLabel(value: unknown): VendorScopeLabel | undefined {
     const raw = asRecord(value);
     const id = stringValue(raw?.id);
     const displayName = stringValue(raw?.display_name);
     return id === undefined && displayName === undefined ? undefined : { id, displayName };
 }
-function quotaKind(value: unknown): ProviderQuotaKind | undefined {
-    return PROVIDER_QUOTA_KINDS.find(kind => kind === value);
+function quotaKind(value: unknown): VendorQuotaKind | undefined {
+    return VENDOR_QUOTA_KINDS.find(kind => kind === value);
 }
 function percentValue(value: unknown, unit: unknown): number | undefined {
     const percent = finiteNumber(value);
     return unit === 'percent_0_100' && percent !== undefined && percent >= 0 && percent <= 100 ? percent : undefined;
 }
-function providerQuota(value: unknown): ProviderQuota | undefined {
+function providerQuota(value: unknown): VendorQuota | undefined {
     const raw = asRecord(value);
     const id = stringValue(raw?.id);
     const bucket = stringValue(raw?.bucket);
@@ -222,7 +222,7 @@ function providerQuota(value: unknown): ProviderQuota | undefined {
         scope:           model === undefined && surface === undefined ? undefined : { model, surface },
     };
 }
-function providerBalance(value: unknown): ProviderBalance | undefined {
+function providerBalance(value: unknown): VendorBalance | undefined {
     const raw = asRecord(value);
     const kind = stringValue(raw?.kind);
     if(kind === undefined) {
@@ -238,7 +238,7 @@ function providerBalance(value: unknown): ProviderBalance | undefined {
         unlimited:  booleanValue(raw?.unlimited),
     };
 }
-function providerSpendLimit(value: unknown): ProviderSpendLimit | undefined {
+function providerSpendLimit(value: unknown): VendorSpendLimit | undefined {
     const raw = asRecord(value);
     if(raw === undefined) {
         return undefined;
@@ -255,7 +255,7 @@ function providerSpendLimit(value: unknown): ProviderSpendLimit | undefined {
         reached:     booleanValue(raw.reached),
     };
 }
-function providerObservation(value: unknown): ProviderObservation | undefined {
+function providerObservation(value: unknown): VendorObservation | undefined {
     const raw = asRecord(value);
     const collectedAt = dateValue(raw?.collected_at);
     if(raw === undefined || collectedAt === undefined) {
@@ -273,7 +273,7 @@ function providerObservation(value: unknown): ProviderObservation | undefined {
     return { collectedAt, quotas, balances, spendLimits, available: booleanValue(raw.available) };
 }
 
-function tokenMix(value: unknown): ProviderTokenMix | undefined {
+function tokenMix(value: unknown): VendorTokenMix | undefined {
     const raw = asRecord(value);
     const inputTokens = tokenCount(raw?.input_tokens);
     const outputTokens = tokenCount(raw?.output_tokens);
@@ -289,7 +289,7 @@ function tokenMix(value: unknown): ProviderTokenMix | undefined {
         : undefined;
 }
 
-function addTokenMix(total: ProviderTokenMix, value: ProviderTokenMix): ProviderTokenMix | undefined {
+function addTokenMix(total: VendorTokenMix, value: VendorTokenMix): VendorTokenMix | undefined {
     return tokenMix({
         input_tokens:          total.inputTokens + value.inputTokens,
         output_tokens:         total.outputTokens + value.outputTokens,
@@ -319,34 +319,34 @@ function parsedCost(value: Record<string, unknown> | undefined): ParsedCost {
     return cost === undefined || cost < 0 ? { valid: false } : { valid: true, value: cost };
 }
 
-function historyModel(value: unknown, provider: string): ProviderHistoryModel | undefined {
+function historyModel(value: unknown, provider: string): VendorHistoryModel | undefined {
     const raw = asRecord(value);
     const model = stringValue(raw?.model);
-    const modelProvider = stringValue(raw?.provider);
+    const modelVendor = stringValue(raw?.provider);
     const tokens = tokenMix(raw);
     const cost = parsedCost(raw);
-    return model === undefined || modelProvider !== provider || tokens === undefined || !cost.valid
+    return model === undefined || modelVendor !== provider || tokens === undefined || !cost.valid
         ? undefined
         : { model, tokens, costUsd: cost.value };
 }
 
 // eslint-disable-next-line complexity -- rejects each independently malformed history-block field
-function historyBlock(value: unknown): ProviderHistoryBlock | undefined {
+function historyBlock(value: unknown): VendorHistoryBlock | undefined {
     const raw = asRecord(value);
     const startTime = dateValue(raw?.start_time);
     const endTime = dateValue(raw?.end_time);
     const active = booleanValue(raw?.is_active);
     const gap = booleanValue(raw?.is_gap);
-    const mixedProvider = booleanValue(raw?.mixed_provider);
+    const mixedVendor = booleanValue(raw?.mixed_provider);
     const tokens = tokenMix(raw);
     const cost = parsedCost(raw);
     if(startTime === undefined || endTime === undefined || startTime >= endTime || active === undefined
-      || gap === undefined || mixedProvider === undefined || tokens === undefined || !cost.valid
+      || gap === undefined || mixedVendor === undefined || tokens === undefined || !cost.valid
       || !Array.isArray(raw?.models)) {
         return undefined;
     }
     const modelNames: string[] = [];
-    const modelProviders: string[] = [];
+    const modelVendors: string[] = [];
     for(const entry of raw.models) {
         const model = asRecord(entry);
         const name = stringValue(model?.model);
@@ -355,13 +355,13 @@ function historyBlock(value: unknown): ProviderHistoryBlock | undefined {
             return undefined;
         }
         modelNames.push(name);
-        modelProviders.push(provider);
+        modelVendors.push(provider);
     }
-    return { startTime, endTime, active, gap, mixedProvider, modelNames, modelProviders, tokens, costUsd: cost.value };
+    return { startTime, endTime, active, gap, mixedVendor, modelNames, modelVendors, tokens, costUsd: cost.value };
 }
 
 // eslint-disable-next-line complexity -- validates report metadata and every aggregate/block before estimates can use them
-function providerHistory(value: unknown, provider: string, generatedAt: Date): ProviderHistory | undefined {
+function providerHistory(value: unknown, provider: string, generatedAt: Date): VendorHistory | undefined {
     const raw = asRecord(value);
     const coverage = stringValue(raw?.coverage);
     const costBasis = stringValue(raw?.cost_basis);
@@ -377,8 +377,8 @@ function providerHistory(value: unknown, provider: string, generatedAt: Date): P
       || !Array.isArray(raw.blocks)) {
         return undefined;
     }
-    let recentTokens: ProviderTokenMix = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 };
-    const recentModels: ProviderHistoryModel[] = [];
+    let recentTokens: VendorTokenMix = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 };
+    const recentModels: VendorHistoryModel[] = [];
     for(const entry of recent.models) {
         const model = historyModel(entry, provider);
         if(model === undefined) {
@@ -393,7 +393,7 @@ function providerHistory(value: unknown, provider: string, generatedAt: Date): P
             recentModels.push(model);
         }
     }
-    const blocks: ProviderHistoryBlock[] = [];
+    const blocks: VendorHistoryBlock[] = [];
     for(const entry of raw.blocks) {
         const block = historyBlock(entry);
         if(block === undefined) {
@@ -405,7 +405,7 @@ function providerHistory(value: unknown, provider: string, generatedAt: Date): P
 }
 
 // eslint-disable-next-line complexity -- every required and optional price category is independently validated
-function referencePrice(value: unknown): ProviderReferencePrice | undefined {
+function referencePrice(value: unknown): VendorReferencePrice | undefined {
     const raw = asRecord(value);
     const model = stringValue(raw?.model);
     const input = finiteNumber(raw?.input);
@@ -439,7 +439,7 @@ function referencePriceAssumptions(value: unknown): ReferencePriceAssumption[] |
 }
 
 // eslint-disable-next-line complexity -- validates independently optional freshness and each model price row
-function providerReferencePrices(value: unknown, generatedAt: Date): ProviderReferencePrices | undefined {
+function providerReferencePrices(value: unknown, generatedAt: Date): VendorReferencePrices | undefined {
     const raw = asRecord(value);
     const observedAt = dateValue(raw?.observed_at);
     const stale = raw?.stale === undefined ? false : booleanValue(raw.stale);
@@ -450,7 +450,7 @@ function providerReferencePrices(value: unknown, generatedAt: Date): ProviderRef
         return undefined;
     }
     // Stryker restore llm
-    const models: ProviderReferencePrice[] = [];
+    const models: VendorReferencePrice[] = [];
     for(const entry of raw.models) {
         const model = referencePrice(entry);
         if(model === undefined) {
@@ -469,14 +469,14 @@ function providerReferencePrices(value: unknown, generatedAt: Date): ProviderRef
 }
 
 /** Parse only utraque's provider-report schema 2 (`/utraque/providers/v2`); schema 1 and malformed reports fail closed. */
-export function parseProviderSnapshot(body: unknown): ProviderSnapshot | undefined {
+export function parseVendorSnapshot(body: unknown): VendorSnapshot | undefined {
     const raw = asRecord(body);
     const generatedAt = dateValue(raw?.generated_at);
     if(raw?.schema_version !== 2 || generatedAt === undefined || !Array.isArray(raw.providers)) {
         return undefined;
     }
     // eslint-disable-next-line complexity -- validates all independently optional report fields before admitting a provider
-    const providers = raw.providers.flatMap((entry): ProviderStatus[] => {
+    const providers = raw.providers.flatMap((entry): VendorStatus[] => {
         const item = asRecord(entry);
         // Stryker disable next-line llm: stringValue maps every falsy non-string and the empty-string fallback to the same undefined result.
         const provider = stringValue(item?.provider);
@@ -574,7 +574,7 @@ export function parseUsageWindows(body: unknown): ParsedUsage {
     return { windows: hasQuotaWindow(windows) ? windows : undefined, rejected };
 }
 
-function anthropicWindows(observation: ProviderObservation, now: number): QuotaWindows | undefined {
+function anthropicWindows(observation: VendorObservation, now: number): QuotaWindows | undefined {
     let windows: QuotaWindows = {};
     for(const quota of observation.quotas) {
         const id = unifiedAnthropicQuotaId(quota.bucket, quota.group, quota.scope?.model !== undefined || quota.scope?.surface !== undefined);
@@ -587,9 +587,9 @@ function anthropicWindows(observation: ProviderObservation, now: number): QuotaW
 }
 
 export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller {
-    const { clock, fetch, ledgers, logger, url = DEFAULT_PROVIDER_REPORT_URL, fallbackUrl = DEFAULT_ANTHROPIC_USAGE_URL,
+    const { clock, fetch, ledgers, logger, url = DEFAULT_VENDOR_REPORT_URL, fallbackUrl = DEFAULT_ANTHROPIC_USAGE_URL,
         headers = () => ({}), fallbackHeaders = () => ({}), pollIntervalMs = DEFAULT_QUOTA_POLL_INTERVAL_MS,
-        preferProviderReport = true, anthropicQuotaSource = 'provider', resultDebounceMs = DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
+        preferVendorReport = true, anthropicQuotaSource = 'provider', resultDebounceMs = DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
         requestTimeoutMs = DEFAULT_QUOTA_REQUEST_TIMEOUT_MS } = params;
     let timer: TimerHandle | undefined;
     let running = false;
@@ -597,7 +597,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
     let abortController: AbortController | undefined;
     // Stryker disable next-line NumberLiteralValue: generation is an opaque equality token; its initial numeric offset is never observed.
     let generation = 0;
-    let snapshot: ProviderSnapshot | undefined;
+    let snapshot: VendorSnapshot | undefined;
     let lastPollStartedAt = Number.NEGATIVE_INFINITY;
     let warned = false;
 
@@ -662,7 +662,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
         const attemptGeneration = generation;
         const timeout = clock.setTimer(() => controller.abort(), requestTimeoutMs);
         try {
-            if(!preferProviderReport) {
+            if(!preferVendorReport) {
                 if(anthropicQuotaSource === 'sdk') {
                     return;
                 }
@@ -673,7 +673,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
             try {
                 const response = await fetch(url, { headers: headers(), signal: controller.signal });
                 if(response.ok) {
-                    const parsed = parseProviderSnapshot(await response.json());
+                    const parsed = parseVendorSnapshot(await response.json());
                     if(parsed === undefined) {
                         markSnapshotStale(clock.now(), attemptGeneration);
                         logger.debug('Quota poll: utraque provider report was not valid schema version 2');

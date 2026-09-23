@@ -15,7 +15,7 @@ import { MessageCoordinator } from '../message-coordinator';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from '../response-sender';
 import { createChannelId, type ChannelId, type DiscordMessageContext } from '../types';
-import { createConductorProcessor, type DiscordEnvelopeProvider } from './conductor-processor';
+import { createConductorProcessor, type DiscordEnvelopeDeps } from './conductor-processor';
 import {
     type PlatformImage, type ActivityLogger, type Conductor, type ContextPolicy, type ContextBuilder, type TimeHeaderProvider, generateText
 } from '@/agent';
@@ -147,7 +147,7 @@ interface SetupCoordinatorParams {
      */
     conversationConductor: Conductor
     contextPolicy:         ContextPolicy
-    envelopeProvider:      DiscordEnvelopeProvider
+    envelopeProvider:      DiscordEnvelopeDeps
     /** `createConductorProcessor`'s own timezone dependency. */
     contextBuilder?:       Pick<ContextBuilder, 'loadUserTimezone' | 'loadUserMemories'>
     /** Session-peers block 4: forwarded verbatim into `createConductorProcessor` — see its own `CreateConductorProcessorParams.timeHeader` doc. */

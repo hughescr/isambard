@@ -5,7 +5,7 @@ import {
     buildSubagentAgents,
     buildMcpServers,
     buildAllowedTools,
-    CROSS_PROVIDER_SUBAGENTS,
+    CROSS_VENDOR_SUBAGENTS,
     EXPLICIT_TOOLS,
     LAUNCH_RESTRICTED_EFFORTS,
     SUBAGENT_EFFORTS,
@@ -59,12 +59,12 @@ describe('sub-agent effort tiers', () => {
 
     test('registers the Claude effort tiers, general-purpose alias, and bounded utraque routes', () => {
         expect(Object.keys(agentsOf())).toEqual([
-            'low', 'medium', 'high', 'xhigh', 'general-purpose', ...Object.keys(CROSS_PROVIDER_SUBAGENTS),
+            'low', 'medium', 'high', 'xhigh', 'general-purpose', ...Object.keys(CROSS_VENDOR_SUBAGENTS),
         ]);
     });
 
     test('pins the bounded utraque route contract to literal external model ids and efforts', () => {
-        expect(CROSS_PROVIDER_SUBAGENTS).toEqual({
+        expect(CROSS_VENDOR_SUBAGENTS).toEqual({
             'astra-high':          { model: 'anthropic-compat.astra', effort: 'high', restricted: false },
             'luna-medium':         { model: 'anthropic-compat.luna', effort: 'medium', restricted: true },
             'terra-high':          { model: 'anthropic-compat.terra', effort: 'high', restricted: false },
@@ -145,7 +145,7 @@ describe('sub-agent effort tiers', () => {
 
     test('pins each utraque route to its full model id and supported effort', () => {
         const agents = agentsOf();
-        for(const [name, route] of Object.entries(CROSS_PROVIDER_SUBAGENTS)) {
+        for(const [name, route] of Object.entries(CROSS_VENDOR_SUBAGENTS)) {
             expect(agents[name].model).toBe(route.model);
             expect(agents[name].effort).toBe(route.effort);
             expect(agents[name].description).toContain('omit the Agent model override');
@@ -154,14 +154,14 @@ describe('sub-agent effort tiers', () => {
     });
 
     test('omits cross-provider routes when the gateway is disabled', () => {
-        expect(Object.keys(buildSessionQueryOptions(baseParams({ crossProviderRoutes: false })).agents)).toEqual([
+        expect(Object.keys(buildSessionQueryOptions(baseParams({ crossVendorRoutes: false })).agents)).toEqual([
             'low', 'medium', 'high', 'xhigh', 'general-purpose',
         ]);
     });
 
     test('includes cross-provider routes when buildSubagentAgents uses its default', () => {
         expect(Object.keys(buildSubagentAgents(() => 'SUBAGENT-PROMPT'))).toEqual([
-            'low', 'medium', 'high', 'xhigh', 'general-purpose', ...Object.keys(CROSS_PROVIDER_SUBAGENTS),
+            'low', 'medium', 'high', 'xhigh', 'general-purpose', ...Object.keys(CROSS_VENDOR_SUBAGENTS),
         ]);
     });
 });

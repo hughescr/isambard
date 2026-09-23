@@ -2,14 +2,14 @@ import { describe, expect, it } from 'bun:test';
 import { composeAmbientLines } from '@/agent/session/ambient-lines';
 import { initialLedger, type QuotaWindows } from '@/agent/session/ledger';
 import type {
-    ProviderBalance,
-    ProviderHistory,
-    ProviderObservation,
-    ProviderQuota,
-    ProviderReferencePrices,
-    ProviderSnapshot,
-    ProviderStatus,
-    ProviderTokenMix
+    VendorBalance,
+    VendorHistory,
+    VendorObservation,
+    VendorQuota,
+    VendorReferencePrices,
+    VendorSnapshot,
+    VendorStatus,
+    VendorTokenMix
 } from '@/agent/session/quota-poller';
 
 const TIMEZONE = 'America/Los_Angeles';
@@ -20,30 +20,30 @@ const ESTIMATE_RESET = new Date('2026-09-10T01:07:00Z');
 type JsonValue = boolean | number | string | null | JsonObject | JsonValue[];
 interface JsonObject { [key: string]: JsonValue | undefined }
 
-function observation(overrides: Partial<ProviderObservation> = {}): ProviderObservation {
+function observation(overrides: Partial<VendorObservation> = {}): VendorObservation {
     return { collectedAt: NOW, available: true, quotas: [], balances: [], spendLimits: [], ...overrides };
 }
 
-function provider(overrides: Partial<ProviderStatus> = {}): ProviderStatus {
+function vendor(overrides: Partial<VendorStatus> = {}): VendorStatus {
     return {
         provider:    'codex', status:      'ok', lastAttempt: NOW,
         freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quota:       observation(), ...overrides,
     };
 }
 
-function snapshot(providers: readonly ProviderStatus[], overrides: Partial<ProviderSnapshot> = {}): ProviderSnapshot {
+function snapshot(providers: readonly VendorStatus[], overrides: Partial<VendorSnapshot> = {}): VendorSnapshot {
     return { generatedAt: NOW, expiresAt: new Date(NOW.getTime() + 600_000), providers, ...overrides };
 }
 
-function quota(overrides: Partial<ProviderQuota> = {}): ProviderQuota {
+function quota(overrides: Partial<VendorQuota> = {}): VendorQuota {
     return { id: 'limit', bucket: 'limit', kind: 'other', usedPercent: 35, resetsAt: THU_0900, ...overrides };
 }
 
-function tokens(overrides: Partial<ProviderTokenMix> = {}): ProviderTokenMix {
+function tokens(overrides: Partial<VendorTokenMix> = {}): VendorTokenMix {
     return { inputTokens: 100, outputTokens: 200, cacheCreationTokens: 300, cacheReadTokens: 400, totalTokens: 1000, ...overrides };
 }
 
-function history(providerName: string, overrides: Partial<ProviderHistory> = {}): ProviderHistory {
+function history(providerName: string, overrides: Partial<VendorHistory> = {}): VendorHistory {
     const recentTokens = tokens({ inputTokens: 700, outputTokens: 1400, cacheCreationTokens: 2100, cacheReadTokens: 2800, totalTokens: 7000 });
     return {
         collector:    'ccusage', coverage:     'local_only', costBasis:    'calculated_api_reference_usd',
@@ -52,27 +52,27 @@ function history(providerName: string, overrides: Partial<ProviderHistory> = {})
         recentTokens,
         recentModels: [{ model: `${providerName}-history-model`, tokens: recentTokens, costUsd: 0.007 }],
         blocks:       [{
-            startTime:      new Date(ESTIMATE_RESET.getTime() - 5 * 3_600_000), endTime:        ESTIMATE_RESET,
-            active:         true, gap:            false, mixedProvider:  false, modelProviders: [providerName], modelNames:     [`${providerName}-history-model`],
-            tokens:         tokens(), costUsd:        0.001,
+            startTime:    new Date(ESTIMATE_RESET.getTime() - 5 * 3_600_000), endTime:      ESTIMATE_RESET,
+            active:       true, gap:          false, mixedVendor:  false, modelVendors: [providerName], modelNames:   [`${providerName}-history-model`],
+            tokens:       tokens(), costUsd:      0.001,
         }],
         ...overrides,
     };
 }
 
-function prices(providerName: string, models: ProviderReferencePrices['models'] = [{
+function prices(providerName: string, models: VendorReferencePrices['models'] = [{
     model: `${providerName}-cheap`, input: 1, output: 1, cacheRead: 1, cacheWrite: 1, eligible: true,
-}]): ProviderReferencePrices {
+}]): VendorReferencePrices {
     return {
         catalog: 'models.dev', observedAt: NOW, stale: false, unit: 'usd_per_million_tokens', models, assumptions: ['base_tier'],
     };
 }
 
-function render(report: ProviderSnapshot, now = NOW, sharedQuotaNote = false): string {
+function render(report: VendorSnapshot, now = NOW, sharedQuotaNote = false): string {
     return composeAmbientLines({ self: initialLedger('conversation'), now, timezone: TIMEZONE, providerSnapshot: report, sharedQuotaNote })[0] ?? '';
 }
 
-function renderJson(report: ProviderSnapshot, now = NOW, sharedQuotaNote = false): JsonObject {
+function renderJson(report: VendorSnapshot, now = NOW, sharedQuotaNote = false): JsonObject {
     const line = render(report, now, sharedQuotaNote);
     const prefix = 'Quota: \n```json\n';
     expect(line.startsWith(prefix)).toBe(true);
@@ -91,7 +91,7 @@ function array(value: JsonValue | undefined): JsonValue[] {
     return value as JsonValue[];
 }
 
-function providerJson(report: ProviderSnapshot, name = 'codex', now = NOW): JsonObject {
+function providerJson(report: VendorSnapshot, name = 'codex', now = NOW): JsonObject {
     return object(renderJson(report, now)[name]);
 }
 
@@ -104,7 +104,7 @@ function quotaLineJson(line: string): JsonObject {
 describe('provider quota JSON', () => {
     it.each([[1_209_600, '2w'], [172_800, '2d'], [7200, '2h'], [90, '90s'], [-1800, '-1800s']] as const)(
         'renders a %s-second duration as %s', (durationSeconds, window) => {
-            const data = providerJson(snapshot([provider({ quota: observation({ quotas: [quota({ durationSeconds })] }) })]));
+            const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [quota({ durationSeconds })] }) })]));
             expect(object(array(data.quotas)[0]).window).toBe(window);
         }
     );
@@ -115,14 +115,14 @@ describe('provider quota JSON', () => {
         ['weekly_scoped', '1w'],
         ['other', undefined],
     ] as const)('infers the window from a `%s` kind when the duration is absent', (kind, expected) => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [quota({ id: 'codex:primary', bucket: 'codex', kind })] }) })]));
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [quota({ id: 'codex:primary', bucket: 'codex', kind })] }) })]));
         expect(object(array(data.quotas)[0]).window).toBe(expected);
     });
 
     it.each([
         ['session', 'five_hour'], ['session', 'session'], ['weekly', 'weekly_all'], ['seven-day', 'seven_day_team'],
     ] as const)('no longer infers a window from a legacy %s id', (_case, id) => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [quota({ id, bucket: id, kind: 'other' })] }) })]));
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [quota({ id, bucket: id, kind: 'other' })] }) })]));
         expect(object(array(data.quotas)[0]).window).toBeUndefined();
     });
 
@@ -131,14 +131,14 @@ describe('provider quota JSON', () => {
         ['a five-hour `weekly`', 'weekly', 18_000, '5h'],
     ] as const)('lets the reported duration win over the kind for %s', (_case, kind, durationSeconds, expected) => {
         // Live Codex Pro labels its one-week window `session`: kind is assigned by slot position, not by duration.
-        const data = providerJson(snapshot([provider({ quota: observation({
+        const data = providerJson(snapshot([vendor({ quota: observation({
             quotas: [quota({ id: 'codex:primary', bucket: 'codex', kind, slot: 'primary', durationSeconds })],
         }) })]));
         expect(object(array(data.quotas)[0]).window).toBe(expected);
     });
 
     it('uses explicit UTC timestamps and preserves fractional percentages', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({
+        const data = providerJson(snapshot([vendor({ quota: observation({
             quotas: [quota({ id: 'weekly', durationSeconds: 604_800, usedPercent: 35.25 })],
         }) })]));
         expect(data.observed_at).toBe('2026-09-09T22:07:00.000Z');
@@ -149,7 +149,7 @@ describe('provider quota JSON', () => {
     });
 
     it('infers known 5h and 1w windows when duration is absent', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [
             quota({ id: 'codex:primary', bucket: 'codex', kind: 'session', slot: 'primary' }),
             quota({ id: 'codex:secondary', bucket: 'codex', kind: 'weekly', slot: 'secondary' }),
             quota({ id: 'codex_team:secondary:gpt-5', bucket: 'codex_team', kind: 'weekly_scoped', slot: 'secondary' }),
@@ -158,7 +158,7 @@ describe('provider quota JSON', () => {
     });
 
     it('retains meaningful scope labels while omitting a redundant slot', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [quota({
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [quota({
             id:    'weekly_primary', name:  'Weekly primary', kind:  'weekly', group: 'general', slot:  'primary',
             scope: { model: { id: 'gpt-5', displayName: 'GPT Five' }, surface: { id: 'chat', displayName: 'Chat UI' } },
         })] }) })]));
@@ -171,7 +171,7 @@ describe('provider quota JSON', () => {
 
     it('labels the slot when two rows share a bucket, whatever their windows', () => {
         // Codex reports `codex:primary` (5h) and `codex:secondary` (1w) against the one `codex` bucket.
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [
             quota({ id: 'codex:primary', bucket: 'codex', kind: 'session', slot: 'primary', durationSeconds: 18_000 }),
             quota({ id: 'codex:secondary', bucket: 'codex', kind: 'weekly', slot: 'secondary', durationSeconds: 604_800 }),
         ] }) })]));
@@ -179,7 +179,7 @@ describe('provider quota JSON', () => {
     });
 
     it('omits the slot from a lone Codex row', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [
             quota({ id: 'codex:primary', bucket: 'codex', kind: 'session', slot: 'primary', durationSeconds: 604_800 }),
         ] }) })]));
         expect(array(data.quotas)).toEqual([{
@@ -192,12 +192,12 @@ describe('provider quota JSON', () => {
         ['different bucket', quota({ id: 'codex:primary', bucket: 'codex', slot: 'primary' }), quota({ id: 'codex_team:secondary', bucket: 'codex_team', slot: 'secondary' })],
         ['same slot', quota({ id: 'codex:primary', bucket: 'codex', slot: 'primary' }), quota({ id: 'codex:primary:gpt-5', bucket: 'codex', slot: 'primary' })],
     ] as const)('omits a slot when there is %s', (_case, current, candidate) => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [current, candidate] }) })]));
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [current, candidate] }) })]));
         expect(object(array(data.quotas)[0]).scope).toBeUndefined();
     });
 
     it('retains each scope label field independently and omits empty labels', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [
             quota({ id: 'one', scope: { model: { id: 'o3' } } }),
             quota({ id: 'two', scope: { surface: { displayName: 'API' } } }),
             quota({ id: 'three', group: 'general' }),
@@ -210,7 +210,7 @@ describe('provider quota JSON', () => {
     });
 
     it('omits optional quota identity and reset fields exactly when absent or redundant', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [
             quota({ id: 'same', name: 'same', resetsAt: undefined }), quota({ id: 'unnamed', name: undefined, resetsAt: undefined }),
         ] }) })]));
         expect(data.quotas).toEqual([
@@ -220,7 +220,7 @@ describe('provider quota JSON', () => {
     });
 
     it('renders inactive, expired, and active quota states distinctly', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [
             quota({ id: 'disabled', active: false }), quota({ id: 'expired', resetsAt: NOW }),
             quota({ id: 'active', resetsAt: new Date(NOW.getTime() + 1) }),
         ] }) })]));
@@ -237,7 +237,7 @@ describe('provider quota JSON', () => {
         });
         const shared = quota({ id: 'codex:primary', bucket: 'codex', kind: 'session', slot: 'primary' });
         const data = renderJson(snapshot([
-            provider({ quota: observation({
+            vendor({ quota: observation({
                 quotas:   [spark, shared],
                 balances: [
                     { kind: 'workspace_credits', limitId: 'codex_bengalfox', amountUnit: 'credits', remaining: '7' },
@@ -246,7 +246,7 @@ describe('provider quota JSON', () => {
                 ],
                 spendLimits: [{ limitId: 'codex_bengalfox', reached: true }, { limitId: 'codex', reached: true }, { reached: true }],
             }) }),
-            provider({ provider: 'other', quota: observation({ quotas: [spark] }) }),
+            vendor({ provider: 'other', quota: observation({ quotas: [spark] }) }),
         ]));
         expect(array(object(data.codex).quotas).map(value => object(value).id)).toEqual(['codex:primary']);
         expect(array(object(data.codex).balances).map(value => object(value).limit_id)).toEqual(['codex', undefined]);
@@ -260,17 +260,17 @@ describe('provider quota JSON', () => {
         ['model id', quota({ id: 'different', scope: { model: { id: 'gpt-5.3-codex-spark' } } })],
         ['model display name', quota({ id: 'different', scope: { model: { displayName: 'GPT-5.3-Codex-Spark' } } })],
     ] as const)('filters the verified Spark %s alias', (_case, spark) => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [spark] }) })]));
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [spark] }) })]));
         expect(data.quotas).toBeUndefined();
     });
 
     it('does not filter a Codex row on its id alone', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({ quotas: [quota({ id: 'codex_bengalfox', bucket: 'codex' })] }) })]));
+        const data = providerJson(snapshot([vendor({ quota: observation({ quotas: [quota({ id: 'codex_bengalfox', bucket: 'codex' })] }) })]));
         expect(array(data.quotas).map(value => object(value).id)).toEqual(['codex_bengalfox']);
     });
 
     it('filters balances and spend limits linked to a Spark alias through its bucket, not its id', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({
+        const data = providerJson(snapshot([vendor({ quota: observation({
             quotas:      [quota({ id: 'retired-meter:primary', bucket: 'retired-meter', slot: 'primary', name: 'GPT-5.3-Codex-Spark' })],
             balances:    [{ kind: 'workspace_credits', limitId: 'retired-meter', remaining: '7' }],
             spendLimits: [{ limitId: 'retired-meter', reached: true }],
@@ -282,7 +282,7 @@ describe('provider quota JSON', () => {
     });
 
     it('filters known Spark-scoped Codex rows even when the quota meter is absent', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({
+        const data = providerJson(snapshot([vendor({ quota: observation({
             balances: [
                 { kind: 'workspace_credits', limitId: 'codex_bengalfox', amountUnit: 'credits', remaining: '7' },
                 { kind: 'workspace_credits', limitId: 'codex', amountUnit: 'credits', remaining: '93' },
@@ -301,7 +301,7 @@ describe('provider quota JSON', () => {
     });
 
     it('retains the same limit id when it belongs to a non-Codex provider', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             provider: 'other',
             quota:    observation({
                 balances:    [{ kind: 'requests', limitId: 'codex_bengalfox', remaining: '7' }],
@@ -319,7 +319,7 @@ describe('provider quota JSON', () => {
 
 describe('rough token estimates', () => {
     it('estimates Codex five-hour and weekly headroom in the cheapest eligible routed model', () => {
-        const report = snapshot([provider({
+        const report = snapshot([vendor({
             history: history('codex'),
             prices:  prices('codex', [
                 { model: 'GPT-5.3-Codex-Spark', input: 0.01, output: 0.01, cacheRead: 0.01, eligible: true },
@@ -375,7 +375,7 @@ describe('rough token estimates', () => {
                 { model: 'gpt-5.6-sol', tokens: sample, costUsd: 0.002 },
             ],
         });
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: scopedHistory,
             prices:  prices('codex', [
                 { model: 'gpt-5.6-luna', input: 1, output: 2, cacheRead: 0.1, eligible: true },
@@ -393,7 +393,7 @@ describe('rough token estimates', () => {
 
     it('matches a model-scoped quota by its stable model id alone', () => {
         const sample = tokens();
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex', {
                 recentModels: [{ model: 'gpt-5.6-sol', tokens: sample, costUsd: 0.002 }],
             }),
@@ -412,7 +412,7 @@ describe('rough token estimates', () => {
         ['surface', { group: undefined, scope: { surface: { id: 'cli' } } }],
         ['unknown group', { group: 'special' }],
     ] as const)('omits an estimate for an unmapped %s scope', (_case, scope) => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex'), prices:  prices('codex'),
             quota:   observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800, ...scope })] }),
         })]));
@@ -421,7 +421,7 @@ describe('rough token estimates', () => {
     });
 
     it('omits an estimate when a provider does not identify the quota window', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex'), prices:  prices('codex'),
             quota:   observation({ quotas: [quota({ id: 'custom', kind: 'other', resetsAt: ESTIMATE_RESET })] }),
         })]));
@@ -430,7 +430,7 @@ describe('rough token estimates', () => {
     });
 
     it('omits a model-scoped weekly estimate with no matching local history', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex'), prices:  prices('codex'),
             quota:   observation({ quotas: [quota({
                 id: 'unknown-weekly', durationSeconds: 604_800, scope: { model: { id: 'unknown-model' } },
@@ -441,7 +441,7 @@ describe('rough token estimates', () => {
     });
 
     it('omits a model-scoped five-hour estimate when its current block belongs to another model', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex', {
                 blocks: [{ ...history('codex').blocks[0], modelNames: ['gpt-5.6-sol', 'gpt-5.6-luna'] }],
             }),
@@ -459,7 +459,7 @@ describe('rough token estimates', () => {
     });
 
     it('breaks equal-price model ties by model id for deterministic output', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex'),
             prices:  prices('codex', [
                 { model: 'z-model', input: 1, output: 1, cacheRead: 1, eligible: true },
@@ -474,14 +474,14 @@ describe('rough token estimates', () => {
     it.each([
         ['inactive', { active: false }],
         ['gap', { gap: true }],
-        ['mixed provider', { mixedProvider: true }],
+        ['mixed provider', { mixedVendor: true }],
         ['different reset', {
             startTime: new Date(ESTIMATE_RESET.getTime() - 5 * 3_600_000 + 1), endTime: new Date(ESTIMATE_RESET.getTime() + 1),
         }],
         ['four-hour duration', { startTime: new Date(ESTIMATE_RESET.getTime() - 4 * 3_600_000) }],
-        ['missing provider', { modelProviders: [] }],
-        ['different provider', { modelProviders: ['anthropic'] }],
-        ['partly different provider', { modelProviders: ['codex', 'anthropic'] }],
+        ['missing provider', { modelVendors: [] }],
+        ['different provider', { modelVendors: ['anthropic'] }],
+        ['partly different provider', { modelVendors: ['codex', 'anthropic'] }],
         ['Spark model', { modelNames: ['GPT-5.3-Codex-Spark'] }],
         ['partly Spark model', { modelNames: ['codex-history-model', 'codex_bengalfox'] }],
         ['missing cost', { costUsd: undefined }],
@@ -490,7 +490,7 @@ describe('rough token estimates', () => {
         const reportHistory = history('codex', {
             blocks: [{ ...history('codex').blocks[0], ...blockOverride }],
         });
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: reportHistory,
             prices:  prices('codex'),
             quota:   observation({ quotas: [
@@ -508,7 +508,7 @@ describe('rough token estimates', () => {
         ['zero cost', { recentModels: [{ model: 'codex-history-model', tokens: tokens(), costUsd: 0 }] }],
         ['no used models', { recentModels: [] }],
     ] as const)('omits a weekly estimate with %s', (_case, historyOverride) => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex', historyOverride), prices:  prices('codex'),
             quota:   observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         })]));
@@ -518,7 +518,7 @@ describe('rough token estimates', () => {
 
     it('ignores an unused model without a reference cost', () => {
         const used = history('codex').recentModels[0];
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex', {
                 recentModels: [
                     { model: 'unused', tokens: tokens({ inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 }) },
@@ -534,7 +534,7 @@ describe('rough token estimates', () => {
 
     it('includes a model whose history contains exactly one token', () => {
         const oneToken = tokens({ inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 1 });
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex', {
                 recentTokens: oneToken,
                 recentModels: [{ model: 'one-token', tokens: oneToken, costUsd: 1 }],
@@ -549,7 +549,7 @@ describe('rough token estimates', () => {
     it('adds the costs and output tokens from every used model', () => {
         const mixedTokens = tokens({ inputTokens: 1, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 2 });
         const outputOnly = tokens({ inputTokens: 0, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 1 });
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex', {
                 recentTokens: tokens({ inputTokens: 1, outputTokens: 2, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 3 }),
                 recentModels: [
@@ -565,7 +565,7 @@ describe('rough token estimates', () => {
     });
 
     it('renders zero remaining at a full bucket and omits an estimate before there is a usable ratio', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex'), prices:  prices('codex'),
             quota:   observation({ quotas: [
                 quota({ id: 'empty', durationSeconds: 604_800, usedPercent: 0 }),
@@ -578,15 +578,15 @@ describe('rough token estimates', () => {
     });
 
     it('estimates the one-percent boundary and suppresses lower or overflowing ratios', () => {
-        const subOnePercent = providerJson(snapshot([provider({
+        const subOnePercent = providerJson(snapshot([vendor({
             history: history('codex'), prices:  prices('codex'),
             quota:   observation({ quotas: [quota({ id: 'sub-one-percent', durationSeconds: 604_800, usedPercent: 0.5 })] }),
         })]));
-        const onePercent = providerJson(snapshot([provider({
+        const onePercent = providerJson(snapshot([vendor({
             history: history('codex'), prices:  prices('codex'),
             quota:   observation({ quotas: [quota({ id: 'one-percent', durationSeconds: 604_800, usedPercent: 1 })] }),
         })]));
-        const overflow = providerJson(snapshot([provider({
+        const overflow = providerJson(snapshot([vendor({
             history: history('codex', {
                 recentModels: [{ model: 'overflowing', tokens: history('codex').recentTokens, costUsd: 0.007 }],
             }),
@@ -598,7 +598,7 @@ describe('rough token estimates', () => {
                 id: 'overflow', durationSeconds: 604_800, usedPercent: 35, scope: { model: { id: 'overflowing' } },
             })] }),
         })]));
-        const roundingOverflow = providerJson(snapshot([provider({
+        const roundingOverflow = providerJson(snapshot([vendor({
             history: history('codex', {
                 recentModels: [{
                     model: 'codex-history-model', tokens: history('codex').recentTokens, costUsd: Number.MAX_VALUE / 1_000_000,
@@ -628,7 +628,7 @@ describe('rough token estimates', () => {
         ['stays above the midpoint', 0.995_000_4, 1_000_000],
     ] as const)('%s when a quota estimate rounds near one million tokens', (_case, costUsd, expected) => {
         const unitInput = tokens({ inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 1 });
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex', {
                 recentTokens: unitInput,
                 recentModels: [{ model: 'boundary', tokens: unitInput, costUsd }],
@@ -644,13 +644,13 @@ describe('rough token estimates', () => {
         const referenceModels = [{
             model: 'shared-model', input: 1, output: 1, cacheRead: 1, cacheWrite: 10, eligible: true,
         }];
-        const anthropic = provider({
+        const anthropic = vendor({
             provider: 'anthropic', history:  history('anthropic'), prices:   prices('anthropic', referenceModels),
             quota:    observation({
                 quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })],
             }),
         });
-        const codex = provider({
+        const codex = vendor({
             history: history('codex'), prices:  prices('codex', referenceModels),
             quota:   observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         });
@@ -660,7 +660,7 @@ describe('rough token estimates', () => {
     });
 
     it('does not apply Codex retired-model exclusions to another provider', () => {
-        const anthropic = provider({
+        const anthropic = vendor({
             provider: 'anthropic', history:  history('anthropic'),
             prices:   prices('anthropic', [{
                 model: 'gpt-5.5', input: 1, output: 1, cacheRead: 1, cacheWrite: 1, eligible: true,
@@ -678,11 +678,11 @@ describe('rough token estimates', () => {
             recentModels: [{ model: 'shared-model', tokens: withoutCache, costUsd: 0.0003 }],
         });
         const price = { model: 'shared-model', input: 1, output: 1, eligible: true };
-        const usable = provider({
+        const usable = vendor({
             provider: 'anthropic', history:  noCacheHistory, prices:   prices('anthropic', [price]),
             quota:    observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         });
-        const missingUsedRate = provider({
+        const missingUsedRate = vendor({
             ...usable,
             history: history('anthropic'),
             prices:  prices('anthropic', [{ ...price, cacheRead: 1 }]),
@@ -701,7 +701,7 @@ describe('rough token estimates', () => {
             recentTokens: tokenMix,
             recentModels: [{ model: 'shared-model', tokens: tokenMix, costUsd: 0.0003 }],
         });
-        const status = provider({
+        const status = vendor({
             provider: providerName,
             history:  oneTokenCacheHistory,
             prices:   prices(providerName, [price]),
@@ -715,7 +715,7 @@ describe('rough token estimates', () => {
 
     it('skips an underflowed price and uses the next finite positive candidate', () => {
         const underflowMix = tokens({ inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 2 });
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex', {
                 recentModels: [{ model: 'observed', tokens: underflowMix, costUsd: 0.001 }],
             }),
@@ -735,7 +735,7 @@ describe('rough token estimates', () => {
         const stale = prices('codex');
         stale.stale = true;
         stale.assumptions = [];
-        const data = providerJson(snapshot([provider({ prices: stale })]));
+        const data = providerJson(snapshot([vendor({ prices: stale })]));
 
         expect(data.estimates).toEqual({
             reference_prices: {
@@ -745,7 +745,7 @@ describe('rough token estimates', () => {
     });
 
     it('keeps history provenance when reference prices are absent', () => {
-        const data = providerJson(snapshot([provider({ history: history('codex') })]));
+        const data = providerJson(snapshot([vendor({ history: history('codex') })]));
 
         expect(object(data.estimates).history).toEqual({
             collector:        'ccusage', coverage:         'local_only', cost_basis:       'calculated_api_reference_usd',
@@ -756,7 +756,7 @@ describe('rough token estimates', () => {
     });
 
     it('keeps price provenance and live quota when local history is absent', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             prices: prices('codex'),
             quota:  observation({ quotas: [quota({ id: 'weekly', durationSeconds: 604_800 })] }),
         })]));
@@ -771,7 +771,7 @@ describe('rough token estimates', () => {
     });
 
     it('keeps live quota but suppresses estimates when the local history section failed', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             history: history('codex'),
             prices:  prices('codex'),
             errors:  [{ section: 'history', code: 'timed_out' }],
@@ -789,7 +789,7 @@ describe('rough token estimates', () => {
     });
 
     it('estimates each eligible DeepSeek model from a fresh USD balance and observed token mix', () => {
-        const deepseek = provider({
+        const deepseek = vendor({
             provider: 'deepseek',
             history:  history('deepseek'),
             prices:   prices('deepseek', [
@@ -822,7 +822,7 @@ describe('rough token estimates', () => {
         ['stays above the midpoint', 1_000_000 / 995_000.4, 1_000_000],
     ] as const)('%s at the two-significant-digit million-token boundary', (_case, unitPrice, expected) => {
         const unitInput = tokens({ inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 1 });
-        const deepseek = provider({
+        const deepseek = vendor({
             provider: 'deepseek',
             history:  history('deepseek', {
                 recentTokens: unitInput,
@@ -842,7 +842,7 @@ describe('rough token estimates', () => {
     });
 
     it('selects only an available unscoped finite USD balance', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
             quota:    observation({
                 balances: [
@@ -865,7 +865,7 @@ describe('rough token estimates', () => {
 
     it.each(['not-a-number', '-1', 'Infinity'])(
         'omits DeepSeek remaining estimates for the invalid balance %s', (remaining) => {
-            const data = providerJson(snapshot([provider({
+            const data = providerJson(snapshot([vendor({
                 provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
                 quota:    observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining }] }),
             })]), 'deepseek');
@@ -875,7 +875,7 @@ describe('rough token estimates', () => {
     );
 
     it('omits DeepSeek remaining estimates when no balance matches the required scope and currency', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
             quota:    observation({ balances: [{ kind: 'eur', currency: 'EUR', remaining: '9.33' }] }),
         })]), 'deepseek');
@@ -885,13 +885,13 @@ describe('rough token estimates', () => {
 
     it('requires DeepSeek history and prices independently and never estimates another provider balance', () => {
         const balance = observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '9.33' }] });
-        const withoutHistory = providerJson(snapshot([provider({
+        const withoutHistory = providerJson(snapshot([vendor({
             provider: 'deepseek', prices: prices('deepseek'), quota: balance,
         })]), 'deepseek');
-        const withoutPrices = providerJson(snapshot([provider({
+        const withoutPrices = providerJson(snapshot([vendor({
             provider: 'deepseek', history: history('deepseek'), quota: balance,
         })]), 'deepseek');
-        const codex = providerJson(snapshot([provider({
+        const codex = providerJson(snapshot([vendor({
             history: history('codex'), prices:  prices('codex'),
             quota:   observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '9.33' }] }),
         })]));
@@ -903,7 +903,7 @@ describe('rough token estimates', () => {
 
     it('supports a missing cache rate for a mix that did not use cache', () => {
         const noCache = tokens({ cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 300 });
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             provider: 'deepseek',
             history:  history('deepseek', {
                 recentTokens: noCache,
@@ -923,11 +923,11 @@ describe('rough token estimates', () => {
     it('omits non-finite DeepSeek token conversions', () => {
         const tiny = Number.MIN_VALUE;
         const tinyPrice = prices('deepseek', [{ model: 'tiny', input: tiny, output: tiny, cacheRead: tiny, eligible: true }]);
-        const hugeBalance = providerJson(snapshot([provider({
+        const hugeBalance = providerJson(snapshot([vendor({
             provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
             quota:    observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: `${Number.MAX_VALUE}` }] }),
         })]), 'deepseek');
-        const tinyRate = providerJson(snapshot([provider({
+        const tinyRate = providerJson(snapshot([vendor({
             provider: 'deepseek', history:  history('deepseek'), prices:   tinyPrice,
             quota:    observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '0' }] }),
         })]), 'deepseek');
@@ -937,7 +937,7 @@ describe('rough token estimates', () => {
     });
 
     it('allows a zero DeepSeek balance but suppresses remaining estimates for stale or spend-blocked quota', () => {
-        const base = provider({
+        const base = vendor({
             provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
             quota:    observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '0' }] }),
         });
@@ -965,7 +965,7 @@ describe('rough token estimates', () => {
         ['a spend limit that has not been reached', [{ reached: false }]],
         ['a spend limit with an unspecified reached state', [{ limitId: 'x' }]],
     ])('still produces DeepSeek remaining estimates alongside %s', (_case, spendLimits) => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
             quota:    observation({
                 balances: [{ kind: 'prepaid', currency: 'USD', remaining: '1' }],
@@ -981,7 +981,7 @@ describe('rough token estimates', () => {
     });
 
     it('retains DeepSeek remaining estimates after an unrelated report section fails', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             provider: 'deepseek', history:  history('deepseek'), prices:   prices('deepseek'),
             errors:   [{ section: 'spend_limits', code: 'timed_out' }],
             quota:    observation({ balances: [{ kind: 'prepaid', currency: 'USD', remaining: '1' }] }),
@@ -995,7 +995,7 @@ describe('rough token estimates', () => {
     });
 
     it('keeps Anthropic history for SDK quota estimates without exposing the skipped quota lookup', () => {
-        const anthropic = provider({
+        const anthropic = vendor({
             provider: 'anthropic', status:   'error', quota:    undefined,
             errors:   [{ section: 'quota', code: 'credential_unavailable' }],
             history:  history('anthropic'), prices:   prices('anthropic'),
@@ -1010,7 +1010,7 @@ describe('rough token estimates', () => {
             },
         };
         const line = composeAmbientLines({
-            self, now: NOW, timezone: TIMEZONE, providerSnapshot: snapshot([provider(), anthropic]), anthropicQuotaSource: 'sdk',
+            self, now: NOW, timezone: TIMEZONE, providerSnapshot: snapshot([vendor(), anthropic]), anthropicQuotaSource: 'sdk',
         })[0] ?? '';
         const data = object(quotaLineJson(line).anthropic);
 
@@ -1023,7 +1023,7 @@ describe('rough token estimates', () => {
     });
 
     it('keeps expired report provenance but does not use it to estimate an SDK quota', () => {
-        const anthropic = provider({
+        const anthropic = vendor({
             provider: 'anthropic', history: history('anthropic'), prices: prices('anthropic'),
         });
         const self = {
@@ -1038,7 +1038,7 @@ describe('rough token estimates', () => {
             self,
             now:                  NOW,
             timezone:             TIMEZONE,
-            providerSnapshot:     snapshot([anthropic, provider()], { expiresAt: NOW }),
+            providerSnapshot:     snapshot([anthropic, vendor()], { expiresAt: NOW }),
             anthropicQuotaSource: 'sdk',
         })[0] ?? '';
         const report = quotaLineJson(line);
@@ -1061,12 +1061,12 @@ describe('rough token estimates', () => {
                 at:       NOW,
             },
         };
-        const anthropic = provider({
+        const anthropic = vendor({
             provider: 'anthropic', status:   'error', quota:    undefined,
             errors:   [{ section: 'quota', code: 'credential_unavailable' }],
             history:  history('anthropic'), prices:   prices('anthropic'),
         });
-        const codex = provider({ history: history('codex'), prices: prices('codex') });
+        const codex = vendor({ history: history('codex'), prices: prices('codex') });
         const line = composeAmbientLines({
             self, now: NOW, timezone: TIMEZONE, providerSnapshot: snapshot([codex, anthropic]), anthropicQuotaSource: 'provider',
         })[0] ?? '';
@@ -1086,7 +1086,7 @@ describe('rough token estimates', () => {
                 at:       NOW,
             },
         };
-        const anthropic = provider({
+        const anthropic = vendor({
             provider: 'anthropic', status:   'error', quota:    undefined,
             errors:   [{ section: 'quota', code: 'credential_unavailable' }],
             history:  history('anthropic'), prices:   prices('anthropic'),
@@ -1109,11 +1109,11 @@ describe('rough token estimates', () => {
 
 describe('balances and report state', () => {
     it('preserves monetary strings and distinguishes balance states', () => {
-        const balances: ProviderBalance[] = [
+        const balances: VendorBalance[] = [
             { kind: 'enterprise', limitId: 'org', unlimited: true }, { kind: 'prepaid', limitId: 'team', available: false },
             { kind: 'cash', currency: 'USD', remaining: '9.35' }, { kind: 'credits', remaining: '120', amountUnit: 'credits' }, { kind: 'grant' },
         ];
-        const data = providerJson(snapshot([provider({ quota: observation({ balances }) })]));
+        const data = providerJson(snapshot([vendor({ quota: observation({ balances }) })]));
         expect(array(data.balances)).toEqual([
             { kind: 'enterprise', limit_id: 'org', status: 'unlimited' }, { kind: 'prepaid', limit_id: 'team', status: 'unknown' },
             { kind: 'cash', currency: 'USD', remaining: '9.35' }, { kind: 'credits', remaining: '120', amount_unit: 'credits' },
@@ -1122,7 +1122,7 @@ describe('balances and report state', () => {
     });
 
     it('shows only reached spend limits, keyed by limit id', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({
+        const data = providerJson(snapshot([vendor({ quota: observation({
             spendLimits: [
                 { limitId: 'codex', reached: false, enabled: true, limit: '100', used: '17.5', usedPercent: 17.5 },
                 { limitId: 'codex_team', reached: true, enabled: true, limit: '50', used: '50', usedPercent: 100 },
@@ -1133,14 +1133,14 @@ describe('balances and report state', () => {
     });
 
     it('omits spend limits entirely when none is reached', () => {
-        const data = providerJson(snapshot([provider({ quota: observation({
+        const data = providerJson(snapshot([vendor({ quota: observation({
             spendLimits: [{ limitId: 'codex', reached: false }, { limitId: 'codex_team' }],
         }) })]));
         expect(data.spend_limits).toBeUndefined();
     });
 
     it('ages cached data from report generation and keeps report status separate', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             status: 'partial', freshness: { cached: true, stale: false, ageSeconds: 45 },
         })], { generatedAt: new Date(NOW.getTime() - 30_000) }));
         expect(data.quota_lookup).toEqual({ status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z', cached: true, age_seconds: 75 });
@@ -1148,7 +1148,7 @@ describe('balances and report state', () => {
     });
 
     it('does not turn a future generation stamp into negative cache age', () => {
-        const data = providerJson(snapshot([provider({ freshness: { cached: true, stale: false, ageSeconds: 45 } })], {
+        const data = providerJson(snapshot([vendor({ freshness: { cached: true, stale: false, ageSeconds: 45 } })], {
             generatedAt: new Date(NOW.getTime() + 30_000),
         }));
         expect(object(data.quota_lookup).age_seconds).toBe(45);
@@ -1158,7 +1158,7 @@ describe('balances and report state', () => {
         ['slightly above the lower rounding boundary', 0.5005, 2],
         ['slightly below the upper rounding boundary', 0.499, 1],
     ] as const)('rounds fractional cached age %s using seconds', (_case, ageSeconds, expected) => {
-        const data = providerJson(snapshot([provider({ freshness: { cached: true, stale: false, ageSeconds } })], {
+        const data = providerJson(snapshot([vendor({ freshness: { cached: true, stale: false, ageSeconds } })], {
             generatedAt: new Date(NOW.getTime() - 1000),
         }));
         expect(object(data.quota_lookup).age_seconds).toBe(expected);
@@ -1166,7 +1166,7 @@ describe('balances and report state', () => {
 
     it('uses unknown for report expiry and emits the actual expiry time', () => {
         const expiresAt = new Date(NOW.getTime() - 1);
-        const data = providerJson(snapshot([provider({ status: 'error' })], { expiresAt }));
+        const data = providerJson(snapshot([vendor({ status: 'error' })], { expiresAt }));
         expect(data.quota_lookup).toEqual({
             status:            'unknown', error:             'quota_data_stale', last_attempt_at:   '2026-09-09T22:07:00.000Z',
             report_expired_at: '2026-09-09T22:06:59.999Z',
@@ -1175,7 +1175,7 @@ describe('balances and report state', () => {
     });
 
     it('expires a report exactly at its expiry boundary', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             quota: observation({ quotas: [quota({ id: 'fresh-until-boundary' })] }),
         })], { expiresAt: NOW }));
         expect(data).toEqual({
@@ -1187,9 +1187,9 @@ describe('balances and report state', () => {
     });
 
     it.each([
-        ['stale', provider({ freshness: { cached: false, stale: true, ageSeconds: 0 } }), 'quota_data_stale'],
-        ['missing', provider({ quota: undefined }), 'quota_api_no_observation'],
-        ['unknown reading', provider({ quota: observation({ available: false }) }), 'quota_api_no_reading'],
+        ['stale', vendor({ freshness: { cached: false, stale: true, ageSeconds: 0 } }), 'quota_data_stale'],
+        ['missing', vendor({ quota: undefined }), 'quota_api_no_observation'],
+        ['unknown reading', vendor({ quota: observation({ available: false }) }), 'quota_api_no_reading'],
     ] as const)('marks a %s quota reading unknown', (_case, status, error) => {
         const lookup = object(providerJson(snapshot([status])).quota_lookup);
         expect(lookup).toMatchObject({ status: 'unknown', error, last_attempt_at: '2026-09-09T22:07:00.000Z' });
@@ -1197,7 +1197,7 @@ describe('balances and report state', () => {
 
     it('labels a 429 as a quota API error and shows retry time', () => {
         const retryAt = new Date('2026-09-09T22:12:00Z');
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             provider: 'anthropic', status:   'partial', quota:    undefined,
             errors:   [{ section: 'quota', code: 'rate_limited', retryAt }, { section: 'history', code: 'timed_out' }],
         })]), 'anthropic');
@@ -1213,7 +1213,7 @@ describe('balances and report state', () => {
     it('shows the real upstream attempt time beside the retry time when the quota error carries it', () => {
         const retryAt = new Date('2026-09-09T22:12:00Z');
         const attemptedAt = new Date('2026-09-09T22:03:00Z');
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             provider: 'anthropic', status:   'partial', quota:    undefined,
             errors:   [{ section: 'quota', code: 'rate_limited', retryAt, attemptedAt }],
         })]), 'anthropic');
@@ -1224,7 +1224,7 @@ describe('balances and report state', () => {
     });
 
     it('maps multiple quota API errors and preserves unrelated report errors', () => {
-        const data = providerJson(snapshot([provider({ status: 'partial', errors: [
+        const data = providerJson(snapshot([vendor({ status: 'partial', errors: [
             { section: 'quota', code: 'unauthorized' }, { section: 'balances', code: 'timed_out' },
             { section: 'quota', code: 'malformed' },
         ] })]));
@@ -1238,7 +1238,7 @@ describe('balances and report state', () => {
     });
 
     it('keeps non-quota errors visible without discarding fresh quota', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             status: 'partial', errors: [{ section: 'balances', code: 'timed_out' }],
             quota:  observation({ quotas: [quota({ resetsAt: undefined })] }),
         })]));
@@ -1248,11 +1248,11 @@ describe('balances and report state', () => {
     });
 
     it('adds the shared-subscription note when requested', () => {
-        expect(renderJson(snapshot([provider()]), NOW, true).note).toBe('Subscription quotas are shared; provider balances are separate.');
+        expect(renderJson(snapshot([vendor()]), NOW, true).note).toBe('Subscription quotas are shared; provider balances are separate.');
     });
 
     it('omits report metadata and the shared note exactly when they are absent', () => {
-        expect(renderJson(snapshot([provider()]))).toEqual({
+        expect(renderJson(snapshot([vendor()]))).toEqual({
             codex: {
                 quota_lookup: { status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z' },
                 observed_at:  '2026-09-09T22:07:00.000Z',
@@ -1265,14 +1265,14 @@ describe('balances and report state', () => {
         ['HTTP_429', 'quota_api_rate_limited'],
         ['Token Expired', 'quota_api_token_expired'],
     ] as const)('normalizes the quota API error code %s', (code, expected) => {
-        const data = providerJson(snapshot([provider({ quota: undefined, errors: [{ section: 'quota', code }] })]));
+        const data = providerJson(snapshot([vendor({ quota: undefined, errors: [{ section: 'quota', code }] })]));
         expect(data.quota_lookup).toEqual({
             status: 'unknown', error: expected, last_attempt_at: '2026-09-09T22:07:00.000Z',
         });
     });
 
     it('maps http_429 to the quota API rate-limit error', () => {
-        const data = providerJson(snapshot([provider({
+        const data = providerJson(snapshot([vendor({
             quota: undefined, errors: [{ section: 'quota', code: 'http_429' }],
         })]));
         expect(data).toEqual({
@@ -1284,10 +1284,10 @@ describe('balances and report state', () => {
 });
 
 describe('shared burn pace', () => {
-    function paceReport(current: ProviderQuota, prior: ProviderQuota, elapsedMs: number, priorCollectedAt?: Date): ProviderSnapshot {
+    function paceReport(current: VendorQuota, prior: VendorQuota, elapsedMs: number, priorCollectedAt?: Date): VendorSnapshot {
         const previousAt = priorCollectedAt ?? new Date(NOW.getTime() - elapsedMs);
-        const previous = snapshot([provider({ quota: observation({ collectedAt: previousAt, quotas: [prior] }) })], { generatedAt: previousAt });
-        return snapshot([provider({ quota: observation({ quotas: [current] }) })], { previous });
+        const previous = snapshot([vendor({ quota: observation({ collectedAt: previousAt, quotas: [prior] }) })], { generatedAt: previousAt });
+        return snapshot([vendor({ quota: observation({ quotas: [current] }) })], { previous });
     }
 
     it('computes positive pace at the exact one-minute boundary', () => {
@@ -1333,9 +1333,9 @@ describe('shared burn pace', () => {
         const noReset = providerJson(paceReport(
             quota({ resetsAt: undefined, usedPercent: 35 }), quota({ resetsAt: undefined, usedPercent: 34 }), 3_600_000
         ));
-        const noPrevious = providerJson(snapshot([provider({ quota: observation({ quotas: [quota()] }) })]));
-        const noPriorQuota = providerJson(snapshot([provider({ quota: observation({ quotas: [quota()] }) })], {
-            previous: snapshot([provider({ quota: observation({ collectedAt: new Date(NOW.getTime() - 3_600_000) }) })]),
+        const noPrevious = providerJson(snapshot([vendor({ quota: observation({ quotas: [quota()] }) })]));
+        const noPriorQuota = providerJson(snapshot([vendor({ quota: observation({ quotas: [quota()] }) })], {
+            previous: snapshot([vendor({ quota: observation({ collectedAt: new Date(NOW.getTime() - 3_600_000) }) })]),
         }));
         for(const data of [noReset, noPrevious, noPriorQuota]) {
             expect(object(array(data.quotas)[0]).shared_burn_percent_per_hour).toBeUndefined();
@@ -1344,12 +1344,12 @@ describe('shared burn pace', () => {
 });
 
 describe('direct Anthropic fallback', () => {
-    function fallback(windows: QuotaWindows, expiresAt = new Date(NOW.getTime() + 60_000)): ProviderSnapshot['anthropicFallback'] {
+    function fallback(windows: QuotaWindows, expiresAt = new Date(NOW.getTime() + 60_000)): VendorSnapshot['anthropicFallback'] {
         return { collectedAt: NOW, expiresAt, windows };
     }
 
     it('inserts a fresh direct fallback when Anthropic is absent', () => {
-        const data = renderJson(snapshot([provider()], { anthropicFallback: fallback({ fiveHour: { utilization: 42 } }) }));
+        const data = renderJson(snapshot([vendor()], { anthropicFallback: fallback({ fiveHour: { utilization: 42 } }) }));
         expect(object(object(data.anthropic).quota_lookup)).toEqual({
             status: 'ok', last_attempt_at: '2026-09-09T22:07:00.000Z', source: 'direct_anthropic',
         });
@@ -1358,8 +1358,8 @@ describe('direct Anthropic fallback', () => {
 
     it('uses direct fallback only for unknown Anthropic data and retains other providers', () => {
         const report = snapshot([
-            provider({ provider: 'anthropic', status: 'error', quota: undefined }),
-            provider({ provider: 'deepseek', quota: observation() }),
+            vendor({ provider: 'anthropic', status: 'error', quota: undefined }),
+            vendor({ provider: 'deepseek', quota: observation() }),
         ], { anthropicFallback: fallback({ sevenDay: { utilization: 61 } }) });
         const data = renderJson(report);
         expect(array(object(data.anthropic).quotas)).toEqual([{
@@ -1375,7 +1375,7 @@ describe('direct Anthropic fallback', () => {
         ['quota API error', { errors: [{ section: 'quota', code: 'timed_out' }] }, {}],
         ['expired report', {}, { expiresAt: new Date(NOW.getTime() - 1) }],
     ] as const)('uses the direct fallback for an Anthropic %s', (_case, providerOverrides, snapshotOverrides) => {
-        const anthropic = provider({ provider: 'anthropic', quota: observation(), ...providerOverrides });
+        const anthropic = vendor({ provider: 'anthropic', quota: observation(), ...providerOverrides });
         const data = renderJson(snapshot([anthropic], {
             anthropicFallback: fallback({ fiveHour: { utilization: 42 } }), ...snapshotOverrides,
         }));
@@ -1383,13 +1383,13 @@ describe('direct Anthropic fallback', () => {
     });
 
     it('keeps fresh Anthropic provider data instead of replacing it', () => {
-        const anthropic = provider({ provider: 'anthropic', quota: observation({ quotas: [quota({ id: 'provider-limit' })] }) });
+        const anthropic = vendor({ provider: 'anthropic', quota: observation({ quotas: [quota({ id: 'provider-limit' })] }) });
         const data = renderJson(snapshot([anthropic], { anthropicFallback: fallback({ fiveHour: { utilization: 99 } }) }));
         expect(object(array(object(data.anthropic).quotas)[0]).id).toBe('provider-limit');
     });
 
     it('keeps a fresh protocol observation when its optional available field is omitted', () => {
-        const anthropic = provider({
+        const anthropic = vendor({
             provider: 'anthropic',
             quota:    {
                 collectedAt: NOW,
@@ -1409,7 +1409,7 @@ describe('direct Anthropic fallback', () => {
     });
 
     it('does not replace fresh data after an unrelated report section failed', () => {
-        const anthropic = provider({
+        const anthropic = vendor({
             provider: 'anthropic', status: 'partial', errors: [{ section: 'balances', code: 'timed_out' }], quota: observation(),
         });
         const data = renderJson(snapshot([anthropic], { anthropicFallback: fallback({ fiveHour: { utilization: 99 } }) }));
@@ -1441,7 +1441,7 @@ describe('direct Anthropic fallback', () => {
 
 describe('mutation regression boundaries', () => {
     it('serializes quota headroom to ten decimal places', () => {
-        const line = render(snapshot([provider({ quota: observation({ quotas: [quota({ usedPercent: 33.333_333_333_33 })] }) })]));
+        const line = render(snapshot([vendor({ quota: observation({ quotas: [quota({ usedPercent: 33.333_333_333_33 })] }) })]));
         expect(line).toContain('"remaining_percent": 66.6666666667,');
     });
 });

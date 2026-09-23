@@ -18,7 +18,7 @@ import {
 import { DiscordRateLimiter } from './rate-limiter';
 import type { BskySetupResult } from './setup/bsky-setup';
 import { setupInboxAndCatchUp, submitConductorCatchUp } from './setup/catchup-setup';
-import type { DiscordEnvelopeProvider } from './setup/conductor-processor';
+import type { DiscordEnvelopeDeps } from './setup/conductor-processor';
 import { setupCoordinatorIntegration } from './setup/coordinator-setup';
 import { channelListProvider, resolveNames as resolveEnvelopeNames, toEnvelopeInput } from './setup/discord-envelope-provider';
 import type { EmailSetupResult } from './setup/email-setup';
@@ -1139,7 +1139,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     // The conductor's Discord-facing dependencies bind to this readyClient/
                     // channelRegistry — built here (not earlier) because both only exist from
                     // clientReady onward.
-                    const envelopeProvider: DiscordEnvelopeProvider = {
+                    const envelopeProvider: DiscordEnvelopeDeps = {
                         resolveNames: resolveEnvelopeNames(channelRegistry, readyClient),
                         toEnvelopeInput,
                         channelList:  channelListProvider(channelRegistry, readyClient),

@@ -103,8 +103,8 @@ function isLaunchRestrictedEffort(effort: SubagentEffort): boolean {
  */
 export const SUBAGENT_LAUNCH_TOOLS: readonly string[] = ['Agent', 'Task', 'Workflow'];
 
-/** Model-pinned routes supplied by utraque. Names encode effort because AgentInput cannot. Cross-provider routes retain their own restricted flag. */
-export const CROSS_PROVIDER_SUBAGENTS = {
+/** Model-pinned routes supplied by utraque. Names encode effort because AgentInput cannot. Cross-vendor routes retain their own restricted flag. */
+export const CROSS_VENDOR_SUBAGENTS = {
     'astra-high':          { model: 'anthropic-compat.astra', effort: 'high', restricted: false },
     'luna-medium':         { model: 'anthropic-compat.luna', effort: 'medium', restricted: true },
     'terra-high':          { model: 'anthropic-compat.terra', effort: 'high', restricted: false },
@@ -128,7 +128,7 @@ export const CROSS_PROVIDER_SUBAGENTS = {
  * into everything it launches.
  * @returns The `agents` map for the SDK `Options`, keyed by sub-agent type
  */
-export function buildSubagentAgents(subagentSystemPrompt: () => string, includeCrossProvider = true): Record<string, AgentDefinition> {
+export function buildSubagentAgents(subagentSystemPrompt: () => string, includeCrossVendor = true): Record<string, AgentDefinition> {
     const prompt = subagentSystemPrompt();
 
     /** One tier's definition: the shared prompt, its own effort, and a launch ban for the cheap tiers. */
@@ -141,8 +141,8 @@ export function buildSubagentAgents(subagentSystemPrompt: () => string, includeC
         };
     }
 
-    const crossProvider = includeCrossProvider
-        ? Object.fromEntries(Object.entries(CROSS_PROVIDER_SUBAGENTS).map(([name, route]): [string, AgentDefinition] => [name, {
+    const crossVendor = includeCrossVendor
+        ? Object.fromEntries(Object.entries(CROSS_VENDOR_SUBAGENTS).map(([name, route]): [string, AgentDefinition] => [name, {
             description: `Utraque ${route.model} sub-agent at ${route.effort} effort; select this named definition and omit the Agent model override.`,
             prompt,
             model:       route.model,
@@ -157,7 +157,7 @@ export function buildSubagentAgents(subagentSystemPrompt: () => string, includeC
             ...tier('high'),
             description: 'General-purpose Isambard sub-agent — the same as `high`; pass the model on the launch.',
         },
-        ...crossProvider,
+        ...crossVendor,
     };
 }
 
@@ -290,7 +290,7 @@ export interface BuildSessionQueryOptionsParams {
     /** Returns true while the session is mid-interrupt, to classify the SDK's expected abort stderr as non-error */
     isInterrupting:       () => boolean
     /** Whether utraque model-pinned agent definitions should be registered. */
-    crossProviderRoutes?: boolean
+    crossVendorRoutes?:   boolean
 }
 
 /**
@@ -300,7 +300,7 @@ export interface BuildSessionQueryOptionsParams {
  * @returns Query options object for Agent SDK, satisfying `Options`
  */
 export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams) {
-    const { role, systemPrompt, subagentSystemPrompt, mcpServers, plugins, hooks, resume, mainModel, fallbackModel, isInterrupting, crossProviderRoutes = true } = params;
+    const { role, systemPrompt, subagentSystemPrompt, mcpServers, plugins, hooks, resume, mainModel, fallbackModel, isInterrupting, crossVendorRoutes = true } = params;
 
     return {
         model:           mainModel,
@@ -309,7 +309,7 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
         // Persisted session title only — NOT the messaging identity; see SESSION_PEER_NAMES.
         title:           SESSION_PEER_NAMES[role],
         tools:           EXPLICIT_TOOLS,
-        agents:          buildSubagentAgents(subagentSystemPrompt, crossProviderRoutes),
+        agents:          buildSubagentAgents(subagentSystemPrompt, crossVendorRoutes),
         mcpServers:      buildMcpServers(mcpServers),
         plugins:         plugins && plugins.length > 0 ? plugins : undefined,
         permissionMode:  'acceptEdits' as const,

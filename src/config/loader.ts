@@ -29,21 +29,21 @@ type ConfigKeys = Exclude<keyof SstResource,
 type ValueOf<T> = T extends { value: infer V } ? { value: V | undefined } : { value?: string };
 
 /**
- * Type for SST Resource provider that only requires the value properties.
+ * Type modeling the shape of SST's `Resource` object, restricted to the value properties.
  * Production code uses the full SST Resource; tests can use simpler mocks.
  */
-export type ResourceProvider = {
+export type SstResources = {
     [K in ConfigKeys]: ValueOf<SstResource[K]>
 };
 
 /**
  * Subset of Resource needed for DynamoDB config.
  */
-export interface DynamoDBResourceProvider {
+export interface DynamoDBResources {
     IsambardMemory: { name: string }
 }
 
-export function loadConfig(resources: ResourceProvider = Resource): Config {
+export function loadConfig(resources: SstResources = Resource): Config {
     const rawConfig = {
         app: {
             nodeEnv:  resources.NodeEnv.value,
@@ -187,7 +187,7 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
     return result.data;
 }
 
-export function loadDynamoDBConfig(resources: DynamoDBResourceProvider): DynamoDBConfig {
+export function loadDynamoDBConfig(resources: DynamoDBResources): DynamoDBConfig {
     const rawConfig = {
         tableName: resources.IsambardMemory.name,
     };

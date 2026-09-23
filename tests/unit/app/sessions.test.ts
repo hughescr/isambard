@@ -2262,7 +2262,7 @@ describe('createSessionAmbience', () => {
     function ambienceHarness(overrides: {
         fetch?:                QuotaFetch
         anthropicQuotaSource?: 'provider' | 'sdk'
-        preferProviderReport?: boolean
+        preferVendorReport?:   boolean
         clockAt?:              number
     } = {}) {
         const clock = new FakeClock(overrides.clockAt ?? 0);
@@ -2272,7 +2272,7 @@ describe('createSessionAmbience', () => {
             timezone: TIMEZONE, clock, logger,
             quota:    {
                 fetch,
-                preferProviderReport: overrides.preferProviderReport ?? false,
+                preferVendorReport:   overrides.preferVendorReport ?? false,
                 anthropicQuotaSource: overrides.anthropicQuotaSource,
             },
         });
@@ -2408,7 +2408,7 @@ describe('createSessionAmbience', () => {
             }],
         };
         const h = ambienceHarness({
-            anthropicQuotaSource: 'sdk', preferProviderReport: true,
+            anthropicQuotaSource: 'sdk', preferVendorReport:   true,
             clockAt:              Date.parse(generated), fetch:                async () => okResponse(report),
         });
         h.ambience.register(h.conversation);

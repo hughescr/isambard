@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'bun:test';
 import { QUOTA_LINE_PREFIX, composeAmbientLines, withAmbientLines, type ComposeAmbientLinesParams } from '@/agent/session/ambient-lines';
 import { initialLedger, type Ledger, type LedgerQuota, type LedgerTask, type LedgerTurn } from '@/agent/session/ledger';
-import type { ProviderSnapshot } from '@/agent/session/quota-poller';
+import type { VendorSnapshot } from '@/agent/session/quota-poller';
 
 const TIMEZONE = 'America/Los_Angeles';
 // tests/setup.ts mocks Intl.DateTimeFormat with a fixed, DST-free -8 offset for this zone, so
@@ -326,7 +326,7 @@ describe('composeAmbientLines: the quota line', () => {
     });
 });
 
-function providerSnapshot(usedPercent: number, reset = THU_0900): ProviderSnapshot {
+function vendorSnapshot(usedPercent: number, reset = THU_0900): VendorSnapshot {
     return {
         generatedAt: NOW,
         expiresAt:   new Date(NOW.getTime() + 600_000),
@@ -351,7 +351,7 @@ function providerSnapshot(usedPercent: number, reset = THU_0900): ProviderSnapsh
 
 describe('composeAmbientLines: provider reports', () => {
     it('preserves quota id, slot, group, duration and reset while keeping money a balance', () => {
-        const line = compose({ providerSnapshot: providerSnapshot(35) })[0] ?? '';
+        const line = compose({ providerSnapshot: vendorSnapshot(35) })[0] ?? '';
         expect(line).toContain('"id": "weekly_primary"');
         expect(line).toContain('"group": "general"');
         expect(line).toContain('"window": "1w"');
@@ -360,9 +360,9 @@ describe('composeAmbientLines: provider reports', () => {
     });
 
     it('shows burn only for comparable samples in the same reset window', () => {
-        const snapshot = providerSnapshot(35);
+        const snapshot = vendorSnapshot(35);
         snapshot.providers[0].quota!.collectedAt = new Date(NOW.getTime() - 30 * 60_000);
-        const prior = providerSnapshot(25);
+        const prior = vendorSnapshot(25);
         prior.generatedAt = new Date(NOW.getTime() - 90 * 60_000);
         const priorCodex = prior.providers[0];
         priorCodex.quota!.collectedAt = prior.generatedAt;
@@ -376,8 +376,8 @@ describe('composeAmbientLines: provider reports', () => {
     });
 
     it('shows urgent burn above 100pp/h, but suppresses pace when reset identity is unknown', () => {
-        const snapshot = providerSnapshot(35);
-        const prior = providerSnapshot(25);
+        const snapshot = vendorSnapshot(35);
+        const prior = vendorSnapshot(25);
         prior.generatedAt = new Date(NOW.getTime() - 5 * 60_000);
         prior.providers[0].quota!.collectedAt = prior.generatedAt;
         snapshot.previous = prior;
@@ -389,7 +389,7 @@ describe('composeAmbientLines: provider reports', () => {
     });
 
     it('uses a fresh direct Claude fallback without hiding stale Codex and DeepSeek state', () => {
-        const snapshot = providerSnapshot(35);
+        const snapshot = vendorSnapshot(35);
         for(const provider of snapshot.providers) {
             provider.freshness.stale = true;
         }
@@ -403,7 +403,7 @@ describe('composeAmbientLines: provider reports', () => {
     });
 
     it('uses SDK ledger quota without exposing the deliberately skipped Anthropic lookup', () => {
-        const snapshot = providerSnapshot(35);
+        const snapshot = vendorSnapshot(35);
         snapshot.providers = [{
             provider:    'anthropic', status:      'partial', lastAttempt: NOW,
             freshness:   { cached: false, stale: false, ageSeconds: 0 }, quota:       undefined,
@@ -425,7 +425,7 @@ describe('composeAmbientLines: provider reports', () => {
 
     it('adds SDK ledger values when an otherwise mixed provider report omits Anthropic', () => {
         const data = quotaJson(compose({
-            self: ledger('conversation', { quota: QUOTA }), providerSnapshot: providerSnapshot(35), anthropicQuotaSource: 'sdk',
+            self: ledger('conversation', { quota: QUOTA }), providerSnapshot: vendorSnapshot(35), anthropicQuotaSource: 'sdk',
         })[0]);
 
         expect(data.anthropic).toEqual({
@@ -439,7 +439,7 @@ describe('composeAmbientLines: provider reports', () => {
     });
 
     it('keeps a fresh Anthropic provider observation authoritative over the SDK ledger', () => {
-        const snapshot = providerSnapshot(35);
+        const snapshot = vendorSnapshot(35);
         snapshot.providers = [{
             provider:    'anthropic', status:      'ok', lastAttempt: NOW,
             freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [],
@@ -463,7 +463,7 @@ describe('composeAmbientLines: provider reports', () => {
     });
 
     it('does not present a poll-updated ledger as an SDK fallback', () => {
-        const snapshot = providerSnapshot(35);
+        const snapshot = vendorSnapshot(35);
         snapshot.providers = [{
             provider:    'anthropic', status:      'error', lastAttempt: NOW,
             freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quota:       undefined,
@@ -479,7 +479,7 @@ describe('composeAmbientLines: provider reports', () => {
     });
 
     it('labels an SDK fallback window expired at its reset boundary', () => {
-        const snapshot = providerSnapshot(35);
+        const snapshot = vendorSnapshot(35);
         snapshot.providers = [{
             provider:    'anthropic', status:      'error', lastAttempt: NOW,
             freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quota:       undefined,
@@ -497,7 +497,7 @@ describe('composeAmbientLines: provider reports', () => {
 
     it('reports missing SDK quota explicitly when other providers are present', () => {
         const data = quotaJson(compose({
-            providerSnapshot: providerSnapshot(35), anthropicQuotaSource: 'sdk', sharedQuotaNote: true,
+            providerSnapshot: vendorSnapshot(35), anthropicQuotaSource: 'sdk', sharedQuotaNote: true,
         })[0]);
 
         expect(data.anthropic).toEqual({
@@ -551,7 +551,7 @@ describe('composeAmbientLines: provider reports', () => {
     });
 
     it('does not render an expired report as fresh capacity', () => {
-        const snapshot = providerSnapshot(35);
+        const snapshot = vendorSnapshot(35);
         snapshot.expiresAt = new Date(NOW.getTime() - 1);
         const line = compose({ providerSnapshot: snapshot })[0] ?? '';
         expect(line).toContain('"status": "unknown"');
@@ -571,7 +571,7 @@ describe('withAmbientLines', () => {
 });
 
 it('marks a direct-fallback quota expired at the render-time reset boundary, even when it was collected earlier', () => {
-    const snapshot = providerSnapshot(35);
+    const snapshot = vendorSnapshot(35);
     snapshot.anthropicFallback = {
         collectedAt: new Date(NOW.getTime() - 60_000),
         expiresAt:   new Date(NOW.getTime() + 60_000),

@@ -390,7 +390,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             fetch:                globalThis.fetch,
             url:                  `${gateway.baseUrl.replace(/\/$/, '')}/utraque/providers/v2`,
             headers:              providerHeaders,
-            preferProviderReport: gateway.enabled,
+            preferVendorReport:   gateway.enabled,
             anthropicQuotaSource: 'sdk',
             pollIntervalMs:       config.agent.quota.pollIntervalMs,
             requestTimeoutMs:     gateway.reportRequestTimeoutMs,
@@ -948,7 +948,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             clock:               systemClock,
             logger,
             ambience,
-            crossProviderRoutes: gateway.enabled,
+            crossVendorRoutes:   gateway.enabled,
         });
         function getConversationSessionId(): string | undefined {
             return builtConductor.conductor.status().sessionId;
@@ -986,20 +986,20 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         };
 
         const builtPerchConductor = await createPerchConductor({
-            config:              config.session,
-            queryFn:             query,
-            mcpShared:           mcpSharedDeps,
-            emailServerFactory:  emailSetup?.createEmailMcpServerInstance,
+            config:             config.session,
+            queryFn:            query,
+            mcpShared:          mcpSharedDeps,
+            emailServerFactory: emailSetup?.createEmailMcpServerInstance,
             plugins,
-            contextBuilder:      contextLayer.contextBuilder,
-            identityCache:       identityCacheSlot.cache,
-            taskListReader:      perchTaskListReader,
-            journal:             perchJournal,
-            resumeStore:         perchResumeStore,
-            clock:               systemClock,
+            contextBuilder:     contextLayer.contextBuilder,
+            identityCache:      identityCacheSlot.cache,
+            taskListReader:     perchTaskListReader,
+            journal:            perchJournal,
+            resumeStore:        perchResumeStore,
+            clock:              systemClock,
             logger,
             ambience,
-            crossProviderRoutes: gateway.enabled,
+            crossVendorRoutes:  gateway.enabled,
         });
         function getPerchSessionId(): string | undefined {
             return builtPerchConductor.conductor.status().sessionId;

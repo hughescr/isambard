@@ -8,7 +8,7 @@
  *    the OTHER role's ledger: its open turn, that turn's phase (and the LLM-generated phase
  *    digest riding on it), its running tasks, and — for a live perch slot turn — the slot fields
  *    the perch envelope's {@link import('./types').EnvelopeMeta} put on `Ledger.perch`.
- * 2. **Provider capacity** — a provider-keyed JSON block under `Quota:`. Fresh utraque reports
+ * 2. **Vendor capacity** — a vendor-keyed JSON block under `Quota:`. Fresh utraque reports
  *    carry explicit lookup, observation, window, reset and balance fields. In SDK-only Anthropic
  *    mode, Anthropic instead comes solely from ledger updates whose last source is an SDK
  *    rate-limit event; a missing event is rendered explicitly as unknown. Ledger windows are
@@ -30,15 +30,15 @@ import type { ActivityPhase } from './activity-phase';
 import type { Ledger, LedgerQuota, LedgerTask, QuotaWindow, QuotaWindows } from './ledger';
 import type {
     AnthropicQuotaSource,
-    ProviderBalance,
-    ProviderHistory,
-    ProviderQuota,
-    ProviderReferencePrice,
-    ProviderReferencePrices,
-    ProviderScopeLabel,
-    ProviderSnapshot,
-    ProviderStatus,
-    ProviderTokenMix
+    VendorBalance,
+    VendorHistory,
+    VendorQuota,
+    VendorReferencePrice,
+    VendorReferencePrices,
+    VendorScopeLabel,
+    VendorSnapshot,
+    VendorStatus,
+    VendorTokenMix
 } from './quota-poller';
 import type { SessionRole } from './types';
 
@@ -66,7 +66,7 @@ export interface ComposeAmbientLinesParams {
     /** True to append the shared-subscription note to the quota line — see the module doc. */
     sharedQuotaNote?:      boolean
     /** Latest independently-fresh utraque provider report, when the report route is available. */
-    providerSnapshot?:     ProviderSnapshot
+    providerSnapshot?:     VendorSnapshot
     /** Which Anthropic quota path this composition intentionally treats as authoritative. */
     anthropicQuotaSource?: AnthropicQuotaSource
 }
@@ -195,7 +195,7 @@ function roundedEstimate(value: number): number | undefined {
     return Number.isFinite(rounded) ? rounded : undefined;
 }
 
-function tokenMixData(tokens: ProviderTokenMix): Record<string, number> {
+function tokenMixData(tokens: VendorTokenMix): Record<string, number> {
     return {
         input:          tokens.inputTokens,
         output:         tokens.outputTokens,
@@ -205,7 +205,7 @@ function tokenMixData(tokens: ProviderTokenMix): Record<string, number> {
     };
 }
 
-function usableHistory(provider: ProviderStatus | undefined): ProviderHistory | undefined {
+function usableHistory(provider: VendorStatus | undefined): VendorHistory | undefined {
     return provider?.errors.some(error => error.section === 'history') === true ? undefined : provider?.history;
 }
 
@@ -214,7 +214,7 @@ function excludedEstimateModel(provider: string, model: string): boolean {
     return provider === 'codex' && (normalized === 'gpt-5.3-codex-spark' || normalized === 'codex_bengalfox' || normalized === 'gpt-5.5');
 }
 
-function blendedPrice(provider: string, price: ProviderReferencePrice, tokens: ProviderTokenMix): number | undefined {
+function blendedPrice(provider: string, price: VendorReferencePrice, tokens: VendorTokenMix): number | undefined {
     if((tokens.cacheReadTokens > 0 && price.cacheRead === undefined)
       || (provider === 'anthropic' && tokens.cacheCreationTokens > 0 && price.cacheWrite === undefined)) {
         return undefined;
@@ -231,7 +231,7 @@ function blendedPrice(provider: string, price: ProviderReferencePrice, tokens: P
     return Number.isFinite(blended) && blended > 0 ? blended : undefined;
 }
 
-function matchesModelScope(model: string, scope: ProviderScopeLabel | undefined): boolean {
+function matchesModelScope(model: string, scope: VendorScopeLabel | undefined): boolean {
     if(scope === undefined) {
         return true;
     }
@@ -241,9 +241,9 @@ function matchesModelScope(model: string, scope: ProviderScopeLabel | undefined)
 
 function cheapestPrice(
     provider: string,
-    prices: ProviderReferencePrices,
-    tokens: ProviderTokenMix,
-    scope?: ProviderScopeLabel
+    prices: VendorReferencePrices,
+    tokens: VendorTokenMix,
+    scope?: VendorScopeLabel
 ): { model: string, blended: number } | undefined {
     const candidates = prices.models.flatMap((price) => {
         if(!price.eligible || excludedEstimateModel(provider, price.model) || !matchesModelScope(price.model, scope)) {
@@ -256,7 +256,7 @@ function cheapestPrice(
     return candidates[0];
 }
 
-function referenceCost(models: readonly ProviderHistory['recentModels'][number][]): number | undefined {
+function referenceCost(models: readonly VendorHistory['recentModels'][number][]): number | undefined {
     const usedModels = models.filter(model => model.tokens.totalTokens > 0);
     let cost = 0;
     for(const model of usedModels) {
@@ -269,8 +269,8 @@ function referenceCost(models: readonly ProviderHistory['recentModels'][number][
     return cost > 0 ? cost : undefined;
 }
 
-function combinedTokens(models: readonly ProviderHistory['recentModels'][number][]): ProviderTokenMix {
-    const total: ProviderTokenMix = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 };
+function combinedTokens(models: readonly VendorHistory['recentModels'][number][]): VendorTokenMix {
+    const total: VendorTokenMix = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0 };
     for(const model of models) {
         total.inputTokens += model.tokens.inputTokens;
         total.outputTokens += model.tokens.outputTokens;
@@ -284,7 +284,7 @@ function combinedTokens(models: readonly ProviderHistory['recentModels'][number]
 
 interface EstimateSample {
     basis:  'current_5h_local_ratio' | 'recent_7d_local_ratio'
-    tokens: ProviderTokenMix
+    tokens: VendorTokenMix
     cost:   number
     since:  Date
     until:  Date
@@ -293,14 +293,14 @@ interface EstimateSample {
 function fiveHourEstimateSample(
     provider: string,
     resetsAt: Date,
-    history: ProviderHistory,
-    modelScope: ProviderScopeLabel | undefined
+    history: VendorHistory,
+    modelScope: VendorScopeLabel | undefined
 ): EstimateSample | undefined {
-    const block = history.blocks.find(candidate => candidate.active && !candidate.gap && !candidate.mixedProvider
+    const block = history.blocks.find(candidate => candidate.active && !candidate.gap && !candidate.mixedVendor
       && candidate.endTime.getTime() - candidate.startTime.getTime() === 5 * 3_600_000
       && candidate.endTime.getTime() === resetsAt.getTime()
-      && candidate.modelProviders.length > 0
-      && candidate.modelProviders.every(modelProvider => modelProvider === provider)
+      && candidate.modelVendors.length > 0
+      && candidate.modelVendors.every(modelVendor => modelVendor === provider)
       && candidate.modelNames.every(model => matchesModelScope(model, modelScope))
       && !candidate.modelNames.some(model => excludedEstimateModel(provider, model)));
     return block?.costUsd === undefined || block.costUsd <= 0
@@ -311,7 +311,7 @@ function fiveHourEstimateSample(
         };
 }
 
-function weeklyEstimateSample(history: ProviderHistory, modelScope: ProviderScopeLabel | undefined): EstimateSample | undefined {
+function weeklyEstimateSample(history: VendorHistory, modelScope: VendorScopeLabel | undefined): EstimateSample | undefined {
     const models = history.recentModels.filter(model => matchesModelScope(model.model, modelScope));
     const cost = referenceCost(models);
     const tokens = combinedTokens(models);
@@ -327,8 +327,8 @@ function estimateSample(
     provider: string,
     window: string | undefined,
     resetsAt: Date | undefined,
-    history: ProviderHistory,
-    modelScope: ProviderScopeLabel | undefined
+    history: VendorHistory,
+    modelScope: VendorScopeLabel | undefined
 ): EstimateSample | undefined {
     if(window === '1w') {
         return weeklyEstimateSample(history, modelScope);
@@ -343,9 +343,9 @@ function quotaEstimateData(
     window: string | undefined,
     usedPercent: number,
     resetsAt: Date | undefined,
-    history: ProviderHistory | undefined,
-    prices: ProviderReferencePrices | undefined,
-    modelScope?: ProviderScopeLabel
+    history: VendorHistory | undefined,
+    prices: VendorReferencePrices | undefined,
+    modelScope?: VendorScopeLabel
 ): Record<string, unknown> | undefined {
     if(history === undefined || prices === undefined || usedPercent < 1) {
         return undefined;
@@ -371,7 +371,7 @@ function quotaEstimateData(
     };
 }
 
-function historyEstimateData(history: ProviderHistory | undefined): Record<string, unknown> | undefined {
+function historyEstimateData(history: VendorHistory | undefined): Record<string, unknown> | undefined {
     return history === undefined
         ? undefined
         : {
@@ -384,7 +384,7 @@ function historyEstimateData(history: ProviderHistory | undefined): Record<strin
         };
 }
 
-function referencePriceData(prices: ProviderReferencePrices | undefined): Record<string, unknown> | undefined {
+function referencePriceData(prices: VendorReferencePrices | undefined): Record<string, unknown> | undefined {
     return prices === undefined
         ? undefined
         : {
@@ -397,8 +397,8 @@ function referencePriceData(prices: ProviderReferencePrices | undefined): Record
 }
 
 function deepSeekRemainingData(
-    provider: ProviderStatus,
-    history: ProviderHistory | undefined,
+    provider: VendorStatus,
+    history: VendorHistory | undefined,
     quotaFresh: boolean
 ): readonly Record<string, unknown>[] {
     const prices = provider.prices;
@@ -439,8 +439,8 @@ function deepSeekRemainingData(
 }
 
 function providerEstimatesData(
-    provider: ProviderStatus,
-    history: ProviderHistory | undefined,
+    provider: VendorStatus,
+    history: VendorHistory | undefined,
     remaining: readonly Record<string, unknown>[]
 ): Record<string, unknown> | undefined {
     const historyData = historyEstimateData(history);
@@ -455,10 +455,10 @@ function providerEstimatesData(
 }
 
 function freshEstimateContext(
-    provider: ProviderStatus | undefined,
-    history: ProviderHistory | undefined,
+    provider: VendorStatus | undefined,
+    history: VendorHistory | undefined,
     reportExpiredAt: Date | undefined
-): { history?: ProviderHistory, prices?: ProviderReferencePrices } {
+): { history?: VendorHistory, prices?: VendorReferencePrices } {
     return reportExpiredAt === undefined ? { history, prices: provider?.prices } : {};
 }
 
@@ -473,7 +473,7 @@ function scopeLabel(label: { id?: string, displayName?: string } | undefined): {
  * The reported duration wins: Codex assigns `kind` by slot position, not by length, so live Codex Pro
  * labels its one-week window `session`. The closed `kind` is only the fallback when no duration is reported.
  */
-function quotaWindow(quota: ProviderQuota): string | undefined {
+function quotaWindow(quota: VendorQuota): string | undefined {
     if(quota.durationSeconds !== undefined) {
         return formatDuration(quota.durationSeconds);
     }
@@ -487,7 +487,7 @@ function quotaWindow(quota: ProviderQuota): string | undefined {
 }
 
 /** Spark was retired from Isambard; hide its dedicated bucket without hiding the shared Codex one. */
-function isSparkQuota(provider: string, quota: ProviderQuota): boolean {
+function isSparkQuota(provider: string, quota: VendorQuota): boolean {
     return provider === 'codex' && (quota.bucket === 'codex_bengalfox'
       || quota.name === 'GPT-5.3-Codex-Spark'
       || quota.scope?.model?.id === 'gpt-5.3-codex-spark'
@@ -498,11 +498,11 @@ function isSparkQuota(provider: string, quota: ProviderQuota): boolean {
  * A slot is only worth labelling when it tells sibling rows of one bucket apart (Codex's
  * `codex:primary` / `codex:secondary` both draw on the `codex` bucket); a row without a slot has nothing to label.
  */
-function needsSlot(quota: ProviderQuota, quotas: readonly ProviderQuota[]): boolean {
+function needsSlot(quota: VendorQuota, quotas: readonly VendorQuota[]): boolean {
     return quotas.some(candidate => candidate.bucket === quota.bucket && candidate.slot !== quota.slot);
 }
 
-function quotaScope(quota: ProviderQuota, includeSlot: boolean): Record<string, unknown> | undefined {
+function quotaScope(quota: VendorQuota, includeSlot: boolean): Record<string, unknown> | undefined {
     const model = scopeLabel(quota.scope?.model);
     const surface = scopeLabel(quota.scope?.surface);
     const slot = includeSlot ? quota.slot : undefined;
@@ -512,13 +512,13 @@ function quotaScope(quota: ProviderQuota, includeSlot: boolean): Record<string, 
     return { group: quota.group, model, surface, slot };
 }
 
-function quotaIdentity(quota: ProviderQuota): string {
+function quotaIdentity(quota: VendorQuota): string {
     const model = quota.scope?.model, surface = quota.scope?.surface;
     return JSON.stringify([quota.id, quota.group, quota.slot, quota.durationSeconds, quota.resetsAt?.toISOString(),
         model?.id, model?.displayName, surface?.id, surface?.displayName]);
 }
 
-function burnPace(quota: ProviderQuota, currentAt: Date, previous: ProviderStatus | undefined): number | undefined {
+function burnPace(quota: VendorQuota, currentAt: Date, previous: VendorStatus | undefined): number | undefined {
     if(quota.resetsAt === undefined) {
         return undefined;
     }
@@ -541,13 +541,13 @@ function burnPace(quota: ProviderQuota, currentAt: Date, previous: ProviderStatu
 
 function providerQuotaData(
     provider: string,
-    quota: ProviderQuota,
-    quotas: readonly ProviderQuota[],
+    quota: VendorQuota,
+    quotas: readonly VendorQuota[],
     collectedAt: Date,
-    previous: ProviderStatus | undefined,
+    previous: VendorStatus | undefined,
     now: Date,
-    history: ProviderHistory | undefined,
-    prices: ProviderReferencePrices | undefined
+    history: VendorHistory | undefined,
+    prices: VendorReferencePrices | undefined
 ): Record<string, unknown> {
     const window = quotaWindow(quota);
     const scope = quotaScope(quota, needsSlot(quota, quotas));
@@ -578,7 +578,7 @@ function providerQuotaData(
     };
 }
 
-function providerBalanceData(balance: ProviderBalance): Record<string, unknown> {
+function providerBalanceData(balance: VendorBalance): Record<string, unknown> {
     const identity = {
         kind:     balance.kind,
         limit_id: balance.limitId,
@@ -605,7 +605,7 @@ function quotaApiError(code: string): string {
         : `quota_api_${normalized}`;
 }
 
-function quotaLookupData(provider: ProviderStatus, reportExpiredAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
+function quotaLookupData(provider: VendorStatus, reportExpiredAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
     const quotaErrors = provider.errors.filter(error => error.section === 'quota');
     const elapsed = Math.max(0, (now.getTime() - generatedAt.getTime()) / 1000);
     const base = {
@@ -636,7 +636,7 @@ function quotaLookupData(provider: ProviderStatus, reportExpiredAt: Date | undef
     return { status: 'unknown', error: 'quota_api_multiple_errors', ...base, errors: quotaErrors.map(entry => quotaApiError(entry.code)) };
 }
 
-function providerData(provider: ProviderStatus, previous: ProviderStatus | undefined, reportExpiredAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
+function providerData(provider: VendorStatus, previous: VendorStatus | undefined, reportExpiredAt: Date | undefined, generatedAt: Date, now: Date): Record<string, unknown> {
     const quotaLookup = quotaLookupData(provider, reportExpiredAt, generatedAt, now);
     const reportErrors = provider.errors.filter(error => error.section !== 'quota');
     const history = usableHistory(provider);
@@ -683,7 +683,7 @@ function providerData(provider: ProviderStatus, previous: ProviderStatus | undef
     };
 }
 
-function providerUnavailable(provider: ProviderStatus, reportExpired: boolean): boolean {
+function providerUnavailable(provider: VendorStatus, reportExpired: boolean): boolean {
     if(provider.freshness.stale || reportExpired || provider.errors.some(error => error.section === 'quota')) {
         return true;
     }
@@ -695,8 +695,8 @@ function windowData(
     window: QuotaWindow,
     now: Date,
     provider?: string,
-    history?: ProviderHistory,
-    prices?: ProviderReferencePrices
+    history?: VendorHistory,
+    prices?: VendorReferencePrices
 ): Record<string, unknown> {
     const identity = { id, window: id === 'five_hour' ? '5h' : '1w' };
     return window.resetsAt !== undefined && window.resetsAt <= now
@@ -731,7 +731,7 @@ function quotaBlock(data: Record<string, unknown>): string {
 }
 
 function sdkProviderLine(
-    snapshot: ProviderSnapshot,
+    snapshot: VendorSnapshot,
     selfQuota: LedgerQuota | undefined,
     otherQuota: LedgerQuota | undefined,
     now: Date,
@@ -768,7 +768,7 @@ function sdkProviderLine(
 }
 
 function providerLine(
-    snapshot: ProviderSnapshot,
+    snapshot: VendorSnapshot,
     selfQuota: LedgerQuota | undefined,
     otherQuota: LedgerQuota | undefined,
     now: Date,
@@ -875,8 +875,8 @@ function ledgerFallbackData(
     other: LedgerQuota | undefined,
     now: Date,
     provider?: string,
-    history?: ProviderHistory,
-    prices?: ProviderReferencePrices
+    history?: VendorHistory,
+    prices?: VendorReferencePrices
 ): Record<string, unknown> | undefined {
     const fiveHour = freshestDatedWindow('fiveHour', self, other);
     const sevenDay = freshestDatedWindow('sevenDay', self, other);
@@ -904,8 +904,8 @@ function sdkLedgerFallbackData(
     self: LedgerQuota | undefined,
     other: LedgerQuota | undefined,
     now: Date,
-    history?: ProviderHistory,
-    prices?: ProviderReferencePrices
+    history?: VendorHistory,
+    prices?: VendorReferencePrices
 ): Record<string, unknown> | undefined {
     const fallback = ledgerFallbackData(
         self?.source === 'headers' ? self : undefined,

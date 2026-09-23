@@ -1,16 +1,16 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { loadConfig, loadDynamoDBConfig, type ResourceProvider, type DynamoDBResourceProvider } from '@/config/loader';
+import { loadConfig, loadDynamoDBConfig, type SstResources, type DynamoDBResources } from '@/config/loader';
 import { ConfigValidationError } from '@/errors/config';
 import { resolveTimezone } from '@/utils/time';
 
 /**
- * Helper to create mock ResourceProvider with sensible defaults.
+ * Helper to create mock SstResources with sensible defaults.
  * Override specific resources by passing partial overrides.
  */
 function createMockResources(
-    overrides?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>
-): ResourceProvider {
-    const defaults: ResourceProvider = {
+    overrides?: Partial<Record<keyof SstResources, { value: string | undefined }>>
+): SstResources {
+    const defaults: SstResources = {
         NodeEnv:               { value: 'development' },
         LogLevel:              { value: 'info' },
         Port:                  { value: '3000' },
@@ -40,7 +40,7 @@ function createMockResources(
 }
 
 /** Minimal email resource overrides for full email config */
-function emailResources(extra?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>) {
+function emailResources(extra?: Partial<Record<keyof SstResources, { value: string | undefined }>>) {
     return createMockResources({
         EmailUser:             { value: 'user@rungie.com' },
         EmailPassword:         { value: 'secret-password' },
@@ -52,7 +52,7 @@ function emailResources(extra?: Partial<Record<keyof ResourceProvider, { value: 
 }
 
 /** Minimal bsky resource overrides for full bsky config */
-function bskyResources(extra?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>) {
+function bskyResources(extra?: Partial<Record<keyof SstResources, { value: string | undefined }>>) {
     return createMockResources({
         BskyHandle:      { value: 'user.bsky.social' },
         BskyAppPassword: { value: 'xxxx-xxxx-xxxx-xxxx' },
@@ -745,7 +745,7 @@ describe.concurrent('loadConfig - Bsky Config', () => {
 
 describe('loadDynamoDBConfig', () => {
     test('should load valid DynamoDB configuration', () => {
-        const resources: DynamoDBResourceProvider = {
+        const resources: DynamoDBResources = {
             IsambardMemory: { name: 'IsambardMemory' },
         };
         const config = loadDynamoDBConfig(resources);
@@ -753,7 +753,7 @@ describe('loadDynamoDBConfig', () => {
     });
 
     test('should throw on missing tableName', () => {
-        const resources: DynamoDBResourceProvider = {
+        const resources: DynamoDBResources = {
             IsambardMemory: { name: '' },
         };
         expect(() => loadDynamoDBConfig(resources)).toThrow('DynamoDB config validation failed');
@@ -766,7 +766,7 @@ describe('loadDynamoDBConfig', () => {
     });
 
     test('should handle different table names', () => {
-        const resources: DynamoDBResourceProvider = {
+        const resources: DynamoDBResources = {
             IsambardMemory: { name: 'CustomTableName' },
         };
         const config = loadDynamoDBConfig(resources);

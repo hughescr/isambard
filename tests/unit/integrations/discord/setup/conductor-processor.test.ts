@@ -15,7 +15,7 @@ import {
 import type { Envelope } from '@/agent/session/types';
 import { createLocalDate, createLocalDateTime, formatCalendarContext, type CalendarEvent } from '@/integrations/caldav';
 import { MessageCoordinator } from '@/integrations/discord/message-coordinator';
-import { createConductorProcessor, type DiscordEnvelopeProvider } from '@/integrations/discord/setup/conductor-processor';
+import { createConductorProcessor, type DiscordEnvelopeDeps } from '@/integrations/discord/setup/conductor-processor';
 import type { ResolvedDiscordNames } from '@/integrations/discord/setup/discord-envelope-provider';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext } from '@/integrations/discord/types';
 import { formatEnvelopeStamp } from '@/utils';
@@ -114,7 +114,7 @@ function makeContextPolicy(overrides: Partial<ContextPolicy> = {}): ContextPolic
     };
 }
 
-function makeEnvelopeProvider(overrides: Partial<DiscordEnvelopeProvider> = {}): DiscordEnvelopeProvider {
+function makeEnvelopeProvider(overrides: Partial<DiscordEnvelopeDeps> = {}): DiscordEnvelopeDeps {
     const resolveNames = jest.fn((context: DiscordMessageContext): Promise<ResolvedDiscordNames> => Promise.resolve({
         channelName: 'general', guildName: 'My Guild', authorName: context.username ?? context.userId, isDM: false,
     }));
@@ -181,7 +181,7 @@ function makeDiscordMessage(channelId: string, id: string, content: string): Mes
 describe('createConductorProcessor', () => {
     let conductor: FakeConductor;
     let contextPolicy: ContextPolicy;
-    let envelopeProvider: DiscordEnvelopeProvider;
+    let envelopeProvider: DiscordEnvelopeDeps;
     let contextBuilder: ReturnType<typeof makeContextBuilder>;
     let logger: ReturnType<typeof makeLogger>;
     let resolveTimezone: ReturnType<typeof jest.fn>;

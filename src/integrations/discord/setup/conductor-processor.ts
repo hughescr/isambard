@@ -42,7 +42,7 @@ import { formatCalendarContext, resolveToInstant } from '@/integrations/caldav';
  * is a closure already bound to a `ChannelRegistryManager`/`Client` pair (see that module's own
  * `resolveNames`/`channelListProvider` factories) — this processor never sees either directly.
  */
-export interface DiscordEnvelopeProvider {
+export interface DiscordEnvelopeDeps {
     resolveNames:    (context: DiscordMessageContext) => Promise<ResolvedDiscordNames>
     toEnvelopeInput: (contexts: DiscordMessageContext[], names: ResolvedDiscordNames, images: PlatformImage[], channelList: string[]) => DiscordEnvelopeInput
     channelList:     () => Promise<string[]>
@@ -52,7 +52,7 @@ export interface DiscordEnvelopeProvider {
 export interface CreateConductorProcessorParams {
     conductor:        Conductor
     contextPolicy:    ContextPolicy
-    envelopeProvider: DiscordEnvelopeProvider
+    envelopeProvider: DiscordEnvelopeDeps
     /** Only the two members this processor needs: the author's stored timezone, and their `[About this user]` memory block text. */
     contextBuilder:   Pick<ContextBuilder, 'loadUserTimezone' | 'loadUserMemories'>
     /** Resolves a possibly-`undefined` stored timezone to a definite IANA zone — injected so tests do not depend on the server's real timezone or `src/utils/time.ts`'s `DateTime.local()` fallback. */

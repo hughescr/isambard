@@ -71,7 +71,7 @@ export {
 export {
     createConductorProcessor,
     type CreateConductorProcessorParams,
-    type DiscordEnvelopeProvider
+    type DiscordEnvelopeDeps
 } from './setup/conductor-processor';
 
 export {
