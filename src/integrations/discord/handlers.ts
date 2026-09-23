@@ -11,9 +11,9 @@ import type { DiscordRateLimiter } from './rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from './response-sender';
 import { withDiscordRetry } from './retry';
 import { type DiscordMessageContext, type UserId, type ChannelId, createGuildId, createChannelId, createUserId  } from './types';
-import { buildDiscordEnvelope, type QuestionRegistry, type AnswerClassifier, type Conductor, type ContextBuilder, type TimeHeaderProvider } from '@/agent';
+import { buildDiscordEnvelope, formatTimeHeader, type QuestionRegistry, type AnswerClassifier, type Conductor, type ContextBuilder, type TimeHeaderProvider } from '@/agent';
 import { ResponseUnavailableError } from '@/errors';
-import { formatTimeHeader, resolveTimezone } from '@/utils';
+import { resolveTimezone } from '@/utils';
 
 /** Type guard: check if a channel supports typing indicators (has sendTyping). */
 function isTypingChannel(channel: unknown): channel is { sendTyping(): Promise<void> } {

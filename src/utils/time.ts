@@ -263,7 +263,7 @@ export function formatShortRelativeTime(date: Date, now: Date = new Date()): str
 
 /**
  * Format duration since a past time in human-readable form.
- * Used for catch-up status generation to describe how long Izzy has been away.
+ * Used for catch-up status generation to describe how long the assistant has been away.
  * @param since - The past timestamp
  * @returns Human readable string like "3 hours", "overnight", "2 days"
  */
@@ -297,40 +297,56 @@ export function formatTimeSince(since: Date): string {
 }
 
 /**
- * Formats a time header with UTC, Izzy's timezone, and optionally the user's timezone.
- * Always includes UTC and Izzy (server) timezone lines.
- * Includes user timezone line only if provided and different from Izzy's timezone.
- * @param userTimezone - Optional IANA timezone string for the user
- * @returns Formatted time header with 2-3 lines depending on timezone configuration
+ * Dependencies for {@link createTimeHeaderFormatter}: the label a time header's server-timezone
+ * line is stamped with.
+ */
+export interface TimeHeaderFormatterDeps {
+    /** Label for the server-timezone line, e.g. `'- ${selfLabel}: ...'`. Pure utils has no
+     * product-name knowledge, so the caller supplies it — see `src/agent/time-header.ts` for
+     * the bound instance every producer in this codebase actually imports. */
+    selfLabel: string
+}
+
+/**
+ * Builds a time header formatter with UTC, the caller-labelled server timezone, and optionally
+ * the user's timezone. Always includes UTC and the server-timezone lines.
+ * Includes a user timezone line only if provided and different from the server timezone.
+ * @param deps - See {@link TimeHeaderFormatterDeps}
+ * @returns A function taking an optional IANA user timezone string and returning a formatted
+ * time header with 2-3 lines depending on timezone configuration
  * @example
  * ```
- * ## Current Time
- * - UTC: 2026-02-09T22:30:00.000Z (Sunday evening)
- * - Izzy: 2026-02-09T14:30:00 America/Los_Angeles (Sunday afternoon)
- * - User: 2026-02-09T17:30:00 America/New_York (Sunday evening)
+ * const formatTimeHeader = createTimeHeaderFormatter({ selfLabel: 'Assistant' });
+ * formatTimeHeader('America/New_York');
+ * // ## Current Time
+ * // - UTC: 2026-02-09T22:30:00.000Z (Sunday evening)
+ * // - Assistant: 2026-02-09T14:30:00 America/Los_Angeles (Sunday afternoon)
+ * // - User: 2026-02-09T17:30:00 America/New_York (Sunday evening)
  * ```
  */
-export function formatTimeHeader(userTimezone?: string): string {
-    const timeContext = getCurrentTimeContext();
-    const izzyTimezone = resolveTimezone();
-    const izzyLocal = formatLocalDateTime(timeContext.utc, izzyTimezone);
-    const izzyDow = getDayOfWeek(new Date(timeContext.utc), izzyTimezone);
-    const izzyTod = getTimeOfDay(new Date(timeContext.utc), izzyTimezone);
+export function createTimeHeaderFormatter({ selfLabel }: TimeHeaderFormatterDeps): (userTimezone?: string) => string {
+    return function formatTimeHeader(userTimezone?: string): string {
+        const timeContext = getCurrentTimeContext();
+        const selfTimezone = resolveTimezone();
+        const selfLocal = formatLocalDateTime(timeContext.utc, selfTimezone);
+        const selfDow = getDayOfWeek(new Date(timeContext.utc), selfTimezone);
+        const selfTod = getTimeOfDay(new Date(timeContext.utc), selfTimezone);
 
-    const lines = [
-        '## Current Time',
-        `- UTC: ${timeContext.utc} (${timeContext.utcDayOfWeek} ${timeContext.utcTimeOfDay})`,
-        `- Izzy: ${izzyLocal} ${izzyTimezone} (${izzyDow} ${izzyTod})`,
-    ];
+        const lines = [
+            '## Current Time',
+            `- UTC: ${timeContext.utc} (${timeContext.utcDayOfWeek} ${timeContext.utcTimeOfDay})`,
+            `- ${selfLabel}: ${selfLocal} ${selfTimezone} (${selfDow} ${selfTod})`,
+        ];
 
-    if(userTimezone && userTimezone !== izzyTimezone) {
-        const userLocal = formatLocalDateTime(timeContext.utc, userTimezone);
-        const userDow = getDayOfWeek(new Date(timeContext.utc), userTimezone);
-        const userTod = getTimeOfDay(new Date(timeContext.utc), userTimezone);
-        lines.push(`- User: ${userLocal} ${userTimezone} (${userDow} ${userTod})`);
-    }
+        if(userTimezone && userTimezone !== selfTimezone) {
+            const userLocal = formatLocalDateTime(timeContext.utc, userTimezone);
+            const userDow = getDayOfWeek(new Date(timeContext.utc), userTimezone);
+            const userTod = getTimeOfDay(new Date(timeContext.utc), userTimezone);
+            lines.push(`- User: ${userLocal} ${userTimezone} (${userDow} ${userTod})`);
+        }
 
-    return lines.join('\n');
+        return lines.join('\n');
+    };
 }
 
 /**

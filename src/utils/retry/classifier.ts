@@ -123,7 +123,9 @@ export function classifyNetworkError(error: unknown, fallbackMessage = 'Unknown 
     }
 
     // POSIX codes: ETIMEDOUT, ECONNRESET, ECONNREFUSED
-    // Smithy/AWS-SDK codes: FailedToOpenSocket (transient socket failure), TimeoutError (throwOnRequestTimeout), NetworkingError (general)
+    // FailedToOpenSocket: Bun's `fetch` (transient socket failure)
+    // TimeoutError: the abort/DOMException convention (throwOnRequestTimeout)
+    // NetworkingError: Smithy/AWS-SDK (general)
     // NOTE: NetworkingError covers DNS NXDOMAIN and other permanent failures; those exhaust the retry budget before surfacing.
     const networkErrorCodes = new Set<string>(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'FailedToOpenSocket', 'TimeoutError', 'NetworkingError']);
 

@@ -8,11 +8,12 @@
 import { logger } from '@hughescr/logger';
 import pLimit from 'p-limit';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
+import { formatTimeHeader } from './time-header';
 import type { BlueskyClient, BskyRejectionBackend } from '@/integrations/bsky';
 import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, type FailedCalendarEvent, CaldavTimeoutError, CaldavAuthError } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
-import { formatShortRelativeTime, formatTimeHeader, resolveTimezone } from '@/utils';
+import { formatShortRelativeTime, resolveTimezone } from '@/utils';
 
 /** Minimal interface for retrieving message metadata from WildDuck */
 interface WildDuckService {

@@ -8,8 +8,7 @@ import {
     WELL_KNOWN_CHANNELS
 } from './types';
 import { InvariantViolationError, ItemNotFoundError, ValidationError } from '@/errors';
-import { BaseRepository, type DynamoDBClientHolder } from '@/storage';
-import { stripDynamoKeys } from '@/utils';
+import { BaseRepository, type DynamoDBClientHolder, stripDynamoKeys } from '@/storage';
 
 /**
  * DynamoDB backend for Discord channel registry.

@@ -31,11 +31,10 @@ import type { DiscordMessageContext } from '../types';
 import { processAttachments, toPlatformImages } from './coordinator-setup';
 import type { ResolvedDiscordNames } from './discord-envelope-provider';
 import {
-    buildDiscordEnvelope, buildResumeNote, StreamTracker,
+    buildDiscordEnvelope, buildResumeNote, formatTimeHeader, StreamTracker,
     type AgendaEntry, type BuildDiscordEnvelopeParams, type CalendarDelta, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type PlatformImage, type StateTopSetDelta, type TimeHeaderProvider
 } from '@/agent';
 import { formatCalendarContext } from '@/integrations/caldav';
-import { formatTimeHeader } from '@/utils';
 
 /**
  * The slice of `discord-envelope-provider.ts` this processor depends on, gathered into one

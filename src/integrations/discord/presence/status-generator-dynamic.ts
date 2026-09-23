@@ -9,7 +9,15 @@ import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import { getToolDescription, type SynopsisContext } from './types.js';
 import { generateTextWithSystemPrompt, SYNOPSIS_SEED_CAP } from '@/agent';
-import { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils';
+import { truncateToWordBoundary } from '@/utils';
+
+/**
+ * Hard cap on synopsis length. A response over this is refused outright by {@link rejectSynopsis}
+ * rather than trimmed — a sentence that long is a paragraph of narration, and trimming it would
+ * cache a bad shape that the next call's "## Previous status" section would then copy. This is
+ * also the ceiling {@link truncateToWordBoundary} truncates a validated response down to.
+ */
+export const HARD_MAX_STATUS_LENGTH = 80;
 
 /**
  * Interface for generating dynamic status synopses.
@@ -447,4 +455,4 @@ export function createDynamicStatusGenerator(
     };
 }
 
-export { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils';
+export { truncateToWordBoundary } from '@/utils';

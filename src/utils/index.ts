@@ -3,7 +3,7 @@ export { assertNever } from './assert-never';
 export {
     getTimeOfDay,
     formatShortRelativeTime,
-    formatTimeHeader,
+    createTimeHeaderFormatter,
     resolveTimezone,
     formatLocalDateTime,
     formatTimeSince,
@@ -16,15 +16,12 @@ export {
 } from './path-validator';
 
 export {
-    truncateToWordBoundary,
-    HARD_MAX_STATUS_LENGTH
+    truncateToWordBoundary
 } from './text.js';
 
 export { safeAsyncHandler } from './safe-async-handler';
 
 export { sanitizeFilename, deduplicateFilename } from './filename';
-
-export { stripDynamoKeys } from './strip-dynamo-keys';
 
 export {
     retryAsync,

@@ -10,7 +10,7 @@ import type { Message } from 'discord.js';
 import { DateTime } from 'luxon';
 import * as agentModule from '@/agent';
 import {
-    type AgendaEntry, type Conductor, type ConductorStatus, type ContextPolicy, type DiscordEnvelopeInput, type SubmitOptions, type TurnResult, StreamTracker
+    type AgendaEntry, type Conductor, type ConductorStatus, type ContextPolicy, type DiscordEnvelopeInput, type SubmitOptions, type TurnResult, StreamTracker, formatTimeHeader
 } from '@/agent';
 import type { Envelope } from '@/agent/session/types';
 import { formatCalendarContext, type CalendarEvent } from '@/integrations/caldav';
@@ -18,7 +18,7 @@ import { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import { createConductorProcessor, type DiscordEnvelopeProvider } from '@/integrations/discord/setup/conductor-processor';
 import type { ResolvedDiscordNames } from '@/integrations/discord/setup/discord-envelope-provider';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext } from '@/integrations/discord/types';
-import { formatEnvelopeStamp, formatTimeHeader } from '@/utils';
+import { formatEnvelopeStamp } from '@/utils';
 
 /** A hand-rolled fake `Conductor`: `submit` never resolves on its own — tests settle it explicitly
  * via `settleOldest`/`settleByEnvelopeId`, or let the caller's own `signal` abort it (mirroring

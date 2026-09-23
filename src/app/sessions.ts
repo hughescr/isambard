@@ -50,6 +50,7 @@ import {
     createTaskLaunchRegistry,
     createTaskTrackingHooks,
     composeAmbientLines,
+    formatTimeHeader,
     mergeHookMaps,
     taskLaunchEntries,
     withAmbientLines,
@@ -81,7 +82,6 @@ import {
 } from '@/agent';
 import { type SessionConfig, loadRetryConfig  } from '@/config';
 import type { ServiceHealthRegistry } from '@/services';
-import { formatTimeHeader } from '@/utils';
 
 /**
  * The subset of `IdentityCache` both conductors depend on: read the current identity, hear when
@@ -222,8 +222,9 @@ function otherRole(role: SessionRole): SessionRole {
  * (perch is built after conversation, and only when enabled) is still a dispatch target — the
  * poller iterates that array at poll time rather than copying it.
  *
- * Each role's provider renders `formatTimeHeader` VERBATIM (`src/utils/time.ts` stays pure and
- * ledger-unaware) and appends the lines `composeAmbientLines` builds from that role's own ledger
+ * Each role's provider renders `formatTimeHeader` VERBATIM (`src/agent/time-header.ts`'s bound
+ * instance stays pure and ledger-unaware) and appends the lines `composeAmbientLines` builds from
+ * that role's own ledger
  * and the other role's. Before a role's ledger is registered there is nothing ambient to say, so
  * the provider degrades to the bare header.
  * @param params See {@link CreateSessionAmbienceParams}.

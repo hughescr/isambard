@@ -5,7 +5,7 @@ export { createDynamoDBClient, probeDynamoDB } from './client';
 export { DynamoDBClientHolder } from './client-holder';
 
 // Storage utilities
-export { createPrefixedKey, parsePrefixedKey } from './utils';
+export { createPrefixedKey, parsePrefixedKey, stripDynamoKeys } from './utils';
 
 // Base repository
 export { BaseRepository } from './repositories/base';

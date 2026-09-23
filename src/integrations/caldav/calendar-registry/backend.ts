@@ -4,8 +4,7 @@ import {
     type CalendarRegistryRecord,
     type CalendarServerEntry
 } from './types';
-import { BaseRepository, type DynamoDBClientHolder } from '@/storage';
-import { stripDynamoKeys } from '@/utils';
+import { BaseRepository, type DynamoDBClientHolder, stripDynamoKeys } from '@/storage';
 
 /**
  * DynamoDB backend for CalDAV calendar registry.

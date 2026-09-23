@@ -20,8 +20,8 @@
  * caller-owned flag ({@link ComposeAmbientLinesParams.sharedQuotaNote}) rather than a module-level
  * latch — the composition root (`src/app/sessions.ts`) owns that flag per role, so each session
  * sees the note exactly once, on the first turn where a quota line actually renders.
- * `src/utils/time.ts`'s `formatTimeHeader` stays pure and ledger-unaware for the same reason:
- * {@link withAmbientLines} is what joins the two.
+ * `src/agent/time-header.ts`'s `formatTimeHeader` stays pure and ledger-unaware for the same
+ * reason: {@link withAmbientLines} is what joins the two.
  *
  * @module agent/session/ambient-lines
  */

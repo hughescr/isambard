@@ -2,8 +2,6 @@
  * Text utility functions.
  */
 
-export const HARD_MAX_STATUS_LENGTH = 80;
-
 /**
  * Truncates text to a maximum length, respecting word boundaries.
  *

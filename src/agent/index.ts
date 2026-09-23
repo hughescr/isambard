@@ -4,6 +4,7 @@
  * Provides Claude agent creation, memory MCP server, context building, and plugin loading.
  */
 
+export { formatTimeHeader } from './time-header';
 export { extractToolUses, redactSensitiveArgs } from './stream-extractors';
 export type { AssistantContentBlock, AssistantFrame, TextBlock, ThinkingBlock, ToolUseBlock } from './stream-extractors';
 export { createStreamEventLogger, createRoleLogger, type StreamEventLogger, type FieldLogger } from './stream-event-logger';

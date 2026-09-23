@@ -10,7 +10,7 @@ import {
     formatMemoryTimestamp,
     getCurrentTimeContext,
     formatTimeSince,
-    formatTimeHeader,
+    createTimeHeaderFormatter,
     formatEnvelopeStamp,
     resolveTimezone,
     type TimeContext
@@ -363,7 +363,7 @@ describe('resolveTimezone', () => {
     });
 });
 
-describe('formatTimeHeader', () => {
+describe('createTimeHeaderFormatter', () => {
     let RealDate: DateConstructor;
     const FIXED_TIME = new Date('2026-02-09T22:30:00.000Z');
 
@@ -396,18 +396,38 @@ describe('formatTimeHeader', () => {
         globalThis.Date = RealDate;
     });
 
-    test('should include header and UTC+Izzy lines when no user timezone', () => {
+    // `selfLabel` is deliberately NOT 'Izzy' anywhere in this describe block (the exact-output,
+    // Izzy-labelled tests for the product's bound instance live in
+    // tests/unit/agent/time-header.test.ts) — a mutant that reverts the factory to a hard-coded
+    // 'Izzy' label would still pass every one of THOSE tests, so only an arbitrary label here
+    // can catch it.
+    const ARBITRARY_LABEL = 'TestBot';
+
+    test('stamps the self-timezone line with the given selfLabel, not a hard-coded one', () => {
+        const formatTimeHeader = createTimeHeaderFormatter({ selfLabel: ARBITRARY_LABEL });
         const result = formatTimeHeader();
         const lines = result.split('\n');
 
         expect(lines[0]).toBe('## Current Time');
         expect(lines[1]).toStartWith('- UTC: 2026-02-09T22:30:00.000Z (');
-        expect(lines[2]).toStartWith('- Izzy: ');
+        expect(lines[2]).toStartWith(`- ${ARBITRARY_LABEL}: `);
         expect(lines[2]).toContain(resolveTimezone());
         expect(lines).toHaveLength(3);
+        expect(result).not.toContain('Izzy');
+    });
+
+    test('two independently-built formatters use their own selfLabel', () => {
+        const first = createTimeHeaderFormatter({ selfLabel: 'Alpha' });
+        const second = createTimeHeaderFormatter({ selfLabel: 'Beta' });
+
+        expect(first()).toContain('- Alpha: ');
+        expect(first()).not.toContain('- Beta: ');
+        expect(second()).toContain('- Beta: ');
+        expect(second()).not.toContain('- Alpha: ');
     });
 
     test('should omit User line when userTimezone equals server timezone', () => {
+        const formatTimeHeader = createTimeHeaderFormatter({ selfLabel: ARBITRARY_LABEL });
         const serverTz = resolveTimezone();
         const result = formatTimeHeader(serverTz);
         const lines = result.split('\n');
@@ -417,6 +437,7 @@ describe('formatTimeHeader', () => {
     });
 
     test('should include User line when userTimezone differs from server timezone', () => {
+        const formatTimeHeader = createTimeHeaderFormatter({ selfLabel: ARBITRARY_LABEL });
         const serverTz = resolveTimezone();
         // Pick a timezone that's definitely different from the server
         const differentTz = serverTz === 'America/New_York' ? 'America/Los_Angeles' : 'America/New_York';
@@ -429,23 +450,26 @@ describe('formatTimeHeader', () => {
     });
 
     test('should format UTC line with day of week and time of day', () => {
+        const formatTimeHeader = createTimeHeaderFormatter({ selfLabel: ARBITRARY_LABEL });
         const result = formatTimeHeader();
         // 22:30 UTC is Monday night (not Sunday evening - that would be local time in PST)
         expect(result).toContain('- UTC: 2026-02-09T22:30:00.000Z (Monday night)');
     });
 
-    test('should format Izzy line with local time, timezone, day of week, and time of day', () => {
+    test('should format the self-labelled line with local time, timezone, day of week, and time of day', () => {
+        const formatTimeHeader = createTimeHeaderFormatter({ selfLabel: ARBITRARY_LABEL });
         const result = formatTimeHeader();
         const lines = result.split('\n');
-        const izzyLine = lines[2];
+        const selfLine = lines[2];
 
-        expect(izzyLine).toStartWith('- Izzy: ');
-        expect(izzyLine).toContain(resolveTimezone());
+        expect(selfLine).toStartWith(`- ${ARBITRARY_LABEL}: `);
+        expect(selfLine).toContain(resolveTimezone());
         // Should contain day of week (one of the seven days)
-        expect(izzyLine).toMatch(/\((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday) (?:morning|afternoon|evening|night)\)/);
+        expect(selfLine).toMatch(/\((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday) (?:morning|afternoon|evening|night)\)/);
     });
 
-    test('derives Izzy header day and time from the captured UTC context', () => {
+    test('derives the self-labelled line\'s day and time from the captured UTC context', () => {
+        const formatTimeHeader = createTimeHeaderFormatter({ selfLabel: ARBITRARY_LABEL });
         const originalTimezone = process.env.TZ;
         process.env.TZ = 'UTC';
         let noArgCalls = 0;
@@ -471,7 +495,7 @@ describe('formatTimeHeader', () => {
 
         try {
             const result = formatTimeHeader('Pacific/Kiritimati');
-            expect(result).toContain('- Izzy: 2026-02-09T22:30:00 UTC (Monday night)');
+            expect(result).toContain(`- ${ARBITRARY_LABEL}: 2026-02-09T22:30:00 UTC (Monday night)`);
         } finally {
             if(originalTimezone === undefined) {
                 delete process.env.TZ;
@@ -481,20 +505,21 @@ describe('formatTimeHeader', () => {
         }
     });
 
-    test('gives Izzy her own time-of-day bucket, distinct from the user\'s', () => {
+    test('gives the self-labelled line its own time-of-day bucket, distinct from the user\'s', () => {
+        const formatTimeHeader = createTimeHeaderFormatter({ selfLabel: ARBITRARY_LABEL });
         const originalTimezone = process.env.TZ;
         process.env.TZ = 'UTC';
 
         try {
-            // FIXED_TIME is 2026-02-09T22:30:00.000Z. Izzy's zone (forced to UTC via TZ) sees
+            // FIXED_TIME is 2026-02-09T22:30:00.000Z. The self zone (forced to UTC via TZ) sees
             // hour 22 -> 'night'. America/Los_Angeles is fixed at UTC-8 in tests/setup.ts's
             // Intl.DateTimeFormat mock (no DST), so it sees hour (22 - 8) = 14 -> 'afternoon'.
-            // The two zones land in different getTimeOfDay buckets so a mix-up between
-            // izzyTimezone and userTimezone in formatTimeHeader is observable.
+            // The two zones land in different getTimeOfDay buckets so a mix-up between the
+            // self timezone and userTimezone in the formatter is observable.
             const result = formatTimeHeader('America/Los_Angeles');
             const lines = result.split('\n');
 
-            expect(lines[2]).toStartWith('- Izzy: ');
+            expect(lines[2]).toStartWith(`- ${ARBITRARY_LABEL}: `);
             expect(lines[2]).toContain('UTC');
             expect(lines[2]).toContain('night');
 
@@ -511,6 +536,7 @@ describe('formatTimeHeader', () => {
     });
 
     test('should format User line with local time, timezone, day of week, and time of day when different from server', () => {
+        const formatTimeHeader = createTimeHeaderFormatter({ selfLabel: ARBITRARY_LABEL });
         const serverTz = resolveTimezone();
         const differentTz = serverTz === 'Europe/London' ? 'America/New_York' : 'Europe/London';
         const result = formatTimeHeader(differentTz);

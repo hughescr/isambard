@@ -46,8 +46,8 @@ import { getSlotForHour } from './schedule';
 import type { PerchConfig, PerchSlot } from './types';
 import type { ContextBuilder } from '@/agent/context-builder';
 import type { Clock, Conductor, TimeHeaderProvider, TimerHandle } from '@/agent/session';
+import { formatTimeHeader } from '@/agent/time-header';
 import type { ActivityLogger } from '@/storage';
-import { formatTimeHeader } from '@/utils';
 
 /** Grace period fallback (minutes) used when {@link PerchConfig.interruptGraceMinutes} is
  * omitted — mirrors `perchConfigSchema`'s own default in `@/config`. */

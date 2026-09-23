@@ -5,7 +5,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendQuery } from '@/storage/memory-tool/backend-query';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryToolItem, MemoryPath, StoredMemoryToolItem, LayerName } from '@/storage/memory-tool/types';
-import { stripDynamoKeys } from '@/storage/utils/strip-keys';
+import { stripDynamoKeys } from '@/storage/utils/strip-dynamo-keys';
 
 describe('MemoryToolBackendQuery - list', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);

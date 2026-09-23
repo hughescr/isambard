@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { stripDynamoKeys } from '@/storage/utils/strip-keys';
+import { stripDynamoKeys } from '@/storage/utils/strip-dynamo-keys';
 
 /**
  * NOTE: This test file achieves 0% mutation score because `stripDynamoKeys`

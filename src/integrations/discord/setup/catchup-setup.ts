@@ -10,11 +10,11 @@ import { createChannelId, type ChannelId } from '../types';
 import {
     type PerchConfig, type Conductor, type SessionJournal, type Envelope, type UndeliveredEnvelope, type ContextPolicy,
     type TimeHeaderProvider,
-    computeRecovery, lastKnownAt, buildDiscordEnvelope, buildCatchupEnvelope, runBootSequence
+    computeRecovery, lastKnownAt, buildDiscordEnvelope, buildCatchupEnvelope, formatTimeHeader, runBootSequence
 } from '@/agent';
 import { ResponseUnavailableError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services';
-import { resolveTimezone, formatTimeHeader, truncateToWordBoundary } from '@/utils';
+import { resolveTimezone, truncateToWordBoundary } from '@/utils';
 
 /**
  * Local shape covering exactly what boot-time envelope composition ({@link runConductorInboxInit})
