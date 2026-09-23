@@ -28,14 +28,16 @@ describe('serializedDiscordPayloadSchema', () => {
         });
     }
 
-    test.each([
-        { type: 2, components: [] },
-        { type: 1 },
-        { type: 1, components: [null] },
-        { type: 1, components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }, null] },
-    ])('rejects malformed component row %p without throwing', (component) => {
-        expect(serializedDiscordPayloadSchema.safeParse({ components: [component] }).success).toBe(false);
-    });
+    for(const [description, component] of [
+        ['non-action-row type', { type: 2, components: [] }],
+        ['action row without components', { type: 1 }],
+        ['action row with a null component', { type: 1, components: [null] }],
+        ['action row with a valid then a null component', { type: 1, components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }, null] }],
+    ] as const) {
+        test(`rejects malformed component row (${description}) without throwing`, () => {
+            expect(serializedDiscordPayloadSchema.safeParse({ components: [component] }).success).toBe(false);
+        });
+    }
 
     // Legacy pre-#49 outbox rows: can be safely deleted after 2026-09-25.
     test('rejects legacy action rows without a components array without throwing', () => {

@@ -122,10 +122,10 @@ describe('timeContextSchema', () => {
     });
 
     test.each([
-        { utc: '2025-01-15T12:00:00.000Z', dayOfWeek: 'Wednesday', timeOfDay: 'invalid' },
-        { utc: '2025-01-15T12:00:00.000Z', dayOfWeek: 'Funday', timeOfDay: 'afternoon' },
-        { utc: '2025-01-15T12:00:00.000Z' },
-    ])('should reject invalid TimeContext: %o', (context) => {
+        { label: 'invalid timeOfDay', context: { utc: '2025-01-15T12:00:00.000Z', dayOfWeek: 'Wednesday', timeOfDay: 'invalid' } },
+        { label: 'invalid dayOfWeek', context: { utc: '2025-01-15T12:00:00.000Z', dayOfWeek: 'Funday', timeOfDay: 'afternoon' } },
+        { label: 'missing dayOfWeek and timeOfDay', context: { utc: '2025-01-15T12:00:00.000Z' } },
+    ])('should reject invalid TimeContext: $label', ({ context }) => {
         expect(timeContextSchema.safeParse(context).success).toBe(false);
     });
 });

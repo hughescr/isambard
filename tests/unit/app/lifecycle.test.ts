@@ -4,7 +4,7 @@
  * `createDiscordRecoveryHandler` (the Discord-reconnect recovery subscriber — P13b: the conductor
  * is the only path, so the one-shot `mode`/`botStateManager`/`bot` branch is gone).
  */
-import { describe, test, expect, mock, jest, afterEach } from 'bun:test';
+import { describe, test, expect, mock, jest, beforeEach, afterEach } from 'bun:test';
 import { FakeClock } from '../../helpers/fake-clock';
 import { registerSignalHandlers, createDiscordRecoveryHandler } from '@/app/lifecycle';
 
@@ -42,6 +42,15 @@ function makeFakeLogger(): { info: ReturnType<typeof mock>, warn: ReturnType<typ
 }
 
 describe('registerSignalHandlers', () => {
+    // Every test here injects its own `exit` param, so registerSignalHandlers should never reach
+    // the real `process.exit`. If a bug (or a surviving mutant) routes through it instead, this
+    // stub turns that into a named test failure instead of silently killing the whole test run.
+    beforeEach(() => {
+        jest.spyOn(process, 'exit').mockImplementation(() => {
+            throw new Error('real process.exit called');
+        });
+    });
+
     afterEach(() => {
         jest.restoreAllMocks();
     });
