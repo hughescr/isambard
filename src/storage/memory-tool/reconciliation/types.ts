@@ -21,18 +21,11 @@ export {
 // ============================================================================
 
 /**
- * Phase identifier for reconciliation job
- */
-const reconciliationPhaseSchema = z.enum(['phaseA', 'phaseB', 'phaseC']);
-
-/**
  * Runtime state for reconciliation job
  */
 export const reconciliationStateSchema = z.object({
     /** Whether reconciliation is currently running */
     isRunning:       z.boolean(),
-    /** Current phase being executed */
-    currentPhase:    reconciliationPhaseSchema.nullable(),
     /** When the current run started */
     runStartedAt:    z.date().optional(),
     /** When the last run completed */

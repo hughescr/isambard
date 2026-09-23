@@ -68,8 +68,7 @@ export function createTagIndexReconciliationScheduler(deps: TagIndexReconciliati
 
     // Internal state
     let state: ReconciliationState = {
-        isRunning:    false,
-        currentPhase: null,
+        isRunning: false,
     };
     let schedulerTimeout: ReturnType<typeof setTimeout> | null = null;
     let abortController: AbortController | null = null;
@@ -99,7 +98,6 @@ export function createTagIndexReconciliationScheduler(deps: TagIndexReconciliati
         }
         state = {
             isRunning:       false,
-            currentPhase:    null,
             lastCompletedAt: completed ? new Date() : state.lastCompletedAt,
         };
         driftPending = false;
@@ -147,7 +145,6 @@ export function createTagIndexReconciliationScheduler(deps: TagIndexReconciliati
         // Set state to running
         state = {
             isRunning:    true,
-            currentPhase: 'phaseA',
             runStartedAt: new Date(),
         };
 
@@ -288,8 +285,7 @@ export function createTagIndexReconciliationScheduler(deps: TagIndexReconciliati
 
             // Reset state
             state = {
-                isRunning:    false,
-                currentPhase: null,
+                isRunning: false,
             };
 
             driftPending = false;

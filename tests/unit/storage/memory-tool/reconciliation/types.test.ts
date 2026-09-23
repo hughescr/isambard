@@ -146,7 +146,6 @@ describe.concurrent('reconciliationStateSchema', () => {
     test('should accept valid state with all fields', () => {
         const state: ReconciliationState = {
             isRunning:       true,
-            currentPhase:    'phaseA',
             runStartedAt:    new Date('2024-01-01T00:00:00Z'),
             lastCompletedAt: new Date('2024-01-01T01:00:00Z'),
         };
@@ -159,55 +158,20 @@ describe.concurrent('reconciliationStateSchema', () => {
 
     test('should accept state with minimal fields', () => {
         const state: ReconciliationState = {
-            isRunning:    false,
-            currentPhase: null,
+            isRunning: false,
         };
         const result = reconciliationStateSchema.safeParse(state);
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.isRunning).toBe(false);
-            expect(result.data.currentPhase).toBeNull();
             expect(result.data.runStartedAt).toBeUndefined();
             expect(result.data.lastCompletedAt).toBeUndefined();
         }
     });
 
-    test('should accept phaseA as currentPhase', () => {
-        const result = reconciliationStateSchema.safeParse({
-            isRunning:    true,
-            currentPhase: 'phaseA',
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept phaseB as currentPhase', () => {
-        const result = reconciliationStateSchema.safeParse({
-            isRunning:    true,
-            currentPhase: 'phaseB',
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should accept null as currentPhase', () => {
-        const result = reconciliationStateSchema.safeParse({
-            isRunning:    false,
-            currentPhase: null,
-        });
-        expect(result.success).toBe(true);
-    });
-
-    test('should reject invalid phase name', () => {
-        const result = reconciliationStateSchema.safeParse({
-            isRunning:    true,
-            currentPhase: 'phaseD',
-        });
-        expect(result.success).toBe(false);
-    });
-
     test('should reject non-boolean isRunning', () => {
         const result = reconciliationStateSchema.safeParse({
-            isRunning:    'true',
-            currentPhase: null,
+            isRunning: 'true',
         });
         expect(result.success).toBe(false);
     });
@@ -215,7 +179,6 @@ describe.concurrent('reconciliationStateSchema', () => {
     test('should reject invalid date format for runStartedAt', () => {
         const result = reconciliationStateSchema.safeParse({
             isRunning:    true,
-            currentPhase: 'phaseA',
             runStartedAt: 'not-a-date',
         });
         expect(result.success).toBe(false);

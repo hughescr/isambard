@@ -485,7 +485,6 @@ describe('TagIndexReconciliationScheduler', () => {
 
             const state = scheduler.getState();
             expect(state.isRunning).toBe(false);
-            expect(state.currentPhase).toBeNull();
         });
 
         test('should show running state during reconciliation', async () => {
@@ -551,7 +550,6 @@ describe('TagIndexReconciliationScheduler', () => {
 
             const state = scheduler.getState();
             expect(state.isRunning).toBe(true);
-            expect(state.currentPhase).toBe('phaseA');
             expect(state.runStartedAt).toBeDefined();
 
             // Clean up - resolve the pending reconciliation

@@ -155,20 +155,30 @@ export interface PhaseBProgress extends ContactReconciliationPhase {
 }
 
 /**
- * Complete result of a contact reconciliation run.
+ * Completed contact reconciliation result.
  */
-export interface ContactReconciliationResult {
-    /** Whether both phases completed with no errors */
+export interface ContactReconciliationCompletedResult {
+    /** Completed runs report whether both phases finished with no errors. */
+    outcome:         'completed'
     success:         boolean
-    /** Whether the run was cancelled via AbortSignal (success is still true when aborted) */
-    aborted?:        boolean
-    /** Phase A (orphan lookup) results */
     phaseA:          PhaseAProgress
-    /** Phase B (missing lookup) results */
     phaseB:          PhaseBProgress
-    /** Total duration in milliseconds */
     totalDurationMs: number
 }
+
+/**
+ * Aborted contact reconciliation result.
+ */
+export interface ContactReconciliationAbortedResult {
+    /** Cancellation is distinct from completion and never reports a success value. */
+    outcome:         'aborted'
+    phaseA:          PhaseAProgress
+    phaseB:          PhaseBProgress
+    totalDurationMs: number
+}
+
+/** Complete result of a contact reconciliation run. */
+export type ContactReconciliationResult = ContactReconciliationCompletedResult | ContactReconciliationAbortedResult;
 
 // ============================================================================
 // Helpers
@@ -685,26 +695,31 @@ export async function runContactReconciliation(
     const totalDurationMs = endTime - startTime;
     // Stryker disable next-line llm: wasAborted is only used as an if condition, where boolean-or-undefined has the same truthiness as === true.
     const wasAborted = options.signal?.aborted === true;
-    // Stryker disable next-line llm: both error counts start at zero and only increase, so === 0 and <= 0 are equivalent.
-    const success = phaseA.errors === 0 && phaseB.errors === 0;
-
-    logger.info({
-        success,
-        totalDurationMs,
-        msg: 'Contact reconciliation complete',
-    });
-
     if(wasAborted) {
+        logger.info({
+            outcome: 'aborted',
+            totalDurationMs,
+            msg:     'Contact reconciliation aborted',
+        });
         return {
-            success: true,
-            aborted: true,
+            outcome: 'aborted',
             phaseA,
             phaseB,
             totalDurationMs,
         };
     }
 
+    // Stryker disable next-line llm: both error counts start at zero and only increase, so === 0 and <= 0 are equivalent.
+    const success = phaseA.errors === 0 && phaseB.errors === 0;
+    logger.info({
+        outcome: 'completed',
+        success,
+        totalDurationMs,
+        msg:     'Contact reconciliation complete',
+    });
+
     return {
+        outcome: 'completed',
         success,
         phaseA,
         phaseB,

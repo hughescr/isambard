@@ -83,7 +83,7 @@ describe('createStorageLayer', () => {
         const mockTagIndexReconciliationScheduler = {
             start:       mock(() => {}),
             stop:        mock(() => {}),
-            getState:    mock(() => ({ isRunning: false, currentPhase: null })),
+            getState:    mock(() => ({ isRunning: false })),
             triggerNow:  mock(async () => undefined),
             notifyDrift: mock(() => {}),
         };
@@ -662,7 +662,7 @@ describe('createStorageLayer', () => {
         const mockTagIndexReconciliationScheduler: TagIndexReconciliationScheduler = {
             start:       mock(() => {}),
             stop:        mock(() => {}),
-            getState:    mock(() => ({ isRunning: false as const, currentPhase: null, lastCompletedAt: undefined })),
+            getState:    mock(() => ({ isRunning: false as const, lastCompletedAt: undefined })),
             triggerNow:  mock(async () => undefined),
             notifyDrift: mockNotifyDrift,
         };
@@ -988,7 +988,7 @@ describe('createStorageLayer', () => {
         const brokenScheduler = {
             start:      mock(() => {}),
             stop:       mock(() => {}),
-            getState:   mock(() => ({ isRunning: false as const, currentPhase: null, lastCompletedAt: undefined })),
+            getState:   mock(() => ({ isRunning: false as const, lastCompletedAt: undefined })),
             triggerNow: mock(async () => undefined),
         } as unknown as TagIndexReconciliationScheduler;
         spies.push(

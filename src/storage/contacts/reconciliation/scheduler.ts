@@ -32,7 +32,10 @@ export interface ContactReconciliationSchedulerDeps {
  * State of the contact reconciliation scheduler.
  */
 export interface ContactReconciliationSchedulerState {
-    /** Whether a reconciliation run is currently in progress */
+    /**
+     * Public acceptance state. stop() clears this immediately while activeWork
+     * continues serializing settlement of the aborted run.
+     */
     isRunning: boolean
 }
 
@@ -136,11 +139,20 @@ export function createContactReconciliationScheduler(deps: ContactReconciliation
 
             finishRun();
 
-            logger.info({
-                success:         result.success,
-                totalDurationMs: result.totalDurationMs,
-                msg:             'Contact reconciliation complete',
-            });
+            if(result.outcome === 'aborted') {
+                logger.info({
+                    outcome:         'aborted',
+                    totalDurationMs: result.totalDurationMs,
+                    msg:             'Contact reconciliation aborted',
+                });
+            } else {
+                logger.info({
+                    outcome:         'completed',
+                    success:         result.success,
+                    totalDurationMs: result.totalDurationMs,
+                    msg:             'Contact reconciliation complete',
+                });
+            }
 
             return result;
         } catch (error) {

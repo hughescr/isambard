@@ -11,11 +11,27 @@ import { createContactReconciliationScheduler, type ContactReconciliationSchedul
 
 /** A minimal successful reconciliation result */
 const SUCCESS_RESULT: ContactReconciliationResult = {
+    outcome:         'completed',
     success:         true,
     totalDurationMs: 1,
     phaseA:          {
         errors:               0,
         itemsScanned:         0,
+        orphanLookupsDeleted: 0,
+    },
+    phaseB: {
+        errors:                0,
+        itemsScanned:          0,
+        missingLookupsCreated: 0,
+    },
+};
+
+const ABORTED_RESULT: ContactReconciliationResult = {
+    outcome:         'aborted',
+    totalDurationMs: 1,
+    phaseA:          {
+        errors:               1,
+        itemsScanned:         1,
         orphanLookupsDeleted: 0,
     },
     phaseB: {
@@ -85,10 +101,26 @@ describe('createContactReconciliationScheduler', () => {
         expect(runReconciliation).toHaveBeenCalledTimes(1);
         expect(mockLogger.info).toHaveBeenCalledWith({ msg: 'Starting contact reconciliation' });
         expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
-            msg: 'Contact reconciliation complete',
+            outcome: 'completed',
+            success: true,
+            msg:     'Contact reconciliation complete',
         }));
 
         scheduler.stop();
+    });
+
+    test('logs an aborted reconciliation without a success field', async () => {
+        runReconciliation.mockImplementation(async (): Promise<ContactReconciliationResult> => ABORTED_RESULT);
+        const scheduler = createContactReconciliationScheduler(deps);
+
+        const result = await scheduler.triggerNow();
+
+        expect(result).toEqual(ABORTED_RESULT);
+        expect(mockLogger.info).toHaveBeenCalledWith({
+            outcome:         'aborted',
+            totalDurationMs: 1,
+            msg:             'Contact reconciliation aborted',
+        });
     });
 
     test('does not run reconciliation when disabled', () => {
@@ -135,7 +167,10 @@ describe('createContactReconciliationScheduler', () => {
         const result = await scheduler.triggerNow();
 
         expect(runReconciliation).toHaveBeenCalledTimes(1);
-        expect(result?.success).toBe(true);
+        expect(result?.outcome).toBe('completed');
+        if(result?.outcome === 'completed') {
+            expect(result.success).toBe(true);
+        }
 
         scheduler.stop();
     });

@@ -16,7 +16,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../../setup';
-import { runContactReconciliation, type ContactReconcilerDeps, type ContactReconcilerOptions } from '@/storage/contacts/reconciliation/reconciler';
+import { runContactReconciliation, type ContactReconcilerDeps, type ContactReconcilerOptions, type ContactReconciliationCompletedResult, type ContactReconciliationResult } from '@/storage/contacts/reconciliation/reconciler';
 
 const ALICE_PROFILE_ITEM = {
     PK:          'CONTACT#alice-smith',
@@ -77,6 +77,14 @@ const FAST_OPTIONS: ContactReconcilerOptions = {
     scanPageSize:              25,
     strayLookupAgeThresholdMs: 0, // 0 = treat all stray lookups as old enough to delete (fast tests don't need age protection)
 };
+
+function expectCompleted(result: ContactReconciliationResult): ContactReconciliationCompletedResult {
+    expect(result.outcome).toBe('completed');
+    if(result.outcome !== 'completed') {
+        throw new Error('Expected a completed reconciliation result');
+    }
+    return result;
+}
 
 describe('runContactReconciliation', () => {
     let ddbMock: ReturnType<typeof mockClient>;
@@ -157,7 +165,7 @@ describe('runContactReconciliation', () => {
 
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
-            expect(result.success).toBe(true);
+            expect(expectCompleted(result).success).toBe(true);
             expect(result.phaseA.errors).toBe(0);
             expect(result.phaseA.orphanLookupsDeleted).toBe(0);
         });
@@ -235,7 +243,7 @@ describe('runContactReconciliation', () => {
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
             expect(result.phaseA.orphanLookupsDeleted).toBe(1);
-            expect(result.success).toBe(true);
+            expect(expectCompleted(result).success).toBe(true);
 
             // DeleteCommand must have been called for the orphan lookup
             const deleteCalls = ddbMock.commandCalls(DeleteCommand);
@@ -271,7 +279,7 @@ describe('runContactReconciliation', () => {
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
             expect(result.phaseA.orphanLookupsDeleted).toBe(1);
-            expect(result.success).toBe(true);
+            expect(expectCompleted(result).success).toBe(true);
 
             const deleteCalls = ddbMock.commandCalls(DeleteCommand);
             expect(deleteCalls.length).toBeGreaterThanOrEqual(1);
@@ -424,7 +432,7 @@ describe('runContactReconciliation', () => {
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
             expect(result.phaseA.errors).toBeGreaterThan(0);
-            expect(result.success).toBe(false);
+            expect(expectCompleted(result).success).toBe(false);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 msg: 'ContactReconciler Phase A: error processing lookup item',
             }));
@@ -516,7 +524,7 @@ describe('runContactReconciliation', () => {
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
             expect(result.phaseB.missingLookupsCreated).toBe(2);
-            expect(result.success).toBe(true);
+            expect(expectCompleted(result).success).toBe(true);
 
             // BatchWriteCommand should have been called to create the missing lookups
             const bwCalls = ddbMock.commandCalls(BatchWriteCommand);
@@ -575,7 +583,7 @@ describe('runContactReconciliation', () => {
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
             expect(result.phaseB.errors).toBeGreaterThan(0);
-            expect(result.success).toBe(false);
+            expect(expectCompleted(result).success).toBe(false);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 msg: 'ContactReconciler Phase B: error processing identifier',
             }));
@@ -632,7 +640,7 @@ describe('runContactReconciliation', () => {
 
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
-            expect(typeof result.success).toBe('boolean');
+            expect(typeof expectCompleted(result).success).toBe('boolean');
             expect(typeof result.totalDurationMs).toBe('number');
             expect(typeof result.phaseA).toBe('object');
             expect(typeof result.phaseB).toBe('object');
@@ -649,6 +657,11 @@ describe('runContactReconciliation', () => {
                 'Contact reconciliation Phase B complete',
                 'Contact reconciliation complete',
             ]);
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                outcome: 'completed',
+                success: true,
+                msg:     'Contact reconciliation complete',
+            }));
         });
 
         test('success is false when any phase has errors', async () => {
@@ -664,7 +677,7 @@ describe('runContactReconciliation', () => {
 
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
-            expect(result.success).toBe(false);
+            expect(expectCompleted(result).success).toBe(false);
         });
 
         test('success is true when both phases complete with no errors', async () => {
@@ -673,7 +686,7 @@ describe('runContactReconciliation', () => {
 
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
-            expect(result.success).toBe(true);
+            expect(expectCompleted(result).success).toBe(true);
             expect(result.phaseA.errors).toBe(0);
             expect(result.phaseB.errors).toBe(0);
         });
@@ -715,7 +728,7 @@ describe('runContactReconciliation', () => {
                 strayLookupAgeThresholdMs: 0,
             });
 
-            expect(result.success).toBe(true);
+            expect(expectCompleted(result).success).toBe(true);
             // Sleep must have been called at least once for the delay (no signal so second arg absent)
             expect(mockSleep).toHaveBeenCalledWith(50);
         });
@@ -729,7 +742,7 @@ describe('runContactReconciliation', () => {
                 strayLookupAgeThresholdMs: 0,
             });
 
-            expect(result.success).toBe(true);
+            expect(expectCompleted(result).success).toBe(true);
             expect(mockSleep).not.toHaveBeenCalled();
         });
     });
@@ -839,7 +852,7 @@ describe('runContactReconciliation', () => {
             const result = await runContactReconciliation(deps, FAST_OPTIONS);
 
             expect(result.phaseA.errors).toBeGreaterThanOrEqual(1);
-            expect(result.success).toBe(false);
+            expect(expectCompleted(result).success).toBe(false);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 msg: 'ContactReconciler Phase A: failed to query lookup rows',
             }));
@@ -858,7 +871,7 @@ describe('runContactReconciliation', () => {
 
             // Exactly one failing scan → exactly one error (not two)
             expect(result.phaseB.errors).toBe(1);
-            expect(result.success).toBe(false);
+            expect(expectCompleted(result).success).toBe(false);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 msg: 'ContactReconciler Phase B: failed to scan profiles',
             }));
@@ -869,6 +882,25 @@ describe('runContactReconciliation', () => {
     // Fix 4: AbortSignal — stop() aborts in-flight run
     // ======================================================================
     describe('AbortSignal cancellation', () => {
+        test('returns aborted without success when Phase A records an error before Phase B aborts', async () => {
+            const controller = new AbortController();
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({ Items: [ALICE_EMAIL_LOOKUP] })
+                .callsFake(() => {
+                    controller.abort();
+                    return Promise.resolve({ Items: [ALICE_PROFILE_ITEM] });
+                });
+            ddbMock.on(GetCommand).resolves({});
+            ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
+
+            const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, signal: controller.signal });
+
+            expect(result.outcome).toBe('aborted');
+            expect(result).not.toHaveProperty('success');
+            expect(result.phaseA.errors).toBe(1);
+            expect(result.phaseB.errors).toBe(0);
+        });
+
         test('skips Phase B profile work when the query completes after abort', async () => {
             const controller = new AbortController();
             const profile = { ...ALICE_PROFILE_ITEM, personId: 'INVALID ID' };
@@ -879,7 +911,7 @@ describe('runContactReconciliation', () => {
                     return Promise.resolve({ Items: [profile] });
                 });
             const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, signal: controller.signal });
-            expect(result.aborted).toBe(true);
+            expect(result.outcome).toBe('aborted');
             expect(result.phaseB.itemsScanned).toBe(1);
             expect(result.phaseB.missingLookupsCreated).toBe(0);
             expect(result.phaseB.errors).toBe(0);
@@ -897,7 +929,7 @@ describe('runContactReconciliation', () => {
                 throw abort;
             });
             const result = await runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50 });
-            expect(result.success).toBe(true);
+            expect(expectCompleted(result).success).toBe(true);
             expect(result.phaseB.errors).toBe(0);
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
             expect(sleep).toHaveBeenCalledTimes(2);
@@ -912,7 +944,7 @@ describe('runContactReconciliation', () => {
                 return Promise.resolve({});
             });
             const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, signal: controller.signal });
-            expect(result.aborted).toBe(true);
+            expect(result.outcome).toBe('aborted');
             expect(result.phaseB.missingLookupsCreated).toBe(0);
             expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(0);
         });
@@ -980,10 +1012,10 @@ describe('runContactReconciliation', () => {
                 signal:                    controller.signal,
             });
 
-            // Should complete without error (abort is graceful exit)
-            expect(typeof result.success).toBe('boolean');
+            // Cancellation is graceful but not a completed run.
+            expect(result.outcome).toBe('aborted');
+            expect(result).not.toHaveProperty('success');
             expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
-            expect(result.aborted).toBe(true);
         });
 
         test('Fix 4: sleepAndCheckAbort returns true immediately when signal is pre-aborted', async () => {
@@ -1052,7 +1084,8 @@ describe('runContactReconciliation', () => {
             // queryCallCount should be 2: 1 for Phase A page 1, 1 for Phase B (not a second Phase A page)
             // Phase B query happens but with pre-aborted signal it breaks immediately
             expect(queryCallCount).toBe(1);
-            expect(typeof result.success).toBe('boolean');
+            expect(result.outcome).toBe('aborted');
+            expect(result).not.toHaveProperty('success');
         });
 
         test('Fix 4: does not delete stray lookup when signal aborted between read and write', async () => {
@@ -1093,8 +1126,9 @@ describe('runContactReconciliation', () => {
             // But DeleteCommand must NOT have been called (write was blocked by abort)
             expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
             expect(result.phaseA.orphanLookupsDeleted).toBe(0);
-            // Result is still graceful
-            expect(typeof result.success).toBe('boolean');
+            // Cancellation is graceful but does not report completion.
+            expect(result.outcome).toBe('aborted');
+            expect(result).not.toHaveProperty('success');
         });
     });
 
@@ -1407,7 +1441,7 @@ describe('runContactReconciliation', () => {
 
             // Should count errors for the failed identifiers
             expect(result.phaseB.errors).toBeGreaterThanOrEqual(1);
-            expect(result.success).toBe(false);
+            expect(expectCompleted(result).success).toBe(false);
         });
     });
 
@@ -1497,7 +1531,7 @@ describe('runContactReconciliation', () => {
                 return Promise.resolve({ Item: ALICE_PROFILE_ITEM });
             });
             const result = await runContactReconciliation(deps, { ...FAST_OPTIONS, operationDelayMs: 50, signal: controller.signal });
-            expect(result.aborted).toBe(true);
+            expect(result.outcome).toBe('aborted');
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
             expect(mockSleep).not.toHaveBeenCalled();
         });
@@ -1510,8 +1544,8 @@ describe('runContactReconciliation', () => {
                 throw abort;
             });
             const result = await runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50 });
-            expect(result.success).toBe(true);
-            expect(result.aborted).toBeUndefined();
+            expect(expectCompleted(result).success).toBe(true);
+            expect(result.outcome).toBe('completed');
             expect(result.phaseA.errors).toBe(0);
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
         });
@@ -1523,7 +1557,7 @@ describe('runContactReconciliation', () => {
                 throw new DOMException('cancelled', 'AbortError');
             });
             const result = await runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50 });
-            expect(result.success).toBe(true);
+            expect(expectCompleted(result).success).toBe(true);
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
         });
 
@@ -1544,11 +1578,11 @@ describe('runContactReconciliation', () => {
                 controller.abort();
             });
             const result = await runContactReconciliation({ ...deps, sleep }, { ...FAST_OPTIONS, operationDelayMs: 50, signal: controller.signal });
-            expect(result.aborted).toBe(true);
+            expect(result.outcome).toBe('aborted');
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
             expect(sleep).toHaveBeenCalledTimes(1);
         });
-        test('aborted result has success:true, aborted:true, and errors:0', async () => {
+        test('aborted result excludes success while retaining phase errors', async () => {
             const controller = new AbortController();
 
             ddbMock.on(QueryCommand)
@@ -1586,9 +1620,13 @@ describe('runContactReconciliation', () => {
             expect(sleepCallCount).toBe(1);
             // Abort must not count as an error
             expect(result.phaseA.errors).toBe(0);
-            // Result must indicate abort
-            expect(result.aborted).toBe(true);
-            expect(result.success).toBe(true);
+            // Cancellation has an outcome of its own and must not claim success.
+            expect(result).toMatchObject({ outcome: 'aborted' });
+            expect(result).not.toHaveProperty('success');
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                outcome: 'aborted',
+                msg:     'Contact reconciliation aborted',
+            }));
         });
     });
 
