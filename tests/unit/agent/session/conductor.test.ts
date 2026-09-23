@@ -11,7 +11,7 @@ import { FakeJournal } from '../../../helpers/fake-journal';
 import { fakeQueryFn, type FakeQuery, type FakeQueryFnOptions } from '../../../helpers/fake-query';
 import { FakeResumeStore } from '../../../helpers/fake-resume-store';
 import * as frames from '../../../helpers/sdk-frames';
-import { createConductor, type Conductor, type CreateConductorParams } from '@/agent/session/conductor';
+import { createConductor, type BootBundleRequest, type Conductor, type CreateConductorParams } from '@/agent/session/conductor';
 import { createLedgerStore, type LedgerStore } from '@/agent/session/ledger';
 import { createTaskLaunchRegistry } from '@/agent/session/task-launch-registry';
 import type { Envelope } from '@/agent/session/types';
@@ -103,14 +103,16 @@ function notificationEnvelope(overrides: Partial<Envelope> = {}): Envelope {
 }
 
 interface Harness {
-    conductor:   Conductor
-    instances:   FakeQuery[]
-    clock:       FakeClock
-    journal:     FakeJournal
-    resumeStore: FakeResumeStore
-    ledgerStore: LedgerStore
-    logger:      { info: ReturnType<typeof jest.fn>, warn: ReturnType<typeof jest.fn>, error: ReturnType<typeof jest.fn>, debug: ReturnType<typeof jest.fn> }
-    readRss:     ReturnType<typeof jest.fn>
+    conductor:        Conductor
+    instances:        FakeQuery[]
+    clock:            FakeClock
+    journal:          FakeJournal
+    resumeStore:      FakeResumeStore
+    ledgerStore:      LedgerStore
+    logger:           { info: ReturnType<typeof jest.fn>, warn: ReturnType<typeof jest.fn>, error: ReturnType<typeof jest.fn>, debug: ReturnType<typeof jest.fn> }
+    readRss:          ReturnType<typeof jest.fn>
+    /** The `buildBootBundle` override, when a test passed a `jest.fn` one — so its calls can be read back. */
+    buildBootBundle?: ReturnType<typeof jest.fn>
 }
 
 const DEFAULT_CONFIG: SessionConfig = sessionConfigSchema.parse({});
@@ -144,7 +146,14 @@ function build(overrides: Partial<CreateConductorParams> = {}, queryFnOptions: F
 
     return {
         conductor, instances, clock, journal, resumeStore, ledgerStore, logger, readRss,
+        buildBootBundle: overrides.buildBootBundle as ReturnType<typeof jest.fn> | undefined,
     };
+}
+
+/** The text of the `[BOOT]` handshake an instance consumed first. */
+function handshakeOf(instance: FakeQuery): string {
+    const content = instance.consumedPrompts[0]?.message.content;
+    return Array.isArray(content) ? content.map(block => (block.type === 'text' ? block.text : '')).join('') : String(content);
 }
 
 /** Opens `h.conductor` against `h.instances[0]`, emitting the init frame and flushing. */
@@ -244,13 +253,63 @@ describe('createConductor', () => {
             );
         });
 
-        it('pushes the boot bundle as the opening handshake boot envelope', async () => {
-            const h = build({ bootBundle: 'welcome back' });
+        it('pushes the built boot bundle as the opening handshake boot envelope, building it once as fresh/boot before the query exists', async () => {
+            let instancesWhenBuilt = -1;
+            const h = build({
+                buildBootBundle: jest.fn(() => {
+                    instancesWhenBuilt = h.instances.length;
+                    return 'welcome back';
+                }),
+            });
 
             await openWith(h);
 
             expect(h.instances[0].consumedPrompts).toHaveLength(1);
-            expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('welcome back');
+            expect(handshakeOf(h.instances[0])).toBe('welcome back');
+            expect(h.buildBootBundle?.mock.calls).toEqual([[{
+                kind: 'fresh', cause: 'boot', lostTasks: [], undelivered: [],
+            }]]);
+            expect(instancesWhenBuilt).toBe(0);
+        });
+
+        it('a stored-id open builds the bundle once as restart_resume/boot, before the query exists, and pushes it as the resume handshake', async () => {
+            let instancesWhenBuilt = -1;
+            const h = build({
+                buildBootBundle: jest.fn(() => {
+                    instancesWhenBuilt = h.instances.length;
+                    return 'while you were away';
+                }),
+            });
+            await h.resumeStore.save('conversation', 'sess-old');
+
+            await expect(openWith(h, 'sess-old')).resolves.toEqual({ sessionId: 'sess-old', resumed: true });
+
+            expect(h.buildBootBundle?.mock.calls).toEqual([[{
+                kind: 'restart_resume', cause: 'boot', lostTasks: [], undelivered: [],
+            }]]);
+            expect(instancesWhenBuilt).toBe(0);
+            expect(handshakeOf(h.instances[0])).toBe('while you were away');
+        });
+
+        it('a boot open whose resume fails builds a FRESH bundle for the fallback, and the fallback handshake carries it rather than the restart_resume text', async () => {
+            const h = build({ buildBootBundle: jest.fn(({ kind }: { kind: string }) => `bundle for ${kind}`) });
+            await h.resumeStore.save('conversation', 'sess-old');
+
+            const openPromise = h.conductor.open();
+            await flush();
+            expect(handshakeOf(h.instances[0])).toBe('bundle for restart_resume');
+            expect(h.buildBootBundle?.mock.calls).toHaveLength(1);
+            h.instances[0].fail(new Error('resume rejected by CLI'));
+            await flush();
+
+            expect(h.buildBootBundle?.mock.calls).toEqual([
+                [{ kind: 'restart_resume', cause: 'boot', lostTasks: [], undelivered: [] }],
+                [{ kind: 'fresh', cause: 'boot', lostTasks: [], undelivered: [] }],
+            ]);
+            expect(h.instances[1].consumedPrompts).toHaveLength(1);
+            expect(handshakeOf(h.instances[1])).toBe('bundle for fresh');
+            h.instances[1].emit(frames.init('sess-new'));
+            await expect(openPromise).resolves.toEqual({ sessionId: 'sess-new', resumed: false });
         });
 
         it('pushes the opening handshake BEFORE the session id arrives: the SDK only emits system/init after its first user message, so a silent open never opens', async () => {
@@ -269,13 +328,22 @@ describe('createConductor', () => {
             await expect(openPromise).resolves.toEqual({ sessionId: 'sess-1', resumed: false });
         });
 
-        it('an empty boot bundle falls back to the bare open marker rather than pushing an empty handshake', async () => {
-            const h = build({ bootBundle: '' });
+        it('an empty built boot bundle falls back to the bare open marker rather than pushing an empty handshake', async () => {
+            const h = build({ buildBootBundle: jest.fn(() => '') });
 
             await openWith(h);
 
             expect(h.instances[0].consumedPrompts).toHaveLength(1);
-            expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('[BOOT] Session opened at 1970-01-01T00:00:00.000Z. No boot context to report.');
+            expect(handshakeOf(h.instances[0])).toBe('[BOOT] Session opened at 1970-01-01T00:00:00.000Z. No boot context to report. Host handshake — nothing to do, no reply expected.');
+        });
+
+        it('an empty restart_resume bundle falls back to the bare resume marker', async () => {
+            const h = build({ buildBootBundle: jest.fn(() => '') });
+            await h.resumeStore.save('conversation', 'sess-old');
+
+            await openWith(h, 'sess-old');
+
+            expect(handshakeOf(h.instances[0])).toBe('[BOOT] Session resumed at 1970-01-01T00:00:00.000Z. No boot context to report. Host handshake — nothing to do, no reply expected.');
         });
 
         it('a resumed open with no boot bundle says "Session resumed", and the fresh fallback after a failed resume says "Session opened"', async () => {
@@ -293,20 +361,47 @@ describe('createConductor', () => {
             await expect(openPromise).resolves.toEqual({ sessionId: 'sess-new', resumed: false });
         });
 
-        it('a fallback fresh open after a failed resume pushes its own handshake onto the fresh handle', async () => {
-            const h = build({ bootBundle: 'welcome back' });
-            await h.resumeStore.save('conversation', 'sess-old');
+        it('the handshake result arriving after open() resolved and a turn was submitted: characterises the pre-existing opening-result boundary (challenge to #98)', async () => {
+            // The real SDK answers the shouldQuery:false handshake with init and then a bare
+            // result frame. Normally both land before open()'s own finishOpen (a resume-store
+            // write) returns, so no turn can be current yet. If the bare result were ever
+            // delayed past a submitted turn, the conductor treats it as that turn's result: the
+            // turn settles with the handshake's empty response and its real reply arrives as a
+            // spontaneous turn. This test pins that behaviour so the real-SDK #98 check can decide
+            // whether the ordering is reachable before anything changes it.
+            const h = build({ buildBootBundle: jest.fn(() => 'welcome back') });
+            await openWith(h);
 
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
+
+            h.instances[0].emit(frames.bareResult());
+            await flush();
+            const settled = await submitted;
+            expect(settled.response).toBe('');
+            expect(settled.isError).toBe(false);
+
+            h.instances[0].emit(frames.assistantText('the real reply'));
+            await flush();
+            expect(h.conductor.status().turn?.kind).toBe('notification');
+        });
+
+        it('the handshake result arriving before the first submitted turn leaves that turn to be settled by its own result', async () => {
+            const h = build({ buildBootBundle: jest.fn(() => 'welcome back') });
             const openPromise = h.conductor.open();
             await flush();
-            expect(JSON.stringify(h.instances[0].consumedPrompts[0]?.message)).toContain('welcome back');
-            h.instances[0].fail(new Error('resume rejected by CLI'));
+            h.instances[0].emit(frames.init('sess-1'));
+            h.instances[0].emit(frames.bareResult());
+            await openPromise;
             await flush();
 
-            expect(h.instances[1].consumedPrompts).toHaveLength(1);
-            expect(JSON.stringify(h.instances[1].consumedPrompts[0]?.message)).toContain('welcome back');
-            h.instances[1].emit(frames.init('sess-new'));
-            await expect(openPromise).resolves.toEqual({ sessionId: 'sess-new', resumed: false });
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.assistantText('the real reply'));
+            h.instances[0].emit(frames.resultSuccess({ result: 'the real reply' }));
+
+            await expect(submitted).resolves.toMatchObject({ response: 'the real reply', isError: false });
         });
 
         it('a mid-life reopen pushes a reopen handshake so the replacement session emits init', async () => {
@@ -2593,6 +2688,18 @@ describe('createConductor', () => {
             expect(result).toEqual({ outcome: 'committed', disposition: 'sent' });
         });
 
+        it('a readSince() rejection hands the bundle builder empty recovery lists', async () => {
+            const buildBootBundle = jest.fn((_request: BootBundleRequest) => '');
+            const h = build({ buildBootBundle });
+            h.journal.scriptReadSinceRejection(new Error('DynamoDB throttled'));
+
+            await openWith(h);
+
+            expect(buildBootBundle.mock.calls).toEqual([[{
+                kind: 'fresh', cause: 'boot', lostTasks: [], undelivered: [],
+            }]]);
+        });
+
         it('journals task_lost at boot for a task_started with no resolution in the journal window', async () => {
             const h = build();
             h.journal.scriptReadSince([
@@ -2624,7 +2731,7 @@ describe('createConductor', () => {
         });
 
         it('feeds recovery-derived lost task and undelivered-envelope descriptions to buildBootBundle', async () => {
-            const buildBootBundle = jest.fn((input: { lostTasks: string[], undelivered: string[] }) => `lost:${input.lostTasks.join(',')}|undelivered:${input.undelivered.join(',')}`);
+            const buildBootBundle = jest.fn((input: BootBundleRequest) => `lost:${input.lostTasks.join(',')}|undelivered:${input.undelivered.join(',')}`);
             const h = build({
                 buildBootBundle,
             });
@@ -2636,17 +2743,18 @@ describe('createConductor', () => {
 
             await openWith(h);
 
-            expect(buildBootBundle).toHaveBeenCalledWith({
+            expect(buildBootBundle.mock.calls).toEqual([[{
+                kind:        'fresh',
+                cause:       'boot',
                 lostTasks:   ['abandoned task'],
                 undelivered: ['discord envelope env-1'],
-            });
+            }]]);
             expect(h.instances[0].consumedPrompts).toHaveLength(1);
-            expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('lost:abandoned task');
-            expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('undelivered:');
+            expect(handshakeOf(h.instances[0])).toBe('lost:abandoned task|undelivered:discord envelope env-1');
         });
 
         it('includes a recovered task with an explicitly empty description in the boot bundle', async () => {
-            const buildBootBundle = jest.fn();
+            const buildBootBundle = jest.fn(() => '');
             const h = build({ buildBootBundle });
             h.journal.scriptReadSince([
                 { type: 'task_started', at: new Date(0), taskId: 'task-empty-description', description: '' },
@@ -2655,9 +2763,172 @@ describe('createConductor', () => {
             await openWith(h);
 
             expect(buildBootBundle).toHaveBeenCalledWith({
+                kind:        'fresh',
+                cause:       'boot',
                 lostTasks:   [''],
                 undelivered: [],
             });
+        });
+
+        it('a builder that rejects leaves the recovery-seeded delivery guard in place: deliver() still refuses to resend what a prior process sent', async () => {
+            const h = build({ buildBootBundle: jest.fn(() => Promise.reject(new Error('task list unavailable'))) });
+            h.journal.scriptReadSince([
+                {
+                    type: 'response_delivered', at: new Date(0), envelopeId: 'env-1', channelId: 'chan-1', messageIds: ['msg-1'],
+                },
+            ]);
+
+            await expect(openWith(h)).resolves.toEqual({ sessionId: 'sess-1', resumed: false });
+            expect(handshakeOf(h.instances[0])).toBe('[BOOT] Session opened at 1970-01-01T00:00:00.000Z. No boot context to report. Host handshake — nothing to do, no reply expected.');
+            expect(h.logger.error).not.toHaveBeenCalled();
+
+            const send = jest.fn(() => Promise.resolve({ kind: 'committed' as const, disposition: 'sent' as const, channelId: 'chan-1', messageIds: ['msg-2'] }));
+            await expect(h.conductor.deliver('env-1', send)).resolves.toEqual({ outcome: 'already-committed' });
+            expect(send).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('boot bundle build bound and fallback (#98)', () => {
+        const BARE_OPENED_AT_ZERO = '[BOOT] Session opened at 1970-01-01T00:00:00.000Z. No boot context to report. Host handshake — nothing to do, no reply expected.';
+
+        it('a builder that rejects is logged and the open goes ahead with the bare marker', async () => {
+            const failure = new Error('task list unavailable');
+            const h = build({ buildBootBundle: jest.fn(() => Promise.reject(failure)) });
+
+            await openWith(h);
+
+            expect(handshakeOf(h.instances[0])).toBe(BARE_OPENED_AT_ZERO);
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                { error: failure, kind: 'fresh', cause: 'boot' },
+                'Boot bundle build failed or timed out; opening with the recovery-only fallback'
+            );
+        });
+
+        it('a builder that throws synchronously is treated like a rejection', async () => {
+            const failure = new Error('sync throw');
+            const h = build({
+                buildBootBundle: jest.fn(() => {
+                    throw failure;
+                }),
+            });
+
+            await openWith(h);
+
+            expect(handshakeOf(h.instances[0])).toBe(BARE_OPENED_AT_ZERO);
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                { error: failure, kind: 'fresh', cause: 'boot' },
+                'Boot bundle build failed or timed out; opening with the recovery-only fallback'
+            );
+        });
+
+        it('a builder that never settles holds the open until exactly 10 000 ms on the injected clock, then opens with the bare marker and ignores the late result', async () => {
+            const late = deferred<string>();
+            const h = build({ buildBootBundle: jest.fn(() => late.promise) });
+
+            const openPromise = h.conductor.open();
+            await flush();
+            h.clock.advance(9999);
+            await flush();
+            expect(h.instances).toHaveLength(0);
+
+            h.clock.advance(1);
+            await flush();
+            expect(h.instances).toHaveLength(1);
+            expect(handshakeOf(h.instances[0])).toBe('[BOOT] Session opened at 1970-01-01T00:00:10.000Z. No boot context to report. Host handshake — nothing to do, no reply expected.');
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                { error: new Error('Boot bundle build did not finish within 10000 ms'), kind: 'fresh', cause: 'boot' },
+                'Boot bundle build failed or timed out; opening with the recovery-only fallback'
+            );
+
+            h.instances[0].emit(frames.init('sess-1'));
+            await expect(openPromise).resolves.toEqual({ sessionId: 'sess-1', resumed: false });
+            late.resolve('too late');
+            await flush();
+            expect(h.instances[0].consumedPrompts).toHaveLength(1);
+            expect(h.instances).toHaveLength(1);
+        });
+
+        it('a builder that settles in time clears its timeout timer', async () => {
+            const h = build({ buildBootBundle: jest.fn(async () => 'in time') });
+
+            const openPromise = h.conductor.open();
+            await flush();
+            expect(h.instances).toHaveLength(1);
+            expect(h.clock.pending()).toBe(0);
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+        });
+
+        it('a builder that rejects clears its timeout timer too', async () => {
+            const h = build({ buildBootBundle: jest.fn(() => Promise.reject(new Error('nope'))) });
+
+            const openPromise = h.conductor.open();
+            await flush();
+            expect(h.instances).toHaveLength(1);
+            expect(h.clock.pending()).toBe(0);
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+        });
+
+        it('on a rejection the recovery-only fallback renderer gets the same request, and its text becomes the handshake', async () => {
+            const renderBootBundleFallback = jest.fn(({ lostTasks }: BootBundleRequest) => `recovery only: ${lostTasks.join(',')}`);
+            const h = build({ buildBootBundle: jest.fn(() => Promise.reject(new Error('perch context failed'))), renderBootBundleFallback });
+            h.journal.scriptReadSince([
+                { type: 'task_started', at: new Date(0), taskId: 'task-1', description: 'abandoned task' },
+            ]);
+
+            await openWith(h);
+
+            expect(renderBootBundleFallback.mock.calls).toEqual([[{
+                kind: 'fresh', cause: 'boot', lostTasks: ['abandoned task'], undelivered: [],
+            }]]);
+            expect(handshakeOf(h.instances[0])).toBe('recovery only: abandoned task');
+        });
+
+        it('on a timeout the recovery-only fallback renderer supplies the handshake as well', async () => {
+            const renderBootBundleFallback = jest.fn((_request: BootBundleRequest) => 'recovery only');
+            const h = build({ buildBootBundle: jest.fn(() => deferred<string>().promise), renderBootBundleFallback });
+            await h.resumeStore.save('conversation', 'sess-old');
+
+            const openPromise = h.conductor.open();
+            await flush();
+            h.clock.advance(10_000);
+            await flush();
+
+            expect(renderBootBundleFallback.mock.calls).toEqual([[{
+                kind: 'restart_resume', cause: 'boot', lostTasks: [], undelivered: [],
+            }]]);
+            expect(handshakeOf(h.instances[0])).toBe('recovery only');
+            h.instances[0].emit(frames.init('sess-old'));
+            await openPromise;
+        });
+
+        it('the fallback renderer is never consulted when the build succeeds', async () => {
+            const renderBootBundleFallback = jest.fn(() => 'recovery only');
+            const h = build({ buildBootBundle: jest.fn(() => 'full bundle'), renderBootBundleFallback });
+
+            await openWith(h);
+
+            expect(renderBootBundleFallback).not.toHaveBeenCalled();
+            expect(handshakeOf(h.instances[0])).toBe('full bundle');
+        });
+
+        it('an empty fallback text falls back to the bare marker', async () => {
+            const h = build({ buildBootBundle: jest.fn(() => Promise.reject(new Error('nope'))), renderBootBundleFallback: jest.fn(() => '') });
+
+            await openWith(h);
+
+            expect(handshakeOf(h.instances[0])).toBe(BARE_OPENED_AT_ZERO);
+        });
+
+        it('with no builder at all nothing is built and the open pushes the bare marker', async () => {
+            const renderBootBundleFallback = jest.fn(() => 'recovery only');
+            const h = build({ renderBootBundleFallback });
+
+            await openWith(h);
+
+            expect(renderBootBundleFallback).not.toHaveBeenCalled();
+            expect(handshakeOf(h.instances[0])).toBe(BARE_OPENED_AT_ZERO);
         });
 
         it('crash-and-restart: a conductor rebuilt over the same journal refuses to redeliver what the crashed one already sent, and reports its unfinished task as lost', async () => {
@@ -4559,7 +4830,8 @@ describe('createConductor', () => {
         }
 
         const RESUMED_CONTINUITY = 'This same conversation was resumed, so this was not an offline gap: messages waiting for you were kept and will still be delivered, and no conversation was lost.';
-        const FALLBACK_CONTINUITY = 'The previous conversation could not be resumed, so this is a new session transcript and the host re-seeds your working memory separately. It was still not an offline gap: messages waiting for you were kept and will still be delivered.';
+        const FALLBACK_CONTINUITY = 'The previous conversation could not be resumed, so this is a new session transcript, and earlier context from it is not available to you. It was still not an offline gap: messages waiting for you were kept and will still be delivered.';
+        const FALLBACK_CONTINUITY_RESEEDED = 'The previous conversation could not be resumed, so this is a new session transcript. Your working memory is re-seeded below. It was still not an offline gap: messages waiting for you were kept and will still be delivered.';
         const TASKS_INTRO = 'Background tasks you had started in the previous session process were still running when it ended. They may have been stopped, or may still be running with no way to report back to you — either way, do not wait for a result from them:';
         const TASKS_ADVICE = 'If you still need a result from one of them, check whether it finished and re-run it if needed. If one finished just before the reopen, its result may already be in the transcript.';
         const HANDSHAKE_SUFFIX = 'Host handshake — no reply expected.';
@@ -4750,6 +5022,294 @@ describe('createConductor', () => {
             expect(h.journal.byKind('task_finished').filter(entry => entry.taskId === 'task-bg-1')).toEqual([
                 { type: 'task_finished', at: expect.any(Date), taskId: 'task-bg-1', description: 'index the archive', outcome: 'completed' },
             ]);
+        });
+
+        describe('the boot bundle on a reopen (#98)', () => {
+            it('a requested reopen that resumes builds no bundle and pushes exactly the #62 reopen text', async () => {
+                const buildBootBundle = jest.fn(() => 'BUNDLE');
+                const h = build({ buildBootBundle });
+                await openWith(h, 'sess-1');
+                h.clock.advance(7000);
+
+                h.conductor.requestReopen('an identity change');
+                await flush();
+
+                expect(buildBootBundle).toHaveBeenCalledTimes(1);
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:07.000Z ${REQUESTED_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+            });
+
+            it('a crash reopen that resumes builds no bundle either', async () => {
+                const buildBootBundle = jest.fn(() => 'BUNDLE');
+                const h = build({ buildBootBundle });
+                await openWith(h, 'sess-1');
+                h.clock.advance(5000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+
+                expect(buildBootBundle).toHaveBeenCalledTimes(1);
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+            });
+
+            it('a requested reopen that falls back to fresh builds a fresh bundle for its cause only after the resume failed, and appends it as the last paragraph', async () => {
+                const buildBootBundle = jest.fn((_request: BootBundleRequest) => 'FRESH BUNDLE');
+                const h = build({ buildBootBundle });
+                await openWith(h, 'sess-1');
+                await startTasksInTurn(h);
+                h.instances[0].emit(frames.resultSuccess());
+                await flush();
+                h.clock.advance(7000);
+
+                h.conductor.requestReopen('an identity change');
+                await flush();
+                expect(buildBootBundle).toHaveBeenCalledTimes(1);
+                h.clock.advance(1000);
+                h.instances[1].fail(new Error('resume rejected by CLI'));
+                await flush();
+
+                expect(buildBootBundle.mock.calls).toEqual([
+                    [{ kind: 'fresh', cause: 'boot', lostTasks: [], undelivered: [] }],
+                    [{ kind: 'fresh', cause: 'requested_reopen', lostTasks: [], undelivered: [] }],
+                ]);
+                expect(handshakeTextOf(h.instances[2])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:08.000Z ${REQUESTED_OPENING}`,
+                    FALLBACK_CONTINUITY_RESEEDED,
+                    `${TASKS_INTRO}\n- index the archive\n- summarise the inbox\n${TASKS_ADVICE}`,
+                    HANDSHAKE_SUFFIX,
+                    'FRESH BUNDLE',
+                ].join('\n\n'));
+            });
+
+            it('a crash reopen that falls back to fresh builds its fresh bundle with cause crash_reopen', async () => {
+                const buildBootBundle = jest.fn((_request: BootBundleRequest) => 'FRESH BUNDLE');
+                const h = build({ buildBootBundle });
+                await openWith(h, 'sess-1');
+                h.clock.advance(5000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+                h.instances[1].fail(new Error('resume also failed'));
+                await flush();
+
+                expect(buildBootBundle.mock.calls).toEqual([
+                    [{ kind: 'fresh', cause: 'boot', lostTasks: [], undelivered: [] }],
+                    [{ kind: 'fresh', cause: 'crash_reopen', lostTasks: [], undelivered: [] }],
+                ]);
+                expect(handshakeTextOf(h.instances[2])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                    FALLBACK_CONTINUITY_RESEEDED,
+                    HANDSHAKE_SUFFIX,
+                    'FRESH BUNDLE',
+                ].join('\n\n'));
+            });
+
+            it('an empty fallback bundle claims no re-seed and appends nothing', async () => {
+                const h = build({ buildBootBundle: jest.fn(() => '') });
+                await openWith(h, 'sess-1');
+                h.clock.advance(5000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+                h.instances[1].fail(new Error('resume also failed'));
+                await flush();
+
+                expect(handshakeTextOf(h.instances[2])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                    FALLBACK_CONTINUITY,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+            });
+
+            it('a fallback bundle whose build rejects claims no re-seed either', async () => {
+                const buildBootBundle = jest.fn()
+                    .mockImplementationOnce(() => 'BOOT BUNDLE')
+                    .mockImplementationOnce(() => Promise.reject(new Error('task list unavailable')));
+                const h = build({ buildBootBundle });
+                await openWith(h, 'sess-1');
+                h.clock.advance(5000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+                h.instances[1].fail(new Error('resume also failed'));
+                await flush();
+
+                expect(handshakeTextOf(h.instances[2])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                    FALLBACK_CONTINUITY,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+            });
+        });
+    });
+
+    describe('shutdown during a boot bundle build (#98)', () => {
+        const SHUTDOWN_OPTIONS = { turnWaitMs: 0, deadlineMs: 1000 };
+
+        it('shutdown while the initial fresh bundle is building: no query is spawned and open() rejects', async () => {
+            const bundle = deferred<string>();
+            const h = build({ buildBootBundle: jest.fn(() => bundle.promise) });
+
+            const openPromise = h.conductor.open();
+            const openOutcome = openPromise.catch((error: unknown) => error);
+            await flush();
+            await h.conductor.shutdown(SHUTDOWN_OPTIONS);
+            bundle.resolve('late bundle');
+            await flush();
+
+            expect(h.instances).toHaveLength(0);
+            expect(await openOutcome).toEqual(new Error('Conductor is shutting down; the session was not opened'));
+        });
+
+        it('shutdown while the restart_resume bundle is building: no query is spawned, and no fresh fallback is attempted', async () => {
+            const bundle = deferred<string>();
+            const h = build({ buildBootBundle: jest.fn(() => bundle.promise) });
+            await h.resumeStore.save('conversation', 'sess-old');
+
+            const openOutcome = h.conductor.open().catch((error: unknown) => error);
+            await flush();
+            await h.conductor.shutdown(SHUTDOWN_OPTIONS);
+            bundle.resolve('late bundle');
+            await flush();
+
+            expect(h.instances).toHaveLength(0);
+            expect(h.buildBootBundle).toHaveBeenCalledTimes(1);
+            expect(await openOutcome).toEqual(new Error('Conductor is shutting down; the session was not opened'));
+            expect(h.logger.warn).not.toHaveBeenCalled();
+        });
+
+        it('shutdown while the boot fallback bundle is building: no fallback query is spawned', async () => {
+            const fallbackBundle = deferred<string>();
+            const h = build({
+                buildBootBundle: jest.fn()
+                    .mockImplementationOnce(() => 'resume bundle')
+                    .mockImplementationOnce(() => fallbackBundle.promise),
+            });
+            await h.resumeStore.save('conversation', 'sess-old');
+
+            const openOutcome = h.conductor.open().catch((error: unknown) => error);
+            await flush();
+            h.instances[0].fail(new Error('resume rejected by CLI'));
+            await flush();
+            expect(h.buildBootBundle).toHaveBeenCalledTimes(2);
+            await h.conductor.shutdown(SHUTDOWN_OPTIONS);
+            fallbackBundle.resolve('late bundle');
+            await flush();
+
+            expect(h.instances).toHaveLength(1);
+            expect(await openOutcome).toEqual(new Error('Conductor is shutting down; the session was not opened'));
+        });
+
+        it('a boot handle that settles after shutdown finished is closed, not left running, and open() rejects', async () => {
+            const h = build({ buildBootBundle: jest.fn(() => 'bundle') });
+
+            const openOutcome = h.conductor.open().catch((error: unknown) => error);
+            await flush();
+            expect(h.instances).toHaveLength(1);
+            await h.conductor.shutdown(SHUTDOWN_OPTIONS);
+            expect(h.instances[0].closeCalls).toBe(0);
+
+            h.instances[0].emit(frames.init('sess-late'));
+            await flush();
+
+            expect(h.instances[0].closeCalls).toBe(1);
+            expect(h.conductor.status().opened).toBe(false);
+            expect(h.journal.byKind('session_opened')).toEqual([]);
+            expect(await openOutcome).toEqual(new Error('Conductor is shutting down; the session was not opened'));
+        });
+
+        it('a restart_resume handle that settles after shutdown is closed without falling back to a fresh open', async () => {
+            const h = build({ buildBootBundle: jest.fn(() => 'bundle') });
+            await h.resumeStore.save('conversation', 'sess-old');
+
+            const openOutcome = h.conductor.open().catch((error: unknown) => error);
+            await flush();
+            await h.conductor.shutdown(SHUTDOWN_OPTIONS);
+            h.instances[0].emit(frames.init('sess-old'));
+            await flush();
+
+            expect(h.instances).toHaveLength(1);
+            expect(h.instances[0].closeCalls).toBe(1);
+            expect(await openOutcome).toEqual(new Error('Conductor is shutting down; the session was not opened'));
+        });
+
+        it('shutdown while a reopen\'s fallback bundle is building: no replacement query is spawned', async () => {
+            const fallbackBundle = deferred<string>();
+            const h = build({
+                buildBootBundle: jest.fn()
+                    .mockImplementationOnce(() => 'boot bundle')
+                    .mockImplementationOnce(() => fallbackBundle.promise),
+            });
+            await openWith(h, 'sess-1');
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].fail(new Error('resume also failed'));
+            await flush();
+            expect(h.buildBootBundle).toHaveBeenCalledTimes(2);
+
+            const shutdownPromise = h.conductor.shutdown(SHUTDOWN_OPTIONS);
+            await flush();
+            fallbackBundle.resolve('late bundle');
+            await shutdownPromise;
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+            expect(h.logger.error).not.toHaveBeenCalledWith(expect.anything(), 'Conductor could not reopen the session after it closed unexpectedly; giving up');
+        });
+
+        it('shutdown while a reopen\'s fallback bundle is building rejects the turn the crash interrupted, clearing its abort listener', async () => {
+            const fallbackBundle = deferred<string>();
+            const h = build({
+                buildBootBundle: jest.fn()
+                    .mockImplementationOnce(() => 'boot bundle')
+                    .mockImplementationOnce(() => fallbackBundle.promise),
+            });
+            await openWith(h, 'sess-1');
+            const controller = new AbortController();
+            const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
+            const inFlight = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
+            const inFlightOutcome = inFlight.catch((error: unknown) => error);
+            await flush();
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].fail(new Error('resume also failed'));
+            await flush();
+
+            const shutdownPromise = h.conductor.shutdown(SHUTDOWN_OPTIONS);
+            await flush();
+            fallbackBundle.resolve('late bundle');
+            await shutdownPromise;
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+            expect(await inFlightOutcome).toEqual(new Error('Conductor is shutting down'));
+            expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+        });
+
+        it('shutdown while a crash reopen\'s resume is in flight rejects the interrupted turn instead of re-queueing it', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            const inFlightOutcome = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' }).catch((error: unknown) => error);
+            await flush();
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+
+            const shutdownPromise = h.conductor.shutdown(SHUTDOWN_OPTIONS);
+            await flush();
+            h.instances[1].emit(frames.init('sess-1'));
+            await shutdownPromise;
+            await flush();
+
+            expect(h.instances[1].closeCalls).toBe(1);
+            expect(turnPrompts(h.instances[1])).toHaveLength(0);
+            expect(await inFlightOutcome).toEqual(new Error('Conductor is shutting down'));
         });
     });
 });

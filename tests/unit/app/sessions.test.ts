@@ -24,9 +24,12 @@ import { formatTimeHeader } from '@/utils';
 
 type MCPServers = ReturnType<typeof mcpServersModule.createMcpServerInstances>;
 
-/** Flushes enough microtask ticks for promise chains to settle. */
+/**
+ * Flushes enough microtask ticks for promise chains to settle — including a fresh boot bundle's
+ * concurrent context reads, which `open()` now awaits before creating its query (#98).
+ */
 async function flush(): Promise<void> {
-    for(let i = 0; i < 10; i += 1) {
+    for(let i = 0; i < 40; i += 1) {
         // eslint-disable-next-line no-await-in-loop -- deterministic microtask-drain helper used only in tests, not a real async loop
         await Promise.resolve();
     }
@@ -54,8 +57,24 @@ async function waitUntil(predicate: () => boolean, description: string): Promise
 }
 
 /**
+ * The text of the `[BOOT]` handshake `instance` consumed first — where the fresh and
+ * restart-resume boot bundles now travel (#98), since the real SDK never fires the SessionStart
+ * callback for `startup`/`resume` (anthropics/claude-agent-sdk-typescript#465).
+ */
+function handshakeOf(instance: FakeQuery): string {
+    const content = instance.consumedPrompts[0]?.message.content;
+    return Array.isArray(content) ? content.map(block => (block.type === 'text' ? block.text : '')).join('') : String(content);
+}
+
+/** Waits until query `index` exists and has consumed its opening handshake, however many ticks its bundle build took. */
+async function waitForHandshake(instances: FakeQuery[], index: number): Promise<void> {
+    await waitUntil(() => (instances[index]?.consumedPrompts.length ?? 0) > 0, `query ${index}'s handshake`);
+}
+
+/**
  * Fires `instance`'s SessionStart boot-bundle hook (always the first SessionStart matcher) for
  * `source`, returning the `additionalContext` it injected — `undefined` when it injected none.
+ * The real SDK only fires it for `compact`; `startup`/`resume` exercise the #465 tripwire.
  */
 async function bootContextOf(instance: FakeQuery, source: 'startup' | 'resume' | 'compact'): Promise<string | undefined> {
     const hookFn = instance.receivedParams?.options.hooks?.SessionStart?.[0]?.hooks[0];
@@ -399,7 +418,32 @@ describe('createConversationConductor', () => {
         expect(h.channelListProvider).not.toHaveBeenCalled();
     });
 
-    it('merges a SessionStart boot-bundle hook that fires for both \'startup\' (mapped to \'fresh\') and \'compact\' sources — only \'fresh\' carries recentUsers, per R1\'s per-kind section set', async () => {
+    it('a fresh boot open carries the full fresh conversation bundle in its [BOOT] handshake (#98), and builds nothing into the SessionStart callback for startup', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        (h.contextBuilder.loadHotState as ReturnType<typeof jest.fn>).mockResolvedValue('Planning the garden');
+        h.taskListReader.buildTaskListSummary.mockResolvedValue('- water the beans' as never);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await waitForHandshake(h.instances, 0);
+        const handshake = handshakeOf(h.instances[0]);
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        expect(handshake.startsWith('[BOOT BUNDLE · conversation · fresh]')).toBe(true);
+        expect(handshake).toContain('## Current focus\nPlanning the garden');
+        expect(handshake).toContain('## Task list\n- water the beans');
+        expect(handshake).toContain('## Channels\n#general');
+        expect(h.channelListProvider).toHaveBeenCalledTimes(1);
+        expect(h.contextBuilder.loadRecentEventsSince).toHaveBeenCalledWith(24 * 60 * 60 * 1000, expect.any(Number), new Date(0));
+
+        // The SDK callback never builds for startup: fired anyway (as #465's fix would), it adds nothing.
+        await expect(bootContextOf(h.instances[0], 'startup')).resolves.toBeUndefined();
+        expect(h.channelListProvider).toHaveBeenCalledTimes(1);
+    });
+
+    it('the compaction bundle comes from the SessionStart callback and carries no recentUsers, per R1\'s per-kind section set', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
 
@@ -409,8 +453,6 @@ describe('createConversationConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        // Submit a discord envelope so recordRecentAuthor has something to report, then let its
-        // turn finish so a subsequent hook fire can observe the ledger's live task afterward.
         const submitPromise = conductor.submit(
             {
                 id: 'env-1', kind: 'discord', text: 'hi', channelId: 'chan-1', authorId: 'user-42', origin: { kind: 'human' }, hostPriority: 'human', shouldQuery: true, createdAt: new Date(0),
@@ -421,24 +463,47 @@ describe('createConversationConductor', () => {
         h.instances[0].emit(frames.resultSuccess());
         await submitPromise;
 
-        const options = h.instances[0].receivedParams?.options;
-        const startHooks = options?.hooks?.SessionStart;
-        expect(startHooks).toBeDefined();
-        const hookFn = startHooks?.[0]?.hooks[0];
-        expect(hookFn).toBeDefined();
-
-        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
-        expect(startupContext).toContain('[BOOT BUNDLE · conversation · fresh]');
-        expect(startupContext).toContain('user-42');
-        expect(startupContext).not.toContain('Stryker was here');
-
         // 'compact' renders no recentUsers section at all (R1's per-kind contract) — nothing was
         // lost across a compaction, so who Izzy was recently talking to is not re-seeded here.
-        const compactResult = await hookFn?.({ source: 'compact' } as never, undefined, undefined as never);
-        const compactContext = (compactResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+        const compactContext = await bootContextOf(h.instances[0], 'compact');
         expect(compactContext).toContain('[BOOT BUNDLE · conversation · compact]');
         expect(compactContext).not.toContain('user-42');
+    });
+
+    it('a failed fresh build opens with the bare marker: conversation wires no recovery-only fallback, since the catch-up owns lost tasks', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.journal.scriptReadSince([
+            { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'Summarize last week' },
+        ]);
+        h.taskListReader.buildTaskListSummary.mockRejectedValue(new Error('task list unavailable'));
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await waitForHandshake(h.instances, 0);
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        expect(handshakeOf(h.instances[0])).toBe('[BOOT] Session opened at 1970-01-01T00:00:00.000Z. No boot context to report. Host handshake — nothing to do, no reply expected.');
+    });
+
+    it('a fresh build that times out opens with the bare marker after exactly 10 000 ms', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.channelListProvider.mockImplementation(() => deferred<string>().promise);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.clock.advance(9999);
+        await flush();
+        expect(h.instances).toHaveLength(0);
+        h.clock.advance(1);
+        await waitForHandshake(h.instances, 0);
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        expect(handshakeOf(h.instances[0])).toBe('[BOOT] Session opened at 1970-01-01T00:00:10.000Z. No boot context to report. Host handshake — nothing to do, no reply expected.');
     });
 
     it('PreCompact dispatches compaction_started onto the ledger; PostCompact resets the context policy and records the compaction summary', async () => {
@@ -468,12 +533,13 @@ describe('createConversationConductor', () => {
         expect(contextPolicy.shouldInjectUserMemory('user-1', 'block text')).toBe(true);
     });
 
-    it('R1: a boot-time \'resume\' SessionStart source maps to the \'restart_resume\' BootKind and renders NO lost-task/undelivered content — that content is the merged Discord boot envelope\'s exclusive responsibility (sourced instead from the returned bootLostTasks)', async () => {
+    it('R1: a boot restart resume renders NO lost-task/undelivered content and, with a new empty ledger, pushes the bare resume marker without a single context fetch — lost tasks are the merged Discord boot envelope\'s exclusive responsibility (sourced instead from the returned bootLostTasks)', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
         h.journal.scriptReadSince([
             { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'Summarize last week' },
         ]);
+        await h.resumeStore.save('conversation', 'sess-1');
 
         const { conductor, bootLostTasks } = await createConversationConductor(h.params);
         expect(bootLostTasks).toEqual(['Summarize last week']);
@@ -483,15 +549,34 @@ describe('createConversationConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        const resumeResult = await hookFn?.({ source: 'resume' } as never, undefined, undefined as never);
-        const resumeContext = (resumeResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+        expect(handshakeOf(h.instances[0])).toBe('[BOOT] Session resumed at 1970-01-01T00:00:00.000Z. No boot context to report. Host handshake — nothing to do, no reply expected.');
+        expect(h.contextBuilder.loadHotState).not.toHaveBeenCalled();
+        expect(h.contextBuilder.loadRecentEventsSince).not.toHaveBeenCalled();
+        expect(h.taskListReader.buildTaskListSummary).not.toHaveBeenCalled();
+        expect(h.channelListProvider).not.toHaveBeenCalled();
+        // Fired anyway (as #465's fix would), the callback adds nothing for resume.
+        await expect(bootContextOf(h.instances[0], 'resume')).resolves.toBeUndefined();
+    });
 
-        // Every resume section is empty (fresh/resume always pass lostTasks/undelivered as `[]`
-        // to the boot-bundle builder — see buildBootBundleText's own doc), so the bundle text is
-        // `''` and the hook adds no additionalContext at all.
-        expect(resumeContext).toBe('');
+    it('R1: a fresh boot bundle renders no lost tasks either, though the conductor offers its recovery', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.journal.scriptReadSince([
+            { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'Summarize last week' },
+            { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-no-text', kind: 'discord' },
+            { type: 'turn_completed', at: new Date(1), envelopeId: 'env-no-text', kind: 'discord' },
+        ]);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const handshake = handshakeOf(h.instances[0]);
+        expect(handshake).toContain('[BOOT BUNDLE · conversation · fresh]');
+        expect(handshake).not.toContain('Summarize last week');
+        expect(handshake).not.toContain('env-no-text');
     });
 
     it('R1: degrades to an empty recovery section (and logs a warning) when the journal readSince read fails', async () => {
@@ -505,10 +590,7 @@ describe('createConversationConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+        const startupContext = handshakeOf(h.instances[0]);
 
         expect(startupContext).toContain('[BOOT BUNDLE · conversation · fresh]');
         expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error) }), 'Conversation boot-bundle recovery read failed; continuing with an empty recovery section');
@@ -546,23 +628,25 @@ describe('createConversationConductor', () => {
         expect(h.contextBuilder.loadRecentEventsSince).toHaveBeenCalledWith(24 * 60 * 60 * 1000, expect.any(Number), new Date(5000));
     });
 
-    it('R1: markEventsSeen is never called for a non-compact boot kind', async () => {
+    it.each([false, true])('R1: markEventsSeen is never called for a non-compact boot kind (stored session: %p)', async (stored) => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        if(stored) {
+            await h.resumeStore.save('conversation', 'sess-1');
+        }
 
-        const { conductor, contextPolicy } = await createConversationConductor(h.params);
+        const { conductor, contextPolicy, ledgerStore } = await createConversationConductor(h.params);
+        // A live task makes the restart_resume bundle non-empty, so it is really built.
+        ledgerStore.dispatch({
+            type: 'sdk_frame', frame: frames.taskStarted({ task_id: 'task-1', description: 'Refactor the widget', is_backgrounded: true }), at: new Date(0),
+        });
+        const markEventsSeenSpy = jest.spyOn(contextPolicy, 'markEventsSeen');
         const openPromise = conductor.open();
         await flush();
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        const markEventsSeenSpy = jest.spyOn(contextPolicy, 'markEventsSeen');
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-
-        await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        await hookFn?.({ source: 'resume' } as never, undefined, undefined as never);
-
+        expect(handshakeOf(h.instances[0])).toContain(stored ? '[BOOT BUNDLE · conversation · restart_resume]' : '[BOOT BUNDLE · conversation · fresh]');
         expect(markEventsSeenSpy).not.toHaveBeenCalled();
     });
 
@@ -572,10 +656,6 @@ describe('createConversationConductor', () => {
         h.clock.advance(10_000);
         const eventsStarted = Promise.withResolvers<void>();
         const eventsGate = Promise.withResolvers<unknown>();
-        (h.contextBuilder.loadRecentEventsSince as ReturnType<typeof jest.fn>).mockImplementation(() => {
-            eventsStarted.resolve();
-            return eventsGate.promise;
-        });
         const events = [
             { path: 'state/foo.md', content: 'Foo happened', contentPreview: 'Foo happened', updatedAt: new Date(9000) },
         ];
@@ -585,6 +665,11 @@ describe('createConversationConductor', () => {
         await flush();
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
+        // Gated only now: the fresh bundle built at open() reads events too (#98).
+        (h.contextBuilder.loadRecentEventsSince as ReturnType<typeof jest.fn>).mockClear().mockImplementation(() => {
+            eventsStarted.resolve();
+            return eventsGate.promise;
+        });
 
         contextPolicy.markEventsSeenAt(5000);
         expect(contextPolicy.eventsSinceMs()).toBe(5000);
@@ -611,27 +696,38 @@ describe('createConversationConductor', () => {
         expect(contextPolicy.eventsSinceMs()).toBe(10_000);
     });
 
-    it('R1: mutation guard — a \'resume\' boot bundle never queries events, even when the context policy already carries an events mark (only \'compact\' reads the mark)', async () => {
+    it('R1: mutation guard — a restart_resume boot bundle never queries events, even when the context policy already carries an events mark (only \'compact\' reads the mark)', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        await h.resumeStore.save('conversation', 'sess-1');
 
         const { conductor, contextPolicy } = await createConversationConductor(h.params);
+        // A mark set before the open — if the `kind === 'compact'` guard were ever weakened
+        // (e.g. mutated to `true`), the restart_resume bundle would start reading events against
+        // this mark instead of rendering none at all.
+        contextPolicy.markEventsSeenAt(5000);
         const openPromise = conductor.open();
         await flush();
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        // A mark left over from an earlier compaction — if the `kind === 'compact'` guard were
-        // ever weakened (e.g. mutated to `true`), a 'resume' bundle would start reading events
-        // against this mark instead of rendering none at all.
-        contextPolicy.markEventsSeenAt(5000);
-        (h.contextBuilder.loadRecentEventsSince as ReturnType<typeof jest.fn>).mockClear();
-
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        await hookFn?.({ source: 'resume' } as never, undefined, undefined as never);
-
         expect(h.contextBuilder.loadRecentEventsSince).not.toHaveBeenCalled();
+    });
+
+    it('R1: a fresh boot bundle ignores an events mark and reads the rolling 24h window', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.clock.advance(100_000);
+
+        const { conductor, contextPolicy } = await createConversationConductor(h.params);
+        contextPolicy.markEventsSeenAt(5000);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        expect(h.contextBuilder.loadRecentEventsSince).toHaveBeenCalledTimes(1);
+        expect(h.contextBuilder.loadRecentEventsSince).toHaveBeenCalledWith(24 * 60 * 60 * 1000, expect.any(Number), new Date(100_000));
     });
 
     describe('#62: the boot kind follows the open cause, not only the SDK source', () => {
@@ -651,32 +747,39 @@ describe('createConversationConductor', () => {
             return result;
         }
 
-        it('a boot-time resume renders restart_resume with the live tasks; the identity reopen\'s resume renders nothing, before and after its init, while the boot query keeps its own cause', async () => {
+        it('a boot-time resume with a live task on the ledger renders restart_resume with that task in its handshake', async () => {
             const h = build();
-            const { ledgerStore } = await openResumedWithTask(h);
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+            await h.resumeStore.save('conversation', 'sess-1');
+            const { conductor, ledgerStore } = await createConversationConductor(h.params);
+            ledgerStore.dispatch({
+                type: 'sdk_frame', frame: frames.taskStarted({ task_id: 'task-1', description: 'Refactor the widget', is_backgrounded: true }), at: new Date(0),
+            });
 
-            const bootContext = await bootContextOf(h.instances[0], 'resume');
+            const openPromise = conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            const bootContext = handshakeOf(h.instances[0]);
             expect(bootContext).toContain('[BOOT BUNDLE · conversation · restart_resume]');
             expect(bootContext).toContain('## Background tasks\nRefactor the widget');
+        });
 
+        it('the identity reopen\'s resume pushes only the #62 reopen text, with no bundle', async () => {
+            const h = build();
+            await openResumedWithTask(h);
             h.identityGet.mockResolvedValue('I am Izzy, revised');
             h.fireIdentityChange();
             await flush();
-            await flush();
             expect(h.instances).toHaveLength(2);
 
-            // Hook before the replacement's init: the ledger still holds the old session's task.
-            expect(ledgerStore.get().tasks.map(task => task.description)).toEqual(['Refactor the widget']);
-            await expect(bootContextOf(h.instances[1], 'resume')).resolves.toBeUndefined();
-            // The first query's hook was built with cause boot and still maps resume that way.
-            await expect(bootContextOf(h.instances[0], 'resume')).resolves.toContain('[BOOT BUNDLE · conversation · restart_resume]');
-
-            h.instances[1].emit(frames.init('sess-1'));
-            await flush();
-            await expect(bootContextOf(h.instances[1], 'resume')).resolves.toBeUndefined();
+            const handshake = handshakeOf(h.instances[1]);
+            expect(handshake.startsWith('[BOOT] Session reopened at ')).toBe(true);
+            expect(handshake).not.toContain('[BOOT BUNDLE');
         });
 
-        it('a crash reopen\'s resume renders nothing either, though the ledger held a task at the crash', async () => {
+        it('a crash reopen\'s resume pushes no bundle either, though the ledger held a task at the crash', async () => {
             const h = build();
             await openResumedWithTask(h);
 
@@ -684,7 +787,7 @@ describe('createConversationConductor', () => {
             await flush();
             expect(h.instances).toHaveLength(2);
 
-            await expect(bootContextOf(h.instances[1], 'resume')).resolves.toBeUndefined();
+            expect(handshakeOf(h.instances[1])).not.toContain('[BOOT BUNDLE');
         });
 
         it('a compaction inside a reopened session still renders the compact bundle with the live tasks and advances the events mark', async () => {
@@ -709,31 +812,26 @@ describe('createConversationConductor', () => {
             expect(markEventsSeenSpy).toHaveBeenCalledTimes(1);
         });
 
-        it('a reopen that falls back to a fresh session renders the full fresh bundle without the old session\'s tasks, whether the hook fires before or after init', async () => {
+        it('a reopen that falls back to a fresh session appends the full fresh bundle to its reopen handshake, without the old session\'s tasks', async () => {
             const h = build();
             const { ledgerStore } = await openResumedWithTask(h);
             h.identityGet.mockResolvedValue('I am Izzy, revised');
             h.fireIdentityChange();
             await flush();
-            await flush();
             h.instances[1].fail(new Error('resume rejected by CLI'));
-            await flush();
-            expect(h.instances).toHaveLength(3);
+            await waitForHandshake(h.instances, 2);
 
-            // Before init the ledger still lists the old task; the reopen handshake already
-            // reported it as probably terminated, so the fresh bundle must not call it running.
+            // The bundle was built before the replacement's init, while the ledger still listed
+            // the old task; the reopen handshake already reported it as probably terminated, so
+            // the fresh bundle must not call it running.
             expect(ledgerStore.get().tasks.map(task => task.description)).toEqual(['Refactor the widget']);
-            const beforeInit = await bootContextOf(h.instances[2], 'startup');
-            expect(beforeInit).toContain('[BOOT BUNDLE · conversation · fresh]');
-            expect(beforeInit).toContain('## Channels\n#general');
-            expect(beforeInit).not.toContain('Refactor the widget');
-            expect(beforeInit).not.toContain('## Background tasks');
-
-            h.instances[2].emit(frames.init('sess-2'));
-            await flush();
-            const afterInit = await bootContextOf(h.instances[2], 'startup');
-            expect(afterInit).toContain('[BOOT BUNDLE · conversation · fresh]');
-            expect(afterInit).not.toContain('Refactor the widget');
+            const [explanation, bundle] = handshakeOf(h.instances[2]).split('Host handshake — no reply expected.\n\n');
+            expect(explanation).toContain('Your working memory is re-seeded below.');
+            expect(explanation).toContain('- Refactor the widget');
+            expect(bundle.startsWith('[BOOT BUNDLE · conversation · fresh]')).toBe(true);
+            expect(bundle).toContain('## Channels\n#general');
+            expect(bundle).not.toContain('Refactor the widget');
+            expect(bundle).not.toContain('## Background tasks');
         });
     });
 
@@ -867,94 +965,108 @@ describe('createConversationConductor', () => {
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
 
         const { conductor, ledgerStore } = await createConversationConductor(h.params);
-        const openPromise = conductor.open();
-        await flush();
-        h.instances[0].emit(frames.init('sess-1'));
-        await openPromise;
-
         ledgerStore.dispatch({
             type: 'sdk_frame', frame: frames.taskStarted({ task_id: 'task-1', description: 'Refactor the widget' }), at: new Date(0),
         });
         expect(ledgerStore.get().tasks.map(task => task.description)).toContain('Refactor the widget');
 
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
-
-        expect(startupContext).toContain('Refactor the widget');
-    });
-
-    // eslint-disable-next-line complexity -- one scenario exercises dedupe, filtering and the ten-user cap through the same live conductor
-    it('dedupes, caps at 10 and ignores non-discord/undefined authors when building recentUsers', async () => {
-        const h = build();
-        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
-
-        const { conductor } = await createConversationConductor(h.params);
         const openPromise = conductor.open();
         await flush();
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        async function submitDiscord(authorId: string | undefined, envelopeId: string): Promise<void> {
-            const submitPromise = conductor.submit(
-                {
-                    id: envelopeId, kind: 'discord', text: 'hi', channelId: 'chan-1', authorId, origin: { kind: 'human' }, hostPriority: 'human', shouldQuery: true, createdAt: new Date(0),
-                },
-                { priority: 'human', requestingChannelId: 'chan-1' }
-            );
+        expect(handshakeOf(h.instances[0])).toContain('## Background tasks\nRefactor the widget');
+    });
+
+    describe('recentUsers in a fresh bundle (reached through a crash reopen whose resume fails)', () => {
+        /** Opens a conversation conductor and returns submit helpers against instance 0. */
+        async function openForAuthors(h: ReturnType<typeof build>) {
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+            const { conductor } = await createConversationConductor(h.params);
+            const openPromise = conductor.open();
             await flush();
-            h.instances[0].emit(frames.resultSuccess());
-            await submitPromise;
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            async function submitDiscord(authorId: string | undefined, envelopeId: string): Promise<void> {
+                const submitPromise = conductor.submit(
+                    {
+                        id: envelopeId, kind: 'discord', text: 'hi', channelId: 'chan-1', authorId, origin: { kind: 'human' }, hostPriority: 'human', shouldQuery: true, createdAt: new Date(0),
+                    },
+                    { priority: 'human', requestingChannelId: 'chan-1' }
+                );
+                await flush();
+                h.instances[0].emit(frames.resultSuccess());
+                await submitPromise;
+            }
+
+            async function submitNonDiscord(envelopeId: string): Promise<void> {
+                const submitPromise = conductor.submit(
+                    {
+                        id: envelopeId, kind: 'notification', text: 'note', authorId: 'user-NON-DISCORD', hostPriority: 'accumulate', shouldQuery: true, createdAt: new Date(0),
+                    },
+                    { priority: 'other' }
+                );
+                await flush();
+                h.instances[0].emit(frames.resultSuccess());
+                await submitPromise;
+            }
+
+            /** Crashes instance 0, fails the resume, and returns the fresh fallback's bundle paragraph. */
+            async function freshFallbackBundle(): Promise<string> {
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+                h.instances[1].fail(new Error('resume rejected by CLI'));
+                await waitForHandshake(h.instances, 2);
+                const [, bundle] = handshakeOf(h.instances[2]).split('Host handshake — no reply expected.\n\n');
+                expect(bundle.startsWith('[BOOT BUNDLE · conversation · fresh]')).toBe(true);
+                return bundle;
+            }
+
+            return { submitDiscord, submitNonDiscord, freshFallbackBundle };
         }
 
-        async function submitNonDiscord(envelopeId: string): Promise<void> {
-            const submitPromise = conductor.submit(
-                {
-                    id: envelopeId, kind: 'notification', text: 'note', authorId: 'user-NON-DISCORD', hostPriority: 'accumulate', shouldQuery: true, createdAt: new Date(0),
-                },
-                { priority: 'other' }
-            );
-            await flush();
-            h.instances[0].emit(frames.resultSuccess());
-            await submitPromise;
-        }
+        it('dedupes, and ignores non-discord and undefined authors', async () => {
+            const h = build();
+            const { submitDiscord, submitNonDiscord, freshFallbackBundle } = await openForAuthors(h);
 
-        // 'user-A' appears twice — dedupe should keep it once, most recent.
-        await submitDiscord('user-A', 'env-A1');
-        await submitDiscord('user-B', 'env-B1');
-        await submitDiscord('user-A', 'env-A2');
-        // A non-discord envelope must not be recorded as a recent author.
-        await submitNonDiscord('env-notify-1');
-        // An undefined authorId must not blow up or be recorded.
-        await submitDiscord(undefined, 'env-anon');
+            // 'user-A' appears twice — dedupe should keep it once, most recent.
+            await submitDiscord('user-A', 'env-A1');
+            await submitDiscord('user-B', 'env-B1');
+            await submitDiscord('user-A', 'env-A2');
+            // A non-discord envelope must not be recorded as a recent author.
+            await submitNonDiscord('env-notify-1');
+            // An undefined authorId must not blow up or be recorded.
+            await submitDiscord(undefined, 'env-anon');
 
-        const prefillOptions = h.instances[0].receivedParams?.options;
-        const prefillHookFn = prefillOptions?.hooks?.SessionStart?.[0]?.hooks[0];
-        const prefillResult = await prefillHookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        const prefillContext = (prefillResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
-        expect(prefillContext.match(/user-A/g)).toHaveLength(1);
-        expect(prefillContext.match(/user-B/g)).toHaveLength(1);
-        expect(prefillContext).not.toContain('user-NON-DISCORD');
+            const bundle = await freshFallbackBundle();
+            expect(bundle).toContain('## Recently talking to\nuser-A\nuser-B');
+            expect(bundle.match(/user-A/g)).toHaveLength(1);
+            expect(bundle.match(/user-B/g)).toHaveLength(1);
+            expect(bundle).not.toContain('user-NON-DISCORD');
+        });
 
-        // Fill past the 10-entry cap.
-        for(let i = 0; i < 10; i += 1) {
-            // eslint-disable-next-line no-await-in-loop -- sequential submits against one fake session, deliberately serialised
-            await submitDiscord(`user-${i}`, `env-${i}`);
-        }
+        it('caps at the ten most recent authors', async () => {
+            const h = build();
+            const { submitDiscord, freshFallbackBundle } = await openForAuthors(h);
 
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+            await submitDiscord('user-A', 'env-A1');
+            await submitDiscord('user-B', 'env-B1');
+            // Fill past the 10-entry cap.
+            for(let i = 0; i < 10; i += 1) {
+                // eslint-disable-next-line no-await-in-loop -- sequential submits against one fake session, deliberately serialised
+                await submitDiscord(`user-${i}`, `env-${i}`);
+            }
 
-        // Most-recent-first, deduped, capped at 10 — 'user-B' and 'user-A' (both submitted before
-        // the fill loop) have been pushed out by the 10 later authors.
-        expect(startupContext).toContain('user-9');
-        expect(startupContext).toContain('user-0');
-        expect(startupContext).not.toContain('user-A');
-        expect(startupContext).not.toContain('user-B');
-        expect(startupContext).not.toContain('Stryker was here');
+            const bundle = await freshFallbackBundle();
+            // Most-recent-first, deduped, capped at 10 — 'user-B' and 'user-A' (both submitted before
+            // the fill loop) have been pushed out by the 10 later authors.
+            expect(bundle).toContain('user-9');
+            expect(bundle).toContain('user-0');
+            expect(bundle).not.toContain('user-A');
+            expect(bundle).not.toContain('user-B');
+            expect(bundle).not.toContain('Stryker was here');
+        });
     });
 
     it('classifies the SDK\'s "Operation aborted" stderr as an error, never debug — the session has no per-open interrupt flag threaded into isInterrupting', async () => {
@@ -1589,7 +1701,7 @@ describe('createPerchConductor', () => {
         expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent);
     });
 
-    it('merges a SessionStart boot-bundle hook (perch variant) carrying the task list and perch context', async () => {
+    it('a fresh boot open carries the perch fresh bundle (task list and perch context) in its [BOOT] handshake, and the SessionStart callback builds nothing for startup', async () => {
         const h = buildPerch();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
         (h.contextBuilder.buildPerchContext as ReturnType<typeof jest.fn>).mockResolvedValue('## Perch context\nQuiet night.');
@@ -1600,16 +1712,58 @@ describe('createPerchConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        expect(hookFn).toBeDefined();
-
-        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
-
+        const startupContext = handshakeOf(h.instances[0]);
         expect(startupContext).toContain('[BOOT BUNDLE · perch · fresh]');
         expect(startupContext).toContain('Quiet night.');
         expect(startupContext).not.toContain('Stryker was here');
+        expect(h.contextBuilder.buildPerchContext).toHaveBeenCalledTimes(1);
+
+        await expect(bootContextOf(h.instances[0], 'startup')).resolves.toBeUndefined();
+        expect(h.contextBuilder.buildPerchContext).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['rejects', () => Promise.reject(new Error('CalDAV unavailable'))],
+        ['never settles', () => deferred<string>().promise],
+    ] as const)('when the perch context build %s, the handshake still carries the recovery the conductor already journaled as lost', async (_label, perchContext) => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.journal.scriptReadSince([
+            { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'Summarize last week' },
+            { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-no-text', kind: 'discord' },
+            { type: 'turn_completed', at: new Date(1), envelopeId: 'env-no-text', kind: 'discord' },
+        ]);
+        (h.contextBuilder.buildPerchContext as ReturnType<typeof jest.fn>).mockImplementation(perchContext);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.clock.advance(10_000);
+        await waitForHandshake(h.instances, 0);
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        expect(handshakeOf(h.instances[0])).toBe([
+            '[BOOT BUNDLE · perch · fresh · recovery only]',
+            'The rest of this boot context could not be loaded in time, so only what was lost at restart is listed here. Use your tools to look up anything else you need.',
+            '## Background tasks lost at restart\nSummarize last week',
+            '## Envelopes without a delivered response\ndiscord envelope env-no-text',
+        ].join('\n\n'));
+        expect(h.journal.byKind('task_lost').map(entry => entry.taskId)).toEqual(['task-orphan']);
+    });
+
+    it('when the perch build fails and nothing was lost, the handshake is the bare marker', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        (h.contextBuilder.buildPerchContext as ReturnType<typeof jest.fn>).mockRejectedValue(new Error('CalDAV unavailable'));
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        expect(handshakeOf(h.instances[0])).toBe('[BOOT] Session opened at 1970-01-01T00:00:00.000Z. No boot context to report. Host handshake — nothing to do, no reply expected.');
     });
 
     it('reports lost perch-started background tasks (recovery from the perch journal) in its boot bundle', async () => {
@@ -1625,10 +1779,7 @@ describe('createPerchConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+        const startupContext = handshakeOf(h.instances[0]);
 
         expect(startupContext).toContain('Summarize last week');
     });
@@ -1650,10 +1801,7 @@ describe('createPerchConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+        const startupContext = handshakeOf(h.instances[0]);
 
         expect(startupContext).toContain('task-no-description');
     });
@@ -1672,10 +1820,7 @@ describe('createPerchConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+        const startupContext = handshakeOf(h.instances[0]);
 
         expect(startupContext).toContain('discord envelope env-no-text');
     });
@@ -1691,7 +1836,7 @@ describe('createPerchConductor', () => {
         expect(readSinceSpy).toHaveBeenCalledWith(100_000 - 24 * 60 * 60 * 1000);
     });
 
-    it('R2: the boot-bundle hook\'s FIRST SessionStart call reuses the construction-time recovery read instead of issuing a duplicate query; a LATER SessionStart (e.g. a compaction) reads fresh, from the clock\'s current time at that point', async () => {
+    it('the boot bundle takes its recovery from the conductor\'s own read, so a boot open reads the journal only at construction and in open() itself; a compaction reads fresh, from the clock\'s current time at that point', async () => {
         const h = buildPerch();
         h.clock.advance(100_000);
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
@@ -1703,20 +1848,15 @@ describe('createPerchConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        // `conductor.open()` itself independently reads the journal over its own (unrelated)
-        // recovery window, on top of the construction-time read above — clear both so the
-        // assertions below isolate the SessionStart hook's own `loadBootRecovery` reads.
+        expect(handshakeOf(h.instances[0])).toContain('[BOOT BUNDLE · perch · fresh]');
+        // One at construction (the task-launch seed), one in the conductor's boot recovery.
+        expect(readSinceSpy).toHaveBeenCalledTimes(2);
         readSinceSpy.mockClear();
 
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-
-        await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        expect(readSinceSpy).not.toHaveBeenCalled();
-
         h.clock.advance(5000);
-        await hookFn?.({ source: 'compact' } as never, undefined, undefined as never);
-        expect(readSinceSpy).toHaveBeenCalledWith(105_000 - 24 * 60 * 60 * 1000);
+        const compactContext = await bootContextOf(h.instances[0], 'compact');
+        expect(compactContext).toContain('[BOOT BUNDLE · perch · compact]');
+        expect(readSinceSpy.mock.calls).toEqual([[105_000 - 24 * 60 * 60 * 1000]]);
     });
 
     it('degrades to an empty recovery section (and logs a warning) when the journal readSince read fails', async () => {
@@ -1730,10 +1870,7 @@ describe('createPerchConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await expect(openPromise).resolves.toBeDefined();
 
-        const options = h.instances[0].receivedParams?.options;
-        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+        const startupContext = handshakeOf(h.instances[0]);
 
         expect(startupContext).toContain('[BOOT BUNDLE · perch · fresh]');
         expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error) }), 'Perch boot-bundle recovery read failed; continuing with an empty recovery section');
@@ -1772,76 +1909,78 @@ describe('createPerchConductor', () => {
             await flush();
         }
 
-        it('a reopen\'s resume renders nothing and reads no journal; the boot query\'s resume still renders the cached construction-time recovery', async () => {
+        it('a boot resume renders restart_resume with the conductor\'s recovery in its handshake; a reopen\'s resume pushes only the #62 text and reads no journal', async () => {
             const h = buildPerch();
             const { readSinceSpy } = await openPerchWithOrphan(h, true);
-            await reopenForIdentity(h);
-            expect(h.instances).toHaveLength(2);
 
-            await expect(bootContextOf(h.instances[1], 'resume')).resolves.toBeUndefined();
-            expect(readSinceSpy).not.toHaveBeenCalled();
-
-            const bootContext = await bootContextOf(h.instances[0], 'resume');
+            const bootContext = handshakeOf(h.instances[0]);
             expect(bootContext).toContain('[BOOT BUNDLE · perch · restart_resume]');
             expect(bootContext).toContain('## Background tasks lost at restart\nSummarize last week');
-            // Served from the construction-time read the reopen hook left unconsumed.
+            expect(h.contextBuilder.buildPerchContext).not.toHaveBeenCalled();
+
+            await reopenForIdentity(h);
+            expect(h.instances).toHaveLength(2);
+            const reopenHandshake = handshakeOf(h.instances[1]);
+            expect(reopenHandshake.startsWith('[BOOT] Session reopened at ')).toBe(true);
+            expect(reopenHandshake).not.toContain('[BOOT BUNDLE');
             expect(readSinceSpy).not.toHaveBeenCalled();
         });
 
-        it('distinguishes a boot resume from a reopen resume even with a live active task on the ledger (bootKindFor, #62): perch\'s activeTasks is fed straight from the ledger regardless of cause, so only the reopen/restart_resume distinction — not an empty section — keeps the reopen hook silent', async () => {
+        it('a boot resume with a live active task on the ledger renders it as a background task', async () => {
             const h = buildPerch();
-            const { ledgerStore } = await openPerchWithOrphan(h, true);
-            // A live background task the ledger still carries — unlike lostTasks/undelivered
-            // (gated by coveredByReopenHandshake), perch's activeTasks is read straight off the
-            // ledger for every cause, so this alone would make a wrongly-'restart_resume' reopen
-            // bundle non-empty; only the early `kind === 'reopen'` return in boot-bundle.ts's
-            // builder keeps it silent.
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+            await h.resumeStore.save('perch', 'sess-1');
+            const { conductor, ledgerStore } = await createPerchConductor(h.params);
             ledgerStore.dispatch({
                 type: 'sdk_frame', frame: frames.taskStarted({ task_id: 'task-live', description: 'Watch the perch channel', is_backgrounded: true }), at: new Date(0),
             });
-            await reopenForIdentity(h);
-            expect(h.instances).toHaveLength(2);
 
-            // The reopen-bound query's own resume must still render nothing, even though the
-            // ledger now holds a live task it could otherwise report.
-            await expect(bootContextOf(h.instances[1], 'resume')).resolves.toBeUndefined();
+            const openPromise = conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
 
-            // The boot-bound query's resume (cause 'boot') keeps rendering restart_resume with
-            // that same live task.
-            const bootContext = await bootContextOf(h.instances[0], 'resume');
+            const bootContext = handshakeOf(h.instances[0]);
             expect(bootContext).toContain('[BOOT BUNDLE · perch · restart_resume]');
             expect(bootContext).toContain('## Background tasks\nWatch the perch channel');
         });
 
-        it('a reopen that falls back to a fresh session re-seeds perch fully but renders no recovery and reads no journal, whether the hook fires before or after init', async () => {
+        it('a reopen that falls back to a fresh session re-seeds perch fully but renders no recovery and reads no journal', async () => {
             const h = buildPerch();
             (h.contextBuilder.buildPerchContext as ReturnType<typeof jest.fn>).mockResolvedValue('## Perch context\nQuiet night.');
             const { readSinceSpy } = await openPerchWithOrphan(h, true);
             await reopenForIdentity(h);
             h.instances[1].fail(new Error('resume rejected by CLI'));
-            await flush();
-            expect(h.instances).toHaveLength(3);
+            await waitForHandshake(h.instances, 2);
 
-            const beforeInit = await bootContextOf(h.instances[2], 'startup');
-            expect(beforeInit).toContain('[BOOT BUNDLE · perch · fresh]');
-            expect(beforeInit).toContain('Quiet night.');
-            expect(beforeInit).not.toContain('Summarize last week');
-            expect(beforeInit).not.toContain('## Background tasks lost at restart');
-            expect(beforeInit).not.toContain('## Envelopes without a delivered response');
-
-            h.instances[2].emit(frames.init('sess-2'));
-            await flush();
-            const afterInit = await bootContextOf(h.instances[2], 'startup');
-            expect(afterInit).toContain('[BOOT BUNDLE · perch · fresh]');
-            expect(afterInit).not.toContain('Summarize last week');
+            const [explanation, bundle] = handshakeOf(h.instances[2]).split('Host handshake — no reply expected.\n\n');
+            expect(explanation).toContain('Your working memory is re-seeded below.');
+            expect(bundle.startsWith('[BOOT BUNDLE · perch · fresh]')).toBe(true);
+            expect(bundle).toContain('Quiet night.');
+            expect(bundle).not.toContain('Summarize last week');
+            expect(bundle).not.toContain('## Background tasks lost at restart');
+            expect(bundle).not.toContain('## Envelopes without a delivered response');
             expect(readSinceSpy).not.toHaveBeenCalled();
+        });
+
+        it('a compaction whose recovery read fails still builds, with an empty recovery section and the perch warning', async () => {
+            const h = buildPerch();
+            const { readSinceSpy } = await openPerchWithOrphan(h, false);
+            h.logger.warn.mockClear();
+            readSinceSpy.mockRejectedValue(new Error('DynamoDB unavailable'));
+
+            const compactContext = await bootContextOf(h.instances[0], 'compact');
+
+            expect(compactContext).toContain('[BOOT BUNDLE · perch · compact]');
+            expect(compactContext).not.toContain('Summarize last week');
+            expect(h.logger.warn.mock.calls).toEqual([
+                [expect.objectContaining({ err: expect.any(Error) }), 'Perch boot-bundle recovery read failed; continuing with an empty recovery section'],
+            ]);
         });
 
         it('a compaction inside a reopened perch session still re-derives recovery from the journal', async () => {
             const h = buildPerch();
             const { readSinceSpy } = await openPerchWithOrphan(h, false);
-            // The process's first SessionStart consumes the construction-time recovery.
-            await bootContextOf(h.instances[0], 'startup');
             await reopenForIdentity(h);
             h.instances[1].emit(frames.init('sess-1'));
             await flush();
@@ -2464,16 +2603,14 @@ describe('ambient-line wiring on the conductors', () => {
         expect(ambience.timeHeaderFor).toHaveBeenCalledWith('perch');
     });
 
-    /** Opens the conductor and fires its SessionStart boot-bundle hook, returning the bundle text. */
+    /** Opens the conductor fresh and returns the boot bundle its `[BOOT]` handshake carried (#98). */
     async function bootBundleText(conductor: { open: () => Promise<unknown> }, instances: FakeQuery[]): Promise<string> {
         const openPromise = conductor.open();
         await flush();
         instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        const hookFn = instances[0].receivedParams?.options.hooks?.SessionStart?.[0]?.hooks[0];
-        const result = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
-        return (result as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+        return handshakeOf(instances[0]);
     }
 
     it('opens the conversation boot bundle with the ambient header, in the session\'s own timezone', async () => {

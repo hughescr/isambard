@@ -1,11 +1,15 @@
 /**
  * Assembles the long-lived conversation conductor (P9, design section 6): the conductor's own
  * MCP server instance set (role `'conversation'`), its once-per-process system prompt (identity
- * loaded from `IdentityCache`), and the merged hook map a session's Agent SDK `Options` need
- * (SessionStart boot bundle for `startup`/`resume`/`compact`, built per query and bound to the
- * conductor's open cause so a process-restart resume and an in-process reopen get different
- * bundles; PreCompact/PostCompact -> ledger + `ContextPolicy.resetAll()`, Stop/StopFailure
- * lifecycle logging, task-tracking logging).
+ * loaded from `IdentityCache`), the boot bundle wiring, and the merged hook map a session's Agent
+ * SDK `Options` need (PreCompact/PostCompact -> ledger + `ContextPolicy.resetAll()`,
+ * Stop/StopFailure lifecycle logging, task-tracking logging).
+ *
+ * The boot bundle has two delivery paths (#98), fed by one builder per role: the fresh and
+ * restart-resume bundles go to the conductor's `buildBootBundle`, which carries them in each
+ * query's opening `[BOOT]` handshake, and the compaction bundle goes to the SessionStart
+ * callback, the only source the real SDK fires it for
+ * (anthropics/claude-agent-sdk-typescript#465).
  *
  * `createConversationConductor` BUILDS but never OPENS the conductor — the caller (`src/index.ts`)
  * decides when opening is safe (after the guild cache and channel registry exist) and degrades to
@@ -13,7 +17,7 @@
  *
  * Two completeness-critic gaps this module closes (see the work-package brief):
  *  - Post-compaction reset: the compaction sink calls `contextPolicy.resetAll()` on
- *    `PostCompact`, and the boot-bundle hook's callback feeds `activeTasks` from
+ *    `PostCompact`, and the boot-bundle builder feeds `activeTasks` from
  *    `ledgerStore.get().tasks` and `recentUsers` from the Discord authors of recently submitted
  *    `discord`-kind envelopes — tracked here (not on `Conductor`'s public interface, which has no
  *    concept of "recent author") by wrapping the conductor's own `submit()`.
@@ -50,7 +54,8 @@ import {
     taskLaunchEntries,
     withAmbientLines,
     QUOTA_LINE_PREFIX,
-    type BootBundleSource,
+    formatRecoveryOnlyBootBundle,
+    type BootBundleRequest,
     type BootKind,
     type Clock,
     type CompactionSink,
@@ -105,14 +110,13 @@ type TaskListSource = CreateBootBundleBuilderParams['taskListReader'];
 const RECENT_AUTHORS_LIMIT = 10;
 
 /**
- * How far back a boot-bundle hook re-derives crash recovery from its own role's journal (P8) —
- * a second, independent read of the SAME journal `Conductor.open()` already scanned internally
- * on this process's boot, matching `conductor.ts`'s own (private) `RECOVERY_WINDOW_MS` and
- * `catchup-setup.ts`'s copy. Shared by both {@link createConversationConductor} (its own
- * pre-open `bootLostTasks` snapshot — see {@link ConversationConductorResult}'s doc for why the
- * conversation SessionStart hook itself no longer calls this) and {@link createPerchConductor}
- * (perch's boot-bundle hook still calls this directly — perch has no merged Discord catch-up
- * envelope to defer to).
+ * How far back {@link loadBootRecovery} re-derives crash recovery from its own role's journal (P8)
+ * — a read independent of the one `Conductor.open()` does internally on this process's boot,
+ * matching `conductor.ts`'s own (private) `RECOVERY_WINDOW_MS` and `catchup-setup.ts`'s copy.
+ * Used at construction by both {@link createConversationConductor} (its pre-open `bootLostTasks`
+ * snapshot — see {@link ConversationConductorResult}'s doc) and {@link createPerchConductor} (its
+ * task-launch seed), and by perch's compaction bundle. Perch's boot bundles take their recovery
+ * from the conductor's own read instead (#98).
  */
 const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -128,33 +132,14 @@ const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_BOOT_EVENTS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Maps one SessionStart onto its {@link BootKind} (R1, #62) from the Agent SDK's `source` AND the
- * conductor's open cause for the query the hook belongs to (bound per query in each role's
- * `buildOptions`). `startup` is always `fresh` (a new transcript, including a reopen's fresh
- * fallback) and `compact` always `compact`, whatever the cause — a compaction inside a reopened
- * session is still a compaction. Only `resume` needs the cause: the SDK reports a process-restart
- * resume and an in-process reopen identically, so `boot` makes it `restart_resume` (only what
- * happened while offline) and either reopen cause makes it `reopen` (nothing — see
- * `boot-bundle.ts`'s module doc).
- */
-function bootKindFor(source: BootBundleSource, cause: SessionOpenCause): BootKind {
-    if(source === 'startup') {
-        return 'fresh';
-    }
-    if(source === 'compact') {
-        return 'compact';
-    }
-    return cause === 'boot' ? 'restart_resume' : 'reopen';
-}
-
-/**
- * True when a SessionStart's context is already covered by an in-process reopen's own `[BOOT]`
- * handshake (#62): the replacement query's own open — a `reopen`, or the `fresh` fallback after the
- * reopen's resume failed — but never a later `compact` in that session. The handshake names the
- * background tasks the reopen probably cut off, and the host kept its queue, so such a bundle must
- * neither list the old session's tasks as still running nor re-render journal recovery. It keys
- * on the cause and kind, not on whether the replacement's `finishOpen` has run yet: the ledger
- * still lists the old tasks until then, and the SDK decides whether the hook fires before or after.
+ * True when a bundle's context is already covered by an in-process reopen's own `[BOOT]` handshake
+ * (#62): the `fresh` bundle the conductor builds for a reopen whose resume failed, but never a
+ * later `compact` in that session. The handshake names the background tasks the reopen probably
+ * cut off, and the host kept its queue, so such a bundle must not list the old session's tasks as
+ * still running. The conductor builds it before the replacement's `finishOpen`, while the ledger
+ * still lists the old tasks, so this has to key on the cause rather than on the ledger. (The
+ * conductor never builds anything for a reopen whose resume succeeds, and passes no recovery for
+ * a reopen at all.)
  */
 function coveredByReopenHandshake(kind: BootKind, cause: SessionOpenCause): boolean {
     return cause !== 'boot' && kind !== 'compact';
@@ -166,7 +151,7 @@ function coveredByReopenHandshake(kind: BootKind, cause: SessionOpenCause): bool
  * rows in the same window (R2) — the boot-time seed for each role's own
  * `TaskLaunchRegistry`, so a launch recorded just before a crash still resolves its
  * channel/author if the wake arrives after restart. Never rejects: a `readSince` failure degrades
- * to an empty recovery section (and no seed rows) rather than blocking the boot-bundle hook,
+ * to an empty recovery section (and no seed rows) rather than blocking construction or the compaction bundle,
  * logged as `'${roleLabel} boot-bundle recovery read failed; continuing with an empty recovery
  * section'`. Shared by both session roles so the recovery-read/format/degrade behaviour cannot
  * drift between them.
@@ -324,7 +309,7 @@ export interface CreateConversationConductorParams {
     taskListReader:       TaskListSource
     journal:              SessionJournal
     resumeStore:          ResumeStore
-    /** Builds the `[Channels]` boot-bundle section. Invoked lazily, only when a SessionStart hook actually fires — never at build time. */
+    /** Builds the `[Channels]` boot-bundle section. Invoked lazily, only when a fresh bundle is built for an open — never at construction. */
     channelListProvider:  () => Promise<string | undefined>
     clock:                Clock
     logger:               Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
@@ -392,9 +377,9 @@ export async function createConversationConductor(params: CreateConversationCond
     const timeHeader: TimeHeaderProvider = ambience?.timeHeaderFor('conversation') ?? formatTimeHeader;
 
     // R1: see ConversationConductorResult.bootLostTasks's own doc for why this MUST be read here
-    // — before conductor.open() is ever called by this function's caller — rather than lazily
-    // inside the SessionStart hook below (which no longer renders lost tasks at all; see
-    // buildBootBundleText's own doc) or from `catchup-setup.ts` after open() has run.
+    // — before conductor.open() is ever called by this function's caller — rather than from the
+    // boot bundle below (which renders no lost tasks at all; see buildBootBundleText's own doc)
+    // or from `catchup-setup.ts` after open() has run.
     const { lostTasks: bootLostTasks, taskLaunches: bootTaskLaunches } = await loadBootRecovery(journal, clock, logger, 'Conversation');
 
     // R2: seeded here (before open()) for the same reason bootLostTasks is read here — a launch
@@ -464,23 +449,26 @@ export async function createConversationConductor(params: CreateConversationCond
     }
 
     /**
-     * Builds the boot bundle for one SessionStart of a query opened for `cause`, as the
-     * {@link BootKind} {@link bootKindFor} derives (R1, #62). Deliberately renders NEITHER
-     * lost tasks NOR undelivered envelopes for `fresh`/`restart_resume` (always `[]`, so
-     * `boot-bundle.ts` omits those sections entirely — its own `renderListSection` renders nothing
-     * for an empty list): that content is the exclusive responsibility of the merged Discord boot
-     * envelope (`catchup-setup.ts`'s `runConductorInboxInit`/`submitMergedBootEnvelope`), which
-     * fires in the SAME boot sequence moments after this hook's `fresh`/`restart_resume`
-     * SessionStart — see design decision 2, "the boot bundle and the Discord catch-up merge into ONE
-     * boot envelope". Feeding the same journal-derived recovery into both would inject the same
-     * "lost tasks"/"undelivered replies" content twice on every restart (a `restart_resume` boot —
-     * the common case — otherwise duplicated it on every single restart). Perch has no such merged
-     * envelope, so its own boot-bundle hook (below) calls {@link loadBootRecovery} directly.
+     * Builds the conversation boot bundle of `kind` for a query opened for `cause`: `fresh` and
+     * `restart_resume` for the conductor's `[BOOT]` handshake (#98), `compact` for the
+     * SessionStart callback. Deliberately renders NEITHER lost tasks NOR undelivered envelopes
+     * (always `[]`, so `boot-bundle.ts` omits those sections entirely — its own `renderListSection`
+     * renders nothing for an empty list), ignoring the recovery the conductor offers: that content
+     * is the exclusive responsibility of the merged Discord boot envelope
+     * (`catchup-setup.ts`'s `runConductorInboxInit`/`submitMergedBootEnvelope`), which
+     * arrives in the SAME boot sequence moments after this handshake — see design decision 2, "the
+     * boot bundle and the Discord catch-up merge into ONE boot envelope". Feeding the same
+     * journal-derived recovery into both would inject the same "lost tasks"/"undelivered replies"
+     * content twice on every restart. For the same reason conversation wires no recovery-only
+     * fallback: a failed build pushes the bare marker. Perch has no such merged envelope, so its
+     * own builder (below) renders the conductor's recovery.
      *
-     * A `reopen` renders nothing at all (the builder returns `''`). The `fresh` fallback of a
-     * reopen whose resume failed passes NO `activeTasks` ({@link coveredByReopenHandshake}): the
-     * ledger still lists the old session's tasks until the replacement's `finishOpen`, but the
-     * reopen handshake has already told the model they were probably terminated.
+     * At boot the ledger is newly created and holds no tasks, so a `restart_resume` bundle is
+     * normally `''` and fetches nothing: the conductor then pushes its bare resume marker. The
+     * `fresh` fallback of a reopen whose resume failed passes NO `activeTasks`
+     * ({@link coveredByReopenHandshake}): the ledger still lists the old session's tasks until the
+     * replacement's `finishOpen`, but the reopen handshake has already told the model they were
+     * probably terminated.
      *
      * `compact` renders "events since the mark" via `contextPolicy.eventsSinceMs()` (the mark
      * survives `resetAll()` — see context-policy.ts's own module doc), falling back to
@@ -493,8 +481,7 @@ export async function createConversationConductor(params: CreateConversationCond
      * built, so a later compaction's window starts from here rather than replaying the same
      * events again.
      */
-    async function buildBootBundleText(source: BootBundleSource, cause: SessionOpenCause): Promise<string> {
-        const kind = bootKindFor(source, cause);
+    async function buildBootBundleText(kind: Exclude<BootKind, 'reopen'>, cause: SessionOpenCause): Promise<string> {
         const eventsSinceMs = kind === 'compact'
             ? contextPolicy.eventsSinceMs() ?? (clock.now() - DEFAULT_BOOT_EVENTS_WINDOW_MS)
             : undefined;
@@ -563,8 +550,8 @@ export async function createConversationConductor(params: CreateConversationCond
         wakeTurnDelivery = fn;
     }
 
-    // Every hook but the boot bundle's, built once and shared by every query. The boot-bundle hook
-    // is built per query in buildOptions, bound to that query's open cause (#62).
+    // Every hook but the compaction boot bundle's, built once and shared by every query. The
+    // boot-bundle hook is built per query in buildOptions, bound to that query's open cause (#62).
     const sharedHooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = mergeHookMaps(
         createCompactionHooks(compactionSink),
         createSessionLifecycleHooks({}),
@@ -584,8 +571,9 @@ export async function createConversationConductor(params: CreateConversationCond
             subagentSystemPrompt: () => subagentSystemPrompt,
             mcpServers:           sessionMcpServers,
             plugins,
-            // The boot-bundle hook comes first (SessionStart[0]) and is bound to THIS query's cause.
-            hooks:                mergeHookMaps(createBootBundleHooks(async source => buildBootBundleText(source, cause)), sharedHooks),
+            // The compaction boot-bundle hook comes first (SessionStart[0]) and is bound to THIS
+            // query's cause. Fresh and restart-resume bundles go in the conductor's handshake (#98).
+            hooks:                mergeHookMaps(createBootBundleHooks(async () => buildBootBundleText('compact', cause)), sharedHooks),
             resume,
             mainModel:            'sonnet',
             crossProviderRoutes,
@@ -602,18 +590,21 @@ export async function createConversationConductor(params: CreateConversationCond
     const retryPolicy = loadRetryConfig().claude;
 
     const innerConductor = createConductor({
-        role:         'conversation',
+        role:            'conversation',
         queryFn,
         buildOptions,
         clock,
-        readRss:      () => process.memoryUsage().rss,
+        readRss:         () => process.memoryUsage().rss,
         ledgerStore,
         config,
         retryPolicy,
         journal,
         resumeStore,
+        // #98: the fresh/restart_resume bundle rides in the opening [BOOT] handshake. The
+        // conductor's recovery is ignored here — see buildBootBundleText's doc.
+        buildBootBundle: async ({ kind, cause }) => buildBootBundleText(kind, cause),
         logger,
-        taskLaunches: taskLaunchRegistry,
+        taskLaunches:    taskLaunchRegistry,
         onWakeTurnSettled,
     });
     function getInnerConductor(): Conductor {
@@ -762,16 +753,15 @@ export interface PerchConductorResult {
  * (`src/index.ts`/`bot.ts`'s `clientReady`) decides when opening is safe and degrades to the
  * legacy perch scheduler/runner if `open()` rejects.
  *
- * Unlike the conversation conductor, perch's boot-bundle SessionStart hook re-derives crash
- * recovery itself, independent of the recovery `Conductor.open()` already scans internally on
- * this process's boot (see {@link RECOVERY_WINDOW_MS}'s doc), so a background task a prior
- * process started but never finished, or a perch-channel Discord turn that finished but was
- * never confirmed delivered, is actually reported in the next boot-bundle text — the folded
- * "perch conductor boot" gap this package closes. Its FIRST call reuses the construction-time
- * read this function already did to seed the task-launch registry (R2's `pendingBootRecovery`,
- * below) rather than issuing a second duplicate 24h query; only a LATER SessionStart that wants
- * recovery (a compaction, typically) reads the journal again; an in-process reopen's own open
- * reads none (see `buildBootBundleText`). Also unlike conversation,
+ * Unlike the conversation conductor, perch's boot bundle renders crash recovery, so a background
+ * task a prior process started but never finished, or a perch-channel Discord turn that finished
+ * but was never confirmed delivered, is actually reported — the folded "perch conductor boot" gap
+ * this package closes. Its boot bundles (#98) render the recovery `Conductor.open()` itself just
+ * read, so a boot open adds no journal read of its own, and a failed or slow full build still
+ * renders that recovery ({@link formatRecoveryOnlyBootBundle}) because the conductor has already
+ * journaled those tasks as lost; its compaction bundle re-reads the journal (see
+ * {@link RECOVERY_WINDOW_MS}'s doc); an in-process reopen renders none (see
+ * `buildBootBundleText`). Also unlike conversation,
  * there is no `ContextPolicy`: perch's boot bundle carries no per-user memory block to gate (see
  * `boot-bundle.ts`'s perch variant), so there is nothing for a compaction to reset.
  *
@@ -794,12 +784,10 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     const timeHeader: TimeHeaderProvider = ambience?.timeHeaderFor('perch') ?? formatTimeHeader;
 
     // R2: seeded here (before open()), for the same reason createConversationConductor's own
-    // bootTaskLaunches read is — see that function's identical comment. Also reused by
-    // buildBootBundleText's own FIRST call below (pendingBootRecovery) so a perch process start
-    // issues exactly one 24h journal read rather than two.
-    const initialBootRecovery = await loadBootRecovery(journal, clock, logger, 'Perch');
+    // bootTaskLaunches read is — see that function's identical comment.
+    const { taskLaunches: bootTaskLaunches } = await loadBootRecovery(journal, clock, logger, 'Perch');
     const taskLaunchRegistry = createTaskLaunchRegistry({ journal });
-    taskLaunchRegistry.seed(initialBootRecovery.taskLaunches);
+    taskLaunchRegistry.seed(bootTaskLaunches);
 
     const mcpInstances = createMcpServerInstances(mcpShared, { role: 'perch', emailServerFactory });
     const sessionMcpServers: SessionMcpServers = {
@@ -837,47 +825,14 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     });
 
     /**
-     * R2: the construction-time {@link initialBootRecovery} read, consumed exactly once by
-     * {@link consumeBootRecovery}'s first call (normally the process's initial SessionStart) so a
-     * perch process start issues one 24h journal read rather than two; cleared immediately after, so
-     * a later SessionStart that wants recovery (a compaction, typically) re-reads the journal fresh
-     * rather than replaying stale recovery data. A reopen's own open never consumes it.
+     * Builds the perch boot bundle of `kind` from crash recovery plus the ledger's own live task
+     * descriptions: `fresh`/`restart_resume` for the conductor's `[BOOT]` handshake (#98), fed the
+     * recovery the conductor itself just read (empty for a reopen's fresh fallback, whose reopen
+     * handshake already names what it cut off), and `compact` for the SessionStart callback, fed a
+     * fresh {@link loadBootRecovery} read. A boot open therefore adds no journal read of its own.
      */
-    let pendingBootRecovery: { lostTasks: string[], undelivered: string[] } | undefined = {
-        lostTasks: initialBootRecovery.lostTasks, undelivered: initialBootRecovery.undelivered,
-    };
-
-    /**
-     * Consumes {@link pendingBootRecovery} when it is still there, else re-derives crash recovery
-     * from the perch journal (see {@link loadBootRecovery}). The pending value is read and cleared
-     * synchronously, before any `await` — never across one — so two overlapping calls cannot race
-     * on a stale read of it.
-     */
-    async function consumeBootRecovery(): Promise<{ lostTasks: string[], undelivered: string[] }> {
-        const cachedBootRecovery = pendingBootRecovery;
-        pendingBootRecovery = undefined;
-        return cachedBootRecovery ?? loadBootRecovery(journal, clock, logger, 'Perch');
-    }
-
-    /**
-     * Builds the perch boot bundle for one SessionStart of a query opened for `cause`, as the
-     * {@link BootKind} {@link bootKindFor} derives (R1, #62), feeding it crash recovery
-     * ({@link consumeBootRecovery}) alongside the ledger's own live task descriptions. Never
-     * rejects: a `readSince` failure degrades to an empty recovery section rather than blocking
-     * the boot-bundle hook. The FIRST call that wants recovery reuses {@link pendingBootRecovery}
-     * instead of reading again (R2) — see that field's own doc.
-     *
-     * A reopen's own open — its `reopen` resume, or the `fresh` fallback after that resume failed
-     * ({@link coveredByReopenHandshake}) — wants no recovery at all: the reopen handshake already
-     * names the tasks the reopen probably cut off, and the host kept its queue, so re-reading 24h
-     * of journal would only re-report offline catch-up that never happened. It neither reads the
-     * journal nor consumes the pending construction-time read.
-     */
-    async function buildBootBundleText(source: BootBundleSource, cause: SessionOpenCause): Promise<string> {
-        const kind = bootKindFor(source, cause);
-        const { lostTasks, undelivered } = coveredByReopenHandshake(kind, cause)
-            ? { lostTasks: [], undelivered: [] }
-            : await consumeBootRecovery();
+    async function buildBootBundleText(kind: Exclude<BootKind, 'reopen'>, recovery: Pick<BootBundleRequest, 'lostTasks' | 'undelivered'>): Promise<string> {
+        const { lostTasks, undelivered } = recovery;
 
         return bootBundleBuilder.build({
             kind,
@@ -933,9 +888,11 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         wakeTurnDelivery = fn;
     }
 
-    // Every hook but the boot bundle's, built once and shared by every query. The boot-bundle hook
-    // is built per query in buildOptions, bound to that query's open cause (#62).
-    const sharedHooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = mergeHookMaps(
+    // Every hook, built once and shared by every query. The compaction boot-bundle hook comes first
+    // (SessionStart[0]); unlike conversation's it needs no open cause, since perch's compaction
+    // bundle always re-reads recovery. Fresh and restart-resume bundles go in the handshake (#98).
+    const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = mergeHookMaps(
+        createBootBundleHooks(async () => buildBootBundleText('compact', await loadBootRecovery(journal, clock, logger, 'Perch'))),
         createCompactionHooks(compactionSink),
         createSessionLifecycleHooks({}),
         createTaskTrackingHooks(),
@@ -946,7 +903,7 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         createAgentNamingHooks({ logger })
     );
 
-    function buildOptions(resume: string | undefined, cause: SessionOpenCause): Options {
+    function buildOptions(resume: string | undefined): Options {
         return buildSessionQueryOptions({
             role:                 'perch',
             systemPrompt,
@@ -954,8 +911,7 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
             subagentSystemPrompt: () => subagentSystemPrompt,
             mcpServers:           sessionMcpServers,
             plugins,
-            // The boot-bundle hook comes first (SessionStart[0]) and is bound to THIS query's cause.
-            hooks:                mergeHookMaps(createBootBundleHooks(async source => buildBootBundleText(source, cause)), sharedHooks),
+            hooks,
             resume,
             mainModel:            'sonnet',
             crossProviderRoutes,
@@ -969,16 +925,23 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     const retryPolicy = loadRetryConfig().claude;
 
     const conductor = createConductor({
-        role:         'perch',
+        role:                     'perch',
         queryFn,
         buildOptions,
         clock,
-        readRss:      () => process.memoryUsage().rss,
+        readRss:                  () => process.memoryUsage().rss,
         ledgerStore,
         config,
         retryPolicy,
         journal,
         resumeStore,
+        // #98: the fresh/restart_resume bundle rides in the opening [BOOT] handshake, fed the
+        // conductor's own recovery read. If the full build fails or times out, the recovery the
+        // conductor has already journaled as task_lost is still rendered, with no fetch.
+        buildBootBundle:          async ({ kind, lostTasks, undelivered }) => buildBootBundleText(kind, { lostTasks, undelivered }),
+        renderBootBundleFallback: ({ kind, lostTasks, undelivered }) => formatRecoveryOnlyBootBundle({
+            role: 'perch', kind, lostTasks, undelivered,
+        }),
         logger,
         taskLaunches: taskLaunchRegistry,
         onWakeTurnSettled,

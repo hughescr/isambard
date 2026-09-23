@@ -5,11 +5,11 @@
  * `Conductor.open()` (P8/P9) already, on every boot: reads the journal window, computes
  * {@link import('./recovery').computeRecovery}, journals a `task_lost` entry for every task that
  * never reached a terminal state, seeds the delivery guard from every already-confirmed
- * `response_delivered` id, and — for the conversation conductor specifically
- * (`src/app/sessions.ts`) — injects the boot bundle via a SessionStart hook
- * (`createBootBundleHooks`), not via this module. So this module does NOT repeat any of that: it
- * does not recompute recovery, does not dispatch `task_lost`, and does not submit a second boot
- * envelope (which would double-inject the bundle the hook already delivered).
+ * `response_delivered` id, and pushes the boot bundle its `buildBootBundle` builds (wired per role
+ * in `src/app/sessions.ts`) as the session's opening `[BOOT]` handshake (#98), not via this
+ * module. So this module does NOT repeat any of that: it does not recompute recovery, does not
+ * dispatch `task_lost`, and does not submit a second boot envelope (which would double-inject the
+ * bundle the handshake already delivered).
  *
  * What's left, run once after `open()` resolves and before ingress reopens:
  *  1. Deliver every undelivered envelope's response once, through the caller's `deliver`

@@ -23,7 +23,7 @@ export interface SessionLifecycleHooksDeps {
 
 /**
  * Creates hook matchers for the long-lived session core's lifecycle observability: Stop and
- * StopFailure only — no SessionStart (the boot bundle owns that, see ./boot-bundle.ts) and no
+ * StopFailure only — no SessionStart (the compaction boot bundle owns that, see ./boot-bundle.ts) and no
  * SessionEnd (the session core has no file-cleanup concept; `openSession`'s `onClosed` callback
  * is how the conductor learns a session ended).
  * @param deps Optional onStop/onStopFailure callbacks

@@ -6,10 +6,12 @@
  * injected `retryPolicy`, and a bounded shutdown sequence. Every timing decision goes through the
  * injected {@link Clock} — this module never reads a real timer.
  *
- * `bootBundle`/hook wiring for post-compaction re-injection and PostCompact->
- * `guard.onCompactionFinished()` plumbing belong to whoever builds the session's `Options`
- * (P9's `src/app/sessions.ts`) — this module only pushes the initial boot envelope once, as the opening
- * handshake of {@link Conductor.open} (the SDK emits no frame until it has read one), and drives the guard from every raw frame it observes,
+ * The post-compaction boot-bundle hook and PostCompact->`guard.onCompactionFinished()` plumbing
+ * belong to whoever builds the session's `Options` (P9's `src/app/sessions.ts`). This module
+ * pushes one opening `[BOOT]` handshake per query it creates (the SDK emits no frame until it has
+ * read one), carrying the fresh or restart-resume boot bundle its injected `buildBootBundle`
+ * builds for that attempt (#98: the SDK never fires a SessionStart callback for startup/resume in
+ * a streaming-input session, anthropics/claude-agent-sdk-typescript#465), and drives the guard from every raw frame it observes,
  * which already covers every frame-observable release path (`compact_boundary`, the `/compact`
  * turn's own result, the `error-compacting-conversation` notification, and the clock ceiling).
  * Compaction summaries are deliberately NOT persisted anywhere (Craig, 2026-09-06): the summary
@@ -23,7 +25,7 @@ import type { Logger } from '@hughescr/logger';
 import { classifyClaudeError } from '../claude-retry';
 import { buildResumeNote } from '../resume-prompt-builder';
 import { StreamTracker, type StreamProgress  } from '../stream-tracker';
-import type { BuildBootBundleInput } from './boot-bundle';
+import type { BootKind } from './boot-bundle';
 import { createCompactionGuard, type CompactionGuard } from './compaction-guard';
 import { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';
 import {
@@ -72,6 +74,26 @@ type ResultFrame = Extract<SDKMessage, { type: 'result' }>;
  * try/catch).
  */
 const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long one {@link CreateConductorParams.buildBootBundle} call may take, on the injected
+ * {@link Clock}, before the open goes ahead without it (#98). A fresh bundle's reads (hot state,
+ * events, task list, channels; perch's context also does calendar, mail and Bluesky work) now sit
+ * on the session-open path, and a slow read must cost a missing bundle, never a stuck open.
+ *
+ * This caps the delay the build ADDS to one open attempt. It does not make the whole open fit
+ * inside `bot.ts`'s 30 s `CONDUCTOR_OPEN_TIMEOUT_MS`: `open()` also awaits boot recovery, the
+ * resume-store load, the CLI's own start-up and a resume-store write, and a boot resume that
+ * fails pays for a second build before its fresh fallback. An open that was already slow can
+ * still exceed that deadline (conversation then exits the process; perch is disabled). Losing the
+ * race does not cancel the build's reads either; their late result is simply ignored.
+ */
+const BOOT_BUNDLE_BUILD_TIMEOUT_MS = 10_000;
+
+/** The error `Conductor.open()` rejects with when shutdown began before its session could be kept (#98). */
+function shutDownDuringOpenError(): Error {
+    return new Error('Conductor is shutting down; the session was not opened');
+}
 
 /** Caps `turn_completed.responseText` (P8) so an unusually long assistant reply cannot bloat one journal row; `truncated: true` is set when the cap bit. */
 const TURN_RESPONSE_TEXT_CAP = 200_000;
@@ -226,60 +248,86 @@ export interface ConductorStatus {
     } | null
 }
 
+/** What {@link CreateConductorParams.buildBootBundle} is asked to build for one open attempt (#98). */
+export interface BootBundleRequest {
+    /** `restart_resume` only for a boot open resuming a stored session; every other built attempt starts a new transcript. */
+    kind:        Extract<BootKind, 'fresh' | 'restart_resume'>
+    /** Why this open is happening — `boot`, or the in-process reopen whose resume failed. */
+    cause:       SessionOpenCause
+    /** Boot-time crash recovery's lost background tasks; always `[]` for a reopen. */
+    lostTasks:   string[]
+    /** Boot-time crash recovery's envelopes with no delivered response; always `[]` for a reopen. */
+    undelivered: string[]
+}
+
 /** Dependencies and configuration for {@link createConductor}. */
 export interface CreateConductorParams {
-    role:               SessionRole
-    queryFn:            SessionQueryFn
+    role:                      SessionRole
+    queryFn:                   SessionQueryFn
     /**
      * Builds full Agent SDK `Options` for a fresh (`undefined`) or resumed (session id) open, once
      * per query. `cause` is why this query is being opened — `boot` from {@link Conductor.open},
      * `crash_reopen`/`requested_reopen` from an in-process reopen — including the fresh fallback
      * after a failed resume, which keeps its attempt's cause. Anything built from it (the
-     * SessionStart boot-bundle hook, in `src/app/sessions.ts`) is bound to that one query, so a
-     * later query can never change what an earlier one's hooks see.
+     * conversation's compaction boot-bundle hook, in `src/app/sessions.ts`) is bound to that one
+     * query, so a later query can never change what an earlier one's hooks see.
      */
-    buildOptions:       (resume: string | undefined, cause: SessionOpenCause) => Options
-    clock:              Clock
+    buildOptions:              (resume: string | undefined, cause: SessionOpenCause) => Options
+    clock:                     Clock
     /** Reads the process's current resident set size, in bytes. */
-    readRss:            () => number
-    ledgerStore:        LedgerStore
-    config:             SessionConfig
+    readRss:                   () => number
+    ledgerStore:               LedgerStore
+    config:                    SessionConfig
     /** `config.retry.claude` — drives `is_error` resubmission, on the injected `clock`. */
-    retryPolicy:        RetryPolicy
-    journal:            SessionJournal
-    resumeStore:        ResumeStore
+    retryPolicy:               RetryPolicy
+    journal:                   SessionJournal
+    resumeStore:               ResumeStore
     /**
-     * Pre-formatted boot bundle text, pushed once as the `boot`-kind opening handshake (see
-     * `openWithHandle`) on every fresh or resumed `open()`. Ignored when {@link buildBootBundle} is provided.
+     * Builds the boot bundle carried by the opening `[BOOT]` handshake (#98). The real SDK never
+     * invokes an SDK-callback SessionStart hook for `startup` or `resume` in a streaming-input
+     * session (anthropics/claude-agent-sdk-typescript#465), but it reliably delivers this first
+     * message, so this is the only path by which a fresh or restart-resume bundle reaches the model.
+     *
+     * Called once per open attempt, just before that attempt's query is created, on the injected
+     * clock's {@link BOOT_BUNDLE_BUILD_TIMEOUT_MS} bound:
+     *  - `restart_resume`/`boot` before {@link Conductor.open} resumes a stored session;
+     *  - `fresh`/`boot` before a fresh boot open, or the fresh fallback after that resume failed;
+     *  - `fresh` with the reopen's own cause before an in-process reopen's fresh fallback, with
+     *    empty recovery lists (the reopen handshake already names what the reopen cut off).
+     * Never called for an in-process reopen whose resume succeeds: that transcript survived, and
+     * the #62 reopen handshake alone is pushed.
+     *
+     * `lostTasks`/`undelivered` are the descriptions from this process's boot-time crash recovery
+     * (P8), the same shape P6's boot-bundle builder input takes. An empty result, a rejection or a
+     * timeout pushes the bare `[BOOT]` marker instead (a failure goes through
+     * {@link renderBootBundleFallback} first).
      */
-    bootBundle?:        string
+    buildBootBundle?:          (input: BootBundleRequest) => string | Promise<string>
     /**
-     * Builds the boot bundle text from boot-time crash recovery (P8): `open()` reads the
-     * journal window ending now, computes {@link import('./recovery').computeRecovery}, and
-     * (when this is provided) calls it with the recovery-derived lost-task and
-     * undelivered-envelope descriptions — the same shape P6's boot-bundle builder input takes —
-     * to produce the text pushed as the boot envelope, taking precedence over the static
-     * {@link bootBundle} string.
+     * Renders a small, synchronous, I/O-free boot bundle from the request alone, used only when
+     * {@link buildBootBundle} rejects or times out, so recovery the conductor has already journaled
+     * as `task_lost` (and will therefore never report again) still reaches the model. `''` (or
+     * omitting this) falls back to the bare `[BOOT]` marker. Must not throw.
      */
-    buildBootBundle?:   (input: Pick<BuildBootBundleInput, 'lostTasks' | 'undelivered'>) => string | Promise<string>
-    logger:             Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    renderBootBundleFallback?: (input: BootBundleRequest) => string
+    logger:                    Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
     /** Observes every raw frame alongside {@link Conductor.subscribeTurn} subscribers. */
-    onTurnFrame?:       (turnId: string, frame: SDKMessage) => void
+    onTurnFrame?:              (turnId: string, frame: SDKMessage) => void
     /** Classifies an `is_error` result's adapted error. Defaults to `classifyClaudeError`. */
-    classifyError?:     (error: unknown) => ErrorClassification
+    classifyError?:            (error: unknown) => ErrorClassification
     /**
      * Resolves the launch record for an adopted wake turn (R2) — see
      * {@link Conductor.adoptWakeTurn}. `undefined` (the default) when no launch registry is
      * wired; the adopted turn then carries no channelId/authorId.
      */
-    taskLaunches?:      Pick<TaskLaunchRegistry, 'lookup' | 'forget'>
+    taskLaunches?:             Pick<TaskLaunchRegistry, 'lookup' | 'forget'>
     /**
      * Called once an adopted wake turn (R2) settles, with the synthesized `task`-kind envelope
      * and its {@link TurnResult} — the composition root's hook for delivering that reply to its
      * origin channel (or a fallback, for a turn with no channel). A rejection is caught and
      * logged; it never affects the conductor or any other caller.
      */
-    onWakeTurnSettled?: (envelope: Envelope, result: TurnResult) => void | Promise<void>
+    onWakeTurnSettled?:        (envelope: Envelope, result: TurnResult) => void | Promise<void>
 }
 
 /** A caller's delivery result, distinguishing durable delivery from intentional non-delivery. */
@@ -490,7 +538,7 @@ function latestFinishedTasks(ledger: Ledger): Map<string, LedgerTask> {
 export function createConductor(params: CreateConductorParams): Conductor {
     const {
         role, queryFn, buildOptions, clock, readRss, ledgerStore, config, retryPolicy,
-        journal, resumeStore, bootBundle, buildBootBundle, logger, onTurnFrame, taskLaunches, onWakeTurnSettled,
+        journal, resumeStore, buildBootBundle, renderBootBundleFallback, logger, onTurnFrame, taskLaunches, onWakeTurnSettled,
     } = params;
     const classifyError = params.classifyError ?? classifyClaudeError;
 
@@ -498,8 +546,6 @@ export function createConductor(params: CreateConductorParams): Conductor {
     let shuttingDown = false;
     /** Populated once by {@link runBootRecovery} at the start of {@link open}; guards {@link deliver} against re-sending an envelope a prior process already delivered. */
     let deliveryGuard: DeliveryGuard | undefined;
-    /** The text {@link openHandshakeText} returns — the static {@link bootBundle} until {@link runBootRecovery} replaces it with {@link buildBootBundle}'s output, when provided. */
-    let resolvedBootBundle = bootBundle;
     /** True from the moment a mid-life close is observed until a replacement session (resumed or fresh) has opened — or reopening has been given up on entirely, or `shutdown()` overtook the reopen, in which case it is simply left set (every reader tests {@link shuttingDown} first). Gates {@link processQueue}, {@link submitCompact} and {@link appendWithoutTurn} so no envelope is ever pushed into the dead handle's orphaned {@link InputQueue} while a reopen is in flight. */
     let reopening = false;
     /**
@@ -1254,10 +1300,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
         await resumeStore.save(role, sessionId);
     }
 
-    /** The opening handshake for {@link open}: the boot bundle when there is one, else a bare open/resume marker. */
-    function openHandshakeText(resuming: boolean): string {
-        if(resolvedBootBundle !== undefined && resolvedBootBundle !== '') {
-            return resolvedBootBundle;
+    /** The opening handshake for {@link open}: `bundle` (this attempt's {@link buildBoundedBundle}) when non-empty, else a bare open/resume marker. */
+    function openHandshakeText(resuming: boolean, bundle: string): string {
+        if(bundle !== '') {
+            return bundle;
         }
         const verb = resuming ? 'resumed' : 'opened';
         return `[BOOT] Session ${verb} at ${now().toISOString()}. No boot context to report. Host handshake — nothing to do, no reply expected.`;
@@ -1288,13 +1334,21 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * @param why Why the old session went away, completing "Session reopened at <time> because …"
      * @param backgroundTasks {@link runningBackgroundTaskDescriptions}, taken where the reopen started
      * @param resumed Whether this attempt resumes the old transcript, or is the fresh fallback after that failed
+     * @param bundle The fresh fallback's boot bundle (#98), appended as the last paragraph after
+     *   the #62 explanation; `''` for a resume, or when the fallback's build produced nothing. The
+     *   continuity sentence only claims a re-seed when there is one to read.
      */
-    function reopenHandshakeText(why: string, backgroundTasks: readonly string[], resumed: boolean): string {
+    function reopenHandshakeText(why: string, backgroundTasks: readonly string[], resumed: boolean, bundle = ''): string {
+        let continuity = 'This same conversation was resumed, so this was not an offline gap: messages waiting for you were kept and will still be delivered, and no conversation was lost.';
+        if(!resumed) {
+            const reseed = bundle === ''
+                ? 'so this is a new session transcript, and earlier context from it is not available to you.'
+                : 'so this is a new session transcript. Your working memory is re-seeded below.';
+            continuity = `The previous conversation could not be resumed, ${reseed} It was still not an offline gap: messages waiting for you were kept and will still be delivered.`;
+        }
         const paragraphs = [
             `[BOOT] Session reopened at ${now().toISOString()} because ${why}. The host process kept running throughout; only the session process was replaced.`,
-            resumed
-                ? 'This same conversation was resumed, so this was not an offline gap: messages waiting for you were kept and will still be delivered, and no conversation was lost.'
-                : 'The previous conversation could not be resumed, so this is a new session transcript and the host re-seeds your working memory separately. It was still not an offline gap: messages waiting for you were kept and will still be delivered.',
+            continuity,
         ];
         if(backgroundTasks.length > 0) {
             paragraphs.push([
@@ -1304,6 +1358,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
             ].join('\n'));
         }
         paragraphs.push('Host handshake — no reply expected.');
+        if(bundle !== '') {
+            paragraphs.push(bundle);
+        }
         return paragraphs.join('\n\n');
     }
 
@@ -1343,16 +1400,20 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * undelivered envelopes, journals a `task_lost` entry for each lost task (the process that
      * started them never got to), seeds {@link deliveryGuard} from the recovered
      * `deliveredEnvelopeIds` so {@link deliver} cannot re-send anything a prior process already
-     * confirmed sent, and — when {@link buildBootBundle} is provided — resolves
-     * {@link resolvedBootBundle} from the recovered lost-task/undelivered descriptions.
+     * confirmed sent, and returns the recovered lost-task/undelivered descriptions for each open
+     * attempt's {@link buildBoundedBundle}.
+     *
+     * Builds no bundle itself (#98): a builder failure must never reach this function's catch,
+     * which would replace the recovery-seeded guard with an empty one and reopen the double-send
+     * hole the guard exists to close.
      *
      * Never rejects: a `journal.readSince` failure (DynamoDB throttled/unavailable) is logged and
-     * degrades to an empty-seeded {@link deliveryGuard} and the static {@link bootBundle} — the
+     * degrades to an empty-seeded {@link deliveryGuard} and empty recovery lists — the
      * conductor still opens rather than never starting at all. The accepted risk is a possible
      * double-send for whatever the crashed process had already delivered; that is far preferable
      * to `open()` never resolving.
      */
-    async function runBootRecovery(): Promise<void> {
+    async function runBootRecovery(): Promise<Pick<BootBundleRequest, 'lostTasks' | 'undelivered'>> {
         try {
             const entries = await journal.readSince(clock.now() - RECOVERY_WINDOW_MS);
             // Stryker disable next-line llm: computeRecovery is a pure readonly fold, so a shallow entries copy is unobservable
@@ -1366,16 +1427,72 @@ export function createConductor(params: CreateConductorParams): Conductor {
 
             deliveryGuard = createDeliveryGuard(recovery.deliveredEnvelopeIds);
 
-            if(buildBootBundle !== undefined) {
-                resolvedBootBundle = await buildBootBundle({
-                    lostTasks:   recovery.lostTasks.map(task => task.description ?? task.taskId),
-                    // Stryker disable next-line llm: an unused shallow copy before this read-only map cannot affect output
-                    undelivered: recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`),
-                });
-            }
+            return {
+                lostTasks:   recovery.lostTasks.map(task => task.description ?? task.taskId),
+                // Stryker disable next-line llm: an unused shallow copy before this read-only map cannot affect output
+                undelivered: recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`),
+            };
         } catch (error) {
             logger.error({ error }, 'Conductor boot recovery failed; opening with an empty-seeded delivery guard');
             deliveryGuard = createDeliveryGuard([]);
+            return { lostTasks: [], undelivered: [] };
+        }
+    }
+
+    /**
+     * Runs {@link buildBootBundle} for one open attempt, bounded by
+     * {@link BOOT_BUNDLE_BUILD_TIMEOUT_MS} on the injected clock (#98). Never rejects: a rejection,
+     * a synchronous throw or the timeout is logged and answered with
+     * {@link renderBootBundleFallback}'s recovery-only text, or `''` (the bare marker). The timer is
+     * cleared as soon as the build settles; a result arriving after the timeout is ignored.
+     */
+    async function buildBoundedBundle(request: BootBundleRequest): Promise<string> {
+        if(buildBootBundle === undefined) {
+            return '';
+        }
+        const build = buildBootBundle;
+        let timer!: TimerHandle;
+        const timedOut = new Promise<never>((_resolve, reject) => {
+            // Promise executors run synchronously, so this is assigned before the race below.
+            timer = clock.setTimer(() => {
+                reject(new Error(`Boot bundle build did not finish within ${BOOT_BUNDLE_BUILD_TIMEOUT_MS} ms`));
+            }, BOOT_BUNDLE_BUILD_TIMEOUT_MS);
+        });
+        try {
+            // The async wrapper turns a synchronous throw from `build` into a rejection.
+            return await Promise.race([(async () => build(request))(), timedOut]);
+        } catch (error) {
+            logger.warn({ error, kind: request.kind, cause: request.cause }, 'Boot bundle build failed or timed out; opening with the recovery-only fallback');
+            return renderBootBundleFallback?.(request) ?? '';
+        } finally {
+            clock.clearTimer(timer);
+        }
+    }
+
+    /**
+     * {@link openWithHandle} for {@link open} (#98). Refuses to spawn once shutdown has begun (the
+     * bundle build before it is an await shutdown can overtake), and closes a handle that settles
+     * after shutdown began: `shutdown()` only closes the handle current when it finishes, and never
+     * waits for an initial open, so a child settling afterwards would outlive the process.
+     */
+    async function openForBoot(resumeId: string | undefined, handshakeText: string): Promise<{ handle: SessionHandle, sessionId: string }> {
+        if(shuttingDown) {
+            throw shutDownDuringOpenError();
+        }
+        const result = await openWithHandle(resumeId, handshakeText, 'boot');
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the await lets shutdown() set shuttingDown despite TypeScript retaining the narrowing from the check above
+        if(shuttingDown) {
+            discardHandle(result.handle);
+            throw shutDownDuringOpenError();
+        }
+        return result;
+    }
+
+    /** Rejects the turn a crash interrupted when its reopen is abandoned; a no-op on the controlled path, which has none. */
+    function rejectInFlightItem(inFlightItem: QueuedItem | undefined, error: Error): void {
+        if(inFlightItem !== undefined) {
+            clearAbortListener(inFlightItem);
+            inFlightItem.deferred.reject(error);
         }
     }
 
@@ -1421,8 +1538,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
      *   until it has read a first user message. Rendered per attempt by {@link reopenHandshakeText},
      *   so the fresh fallback does not claim the conversation was resumed; `backgroundTasks` is the
      *   caller's {@link runningBackgroundTaskDescriptions} snapshot, taken before any close or open.
+     *   Only the fresh fallback builds a boot bundle (#98), after the resume has failed, and
+     *   appends it to its handshake; if shutdown began during that build, nothing is spawned.
      * @param inFlightItem The turn that was running when the session went away, re-queued ahead of
-     *   everything else on success and rejected if the reopen is abandoned; `undefined` on the
+     *   everything else on success and rejected if the reopen is abandoned or shutdown overtakes
+     *   it (shutdown's own `rejectAllQueued` cannot reach it); `undefined` on the
      *   controlled path, which only ever runs while idle.
      * @param carryOver Messages the dying queue never delivered, taken by the CALLER: the
      *   controlled path has to `discardHandle` the old handle first (so its `onClosed` is not read
@@ -1441,8 +1561,15 @@ export function createConductor(params: CreateConductorParams): Conductor {
                     throw finishError;
                 }
             } catch{
-                const { sessionId } = await openWithHandle(undefined, reopenHandshakeText(handshake.why, handshake.backgroundTasks, false), cause);
-                await finishOpen(sessionId, { outcome: 'resume_fallback', cause });
+                // Built only now that the resume has failed: a resumed transcript needs no bundle.
+                // The reopen handshake already names what the reopen cut off, so no recovery.
+                const bundle = await buildBoundedBundle({ kind: 'fresh', cause, lostTasks: [], undelivered: [] });
+                // If shutdown() began during the build, spawning now would only create a child to
+                // close at once; the shutdown branch below abandons the reopen instead.
+                if(!shuttingDown) {
+                    const { sessionId } = await openWithHandle(undefined, reopenHandshakeText(handshake.why, handshake.backgroundTasks, false, bundle), cause);
+                    await finishOpen(sessionId, { outcome: 'resume_fallback', cause });
+                }
             }
         } catch (reopenError) {
             reopening = false;
@@ -1455,10 +1582,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             }
             const failure = toError(reopenError, 'Conductor failed to reopen the session');
             logger.error({ error: failure }, 'Conductor could not reopen the session after it closed unexpectedly; giving up');
-            if(inFlightItem !== undefined) {
-                clearAbortListener(inFlightItem);
-                inFlightItem.deferred.reject(failure);
-            }
+            rejectInFlightItem(inFlightItem, failure);
             rejectAllQueued(failure);
             logger.warn({ dropped: carryOver.length + bufferedAppends.length }, 'Giving up on a reopen; dropping input the dead session never delivered');
             bufferedAppends = [];
@@ -1471,6 +1595,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
             if(currentHandleRef !== undefined) {
                 discardHandle(currentHandleRef);
             }
+            // The interrupted turn was taken out of currentTurn by the crash and is not in
+            // pendingQueue, so shutdown()'s rejectAllQueued never reached it: settle it here, or
+            // its submit() promise stays pending for the life of the process.
+            rejectInFlightItem(inFlightItem, new Error('Conductor is shutting down'));
             // `reopening` is deliberately NOT cleared: `shuttingDown` is terminal, and every
             // reader of `reopening` (submitCompact, processQueue, appendWithoutTurn,
             // maybeStartRequestedReopen) tests `shuttingDown` first, so nothing consults it again.
@@ -1570,12 +1698,19 @@ export function createConductor(params: CreateConductorParams): Conductor {
         maybeStartRequestedReopen();
     }
 
+    /**
+     * Boot open (#98): each attempt builds its own bundle just before its query — `restart_resume`
+     * for the stored session, `fresh` for a fresh open or the fallback after that resume failed, so
+     * a brand-new transcript is never handed a resume-only bundle. Shutdown during any of it rejects
+     * rather than falling back (see {@link openForBoot}).
+     */
     async function open(): Promise<{ sessionId: string, resumed: boolean }> {
-        await runBootRecovery();
+        const recovery = await runBootRecovery();
         const stored = await resumeStore.load(role);
         if(stored !== undefined) {
             try {
-                const { handle, sessionId } = await openWithHandle(stored, openHandshakeText(true), 'boot');
+                const bundle = await buildBoundedBundle({ kind: 'restart_resume', cause: 'boot', ...recovery });
+                const { handle, sessionId } = await openForBoot(stored, openHandshakeText(true, bundle));
                 try {
                     await finishOpen(sessionId, { outcome: 'resumed', cause: 'boot' });
                 } catch (finishError) {
@@ -1585,10 +1720,14 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 maybeStartRequestedReopen();
                 return { sessionId, resumed: true };
             } catch (error) {
+                if(shuttingDown) {
+                    throw error;
+                }
                 logger.warn({ error }, 'Resuming the stored session failed; opening a fresh session');
             }
         }
-        const { sessionId } = await openWithHandle(undefined, openHandshakeText(false), 'boot');
+        const bundle = await buildBoundedBundle({ kind: 'fresh', cause: 'boot', ...recovery });
+        const { sessionId } = await openForBoot(undefined, openHandshakeText(false, bundle));
         await finishOpen(sessionId, stored === undefined ? { outcome: 'fresh', cause: 'boot' } : { outcome: 'resume_fallback', cause: 'boot' });
         maybeStartRequestedReopen();
         return { sessionId, resumed: false };

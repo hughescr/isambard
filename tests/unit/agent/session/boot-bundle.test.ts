@@ -2,6 +2,7 @@ import { afterEach, describe, expect, jest, test } from 'bun:test';
 import {
     createBootBundleBuilder,
     formatBootBundle,
+    formatRecoveryOnlyBootBundle,
     type BootBundleParts,
     type BootContextSource,
     type TaskListSource
@@ -780,4 +781,42 @@ describe('createBootBundleBuilder — reopen', () => {
             expect(channelListProvider).not.toHaveBeenCalled();
         });
     }
+});
+
+describe('formatRecoveryOnlyBootBundle (#98: the fallback when the full build fails or times out)', () => {
+    const NOTICE = 'The rest of this boot context could not be loaded in time, so only what was lost at restart is listed here. Use your tools to look up anything else you need.';
+
+    test('renders only the lost-task and undelivered sections, under a recovery-only header and notice', () => {
+        expect(formatRecoveryOnlyBootBundle({
+            role: 'perch', kind: 'fresh', lostTasks: ['Summarize last week', 'Draft the digest'], undelivered: ['perch envelope env-9'],
+        })).toBe([
+            '[BOOT BUNDLE · perch · fresh · recovery only]',
+            NOTICE,
+            '## Background tasks lost at restart\nSummarize last week\nDraft the digest',
+            '## Envelopes without a delivered response\nperch envelope env-9',
+        ].join('\n\n'));
+    });
+
+    test('leaves out an empty section rather than rendering a blank one', () => {
+        expect(formatRecoveryOnlyBootBundle({
+            role: 'conversation', kind: 'restart_resume', lostTasks: [], undelivered: ['discord envelope env-1'],
+        })).toBe([
+            '[BOOT BUNDLE · conversation · restart_resume · recovery only]',
+            NOTICE,
+            '## Envelopes without a delivered response\ndiscord envelope env-1',
+        ].join('\n\n'));
+        expect(formatRecoveryOnlyBootBundle({
+            role: 'perch', kind: 'restart_resume', lostTasks: ['Summarize last week'], undelivered: [],
+        })).toBe([
+            '[BOOT BUNDLE · perch · restart_resume · recovery only]',
+            NOTICE,
+            '## Background tasks lost at restart\nSummarize last week',
+        ].join('\n\n'));
+    });
+
+    test('returns an empty string when nothing was lost, so the caller falls back to the bare marker', () => {
+        expect(formatRecoveryOnlyBootBundle({
+            role: 'perch', kind: 'fresh', lostTasks: [], undelivered: [],
+        })).toBe('');
+    });
 });

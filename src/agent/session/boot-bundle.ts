@@ -1,9 +1,14 @@
 /**
  * Boot bundle composer for the long-lived session core.
  *
- * Assembles the single envelope text (via `buildBootEnvelope`, ./envelope.ts) delivered as
- * `additionalContext` on a `SessionStart` hook. R1 re-seeds by boot KIND rather than always
- * injecting the same full bundle:
+ * Assembles the boot bundle text. Delivery depends on the kind (#98): `fresh` and
+ * `restart_resume` travel in the conductor's opening `[BOOT]` handshake (its `buildBootBundle`,
+ * pushed via `buildBootEnvelope`, ./envelope.ts), because the real SDK never fires an
+ * SDK-callback `SessionStart` hook for `startup`/`resume` in a streaming-input session
+ * (anthropics/claude-agent-sdk-typescript#465); `compact` is `additionalContext` on the
+ * `SessionStart` callback, which the SDK does fire for compaction; and `reopen` is never built by
+ * anyone (the conductor skips the build for a reopen that resumes). R1 re-seeds by boot KIND
+ * rather than always injecting the same full bundle:
  *
  * - `fresh` (a cold process start): the full re-seed — current focus/state, events
  *   (the rolling `bootEventsWindowMs` window, or `eventsSinceMs` when the caller has a better
@@ -16,9 +21,10 @@
  * - `restart_resume` (the transcript survived a PROCESS restart — the host process was down, and
  *   the new process resumed the stored session): ONLY what happened while offline — events since
  *   the last journaled turn, lost tasks, undelivered envelopes, and the active-task set — no
- *   state/task-list/channels, since none of that was lost. `build()` returns `''` (and the hook
- *   then adds no `additionalContext` at all — see `../hooks/boot-bundle.ts`) when every one of
- *   those sections is empty.
+ *   state/task-list/channels, since none of that was lost. `build()` returns `''` (and the
+ *   conductor then pushes its bare `[BOOT] Session resumed` marker instead) when every one of
+ *   those sections is empty — normally so for conversation, whose ledger is new at boot and whose
+ *   lost tasks the Discord catch-up owns.
  * - `reopen` (the transcript survived an IN-PROCESS reopen — the conductor replaced a crashed
  *   session, or closed and resumed it on request, e.g. after an identity change, while the host
  *   process kept running): ALWAYS `''`, returned before the time header or any fetch. Nothing
@@ -26,14 +32,17 @@
  *   session never read (see `reopenReplacementSession` in `conductor.ts`). The one thing a reopen
  *   can lose — background tasks the old session process was running — is named in the
  *   conductor's own reopen `[BOOT]` handshake instead, which is the first thing the replacement
- *   reads whether its resume succeeds or falls back to a fresh session.
+ *   reads whether its resume succeeds or falls back to a fresh session. Since #98 no caller asks
+ *   for this kind (the conductor simply skips the build for a reopen that resumes); the early
+ *   return stays as a guard.
  *
- * The SDK's `SessionStart` source alone cannot tell the two resumes apart (both arrive as
- * `resume`), so `src/app/sessions.ts` maps the source plus the conductor's open cause onto a
- * kind: `startup` is `fresh`, `compact` is `compact` whatever the cause, and `resume` is
- * `restart_resume` for a boot open and `reopen` for either in-process reopen. A reopen whose
- * resume fails falls back to a fresh session (`startup`, so `fresh`): it gets the full re-seed,
- * minus the old session's tasks and recovery, which that reopen handshake already covers.
+ * The conductor names the kind for each open attempt it builds: `restart_resume` for a boot open
+ * resuming its stored session, `fresh` for a fresh boot open or the fallback after that resume
+ * failed, and nothing at all for an in-process reopen that resumes. A reopen whose resume fails
+ * falls back to a fresh session (`fresh`, with the reopen's cause): it gets the full re-seed,
+ * appended to that reopen's own handshake, minus the old session's tasks and recovery, which the
+ * handshake already covers. When a build fails or times out, the conductor can render
+ * {@link formatRecoveryOnlyBootBundle} instead.
  *
  * Two role variants share one builder: `conversation` re-seeds the sections above; `perch`
  * re-seeds the task list and `ContextBuilder.buildPerchContext`'s own block verbatim
@@ -81,8 +90,8 @@ export interface TaskListSource {
 }
 
 /**
- * Which SessionStart trigger a boot bundle is re-seeding for — see the module doc for what each
- * kind injects.
+ * Which kind of session start a boot bundle is re-seeding for — see the module doc for what each
+ * kind injects and how each is delivered.
  */
 export type BootKind = 'fresh' | 'restart_resume' | 'reopen' | 'compact';
 
@@ -111,7 +120,7 @@ export interface CreateBootBundleBuilderParams {
 
 /** Ledger/journal-derived facts supplied at build time (not known to the builder itself). */
 export interface BuildBootBundleInput {
-    /** Which SessionStart trigger this bundle is re-seeding for; a `reopen` renders `''` whatever else is given. */
+    /** Which kind of session start this bundle is re-seeding for; a `reopen` renders `''` whatever else is given. */
     kind:           BootKind
     /**
      * Absolute epoch ms events high-water mark (e.g. `ContextPolicy.eventsSinceMs()` or a
@@ -258,6 +267,32 @@ export function formatBootBundle(parts: BootBundleParts): string {
     ];
 
     return sections.filter(Boolean).join('\n\n');
+}
+
+const RECOVERY_ONLY_NOTICE = 'The rest of this boot context could not be loaded in time, so only what was lost at restart is listed here. Use your tools to look up anything else you need.';
+
+/**
+ * Pure, synchronous recovery-only bundle (#98): the conductor's fallback when a full `build()`
+ * for its `[BOOT]` handshake rejects or times out. By then the conductor has already journaled
+ * each lost task as `task_lost`, so no later recovery read will report it again; rendering the
+ * already-captured lists here, with no fetch, keeps a failed context read from losing them.
+ * @param input The role and kind being opened, and the recovered descriptions
+ * @returns The recovery-only bundle, or `''` when there is nothing recovered to report
+ */
+export function formatRecoveryOnlyBootBundle(input: {
+    role:        BootBundleParts['role']
+    kind:        'fresh' | 'restart_resume'
+    lostTasks:   string[]
+    undelivered: string[]
+}): string {
+    const sections = [
+        renderListSection('Background tasks lost at restart', input.lostTasks),
+        renderListSection('Envelopes without a delivered response', input.undelivered),
+    ].filter(section => section !== undefined);
+    if(sections.length === 0) {
+        return '';
+    }
+    return [`[BOOT BUNDLE · ${input.role} · ${input.kind} · recovery only]`, RECOVERY_ONLY_NOTICE, ...sections].join('\n\n');
 }
 
 /**

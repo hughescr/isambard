@@ -204,6 +204,7 @@ export {
 
 export {
     createConductor,
+    type BootBundleRequest,
     type Conductor,
     type ConductorStatus,
     type DeliverResult,
@@ -219,6 +220,7 @@ export {
 export {
     createBootBundleBuilder,
     formatBootBundle,
+    formatRecoveryOnlyBootBundle,
     type BootKind,
     type BootBundleBuilder,
     type BootBundleParts,

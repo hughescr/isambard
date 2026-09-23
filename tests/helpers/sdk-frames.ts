@@ -150,7 +150,12 @@ export function hookResponse(overrides: Partial<SDKHookResponseMessage> = {}): S
     return { ...hookResponseFrame, ...overrides };
 }
 
-/** The recorded `SessionStart` hook input for `source`, `'startup'` (hand-authored) or `'compact'` (recorded). */
+/**
+ * The `SessionStart` hook input for `source`: `'compact'` is recorded; `'startup'` is
+ * hand-authored and unobservable, since the real SDK never fires this callback for startup in a
+ * streaming-input session (anthropics/claude-agent-sdk-typescript#465, #98). Use `'startup'` only
+ * to drive the boot-bundle hook's #465 tripwire test.
+ */
 export function sessionStartInput(source: 'startup' | 'compact', overrides: Partial<SessionStartHookInput> = {}): SessionStartHookInput {
     const base = source === 'compact' ? hookSessionStartCompactInput : hookSessionStartStartupInput;
     return { ...base, source, ...overrides };

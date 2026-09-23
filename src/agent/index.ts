@@ -8,7 +8,7 @@ export { extractToolUses, redactSensitiveArgs } from './stream-extractors';
 export type { AssistantContentBlock, AssistantFrame, TextBlock, ThinkingBlock, ToolUseBlock } from './stream-extractors';
 export { createStreamEventLogger, createRoleLogger, type StreamEventLogger, type FieldLogger } from './stream-event-logger';
 export { createCompactionHooks, type CompactionSink } from './hooks/compaction';
-export { createBootBundleHooks, type BootBundleSource } from './hooks/boot-bundle';
+export { createBootBundleHooks } from './hooks/boot-bundle';
 export { createSessionLifecycleHooks, type SessionLifecycleHooksDeps } from './hooks/lifecycle';
 export { createTaskTrackingHooks } from './hooks/task-tracking';
 export { createTaskLaunchHooks, type CreateTaskLaunchHooksParams } from './hooks/task-launch';
