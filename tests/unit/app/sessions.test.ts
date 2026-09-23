@@ -1016,7 +1016,7 @@ describe('createConversationConductor', () => {
                     {
                         // Replayed Discord envelopes can lack the historical author's ID;
                         // this pins recordRecentAuthor's undefined guard.
-                        id: envelopeId, mode: 'query', kind: 'discord', text: 'hi', channelId: createChannelId('chan-1'), authorId: authorId!, origin: { kind: 'human' }, createdAt: new Date(0),
+                        id: envelopeId, mode: 'query', kind: 'discord', text: 'hi', channelId: createChannelId('chan-1'), authorId, origin: { kind: 'human' }, createdAt: new Date(0),
                     },
                     { priority: 'urgent', requestingChannelId: createChannelId('chan-1') }
                 );

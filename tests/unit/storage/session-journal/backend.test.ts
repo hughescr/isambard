@@ -319,6 +319,19 @@ describe('SessionJournalBackend', () => {
             expect(mockLogger.warn).not.toHaveBeenCalled();
         });
 
+        test('a legacy response_delivered row with an empty channelId still parses', async () => {
+            const legacyRow = ALL_ENTRY_ROWS.find(row => row.type === 'response_delivered')!;
+            ddbMock.on(QueryCommand).resolves({ Items: [{ ...legacyRow, channelId: '' }] });
+
+            const entries = await backend.readSince('conversation', '2026-09-01T00:00:00.000Z');
+
+            expect(entries).toHaveLength(1);
+            expect(entries[0]).toEqual({
+                type: 'response_delivered', at: new Date(BASE.at), envelopeId: 'e1', channelId: '', messageIds: ['m1'],
+            });
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
         test.each(ALL_ENTRY_ROWS.map(row => [row.type as string, row] as const))('%s parses to its own type with fields intact', async (type, row) => {
             ddbMock.on(QueryCommand).resolves({ Items: [row] });
             const { PK: _pk, SK: _sk, TTL: _ttl, ...expectedFields } = row;
