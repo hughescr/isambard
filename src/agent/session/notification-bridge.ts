@@ -15,20 +15,22 @@
  * (and, for a coalesced source, its own "already reported" memory) on a delivery that never
  * happened, permanently losing it for as long as the underlying key stays the same (a health
  * outage's key is stable for the epoch's whole lifetime — see `health-notification.ts`'s module
- * doc). `notify()` therefore checks `conductor.status().opened` (not just whether a conductor is
- * attached) and treats "attached but not yet open" exactly like "not attached": a debug log, no
- * dedupe/memory consumed, `notify()` returns `false` so the caller knows to retry. Before attach
- * — and after {@link NotificationBridge.detach} — `notify()` is the same safe no-op: a debug
- * log, nothing queued, never a throw.
+ * doc). `notify()` therefore checks the conductor's `status().lifecycle` with
+ * {@link lifecycleAcceptsWork} (not just whether a conductor is attached) and treats "attached
+ * but cannot accept work" — not yet open, a failed open or reopen, or shutting down — exactly
+ * like "not attached": a debug log, no dedupe/memory consumed, `notify()` returns `false` so the
+ * caller knows to retry. Before attach — and after {@link NotificationBridge.detach} —
+ * `notify()` is the same safe no-op: a debug log, nothing queued, never a throw.
  *
- * One notify contract (plan amendment B2): `notify({ source, text, wake, dedupeKey, at? }):
- * boolean`. `dedupeKey` is REQUIRED — it is the sole dedupe key every source (and Q5's own
- * `createHealthOutageCoalescer`) keys on. The boolean return is `true` once this `dedupeKey` has
- * been (or was already) handed to the conductor, and `false` only when delivery could not be
- * attempted right now (see the readiness paragraph above) — a caller with its own delivery
- * memory reads this to decide whether THIS occurrence may be forgotten or must be retried on the
- * next one. `wake` selects the routing through the envelope contract it builds (see
- * `./envelope.ts`'s `buildNotificationEnvelope`): `true` submits a turn-opening envelope via
+ * One notify contract (plan amendment B2): `notify({ source, text, wake, key, at? }): boolean`.
+ * `key` is REQUIRED and unique only within its `source`: the bridge owns the namespace, deduping
+ * every source (and Q5's own `createHealthOutageCoalescer`) on the `(source, key)` pair, so no
+ * producer prefixes its keys with its own source tag. The boolean return is `true` once this
+ * `(source, key)` has been (or was already) handed to the conductor, and `false` only when
+ * delivery could not be attempted right now (see the readiness paragraph above) — a caller with
+ * its own delivery memory reads this to decide whether THIS occurrence may be forgotten or must
+ * be retried on the next one. `wake` selects the routing through the envelope contract it builds
+ * (see `./envelope.ts`'s `buildNotificationEnvelope`): `true` submits a turn-opening envelope via
  * `conductor.submit(envelope, { priority: 'normal' })` — never `'urgent'`, so a notification can
  * never preempt a live Discord turn (`conductor.ts`'s human-only fast-path at
  * enqueue/routeIncoming); `false` appends via `conductor.appendWithoutTurn(envelope)`, the
@@ -50,7 +52,7 @@
  * @module agent/session/notification-bridge
  */
 import type { Logger } from '@hughescr/logger';
-import type { Conductor, TurnResult } from './conductor';
+import { lifecycleAcceptsWork, type Conductor, type TurnResult } from './conductor';
 import { buildNotificationEnvelope } from './envelope';
 import type { Clock, Envelope } from './types';
 
@@ -59,24 +61,29 @@ export const DEFAULT_NOTIFICATION_DEDUPE_CAPACITY = 200;
 
 /** One notification submission — the shared contract every notification source conforms to (plan amendment B2). */
 export interface NotifyParams {
-    /** Short source tag, e.g. `'health'`, `'email'`, `'bsky-dm'` — rendered into the envelope's `[NOTIFICATION · {source} · ...]` header. */
-    source:    string
+    /** Short source tag, e.g. `'health'`, `'email'`, `'bsky-dm'` — rendered into the envelope's `[NOTIFICATION · {source} · ...]` header, and the namespace {@link NotifyParams.key} is unique within. */
+    source: string
     /** Human-readable notification body. */
-    text:      string
+    text:   string
     /** `true` opens a turn (`conductor.submit`, `priority:'normal'`); `false` appends without opening one (`conductor.appendWithoutTurn`). */
-    wake:      boolean
-    /** REQUIRED. The bridge's sole dedupe key — a repeated key (while still within {@link CreateNotificationBridgeParams.dedupeCapacity} recent distinct keys) is dropped silently. */
-    dedupeKey: string
+    wake:   boolean
+    /**
+     * REQUIRED. This notification's dedupe key, unique within {@link NotifyParams.source} — the
+     * bridge namespaces it by `source` itself, so it carries no source prefix. A repeated
+     * `(source, key)` pair (while still within {@link CreateNotificationBridgeParams.dedupeCapacity}
+     * recent distinct pairs) is dropped silently.
+     */
+    key:    string
     /** Overrides the envelope's `now`/timestamp; defaults to `new Date(clock.now())` at call time. */
-    at?:       Date
+    at?:    Date
 }
 
 /**
  * A source-agnostic notification submission function — the single shared contract every
- * notification source imports (plan amendment B2). Returns `true` once this `dedupeKey` has
+ * notification source imports (plan amendment B2). Returns `true` once this `(source, key)` has
  * been (or was already, via an earlier call) handed to the conductor, and `false` only when it
- * could not be attempted right now — no conductor attached, or one is attached but has not
- * finished `open()` yet (see `createNotificationBridge`'s module doc) — so a caller with its own
+ * could not be attempted right now — no conductor attached, or one is attached whose lifecycle
+ * cannot accept work (see `createNotificationBridge`'s module doc) — so a caller with its own
  * retry memory (e.g. {@link import('./health-notification').createHealthOutageCoalescer}) knows
  * to try again on the next occurrence instead of treating a dropped notification as delivered.
  */
@@ -96,8 +103,8 @@ export interface CreateNotificationBridgeParams {
 
 /**
  * The narrow slice of {@link Conductor} the bridge actually calls. `status` is read (not just
- * `submit`/`appendWithoutTurn`) so `notify()` can tell "attached to a conductor that hasn't
- * finished `open()` yet" apart from "actually ready to receive" — see `notify()`'s doc.
+ * `submit`/`appendWithoutTurn`) so `notify()` can tell "attached to a conductor that cannot
+ * accept work right now" apart from "actually ready to receive" — see `notify()`'s doc.
  */
 export type NotificationConductor = Pick<Conductor, 'submit' | 'appendWithoutTurn' | 'status'>;
 
@@ -110,12 +117,12 @@ export interface NotificationBridge {
     detach:              () => void
     /**
      * Attaches a reply-delivery callback (R2): once a `wake:true` `notify()`'s
-     * `conductor.submit()` resolves with a non-null `response` and no `outcome` (a genuine
-     * completed reply — not `null`/withdrawn/interrupted), `fn` is called with the notification's
-     * own envelope and that `TurnResult`, so the composition root can deliver a notification's
-     * reply the same way it delivers any other turn's. A rejection is caught and logged; it
-     * never affects `notify()`'s own synchronous return. Never called for a `wake:false`
-     * `notify()` (`appendWithoutTurn` produces no `TurnResult` to deliver).
+     * `conductor.submit()` resolves with `status: 'completed'` (a genuine reply — never a
+     * failed, interrupted or withdrawn turn, none of which carries one), `fn` is called with the
+     * notification's own envelope and that `TurnResult`, so the composition root can deliver a
+     * notification's reply the same way it delivers any other turn's. A rejection is caught and
+     * logged; it never affects `notify()`'s own synchronous return. Never called for a
+     * `wake:false` `notify()` (`appendWithoutTurn` produces no `TurnResult` to deliver).
      */
     attachReplyDelivery: (fn: (envelope: Envelope, result: TurnResult) => Promise<void>) => void
 }
@@ -134,10 +141,10 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
     const dedupeOrder: string[] = [];
     const dedupeSeen = new Set<string>();
 
-    /** Marks `key` as seen and evicts the oldest entry once the FIFO set exceeds `dedupeCapacity`. */
-    function rememberKey(key: string): void {
-        dedupeSeen.add(key);
-        dedupeOrder.push(key);
+    /** Marks `namespacedKey` as seen and evicts the oldest entry once the FIFO set exceeds `dedupeCapacity`. */
+    function rememberKey(namespacedKey: string): void {
+        dedupeSeen.add(namespacedKey);
+        dedupeOrder.push(namespacedKey);
         if(dedupeOrder.length > dedupeCapacity) {
             // `dedupeOrder.length > dedupeCapacity` after the push above guarantees
             // `dedupeOrder.length >= 1` here, so `.shift()` always returns an element — the `!`
@@ -148,22 +155,27 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
     }
 
     function notify(notifyParams: NotifyParams): boolean {
-        const { source, text, wake, dedupeKey, at } = notifyParams;
+        const { source, text, wake, key, at } = notifyParams;
+        // The dedupe identity (and the form every log line prints): a JSON tuple rather than a
+        // `${source}:${key}` join, because both halves are open strings — a join would let
+        // ('a:b', 'c') and ('a', 'b:c') collide and suppress each other.
+        const namespacedKey = JSON.stringify([source, key]);
 
-        // Not attached, or attached to a conductor whose open() hasn't resolved yet: treat
-        // exactly like the unattached case (debug-log, drop, no dedupe burn) rather than
-        // attempting delivery — conductor.submit() would only reject ('Conductor is not open')
-        // and conductor.appendWithoutTurn() would silently no-op, and in both cases the dedupe
-        // key below would already be burned by the time that was discovered. Returning `false`
-        // here (see the module doc / review finding) lets a caller with its own "already
-        // reported" memory — e.g. the health-outage coalescer — hold off marking this occurrence
-        // handled, so the outage is retried on its next occurrence instead of being silently and
-        // permanently dropped for the life of the current epoch.
-        if(!conductor?.status().opened) {
-            logger.debug({ source, dedupeKey }, 'Notification bridge not attached to an open conductor; dropping notify');
+        // Not attached, or attached to a conductor that cannot accept work (not yet open, a
+        // failed open or reopen, shutting down): treat exactly like the unattached case
+        // (debug-log, drop, no dedupe burn) rather than attempting delivery —
+        // conductor.submit() would only reject and conductor.appendWithoutTurn() would refuse,
+        // and on the wake path the dedupe key below would already be burned by the time that
+        // was discovered. Returning `false` here (see the module doc / review finding) lets a
+        // caller with its own "already reported" memory — e.g. the health-outage coalescer —
+        // hold off marking this occurrence handled, so the outage is retried on its next
+        // occurrence instead of being silently and permanently dropped for the life of the
+        // current epoch.
+        if(conductor === undefined || !lifecycleAcceptsWork(conductor.status().lifecycle)) {
+            logger.debug({ source, namespacedKey }, 'Notification bridge not attached to a conductor that can accept work; dropping notify');
             return false;
         }
-        if(dedupeSeen.has(dedupeKey)) {
+        if(dedupeSeen.has(namespacedKey)) {
             return true;
         }
 
@@ -176,22 +188,22 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
         if(envelope.mode === 'query') {
             // Burned up front on this path: `submit()` opens a real turn and the conductor owns
             // the envelope from here, so a later failure is a failed turn, not a lost hand-off.
-            rememberKey(dedupeKey);
+            rememberKey(namespacedKey);
             void (async (): Promise<void> => {
                 let result: TurnResult;
                 try {
                     result = await conductor.submit(envelope, { priority: 'normal' });
                 } catch (err) {
-                    logger.warn({ err, source, dedupeKey }, 'Failed to submit wake notification');
+                    logger.warn({ err, source, namespacedKey }, 'Failed to submit wake notification');
                     return;
                 }
-                if(result.response === null || result.outcome !== undefined || replyDelivery === undefined) {
+                if(result.status !== 'completed' || replyDelivery === undefined) {
                     return;
                 }
                 try {
                     await replyDelivery(envelope, result);
                 } catch (err) {
-                    logger.warn({ err, source, dedupeKey }, 'Failed to deliver a wake notification\'s reply');
+                    logger.warn({ err, source, namespacedKey }, 'Failed to deliver a wake notification\'s reply');
                 }
             })();
             return true;
@@ -206,14 +218,14 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
         try {
             accepted = conductor.appendWithoutTurn(envelope);
         } catch (err) {
-            logger.warn({ err, source, dedupeKey }, 'Failed to append accumulate notification');
+            logger.warn({ err, source, namespacedKey }, 'Failed to append accumulate notification');
             return false;
         }
         if(!accepted) {
-            logger.debug({ source, dedupeKey }, 'Conductor did not accept an accumulate notification; leaving the dedupe key unburned for a retry');
+            logger.debug({ source, namespacedKey }, 'Conductor did not accept an accumulate notification; leaving the dedupe key unburned for a retry');
             return false;
         }
-        rememberKey(dedupeKey);
+        rememberKey(namespacedKey);
         return true;
     }
 

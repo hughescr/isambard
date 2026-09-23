@@ -531,7 +531,7 @@ describe('Bot Lifecycle Integration', () => {
             const mockDocClient = { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient;
             const mockContextBuilder = {} as ContextBuilder;
             const mockMemoryMcp = {};
-            const conductor = { open: mock(async () => ({ sessionId: 'conv-sess', resumed: false })), submit: mock(async () => ({})), appendWithoutTurn: mock(() => undefined), status: mock(() => ({ sessionId: undefined, opened: true })) } as unknown as Conductor & { submit: ReturnType<typeof mock>, appendWithoutTurn: ReturnType<typeof mock> };
+            const conductor = { open: mock(async () => ({ sessionId: 'conv-sess', resumed: false })), submit: mock(async () => ({})), appendWithoutTurn: mock(() => undefined), status: mock(() => ({ sessionId: undefined, lifecycle: 'open' })) } as unknown as Conductor & { submit: ReturnType<typeof mock>, appendWithoutTurn: ReturnType<typeof mock> };
 
             spies.push(
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
@@ -560,10 +560,10 @@ describe('Bot Lifecycle Integration', () => {
 
             await createApp();
 
-            const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as { notify?: (params: { source: string, text: string, wake: boolean, dedupeKey: string }) => void };
+            const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as { notify?: (params: { source: string, text: string, wake: boolean, key: string }) => void };
             expect(typeof botOptions.notify).toBe('function');
 
-            botOptions.notify!({ source: 'test', text: 'hello', wake: true, dedupeKey: 'bot-lifecycle-key' });
+            botOptions.notify!({ source: 'test', text: 'hello', wake: true, key: 'bot-lifecycle-key' });
             expect(conductor.submit).toHaveBeenCalledTimes(1);
             expect(conductor.submit.mock.calls[0]?.[1]).toEqual({ priority: 'normal' });
         });

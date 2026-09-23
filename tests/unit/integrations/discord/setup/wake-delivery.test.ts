@@ -12,19 +12,23 @@ import * as responseSenderModule from '@/integrations/discord/response-sender';
 import type { SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
 import { createWakeTurnDelivery, type CreateWakeTurnDeliveryParams } from '@/integrations/discord/setup/wake-delivery';
 
-/** Minimal-but-complete `TurnResult` fixture. */
-function makeTurnResult(overrides: Partial<TurnResult> = {}): TurnResult {
+const RESULT_BASE = { envelopeId: 'env-1', sessionId: 'session-id', contextUsagePercent: 0 };
+
+/** Minimal-but-complete completed `TurnResult` fixture. */
+function makeTurnResult(overrides: { response?: string } = {}): TurnResult {
     return {
-        envelopeId:          'env-1',
-        response:            'the response text',
-        wasInterrupted:      false,
-        partialWork:         { thinking: '', text: '', pendingToolUse: null, sessionId: undefined },
-        sessionId:           'session-id',
-        isError:             false,
-        contextUsagePercent: 0,
-        ...overrides,
+        ...RESULT_BASE, status: 'completed', response: 'the response text', ...overrides,
     };
 }
+
+/** One result per non-completed status — none of which carries a reply. */
+const NOT_COMPLETED_RESULTS: [string, TurnResult][] = [
+    ['failed', { ...RESULT_BASE, status: 'failed', response: null, error: new Error('turn failed') }],
+    ['interrupted (human_preempt)', {
+        ...RESULT_BASE, status: 'interrupted', response: null, partialWork: { thinking: '', text: 'partial', pendingToolUse: null, sessionId: undefined }, cancellationSource: 'human_preempt',
+    }],
+    ['withdrawn', { ...RESULT_BASE, status: 'withdrawn', response: null, cancellationSource: 'caller_signal' }],
+];
 
 /** Minimal-but-complete `DeliverableEnvelope` fixture — all a wake-turn delivery reads. */
 function makeEnvelope(overrides: Partial<DeliverableEnvelope> = {}): DeliverableEnvelope {
@@ -74,17 +78,7 @@ describe('createWakeTurnDelivery', () => {
         jest.restoreAllMocks();
     });
 
-    it('no-ops when result.response is null', async () => {
-        const h = build();
-        const sendSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse');
-
-        await h.deliver(makeEnvelope({ channelId: 'chan-1' }), makeTurnResult({ response: null }));
-
-        expect(sendSpy).not.toHaveBeenCalled();
-        expect(h.conductor.deliver).not.toHaveBeenCalled();
-    });
-
-    it('no-ops when result.response is an empty string', async () => {
+    it('no-ops when a completed result\'s response is an empty string', async () => {
         const h = build();
         const sendSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse');
 
@@ -94,11 +88,11 @@ describe('createWakeTurnDelivery', () => {
         expect(h.conductor.deliver).not.toHaveBeenCalled();
     });
 
-    it.each(['withdrawn', 'interrupted'] as const)('no-ops when result.outcome is %s, even with a non-null response', async (outcome) => {
+    it.each(NOT_COMPLETED_RESULTS)('no-ops when the result status is %s', async (_status, result) => {
         const h = build();
         const sendSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse');
 
-        await h.deliver(makeEnvelope({ channelId: 'chan-1' }), makeTurnResult({ outcome }));
+        await h.deliver(makeEnvelope({ channelId: 'chan-1' }), result);
 
         expect(sendSpy).not.toHaveBeenCalled();
         expect(h.conductor.deliver).not.toHaveBeenCalled();

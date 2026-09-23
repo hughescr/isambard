@@ -486,7 +486,7 @@ describe('buildEmailProcessorCallbacks', () => {
         discordCapability = { sendToChannel };
     });
 
-    it('onSafe notifies with wake:false and a uid-keyed dedupeKey, and posts the unchanged admin content', async () => {
+    it('onSafe notifies with wake:false and a uid-keyed notify key, and posts the unchanged admin content', async () => {
         const callbacks = buildEmailProcessorCallbacks({
             client:            {} as unknown as Client,
             adminDiscordChannelId,
@@ -501,7 +501,7 @@ describe('buildEmailProcessorCallbacks', () => {
         const call = notify.mock.calls[0][0];
         expect(call.source).toBe('email');
         expect(call.wake).toBe(false);
-        expect(call.dedupeKey).toBe('email-safe:7');
+        expect(call.key).toBe('safe:7');
         expect(call.text).toBe('Safe email from sender@example.com — not on allowlist. Subject: Hi there');
         expect(sendToChannel).toHaveBeenCalledTimes(1);
         const [channelId, content] = sendToChannel.mock.calls[0];
@@ -511,7 +511,7 @@ describe('buildEmailProcessorCallbacks', () => {
         );
     });
 
-    it('onReview notifies with wake:false and a uid-keyed dedupeKey, and posts the unchanged review embed', async () => {
+    it('onReview notifies with wake:false and a uid-keyed notify key, and posts the unchanged review embed', async () => {
         const callbacks = buildEmailProcessorCallbacks({
             client:            {} as unknown as Client,
             adminDiscordChannelId,
@@ -527,7 +527,7 @@ describe('buildEmailProcessorCallbacks', () => {
         const call = notify.mock.calls[0][0];
         expect(call.source).toBe('email');
         expect(call.wake).toBe(false);
-        expect(call.dedupeKey).toBe('email-review:8');
+        expect(call.key).toBe('review:8');
         expect(call.text).toBe(`Email needs review: ${email.subject}`);
         expect(sendToChannel).toHaveBeenCalledTimes(1);
         const [channelId, content] = sendToChannel.mock.calls[0];
@@ -540,7 +540,7 @@ describe('buildEmailProcessorCallbacks', () => {
         expect(actual.components[0].toJSON()).toEqual(expected.actionRow.toJSON());
     });
 
-    it('onAuthFailed notifies with wake:false and a uid-keyed dedupeKey, and posts the unchanged admin content', async () => {
+    it('onAuthFailed notifies with wake:false and a uid-keyed notify key, and posts the unchanged admin content', async () => {
         const callbacks = buildEmailProcessorCallbacks({
             client:            {} as unknown as Client,
             adminDiscordChannelId,
@@ -555,7 +555,7 @@ describe('buildEmailProcessorCallbacks', () => {
         const call = notify.mock.calls[0][0];
         expect(call.source).toBe('email');
         expect(call.wake).toBe(false);
-        expect(call.dedupeKey).toBe('email-auth-failed:9');
+        expect(call.key).toBe('auth-failed:9');
         expect(call.text).toBe('Allowlisted sender sender@example.com failed auth check. Subject: Auth fail');
         expect(sendToChannel).toHaveBeenCalledTimes(1);
         const [channelId, content] = sendToChannel.mock.calls[0];
@@ -565,7 +565,7 @@ describe('buildEmailProcessorCallbacks', () => {
         );
     });
 
-    it('onUnsafe notifies with wake:true and a uid-keyed dedupeKey, and posts the unchanged unsafe alert embed', async () => {
+    it('onUnsafe notifies with wake:true and a uid-keyed notify key, and posts the unchanged unsafe alert embed', async () => {
         const callbacks = buildEmailProcessorCallbacks({
             client:            {} as unknown as Client,
             adminDiscordChannelId,
@@ -581,7 +581,7 @@ describe('buildEmailProcessorCallbacks', () => {
         const call = notify.mock.calls[0][0];
         expect(call.source).toBe('email');
         expect(call.wake).toBe(true);
-        expect(call.dedupeKey).toBe('email-unsafe:10');
+        expect(call.key).toBe('unsafe:10');
         expect(call.text).toBe(`Unsafe email quarantined: ${email.subject}`);
         expect(sendToChannel).toHaveBeenCalledTimes(1);
         const [channelId, content] = sendToChannel.mock.calls[0];

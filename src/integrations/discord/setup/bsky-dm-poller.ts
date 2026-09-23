@@ -9,7 +9,7 @@
  * `BskyCheckpointManager.processDirectMessages` — which does the dedupe work AND persists the
  * checkpoint itself, so this module never touches the checkpoint directly. When the batch of
  * newly-unread conversations is non-empty, `notify()` is called exactly once (never per-convo),
- * keyed on the newest candidate's `lastMessage.id` (`bsky-dm:<id>`) so the bridge's dedupe set —
+ * keyed on the newest candidate's `lastMessage.id` (under source `bsky-dm`) so the bridge's dedupe set —
  * not this poller — decides whether a repeat of the very same newest message is worth another
  * notification. A tick that throws or rejects (a transient Bluesky API failure, most likely) is
  * caught and logged, never propagated into the `setInterval` callback.
@@ -76,10 +76,10 @@ export function createBskyDmPoller(options: BskyDmPollerOptions): BskyDmPoller {
             if(newConvos.length > 0) {
                 const newestId = newestMessageId(newConvos);
                 const delivered = notify({
-                    source:    'bsky-dm',
-                    text:      `${newConvos.length} new unread Bluesky conversation(s)`,
-                    wake:      false,
-                    dedupeKey: `bsky-dm:${newestId}`,
+                    source: 'bsky-dm',
+                    text:   `${newConvos.length} new unread Bluesky conversation(s)`,
+                    wake:   false,
+                    key:    newestId,
                 });
                 // `processDirectMessages` already durably recorded this batch's ids as processed
                 // before `notify()` was attempted. When delivery could not be attempted (the

@@ -127,10 +127,10 @@ export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<nu
         // the rejection outcome, which has already been persisted and reflected to Discord.
         try {
             this.notify({
-                source:    'email-approval',
-                wake:      true,
-                dedupeKey: `email:${uid}:rejected`,
-                text:      `Outbound email (uid ${uid}) rejected by admin. Reason: ${reason}`,
+                source: 'email-approval',
+                wake:   true,
+                key:    `${uid}:rejected`,
+                text:   `Outbound email (uid ${uid}) rejected by admin. Reason: ${reason}`,
             });
         } catch (err) {
             logger.warn({ err, uid, msg: 'Notify failed for email rejection' });
@@ -198,10 +198,10 @@ export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<nu
             // false-returning notify never fails this approval outcome.
             try {
                 this.notify({
-                    source:    'email-approval',
-                    wake:      true,
-                    dedupeKey: `email:${uid}:approved`,
-                    text:      `Outbound email (uid ${uid}) approved for sending`,
+                    source: 'email-approval',
+                    wake:   true,
+                    key:    `${uid}:approved`,
+                    text:   `Outbound email (uid ${uid}) approved for sending`,
                 });
             } catch (notifyError) {
                 logger.warn({ err: notifyError, uid, msg: 'Notify failed for email approval' });
@@ -260,10 +260,10 @@ export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<nu
         // fails this approval outcome.
         try {
             this.notify({
-                source:    'email-approval',
-                wake:      true,
-                dedupeKey: `email:${uid}:approved`,
-                text:      `Outbound email (uid ${uid}) approved for sending`,
+                source: 'email-approval',
+                wake:   true,
+                key:    `${uid}:approved`,
+                text:   `Outbound email (uid ${uid}) approved for sending`,
             });
         } catch (err) {
             logger.warn({ err, uid, msg: 'Notify failed for email approval' });

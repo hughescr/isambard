@@ -4,7 +4,7 @@
 import { describe, test, expect, beforeEach, mock, type Mock } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
 import { FakeClock } from '../../../helpers/fake-clock';
-import type { Conductor, ConductorStatus, Envelope, SubmitOptions, TurnResult } from '@/agent/session';
+import type { Conductor, ConductorLifecycle, ConductorStatus, Envelope, SubmitOptions, TurnResult } from '@/agent/session';
 import {
     createNotificationBridge,
     DEFAULT_NOTIFICATION_DEDUPE_CAPACITY,
@@ -12,13 +12,15 @@ import {
     type NotifyParams
 } from '@/agent/session/notification-bridge';
 
-/** A minimal `ConductorStatus`, `opened` toggleable — the only field `notify()` reads. */
-function fakeStatus(opened: boolean): ConductorStatus {
-    return { role: 'conversation', sessionId: undefined, opened, shuttingDown: false, queueLength: 0, turn: null };
+/** A minimal `ConductorStatus` with a chosen `lifecycle` — the only field `notify()` reads. */
+function fakeStatus(lifecycle: ConductorLifecycle): ConductorStatus {
+    return {
+        role: 'conversation', sessionId: undefined, lifecycle, opened: false, shuttingDown: false, queueLength: 0, turn: null,
+    };
 }
 
-/** A fake conductor exposing only the surface the bridge depends on. `opened` defaults to `true` (a fully-open conductor); pass `false` to model one that is attached but has not finished `open()` yet. */
-function createFakeConductor(opened = true): Pick<Conductor, 'submit' | 'appendWithoutTurn' | 'status'> & {
+/** A fake conductor exposing only the surface the bridge depends on. `lifecycle` defaults to `'open'`; pass another value to model one that cannot accept work. */
+function createFakeConductor(lifecycle: ConductorLifecycle = 'open'): Pick<Conductor, 'submit' | 'appendWithoutTurn' | 'status'> & {
     submit:            Mock<(envelope: Envelope, options: SubmitOptions) => Promise<TurnResult>>
     appendWithoutTurn: Mock<(envelope: Envelope) => boolean>
     status:            Mock<() => ConductorStatus>
@@ -26,7 +28,7 @@ function createFakeConductor(opened = true): Pick<Conductor, 'submit' | 'appendW
     return {
         submit:            mock((_envelope: Envelope, _options: SubmitOptions) => Promise.resolve({} as TurnResult)),
         appendWithoutTurn: mock((_envelope: Envelope) => true),
-        status:            mock(() => fakeStatus(opened)),
+        status:            mock(() => fakeStatus(lifecycle)),
     };
 }
 
@@ -40,7 +42,7 @@ function createMockLogger(): Logger {
 }
 
 function baseParams(overrides: Partial<NotifyParams> = {}): NotifyParams {
-    return { source: 'test-source', text: 'something happened', wake: false, dedupeKey: 'key-1', ...overrides };
+    return { source: 'test-source', text: 'something happened', wake: false, key: 'key-1', ...overrides };
 }
 
 describe('createNotificationBridge', () => {
@@ -69,7 +71,7 @@ describe('createNotificationBridge', () => {
     });
 
     test('wake:true submits via conductor.submit with priority "normal", never appendWithoutTurn', () => {
-        bridge.notify(baseParams({ wake: true, dedupeKey: 'wake-key' }));
+        bridge.notify(baseParams({ wake: true, key: 'wake-key' }));
 
         expect(conductor.submit).toHaveBeenCalledTimes(1);
         expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
@@ -84,19 +86,21 @@ describe('createNotificationBridge', () => {
             resolveSubmit = resolve;
         }));
 
-        bridge.notify(baseParams({ wake: true, dedupeKey: 'wake-dupe' }));
+        bridge.notify(baseParams({ wake: true, key: 'wake-dupe' }));
         // A second call with the same key, issued while the first submit() is still pending,
         // must already see the key as burned rather than submitting a second time.
-        const second = bridge.notify(baseParams({ wake: true, dedupeKey: 'wake-dupe' }));
+        const second = bridge.notify(baseParams({ wake: true, key: 'wake-dupe' }));
 
         expect(second).toBe(true);
         expect(conductor.submit).toHaveBeenCalledTimes(1);
 
-        resolveSubmit({ response: null, outcome: undefined } as TurnResult);
+        resolveSubmit({
+            status: 'failed', envelopeId: 'env-1', response: null, sessionId: 'sess-1', contextUsagePercent: 0, error: new Error('x'),
+        });
     });
 
     test('wake:false appends via conductor.appendWithoutTurn, never submit', () => {
-        bridge.notify(baseParams({ wake: false, dedupeKey: 'accumulate-key' }));
+        bridge.notify(baseParams({ wake: false, key: 'accumulate-key' }));
 
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(1);
         expect(conductor.submit).not.toHaveBeenCalled();
@@ -108,7 +112,7 @@ describe('createNotificationBridge', () => {
         const explicitAt = new Date('2020-01-01T00:00:00.000Z');
         clock.advance(999_999); // clock.now() would produce a very different timestamp if used
 
-        bridge.notify(baseParams({ dedupeKey: 'at-key', at: explicitAt }));
+        bridge.notify(baseParams({ key: 'at-key', at: explicitAt }));
 
         const [envelope] = conductor.appendWithoutTurn.mock.calls[0];
         expect(envelope.createdAt).toEqual(explicitAt);
@@ -117,16 +121,16 @@ describe('createNotificationBridge', () => {
     test('omitting `at` falls back to `new Date(clock.now())` at call time', () => {
         clock.advance(12_345);
 
-        bridge.notify(baseParams({ dedupeKey: 'no-at-key' }));
+        bridge.notify(baseParams({ key: 'no-at-key' }));
 
         const [envelope] = conductor.appendWithoutTurn.mock.calls[0];
         expect(envelope.createdAt).toEqual(new Date(12_345));
     });
 
     test('timeHeader() is invoked fresh on every notify() call', () => {
-        bridge.notify(baseParams({ dedupeKey: 'key-a' }));
+        bridge.notify(baseParams({ key: 'key-a' }));
         clock.advance(1000);
-        bridge.notify(baseParams({ dedupeKey: 'key-b' }));
+        bridge.notify(baseParams({ key: 'key-b' }));
 
         expect(timeHeaderCalls).toHaveLength(2);
         expect(timeHeaderCalls[0]).not.toBe(timeHeaderCalls[1]);
@@ -135,10 +139,24 @@ describe('createNotificationBridge', () => {
         expect(firstEnvelope.text).not.toBe(secondEnvelope.text);
     });
 
-    test('a repeated dedupeKey suppresses the second notify(); a distinct key goes through', () => {
-        bridge.notify(baseParams({ dedupeKey: 'dupe' }));
-        bridge.notify(baseParams({ dedupeKey: 'dupe' }));
-        bridge.notify(baseParams({ dedupeKey: 'distinct' }));
+    test('a repeated (source, key) suppresses the second notify(); a distinct key goes through', () => {
+        bridge.notify(baseParams({ key: 'dupe' }));
+        bridge.notify(baseParams({ key: 'dupe' }));
+        bridge.notify(baseParams({ key: 'distinct' }));
+
+        expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(2);
+    });
+
+    test('the same key under two different sources is not deduped: each source is its own namespace', () => {
+        expect(bridge.notify(baseParams({ source: 'health', key: 'k1' }))).toBe(true);
+        expect(bridge.notify(baseParams({ source: 'email', key: 'k1' }))).toBe(true);
+
+        expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(2);
+    });
+
+    test('a source/key split that a colon join would collapse still counts as two distinct notifications', () => {
+        bridge.notify(baseParams({ source: 'health:worker', key: 'k1' }));
+        bridge.notify(baseParams({ source: 'health', key: 'worker:k1' }));
 
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(2);
     });
@@ -150,19 +168,19 @@ describe('createNotificationBridge', () => {
         });
         smallBridge.attachConductor(conductor);
 
-        smallBridge.notify(baseParams({ dedupeKey: 'k1' }));
-        smallBridge.notify(baseParams({ dedupeKey: 'k2' }));
-        smallBridge.notify(baseParams({ dedupeKey: 'k3' }));
+        smallBridge.notify(baseParams({ key: 'k1' }));
+        smallBridge.notify(baseParams({ key: 'k2' }));
+        smallBridge.notify(baseParams({ key: 'k3' }));
         // at capacity: k1 still suppresses a resubmit
-        smallBridge.notify(baseParams({ dedupeKey: 'k1' }));
+        smallBridge.notify(baseParams({ key: 'k1' }));
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(3);
 
         // one more distinct key past capacity evicts k1 (the oldest)
-        smallBridge.notify(baseParams({ dedupeKey: 'k4' }));
+        smallBridge.notify(baseParams({ key: 'k4' }));
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(4);
 
         // k1 was evicted, so it now goes through again
-        smallBridge.notify(baseParams({ dedupeKey: 'k1' }));
+        smallBridge.notify(baseParams({ key: 'k1' }));
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(5);
     });
 
@@ -172,8 +190,8 @@ describe('createNotificationBridge', () => {
         });
         zeroCapacityBridge.attachConductor(conductor);
 
-        expect(zeroCapacityBridge.notify(baseParams({ dedupeKey: 'repeat' }))).toBe(true);
-        expect(zeroCapacityBridge.notify(baseParams({ dedupeKey: 'repeat' }))).toBe(true);
+        expect(zeroCapacityBridge.notify(baseParams({ key: 'repeat' }))).toBe(true);
+        expect(zeroCapacityBridge.notify(baseParams({ key: 'repeat' }))).toBe(true);
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(2);
     });
 
@@ -191,31 +209,31 @@ describe('createNotificationBridge', () => {
         defaultBridge.attachConductor(conductor);
 
         for(let i = 1; i <= 200; i++) {
-            defaultBridge.notify(baseParams({ dedupeKey: `key-${i}` }));
+            defaultBridge.notify(baseParams({ key: `key-${i}` }));
         }
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(200);
 
         // At exactly the capacity the oldest key is still retained, so a repeat is suppressed...
-        defaultBridge.notify(baseParams({ dedupeKey: 'key-1' }));
+        defaultBridge.notify(baseParams({ key: 'key-1' }));
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(200);
 
         // ...and it is the 201st distinct key that evicts it.
-        defaultBridge.notify(baseParams({ dedupeKey: 'key-201' }));
-        defaultBridge.notify(baseParams({ dedupeKey: 'key-1' }));
+        defaultBridge.notify(baseParams({ key: 'key-201' }));
+        defaultBridge.notify(baseParams({ key: 'key-1' }));
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(202);
     });
 
-    test('a synchronously-rejecting conductor.submit is caught and logged, never thrown out of notify()', async () => {
+    test('a synchronously-rejecting conductor.submit is caught and logged with the namespaced key, never thrown out of notify()', async () => {
         conductor.submit.mockImplementationOnce(() => Promise.reject(new Error('submit boom')));
 
         expect(() => {
-            bridge.notify(baseParams({ wake: true, dedupeKey: 'reject-key' }));
+            bridge.notify(baseParams({ wake: true, key: 'reject-key' }));
         }).not.toThrow();
         await Promise.resolve();
         await Promise.resolve();
 
         expect(logger.warn).toHaveBeenCalledWith(
-            expect.objectContaining({ err: expect.any(Error), source: 'test-source', dedupeKey: 'reject-key' }),
+            expect.objectContaining({ err: expect.any(Error), source: 'test-source', namespacedKey: '["test-source","reject-key"]' }),
             'Failed to submit wake notification'
         );
     });
@@ -223,21 +241,21 @@ describe('createNotificationBridge', () => {
     test('a wake:false notify the conductor could not accept returns false and does NOT burn the dedupe key', () => {
         conductor.appendWithoutTurn.mockImplementationOnce(() => false);
 
-        expect(bridge.notify(baseParams({ wake: false, dedupeKey: 'retry-key' }))).toBe(false);
+        expect(bridge.notify(baseParams({ wake: false, key: 'retry-key' }))).toBe(false);
         expect(logger.debug).toHaveBeenCalledWith(
-            { source: 'test-source', dedupeKey: 'retry-key' },
+            { source: 'test-source', namespacedKey: '["test-source","retry-key"]' },
             'Conductor did not accept an accumulate notification; leaving the dedupe key unburned for a retry'
         );
 
         // The same key retried later must actually be delivered: a burned key would drop this
         // notification permanently, since the source has already forgotten this occurrence.
-        expect(bridge.notify(baseParams({ wake: false, dedupeKey: 'retry-key' }))).toBe(true);
+        expect(bridge.notify(baseParams({ wake: false, key: 'retry-key' }))).toBe(true);
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(2);
     });
 
     test('a wake:false notify accepted into the conductor\'s reopen buffer returns true and burns the key once', () => {
-        expect(bridge.notify(baseParams({ wake: false, dedupeKey: 'buffered-key' }))).toBe(true);
-        expect(bridge.notify(baseParams({ wake: false, dedupeKey: 'buffered-key' }))).toBe(true);
+        expect(bridge.notify(baseParams({ wake: false, key: 'buffered-key' }))).toBe(true);
+        expect(bridge.notify(baseParams({ wake: false, key: 'buffered-key' }))).toBe(true);
 
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(1);
     });
@@ -250,16 +268,16 @@ describe('createNotificationBridge', () => {
 
         let delivered: boolean | undefined;
         expect(() => {
-            delivered = bridge.notify(baseParams({ wake: false, dedupeKey: 'throw-key' }));
+            delivered = bridge.notify(baseParams({ wake: false, key: 'throw-key' }));
         }).not.toThrow();
         expect(delivered).toBe(false);
         expect(logger.warn).toHaveBeenCalledWith(
-            { err: appendError, source: 'test-source', dedupeKey: 'throw-key' },
+            { err: appendError, source: 'test-source', namespacedKey: '["test-source","throw-key"]' },
             'Failed to append accumulate notification'
         );
 
         // The dedupe key must not have been burned: a retry with the same key tries again.
-        bridge.notify(baseParams({ wake: false, dedupeKey: 'throw-key' }));
+        bridge.notify(baseParams({ wake: false, key: 'throw-key' }));
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(2);
     });
 
@@ -268,21 +286,21 @@ describe('createNotificationBridge', () => {
             clock, timezone: 'America/Los_Angeles', timeHeader: () => 'H', logger,
         });
 
-        const delivered = freshBridge.notify(baseParams({ dedupeKey: 'unattached-key' }));
+        const delivered = freshBridge.notify(baseParams({ source: 'health', key: 'k1' }));
 
         expect(delivered).toBe(false);
         expect(conductor.submit).not.toHaveBeenCalled();
         expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
         expect(logger.debug).toHaveBeenCalledWith(
-            { source: 'test-source', dedupeKey: 'unattached-key' },
-            'Notification bridge not attached to an open conductor; dropping notify'
+            { source: 'health', namespacedKey: '["health","k1"]' },
+            'Notification bridge not attached to a conductor that can accept work; dropping notify'
         );
     });
 
     test('detach() reverts to the unattached no-op drop behaviour', () => {
         bridge.detach();
 
-        const delivered = bridge.notify(baseParams({ dedupeKey: 'after-detach' }));
+        const delivered = bridge.notify(baseParams({ key: 'after-detach' }));
 
         expect(delivered).toBe(false);
         expect(conductor.submit).not.toHaveBeenCalled();
@@ -295,70 +313,95 @@ describe('createNotificationBridge', () => {
             clock, timezone: 'America/Los_Angeles', timeHeader: () => 'H', logger,
         });
 
-        freshBridge.notify(baseParams({ dedupeKey: 'reused-key' }));
+        freshBridge.notify(baseParams({ key: 'reused-key' }));
         freshBridge.attachConductor(conductor);
-        freshBridge.notify(baseParams({ dedupeKey: 'reused-key' }));
+        freshBridge.notify(baseParams({ key: 'reused-key' }));
 
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(1);
     });
 
-    test('a conductor attached but not yet open (open() has not resolved) is treated exactly like unattached: no submit/appendWithoutTurn, debug-logged, returns false', () => {
-        const notYetOpenConductor = createFakeConductor(false);
+    test.each<ConductorLifecycle>(['new', 'opening', 'failed', 'closing', 'closed'])('a conductor whose lifecycle is %s cannot accept work: a wake notify returns false, submits nothing and is debug-logged', (lifecycle) => {
+        const notReadyConductor = createFakeConductor(lifecycle);
         const freshBridge = createNotificationBridge({
             clock, timezone: 'America/Los_Angeles', timeHeader: () => 'H', logger,
         });
-        freshBridge.attachConductor(notYetOpenConductor);
+        freshBridge.attachConductor(notReadyConductor);
 
-        const delivered = freshBridge.notify(baseParams({ wake: true, dedupeKey: 'not-open-key' }));
+        const delivered = freshBridge.notify(baseParams({ wake: true, key: 'not-ready-key' }));
 
         expect(delivered).toBe(false);
-        expect(notYetOpenConductor.submit).not.toHaveBeenCalled();
-        expect(notYetOpenConductor.appendWithoutTurn).not.toHaveBeenCalled();
-        expect(logger.debug).toHaveBeenCalled();
+        expect(notReadyConductor.submit).not.toHaveBeenCalled();
+        expect(notReadyConductor.appendWithoutTurn).not.toHaveBeenCalled();
+        expect(logger.debug).toHaveBeenCalledWith(
+            { source: 'test-source', namespacedKey: '["test-source","not-ready-key"]' },
+            'Notification bridge not attached to a conductor that can accept work; dropping notify'
+        );
     });
 
-    test('a not-yet-open notify() does not consume the dedupe budget: the same key delivers once the conductor reports open', () => {
-        const notYetOpenConductor = createFakeConductor(false);
+    test.each<ConductorLifecycle>(['new', 'opening', 'failed', 'closing', 'closed'])('a notify refused while the lifecycle is %s does not consume the dedupe budget: the same key delivers once the conductor is open', (lifecycle) => {
+        const notReadyConductor = createFakeConductor(lifecycle);
         const freshBridge = createNotificationBridge({
             clock, timezone: 'America/Los_Angeles', timeHeader: () => 'H', logger,
         });
-        freshBridge.attachConductor(notYetOpenConductor);
+        freshBridge.attachConductor(notReadyConductor);
 
-        freshBridge.notify(baseParams({ dedupeKey: 'reused-key-2' }));
-        notYetOpenConductor.status.mockReturnValue(fakeStatus(true));
-        const delivered = freshBridge.notify(baseParams({ dedupeKey: 'reused-key-2' }));
+        freshBridge.notify(baseParams({ key: 'reused-key-2' }));
+        notReadyConductor.status.mockReturnValue(fakeStatus('open'));
+        const delivered = freshBridge.notify(baseParams({ key: 'reused-key-2' }));
 
         expect(delivered).toBe(true);
-        expect(notYetOpenConductor.appendWithoutTurn).toHaveBeenCalledTimes(1);
+        expect(notReadyConductor.appendWithoutTurn).toHaveBeenCalledTimes(1);
+    });
+
+    test.each<ConductorLifecycle>(['open', 'reopening'])('a conductor whose lifecycle is %s accepts work: a wake notify submits and an accumulate notify appends', (lifecycle) => {
+        const readyConductor = createFakeConductor(lifecycle);
+        const freshBridge = createNotificationBridge({
+            clock, timezone: 'America/Los_Angeles', timeHeader: () => 'H', logger,
+        });
+        freshBridge.attachConductor(readyConductor);
+
+        expect(freshBridge.notify(baseParams({ wake: true, key: 'ready-wake' }))).toBe(true);
+        expect(freshBridge.notify(baseParams({ wake: false, key: 'ready-accum' }))).toBe(true);
+
+        expect(readyConductor.submit).toHaveBeenCalledTimes(1);
+        expect(readyConductor.appendWithoutTurn).toHaveBeenCalledTimes(1);
     });
 
     test('notify() returns true once the envelope is actually submitted (wake:true) or appended (wake:false)', () => {
-        expect(bridge.notify(baseParams({ wake: true, dedupeKey: 'ret-wake' }))).toBe(true);
-        expect(bridge.notify(baseParams({ wake: false, dedupeKey: 'ret-accum' }))).toBe(true);
+        expect(bridge.notify(baseParams({ wake: true, key: 'ret-wake' }))).toBe(true);
+        expect(bridge.notify(baseParams({ wake: false, key: 'ret-accum' }))).toBe(true);
     });
 
     test('notify() returns true for an already-delivered repeat, without re-delivering', () => {
-        bridge.notify(baseParams({ dedupeKey: 'ret-dupe' }));
+        bridge.notify(baseParams({ key: 'ret-dupe' }));
 
-        const delivered = bridge.notify(baseParams({ dedupeKey: 'ret-dupe' }));
+        const delivered = bridge.notify(baseParams({ key: 'ret-dupe' }));
 
         expect(delivered).toBe(true);
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(1);
     });
 
     describe('attachReplyDelivery() (R2)', () => {
-        function turnResult(overrides: Partial<TurnResult> = {}): TurnResult {
-            return {
-                envelopeId: 'env-1', response: 'a reply', wasInterrupted: false, partialWork: {} as TurnResult['partialWork'], sessionId: 'sess-1', isError: false, contextUsagePercent: 0, ...overrides,
-            };
+        const base = { envelopeId: 'env-1', sessionId: 'sess-1', contextUsagePercent: 0 };
+
+        function completed(response: string): TurnResult {
+            return { ...base, status: 'completed', response };
         }
 
-        test('is called with the envelope and result once a wake submit() resolves with a non-null response and no outcome', async () => {
+        const notCompleted: [string, TurnResult][] = [
+            ['failed', { ...base, status: 'failed', response: null, error: new Error('turn failed') }],
+            ['interrupted', {
+                ...base, status: 'interrupted', response: null, partialWork: {} as Extract<TurnResult, { status: 'interrupted' }>['partialWork'], cancellationSource: 'human_preempt',
+            }],
+            ['withdrawn', { ...base, status: 'withdrawn', response: null, cancellationSource: 'caller_signal' }],
+        ];
+
+        test('is called with the envelope and result once a wake submit() resolves with status completed', async () => {
             const delivery = mock((_envelope: Envelope, _result: TurnResult) => Promise.resolve());
             bridge.attachReplyDelivery(delivery);
-            conductor.submit.mockImplementationOnce(() => Promise.resolve(turnResult({ response: 'the reply' })));
+            conductor.submit.mockImplementationOnce(() => Promise.resolve(completed('the reply')));
 
-            bridge.notify(baseParams({ wake: true, dedupeKey: 'reply-key' }));
+            bridge.notify(baseParams({ wake: true, key: 'reply-key' }));
             await Promise.resolve();
             await Promise.resolve();
 
@@ -367,24 +410,12 @@ describe('createNotificationBridge', () => {
             expect(result.response).toBe('the reply');
         });
 
-        test('is not called when the resolved response is null', async () => {
+        test.each(notCompleted)('is not called when the wake submit() resolves with status %s', async (_status, result) => {
             const delivery = mock((_envelope: Envelope, _result: TurnResult) => Promise.resolve());
             bridge.attachReplyDelivery(delivery);
-            conductor.submit.mockImplementationOnce(() => Promise.resolve(turnResult({ response: null })));
+            conductor.submit.mockImplementationOnce(() => Promise.resolve(result));
 
-            bridge.notify(baseParams({ wake: true, dedupeKey: 'null-response-key' }));
-            await Promise.resolve();
-            await Promise.resolve();
-
-            expect(delivery).not.toHaveBeenCalled();
-        });
-
-        test('is not called when the result carries an outcome (withdrawn/interrupted)', async () => {
-            const delivery = mock((_envelope: Envelope, _result: TurnResult) => Promise.resolve());
-            bridge.attachReplyDelivery(delivery);
-            conductor.submit.mockImplementationOnce(() => Promise.resolve(turnResult({ response: 'a reply', outcome: 'interrupted' })));
-
-            bridge.notify(baseParams({ wake: true, dedupeKey: 'interrupted-key' }));
+            bridge.notify(baseParams({ wake: true, key: 'not-completed-key' }));
             await Promise.resolve();
             await Promise.resolve();
 
@@ -395,7 +426,7 @@ describe('createNotificationBridge', () => {
             const delivery = mock((_envelope: Envelope, _result: TurnResult) => Promise.resolve());
             bridge.attachReplyDelivery(delivery);
 
-            bridge.notify(baseParams({ wake: false, dedupeKey: 'accumulate-key-2' }));
+            bridge.notify(baseParams({ wake: false, key: 'accumulate-key-2' }));
 
             expect(delivery).not.toHaveBeenCalled();
         });
@@ -403,25 +434,25 @@ describe('createNotificationBridge', () => {
         test('a rejecting delivery is caught and logged, and never affects notify()\'s own synchronous return', async () => {
             const delivery = mock((_envelope: Envelope, _result: TurnResult) => Promise.reject(new Error('delivery failed')));
             bridge.attachReplyDelivery(delivery);
-            conductor.submit.mockImplementationOnce(() => Promise.resolve(turnResult({ response: 'a reply' })));
+            conductor.submit.mockImplementationOnce(() => Promise.resolve(completed('a reply')));
 
-            const delivered = bridge.notify(baseParams({ wake: true, dedupeKey: 'delivery-fails-key' }));
+            const delivered = bridge.notify(baseParams({ wake: true, key: 'delivery-fails-key' }));
             expect(delivered).toBe(true);
             await Promise.resolve();
             await Promise.resolve();
             await Promise.resolve();
 
             expect(logger.warn).toHaveBeenCalledWith(
-                expect.objectContaining({ err: expect.any(Error), source: 'test-source', dedupeKey: 'delivery-fails-key' }),
+                expect.objectContaining({ err: expect.any(Error), source: 'test-source', namespacedKey: '["test-source","delivery-fails-key"]' }),
                 'Failed to deliver a wake notification\'s reply'
             );
         });
 
         test('with no delivery attached, a resolved wake submit() with a real response does not throw', async () => {
-            conductor.submit.mockImplementationOnce(() => Promise.resolve(turnResult({ response: 'a reply' })));
+            conductor.submit.mockImplementationOnce(() => Promise.resolve(completed('a reply')));
 
             expect(() => {
-                bridge.notify(baseParams({ wake: true, dedupeKey: 'no-delivery-key' }));
+                bridge.notify(baseParams({ wake: true, key: 'no-delivery-key' }));
             }).not.toThrow();
             await Promise.resolve();
             await Promise.resolve();

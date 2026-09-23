@@ -106,8 +106,9 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
     }
 
     return async function deliverWakeTurn(envelope: DeliverableEnvelope, result: TurnResult): Promise<void> {
-        // Stryker disable next-line llm: TurnResult.response is string | null, so these explicit empty cases and !response are equivalent for every produced result.
-        if(result.response === null || result.response === '' || result.outcome !== undefined) {
+        // Only a completed turn carries a reply (failed/interrupted/withdrawn all have response: null).
+        // Stryker disable next-line llm: response is a string on the completed arm, so `=== ''` and `!response` are equivalent there.
+        if(result.status !== 'completed' || result.response === '') {
             return;
         }
         const text = result.response;

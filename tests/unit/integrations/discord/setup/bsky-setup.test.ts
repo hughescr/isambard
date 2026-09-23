@@ -297,7 +297,7 @@ describe('setupBsky — Q8 DM poller and notify threading', () => {
 
         expect(options.notify).toHaveBeenCalledTimes(1);
         expect((options.notify as ReturnType<typeof mock>).mock.calls[0]?.[0]).toMatchObject({
-            source: 'bsky-dm', text: '1 new unread Bluesky conversation(s)', wake: false, dedupeKey: 'bsky-dm:msg-1',
+            source: 'bsky-dm', text: '1 new unread Bluesky conversation(s)', wake: false, key: 'msg-1',
         });
 
         result.dmPoller.stop();

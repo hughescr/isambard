@@ -137,11 +137,11 @@ export function createHealthOutageCoalescer(params: CreateHealthOutageCoalescerP
         // Stryker disable next-line llm: pending never escapes this closure and members is already snapshotted, so rebinding and clear() are indistinguishable
         pending = new Map();
         const services = members.map(member => member.service);
-        const dedupeKey = members.map(member => `${member.service}:${member.epoch}`).toSorted((a, b) => a.localeCompare(b)).join('+');
+        const key = members.map(member => `${member.service}:${member.epoch}`).toSorted((a, b) => a.localeCompare(b)).join('+');
         const delivered = notify({
             source: 'health',
             wake:   true,
-            dedupeKey,
+            key,
             text:   `Service(s) offline: ${services.join(', ')}`,
         });
         // See the "already reported" memory's doc comment above: only remember these members'
@@ -211,10 +211,10 @@ export function createHealthNotificationListener(params: CreateHealthNotificatio
         // time-bucketed) would need to live in the bridge's dedupe design instead, and is a
         // follow-on if flapping visibility turns out to matter in practice.
         notify({
-            source:    'health',
-            wake:      false,
-            dedupeKey: `health:${change.service}:${change.epoch}:${change.newState}`,
-            text:      `${change.service}: ${change.previousState} -> ${change.newState}`,
+            source: 'health',
+            wake:   false,
+            key:    `${change.service}:${change.epoch}:${change.newState}`,
+            text:   `${change.service}: ${change.previousState} -> ${change.newState}`,
         });
     };
 }

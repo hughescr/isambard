@@ -14,17 +14,17 @@ async function flush(): Promise<void> {
     }
 }
 
-/** Minimal-but-complete TurnResult fixture; individual fields overridden per test. */
-function makeTurnResult(overrides: Partial<TurnResult> = {}): TurnResult {
+const RESULT_BASE = { envelopeId: 'envelope-id', sessionId: 'session-id', contextUsagePercent: 0 };
+
+/** Minimal-but-complete completed TurnResult fixture. */
+function makeTurnResult(): TurnResult {
+    return { ...RESULT_BASE, status: 'completed', response: 'ok' };
+}
+
+/** A TurnResult for a turn interrupted by an explicit `interruptCurrent` (the perch driver's own slot ceiling). */
+function makeInterruptedTurnResult(): TurnResult {
     return {
-        envelopeId:          'envelope-id',
-        response:            'ok',
-        wasInterrupted:      false,
-        partialWork:         { thinking: '', text: '', pendingToolUse: null, sessionId: undefined },
-        sessionId:           'session-id',
-        isError:             false,
-        contextUsagePercent: 0,
-        ...overrides,
+        ...RESULT_BASE, status: 'interrupted', response: null, partialWork: { thinking: '', text: '', pendingToolUse: null, sessionId: undefined }, cancellationSource: 'interrupt_current',
     };
 }
 
@@ -84,7 +84,7 @@ function createFakeConductor(): Pick<Conductor, 'submit' | 'interruptCurrent' | 
         })),
         interruptCurrent: mock(() => Promise.resolve()),
         status:           mock(() => ({
-            role: 'perch', sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: activeTurn,
+            role: 'perch', sessionId: undefined, lifecycle: 'open', opened: true, shuttingDown: false, queueLength: 0, turn: activeTurn,
         })),
         setActiveTurn(turn: FakeActiveTurn | null): void {
             activeTurn = turn;
@@ -463,7 +463,7 @@ describe('createPerchDriver', () => {
 
             clock.advance((MAX_SESSION_MINUTES + INTERRUPT_GRACE_MINUTES) * MINUTE_MS);
             expect(conductor.interruptCurrent).toHaveBeenCalledTimes(1);
-            conductor.submissions[0].resolve(makeTurnResult({ wasInterrupted: true }));
+            conductor.submissions[0].resolve(makeInterruptedTurnResult());
             await flush();
 
             expect(calls).toEqual(['start', 'end']);

@@ -101,10 +101,10 @@ describe('bsky-dm-poller', () => {
         expect(listConversations).toHaveBeenCalledWith(undefined, undefined, 'unread');
         expect(notify).toHaveBeenCalledTimes(1);
         expect(notify.mock.calls[0]?.[0]).toMatchObject({
-            source:    'bsky-dm',
-            text:      '3 new unread Bluesky conversation(s)',
-            wake:      false,
-            dedupeKey: 'bsky-dm:msg-new',
+            source: 'bsky-dm',
+            text:   '3 new unread Bluesky conversation(s)',
+            wake:   false,
+            key:    'msg-new',
         });
     });
 

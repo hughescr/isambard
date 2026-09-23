@@ -56,7 +56,7 @@ function makeFakeIngressGate() {
 function makeFakeConductor(overrides: Record<string, unknown> = {}) {
     return {
         submit: mock(async (envelope: { id: string, kind: string }) => ({
-            envelopeId: envelope.id, response: 'ok', wasInterrupted: false, sessionId: 'sess-1', isError: false, contextUsagePercent: 0,
+            status: 'completed' as const, envelopeId: envelope.id, response: 'ok', sessionId: 'sess-1', contextUsagePercent: 0,
         })),
         deliver: mock(async (_envelopeId: string, send: () => Promise<unknown>) => {
             await send();
@@ -637,7 +637,7 @@ describe('runConductorInboxInit', () => {
                 if(envelope.channelId === 'chan-1') {
                     throw submissionError;
                 }
-                return { envelopeId: envelope.id, response: 'ok', wasInterrupted: false, sessionId: 'sess-1', isError: false, contextUsagePercent: 0 };
+                return { status: 'completed' as const, envelopeId: envelope.id, response: 'ok', sessionId: 'sess-1', contextUsagePercent: 0 };
             }),
         });
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
@@ -1057,7 +1057,7 @@ describe('runConductorInboxInit', () => {
                         throw new Error('boom');
                     }
                     return {
-                        envelopeId: envelope.id, response: 'ok', wasInterrupted: false, sessionId: 'sess-1', isError: false, contextUsagePercent: 0,
+                        status: 'completed' as const, envelopeId: envelope.id, response: 'ok', sessionId: 'sess-1', contextUsagePercent: 0,
                     };
                 }),
             });

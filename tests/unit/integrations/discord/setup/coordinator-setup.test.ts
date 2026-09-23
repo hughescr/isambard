@@ -72,7 +72,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
             channelRegistry:       makeMockChannelRegistry(),
             conversationConductor: {
                 submit: mock(() => Promise.resolve({
-                    envelopeId: 'env-1', response: 'ok', wasInterrupted: false, partialWork: { thinking: '', text: '', pendingToolUse: null }, sessionId: 'sess-1', isError: false, contextUsagePercent: 0,
+                    status: 'completed', envelopeId: 'env-1', response: 'ok', sessionId: 'sess-1', contextUsagePercent: 0,
                 })),
                 subscribeTurn: mock(() => mock(() => undefined)),
                 deliver:       mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {

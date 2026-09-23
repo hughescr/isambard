@@ -1160,7 +1160,7 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(recorded.targetHandle).toBe('');
         });
 
-        test('should notify with wake:true and a rejection-keyed dedupeKey after a reply rejection', async () => {
+        test('should notify with wake:true and a rejection-keyed notify key after a reply rejection', async () => {
             const notify  = mock((_params: unknown) => true);
             const deps    = makeDeps({ notify });
             const handler = new BskyOutboundApprovalHandler(deps);
@@ -1174,14 +1174,14 @@ describe('BskyOutboundApprovalHandler', () => {
 
             expect(notify).toHaveBeenCalledTimes(1);
             expect(notify.mock.calls[0]?.[0]).toMatchObject({
-                source:    'bsky-approval',
-                text:      'Bluesky reply rejected: Too aggressive',
-                wake:      true,
-                dedupeKey: `bsky-approval:${TEST_UUID}:rejected`,
+                source: 'bsky-approval',
+                text:   'Bluesky reply rejected: Too aggressive',
+                wake:   true,
+                key:    `${TEST_UUID}:rejected`,
             });
         });
 
-        test('should notify with wake:true and a rejection-keyed dedupeKey after a DM rejection', async () => {
+        test('should notify with wake:true and a rejection-keyed notify key after a DM rejection', async () => {
             const notify  = mock((_params: unknown) => true);
             const deps    = makeDeps({ notify });
             const handler = new BskyOutboundApprovalHandler(deps);
@@ -1201,10 +1201,10 @@ describe('BskyOutboundApprovalHandler', () => {
 
             expect(notify).toHaveBeenCalledTimes(1);
             expect(notify.mock.calls[0]?.[0]).toMatchObject({
-                source:    'bsky-approval',
-                text:      'Bluesky dm rejected: Not appropriate',
-                wake:      true,
-                dedupeKey: `bsky-approval:${TEST_UUID}:rejected`,
+                source: 'bsky-approval',
+                text:   'Bluesky dm rejected: Not appropriate',
+                wake:   true,
+                key:    `${TEST_UUID}:rejected`,
             });
         });
 

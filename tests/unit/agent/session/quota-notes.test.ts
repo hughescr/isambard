@@ -50,7 +50,7 @@ describe('createQuotaNotes', () => {
         expect(params.source).toBe('quota');
         expect(params.wake).toBe(false);
         expect(params.at).toBe(AT);
-        expect(params.dedupeKey).toBe(`fiveHour:75:${RESET_A.getTime()}`);
+        expect(params.key).toBe(`fiveHour:75:${RESET_A.getTime()}`);
         expect(params.text).toBe('Quota: the five-hour window has passed 75% (now 80%) of the shared Claude subscription.');
     });
 
@@ -62,7 +62,7 @@ describe('createQuotaNotes', () => {
 
         expect(notify).toHaveBeenCalledTimes(1);
         const [params] = notify.mock.calls[0];
-        expect(params.dedupeKey).toBe(`fiveHour:90:${RESET_A.getTime()}`);
+        expect(params.key).toBe(`fiveHour:90:${RESET_A.getTime()}`);
         expect(params.text).toBe('Quota: the five-hour window has passed 90% (now 92%) of the shared Claude subscription.');
     });
 
@@ -73,8 +73,8 @@ describe('createQuotaNotes', () => {
         notes.record(fiveHour(91));
 
         expect(notify).toHaveBeenCalledTimes(2);
-        expect(notify.mock.calls[0][0].dedupeKey).toBe(`fiveHour:75:${RESET_A.getTime()}`);
-        expect(notify.mock.calls[1][0].dedupeKey).toBe(`fiveHour:90:${RESET_A.getTime()}`);
+        expect(notify.mock.calls[0][0].key).toBe(`fiveHour:75:${RESET_A.getTime()}`);
+        expect(notify.mock.calls[1][0].key).toBe(`fiveHour:90:${RESET_A.getTime()}`);
     });
 
     test('exactly 75% counts as crossed', () => {
@@ -103,7 +103,7 @@ describe('createQuotaNotes', () => {
 
         expect(notify).toHaveBeenCalledTimes(1);
         const [params] = notify.mock.calls[0];
-        expect(params.dedupeKey).toBe(`sevenDay:75:${RESET_B.getTime()}`);
+        expect(params.key).toBe(`sevenDay:75:${RESET_B.getTime()}`);
         expect(params.text).toBe('Quota: the weekly window has passed 75% (now 76%) of the shared Claude subscription.');
     });
 
@@ -132,7 +132,7 @@ describe('createQuotaNotes', () => {
         expect(notes.isPaused()).toBe(false);
         // The reset note (once) and instance A's own 90% note (once) — nothing more.
         expect(notify).toHaveBeenCalledTimes(2);
-        expect(notify.mock.calls[1][0].dedupeKey).toBe(`fiveHour:reset:${RESET_B.getTime()}`);
+        expect(notify.mock.calls[1][0].key).toBe(`fiveHour:reset:${RESET_B.getTime()}`);
     });
 
     test('a stale reading does not consume the new instance\'s thresholds: the next genuine reading still notes them under the new key', () => {
@@ -144,7 +144,7 @@ describe('createQuotaNotes', () => {
         notes.record(fiveHour(80, RESET_B));
 
         expect(notify).toHaveBeenCalledTimes(1);
-        expect(notify.mock.calls[0][0].dedupeKey).toBe(`fiveHour:75:${RESET_B.getTime()}`);
+        expect(notify.mock.calls[0][0].key).toBe(`fiveHour:75:${RESET_B.getTime()}`);
         expect(notify.mock.calls[0][0].text).toBe('Quota: the five-hour window has passed 75% (now 80%) of the shared Claude subscription.');
     });
 
@@ -159,9 +159,9 @@ describe('createQuotaNotes', () => {
         const [resetParams] = notify.mock.calls[1];
         expect(resetParams.source).toBe('quota');
         expect(resetParams.wake).toBe(false);
-        expect(resetParams.dedupeKey).toBe(`fiveHour:reset:${RESET_B.getTime()}`);
+        expect(resetParams.key).toBe(`fiveHour:reset:${RESET_B.getTime()}`);
         expect(resetParams.text).toBe('Quota: the five-hour window has reset; it was at 92%.');
-        expect(notify.mock.calls[2][0].dedupeKey).toBe(`fiveHour:75:${RESET_B.getTime()}`);
+        expect(notify.mock.calls[2][0].key).toBe(`fiveHour:75:${RESET_B.getTime()}`);
     });
 
     test('a reset is reported from the lowest threshold up, not only from the highest', () => {
@@ -213,7 +213,7 @@ describe('createQuotaNotes', () => {
         notes.record(fiveHour(80));
 
         expect(notify).toHaveBeenCalledTimes(2);
-        expect(notify.mock.calls[1][0].dedupeKey).toBe(`fiveHour:75:${RESET_A.getTime()}`);
+        expect(notify.mock.calls[1][0].key).toBe(`fiveHour:75:${RESET_A.getTime()}`);
     });
 
     test('a reset note the bridge could not deliver is retried on the next reading, then settles', () => {
@@ -226,8 +226,8 @@ describe('createQuotaNotes', () => {
         notes.record(fiveHour(3, RESET_B));
 
         expect(notify).toHaveBeenCalledTimes(3);
-        expect(notify.mock.calls[1][0].dedupeKey).toBe(`fiveHour:reset:${RESET_B.getTime()}`);
-        expect(notify.mock.calls[2][0]).toMatchObject({ dedupeKey: `fiveHour:reset:${RESET_B.getTime()}`, text: 'Quota: the five-hour window has reset; it was at 92%.' });
+        expect(notify.mock.calls[1][0].key).toBe(`fiveHour:reset:${RESET_B.getTime()}`);
+        expect(notify.mock.calls[2][0]).toMatchObject({ key: `fiveHour:reset:${RESET_B.getTime()}`, text: 'Quota: the five-hour window has reset; it was at 92%.' });
     });
 
     test('a ledger with no quota at all reports nothing', () => {
@@ -252,7 +252,7 @@ describe('createQuotaNotes', () => {
         notes.record(fiveHour(60));
 
         expect(notify).toHaveBeenCalledTimes(1);
-        expect(notify.mock.calls[0][0].dedupeKey).toBe(`fiveHour:50:${RESET_A.getTime()}`);
+        expect(notify.mock.calls[0][0].key).toBe(`fiveHour:50:${RESET_A.getTime()}`);
     });
 
     test('a source that reports no resetsAt still notes thresholds, under a `none` key, and never claims a reset', () => {
@@ -262,8 +262,8 @@ describe('createQuotaNotes', () => {
         notes.record(fiveHour(95, null));
 
         expect(notify).toHaveBeenCalledTimes(2);
-        expect(notify.mock.calls[0][0].dedupeKey).toBe('fiveHour:75:none');
-        expect(notify.mock.calls[1][0].dedupeKey).toBe('fiveHour:90:none');
+        expect(notify.mock.calls[0][0].key).toBe('fiveHour:75:none');
+        expect(notify.mock.calls[1][0].key).toBe('fiveHour:90:none');
     });
 
     describe('isPaused (the perch quota ceiling)', () => {

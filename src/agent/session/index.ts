@@ -211,7 +211,9 @@ export {
 export {
     createConductor,
     type BootBundleRequest,
+    type CancellationSource,
     type Conductor,
+    type ConductorLifecycle,
     type ConductorStatus,
     type DeliverResult,
     type SendOutcome,

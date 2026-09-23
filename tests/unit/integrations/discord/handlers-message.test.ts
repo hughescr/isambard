@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn, jest } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
 import { mockLogger, mockWithDiscordRetry } from '../../../setup';
-import type { SendOutcome } from '@/agent';
+import type { SendOutcome, TurnResult } from '@/agent';
 import type { AnswerClassifier } from '@/agent/answer-classifier/classifier';
 import type { ClassificationResult, MessageToClassify } from '@/agent/answer-classifier/types';
 import type { QuestionRegistry } from '@/agent/question-registry/registry';
@@ -1753,9 +1753,12 @@ describe('Discord Event Handlers', () => {
                 const deliveredPayloads: SendOutcome[] = [];
                 const deliveryErrors: Error[] = [];
                 return {
-                    submit: mock(async (_envelope: { kind: string, authorId?: string }, _options: { priority: string, requestingChannelId?: string }) => ({
-                        envelopeId: 'env-perch-1', response: turnResult.response, wasInterrupted: false, partialWork: { thinking: '', text: '', pendingToolUse: null, sessionId: undefined }, sessionId: 'perch-sess-1', isError: false, contextUsagePercent: 0,
-                    })),
+                    submit: mock(async (_envelope: { kind: string, authorId?: string }, _options: { priority: string, requestingChannelId?: string }): Promise<TurnResult> => {
+                        const base = { envelopeId: 'env-perch-1', sessionId: 'perch-sess-1', contextUsagePercent: 0 };
+                        return turnResult.response === null
+                            ? { ...base, status: 'failed', response: null, error: new Error('no reply') }
+                            : { ...base, status: 'completed', response: turnResult.response };
+                    }),
                     deliver: mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
                         try {
                             const payload = await send();

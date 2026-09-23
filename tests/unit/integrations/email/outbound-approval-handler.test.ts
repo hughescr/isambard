@@ -450,7 +450,7 @@ describe('EmailOutboundApprovalHandler', () => {
                 expect(replyArg.components).toHaveLength(0);
             });
 
-            test('should notify wake:true with dedupeKey email:<uid>:approved after editReply', async () => {
+            test('should notify wake:true with key <uid>:approved after editReply', async () => {
                 const order: string[] = [];
                 const notify = mock((_params: NotifyParams) => {
                     order.push('notify');
@@ -471,7 +471,7 @@ describe('EmailOutboundApprovalHandler', () => {
                 const call = notify.mock.calls[0]?.[0];
                 expect(call.source).toBe('email-approval');
                 expect(call.wake).toBe(true);
-                expect(call.dedupeKey).toBe('email:42:approved');
+                expect(call.key).toBe('42:approved');
                 expect(call.text).toBe('Outbound email (uid 42) approved for sending');
             });
 
@@ -506,7 +506,7 @@ describe('EmailOutboundApprovalHandler', () => {
                 const call = notify.mock.calls[0]?.[0];
                 expect(call.source).toBe('email-approval');
                 expect(call.wake).toBe(true);
-                expect(call.dedupeKey).toBe('email:42:approved');
+                expect(call.key).toBe('42:approved');
                 expect(call.text).toBe('Outbound email (uid 42) approved for sending');
                 expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                     uid: 42,
@@ -1021,7 +1021,7 @@ describe('EmailOutboundApprovalHandler', () => {
             }));
         });
 
-        test('should notify wake:true with dedupeKey email:<uid>:rejected after the Discord editReply block', async () => {
+        test('should notify wake:true with key <uid>:rejected after the Discord editReply block', async () => {
             const order: string[] = [];
             const notify = mock((_params: NotifyParams) => {
                 order.push('notify');
@@ -1042,7 +1042,7 @@ describe('EmailOutboundApprovalHandler', () => {
             const call = notify.mock.calls[0]?.[0];
             expect(call.source).toBe('email-approval');
             expect(call.wake).toBe(true);
-            expect(call.dedupeKey).toBe('email:42:rejected');
+            expect(call.key).toBe('42:rejected');
             expect(call.text).toBe('Outbound email (uid 42) rejected by admin. Reason: Not appropriate');
         });
 
@@ -1284,7 +1284,7 @@ describe('EmailOutboundApprovalHandler', () => {
             expect(replyArg.content).toBeNull();
         });
 
-        test('should notify wake:true with dedupeKey email:<uid>:approved exactly once after editReply, even with multiple recipients', async () => {
+        test('should notify wake:true with key <uid>:approved exactly once after editReply, even with multiple recipients', async () => {
             const order: string[] = [];
             const notify = mock((_params: NotifyParams) => {
                 order.push('notify');
@@ -1305,7 +1305,7 @@ describe('EmailOutboundApprovalHandler', () => {
             const call = notify.mock.calls[0]?.[0];
             expect(call.source).toBe('email-approval');
             expect(call.wake).toBe(true);
-            expect(call.dedupeKey).toBe('email:42:approved');
+            expect(call.key).toBe('42:approved');
             expect(call.text).toBe('Outbound email (uid 42) approved for sending');
         });
 

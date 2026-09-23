@@ -37,7 +37,7 @@ function userPromptSubmitInput(overrides: Partial<UserPromptSubmitHookInput> = {
 
 function statusWithTurn(turn: ConductorStatus['turn']): ConductorStatus {
     return {
-        role: 'conversation', sessionId: 'sess-1', opened: true, shuttingDown: false, queueLength: 0, turn,
+        role: 'conversation', sessionId: 'sess-1', lifecycle: 'open', opened: true, shuttingDown: false, queueLength: 0, turn,
     };
 }
 

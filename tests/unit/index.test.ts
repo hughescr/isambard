@@ -1186,10 +1186,10 @@ describe('createApp', () => {
                 open:              mock(async () => ({ sessionId, resumed: false })),
                 submit:            mock(async () => ({})),
                 appendWithoutTurn: mock(() => undefined),
-                // opened:true — these tests model a conductor whose open() has already resolved;
-                // the "attached but not open yet" gap has its own dedicated coverage in
-                // notification-bridge.test.ts.
-                status:            mock(() => ({ sessionId: undefined, opened: true })),
+                // lifecycle 'open' — these tests model a conductor whose open() has already
+                // resolved; the "attached but cannot accept work" cases have their own dedicated
+                // coverage in notification-bridge.test.ts.
+                status:            mock(() => ({ sessionId: undefined, lifecycle: 'open' })),
             } as unknown as Conductor & { submit: ReturnType<typeof mock>, appendWithoutTurn: ReturnType<typeof mock> };
         }
 
@@ -1306,7 +1306,7 @@ describe('createApp', () => {
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockImplementation(async () => {
                 // The bridge is constructed before this call (per B1) but attachConductor only
                 // runs after this promise resolves — a notify() here must be a safe no-op.
-                capturedBridge?.notify({ source: 'mid-boot', text: 'mid-boot text', wake: true, dedupeKey: 'mid-boot-key' });
+                capturedBridge?.notify({ source: 'mid-boot', text: 'mid-boot text', wake: true, key: 'mid-boot-key' });
                 return { conductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined) };
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
@@ -1325,7 +1325,7 @@ describe('createApp', () => {
             expect(typeof botOptions.notify).toBe('function');
 
             // ...and, now that the conductor has resolved and been attached, reaches it for real.
-            botOptions.notify!({ source: 'post-boot', text: 'post-boot text', wake: true, dedupeKey: 'post-boot-key' });
+            botOptions.notify!({ source: 'post-boot', text: 'post-boot text', wake: true, key: 'post-boot-key' });
             expect(conductor.submit).toHaveBeenCalledTimes(1);
             expect(conductor.submit.mock.calls[0]?.[1]).toEqual({ priority: 'normal' });
         });

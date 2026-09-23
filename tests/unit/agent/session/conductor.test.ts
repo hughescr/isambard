@@ -437,7 +437,7 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.assistantText('the real reply'));
             h.instances[0].emit(frames.resultSuccess({ result: 'the real reply', ...frames.echoOf(turn) }));
 
-            await expect(submitted).resolves.toMatchObject({ response: 'the real reply', isError: false });
+            await expect(submitted).resolves.toMatchObject({ response: 'the real reply', status: 'completed' });
             expect(h.journal.byKind('turn_completed')).toEqual([expect.objectContaining({ responseText: 'the real reply' })]);
         });
 
@@ -455,7 +455,7 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.assistantText('the real reply'));
             h.instances[0].emit(frames.resultSuccess({ result: 'the real reply' }));
 
-            await expect(submitted).resolves.toMatchObject({ response: 'the real reply', isError: false });
+            await expect(submitted).resolves.toMatchObject({ response: 'the real reply', status: 'completed' });
         });
 
         it('a mid-life reopen pushes a reopen handshake so the replacement session emits init', async () => {
@@ -580,7 +580,7 @@ describe('createConductor', () => {
             expect(h.journal.byKind('turn_completed')).toEqual([]);
 
             h.instances[0].emit(frames.resultSuccess({ result: 'answer', ...frames.echoOf(turn) }));
-            await expect(submitted).resolves.toMatchObject({ response: 'answer', isError: false });
+            await expect(submitted).resolves.toMatchObject({ response: 'answer', status: 'completed' });
         });
 
         it('an append made mid-turn, acknowledged after the next queued turn has begun, settles neither turn early and leaves the ledger turn open', async () => {
@@ -1032,7 +1032,7 @@ describe('createConductor', () => {
             const result = await resultPromise;
 
             expect(result).toEqual({
-                envelopeId: envelope.id, response: 'LAUNCHED', wasInterrupted: false, partialWork: expect.any(Object), sessionId: 'sess-1', isError: false, contextUsagePercent: 0,
+                status: 'completed', envelopeId: envelope.id, response: 'LAUNCHED', sessionId: 'sess-1', contextUsagePercent: 0,
             });
             expect(h.journal.byKind('turn_completed')).toEqual([
                 {
@@ -1185,7 +1185,7 @@ describe('createConductor', () => {
 
             expect(h.instances[0].interruptCalls).toBe(1);
             expect(h.logger.debug).toHaveBeenCalledWith(
-                { reason: 'human envelope for the running channel' },
+                { reason: 'human envelope for the running channel', source: 'human_preempt' },
                 'Conductor requesting interrupt'
             );
 
@@ -1197,8 +1197,7 @@ describe('createConductor', () => {
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             const firstOutcome = await firstResult;
-            expect(firstOutcome.wasInterrupted).toBe(true);
-            expect(firstOutcome.isError).toBe(false);
+            expect(firstOutcome).toMatchObject({ status: 'interrupted', cancellationSource: 'human_preempt' });
 
             h.instances[0].emit(frames.resultSuccess());
             await secondPromise;
@@ -1325,7 +1324,7 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.resultSuccess());
             const result = await resultPromise;
 
-            expect(result.isError).toBe(false);
+            expect(result.status).toBe('completed');
         });
 
         it('never dispatches envelope_queued on the ledger: appendWithoutTurn never opens a turn, so the "other" gauge stays at 0', async () => {
@@ -1591,7 +1590,7 @@ describe('createConductor', () => {
             h.clock.advance(1);
             expect(h.instances[0].interruptCalls).toBe(1);
             expect(h.logger.debug).toHaveBeenCalledWith(
-                { reason: 'human wait target elapsed' },
+                { reason: 'human wait target elapsed', source: 'human_wait' },
                 'Conductor requesting interrupt'
             );
 
@@ -1624,7 +1623,7 @@ describe('createConductor', () => {
             h.clock.advance(1);
             expect(h.instances[0].interruptCalls).toBe(1);
             expect(h.logger.debug).toHaveBeenCalledWith(
-                { reason: 'human wait ceiling elapsed' },
+                { reason: 'human wait ceiling elapsed', source: 'human_wait' },
                 'Conductor requesting interrupt'
             );
 
@@ -1897,7 +1896,7 @@ describe('createConductor', () => {
             // interrupted, or processQueue() stays blocked on currentTurn !== null forever.
             expect(h.instances[0].interruptCalls).toBe(1);
             expect(h.logger.debug).toHaveBeenCalledWith(
-                { reason: 'compaction ceiling exceeded' },
+                { reason: 'compaction ceiling exceeded', source: 'compaction_ceiling' },
                 'Conductor requesting interrupt'
             );
 
@@ -2322,7 +2321,7 @@ describe('createConductor', () => {
             expect(turnPrompts(h.instances[0])).toHaveLength(3);
 
             h.instances[0].emit(frames.resultSuccess());
-            await expect(resultPromise).resolves.toMatchObject({ isError: false });
+            await expect(resultPromise).resolves.toMatchObject({ status: 'completed' });
         });
 
         it('a transient error is resubmitted, and exhausting retryPolicy.maxAttempts journals turn_failed', async () => {
@@ -2343,7 +2342,9 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'still overloaded', api_error_status: 529 }));
             const result = await resultPromise;
 
-            expect(result).toMatchObject({ isError: true, wasInterrupted: false });
+            expect(result).toEqual({
+                status: 'failed', envelopeId: envelope.id, response: null, sessionId: 'sess-1', contextUsagePercent: 0, error: expect.objectContaining({ message: 'still overloaded' }),
+            });
             expect(h.journal.byKind('turn_failed')).toEqual([
                 { type: 'turn_failed', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord', error: 'still overloaded' },
             ]);
@@ -2366,7 +2367,7 @@ describe('createConductor', () => {
 
             h.instances[0].emit(frames.resultSuccess());
             const result = await resultPromise;
-            expect(result.isError).toBe(false);
+            expect(result.status).toBe('completed');
         });
 
         it('a permanent error journals turn_failed immediately with no resubmission, and clears the submit()\'s AbortSignal listener', async () => {
@@ -2381,14 +2382,37 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'bad request', api_error_status: 400 }));
             const result = await resultPromise;
 
-            expect(result.isError).toBe(true);
+            expect(result).toMatchObject({ status: 'failed', response: null, error: expect.objectContaining({ message: 'bad request' }) });
             expect(turnPrompts(h.instances[0])).toHaveLength(1);
+            expect(h.journal.byKind('turn_completed')).toEqual([]);
             expect(h.journal.byKind('turn_failed')).toEqual([
                 { type: 'turn_failed', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord', error: 'bad request' },
             ]);
             // failTurn clears the abort listener — a long-lived signal must not keep retaining a
             // settled turn's callback.
             expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+        });
+
+        it('a non-success result the SDK did not flag is_error, on a turn nobody interrupted, resolves status failed and journals a reply-less turn_completed', async () => {
+            const h = build();
+            await openWith(h);
+            const envelope = discordEnvelope();
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
+            await flush();
+
+            h.instances[0].emit(frames.resultInterrupted({ is_error: false, errors: ['tool loop aborted'] }));
+            const result = await resultPromise;
+
+            expect(result).toEqual({
+                status: 'failed', envelopeId: envelope.id, response: null, sessionId: 'sess-1', contextUsagePercent: 0, error: expect.objectContaining({ message: 'tool loop aborted' }),
+            });
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
+            expect(h.journal.byKind('turn_completed')).toEqual([
+                {
+                    type: 'turn_completed', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord',
+                },
+            ]);
+            expect(h.journal.byKind('turn_failed')).toEqual([]);
         });
 
         it('a retryable classification with retryAfterMs 0 resubmits immediately, with no clock advance needed', async () => {
@@ -2405,7 +2429,7 @@ describe('createConductor', () => {
 
             h.instances[0].emit(frames.resultSuccess());
             const result = await resultPromise;
-            expect(result.isError).toBe(false);
+            expect(result.status).toBe('completed');
         });
 
         it('an abort that fires during the retry backoff window withdraws the item instead of letting the stale retry run', async () => {
@@ -2426,8 +2450,7 @@ describe('createConductor', () => {
             await flush();
 
             const result = await resultPromise;
-            expect(result.outcome).toBe('withdrawn');
-            expect(result.response).toBeNull();
+            expect(result).toMatchObject({ status: 'withdrawn', response: null, cancellationSource: 'caller_signal' });
 
             // The stale retry timer still fires, but must not resubmit the withdrawn envelope.
             h.clock.advance(FAST_RETRY_POLICY.baseDelayMs);
@@ -2542,7 +2565,7 @@ describe('createConductor', () => {
 
             h.instances[1].emit(frames.resultSuccess());
             const result = await pendingSubmit;
-            expect(result.isError).toBe(false);
+            expect(result.status).toBe('completed');
         });
 
         it('when both the resume and the fresh-open fallback fail, the in-flight and queued submits are rejected rather than hanging forever, with both AbortSignal listeners cleared', async () => {
@@ -2615,7 +2638,7 @@ describe('createConductor', () => {
             const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             h.instances[3].emit(frames.resultSuccess());
-            await expect(resultPromise).resolves.toMatchObject({ isError: false, sessionId: 'sess-recovered' });
+            await expect(resultPromise).resolves.toMatchObject({ status: 'completed', sessionId: 'sess-recovered' });
         });
 
         it('closes a fresh fallback handle when its own finishOpen fails before giving up', async () => {
@@ -2711,7 +2734,7 @@ describe('createConductor', () => {
 
             const result = await h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1', signal: controller.signal });
 
-            expect(result).toMatchObject({ response: null, wasInterrupted: true, isError: false, outcome: 'withdrawn' });
+            expect(result).toMatchObject({ status: 'withdrawn', response: null, cancellationSource: 'caller_signal' });
             expect(turnPrompts(h.instances[0])).toHaveLength(0);
             expect(h.instances[0].interruptCalls).toBe(0);
         });
@@ -2733,8 +2756,9 @@ describe('createConductor', () => {
             // Withdrawn the instant the signal aborts — no need to wait out the human-wait target
             // that would otherwise (still, independently of this envelope) eventually interrupt
             // the running notification turn.
+            // No partialWork key at all: a withdrawn envelope never reached the SDK.
             expect(result).toEqual({
-                envelopeId: heldEnvelope.id, response: null, wasInterrupted: true, partialWork: expect.any(Object), sessionId: 'sess-1', isError: false, contextUsagePercent: 0, outcome: 'withdrawn',
+                status: 'withdrawn', envelopeId: heldEnvelope.id, response: null, sessionId: 'sess-1', contextUsagePercent: 0, cancellationSource: 'caller_signal',
             });
             expect(h.conductor.status().queueLength).toBe(0);
 
@@ -2758,14 +2782,14 @@ describe('createConductor', () => {
             controller.abort();
             const result = await heldResult;
 
-            expect(result.outcome).toBe('withdrawn');
+            expect(result.status).toBe('withdrawn');
             expect(h.instances[0].interruptCalls).toBe(0);
 
             h.instances[0].emit(frames.resultSuccess());
             await firstResult;
         });
 
-        it('aborting while this envelope\'s own turn is already running interrupts it and resolves outcome: \'interrupted\'', async () => {
+        it('aborting while this envelope\'s own turn is already running interrupts it and resolves status interrupted with cancellationSource caller_signal', async () => {
             const h = build();
             await openWith(h);
             const controller = new AbortController();
@@ -2782,7 +2806,7 @@ describe('createConductor', () => {
             expect(h.instances[0].interruptCalls).toBe(1);
             expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
             expect(h.logger.debug).toHaveBeenCalledWith(
-                { reason: 'submit() signal aborted' },
+                { reason: 'submit() signal aborted', source: 'caller_signal' },
                 'Conductor requesting interrupt'
             );
 
@@ -2790,13 +2814,16 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.resultInterrupted());
             const result = await resultPromise;
 
-            expect(result).toMatchObject({ envelopeId: envelope.id, wasInterrupted: true, isError: false, outcome: 'interrupted' });
+            expect(result).toEqual({
+                status: 'interrupted', envelopeId: envelope.id, response: null, partialWork: expect.any(Object), sessionId: 'sess-1', contextUsagePercent: 0, cancellationSource: 'caller_signal',
+            });
         });
 
-        it('an interrupt caused by another human envelope for the same channel (no signal involved) still carries wasInterrupted but no outcome', async () => {
+        it('an interrupt caused by another human envelope for the same channel (no signal involved) resolves status interrupted with cancellationSource human_preempt', async () => {
             const h = build();
             await openWith(h);
-            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
+            const envelope = discordEnvelope({ channelId: 'chan-1' });
+            const firstResult = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
             void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
@@ -2806,8 +2833,27 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.resultInterrupted());
             const result = await firstResult;
 
-            expect(result.wasInterrupted).toBe(true);
-            expect(result.outcome).toBeUndefined();
+            expect(result).toEqual({
+                status: 'interrupted', envelopeId: envelope.id, response: null, partialWork: expect.any(Object), sessionId: 'sess-1', contextUsagePercent: 0, cancellationSource: 'human_preempt',
+            });
+        });
+
+        it('a signal abort after a human preempt already interrupted the turn keeps human_preempt as the cancellationSource (the first source wins)', async () => {
+            const h = build();
+            await openWith(h);
+            const controller = new AbortController();
+            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1', signal: controller.signal });
+            await flush();
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
+            await flush();
+            controller.abort();
+            await flush();
+            expect(h.instances[0].interruptCalls).toBe(1);
+
+            h.instances[0].resolveInterrupt();
+            h.instances[0].emit(frames.resultInterrupted());
+
+            await expect(firstResult).resolves.toMatchObject({ status: 'interrupted', cancellationSource: 'human_preempt' });
         });
 
         it('aborting after the turn has already resolved is a no-op (the listener was already removed)', async () => {
@@ -2819,7 +2865,7 @@ describe('createConductor', () => {
             await flush();
             h.instances[0].emit(frames.resultSuccess());
             const result = await resultPromise;
-            expect(result.outcome).toBeUndefined();
+            expect(result.status).toBe('completed');
             expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
 
             expect(() => {
@@ -2874,7 +2920,7 @@ describe('createConductor', () => {
 
             controller.abort();
             const withdrawn = await behindResult;
-            expect(withdrawn).toMatchObject({ envelopeId: behindEnvelope.id, response: null, wasInterrupted: true, outcome: 'withdrawn' });
+            expect(withdrawn).toMatchObject({ status: 'withdrawn', envelopeId: behindEnvelope.id, response: null });
             // Exactly one envelope left the queue — the aborted one. Withdrawing by removing the
             // head instead of the aborted envelope's own index would have dropped `ahead` and left
             // this already-settled envelope queued to run a turn of its own.
@@ -2917,18 +2963,21 @@ describe('createConductor', () => {
             );
         });
 
-        it('allows an unscoped interrupt of a channel-owned turn', async () => {
+        it('allows an unscoped interrupt of a channel-owned turn, which settles with cancellationSource interrupt_current', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
+            const submitted = h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const interruptPromise = h.conductor.interruptCurrent({ reason: 'operator requested' });
             await flush();
 
             expect(h.instances[0].interruptCalls).toBe(1);
+            expect(h.logger.debug).toHaveBeenCalledWith({ reason: 'operator requested', source: 'interrupt_current' }, 'Conductor requesting interrupt');
             h.instances[0].resolveInterrupt();
             await interruptPromise;
+            h.instances[0].emit(frames.resultInterrupted());
+            await expect(submitted).resolves.toMatchObject({ status: 'interrupted', cancellationSource: 'interrupt_current' });
         });
 
         it('allows a channel-scoped interrupt when the running turn itself has no channel', async () => {
@@ -2983,7 +3032,7 @@ describe('createConductor', () => {
     describe('status()', () => {
         it('reports role, sessionId, queue length and the running turn', async () => {
             const h = build();
-            expect(h.conductor.status()).toMatchObject({ role: 'conversation', opened: false, turn: null });
+            expect(h.conductor.status()).toMatchObject({ role: 'conversation', lifecycle: 'new', opened: false, turn: null });
 
             await openWith(h, 'sess-status');
             const envelope = discordEnvelope({ authorId: 'user-status' });
@@ -2991,8 +3040,170 @@ describe('createConductor', () => {
             await flush();
 
             expect(h.conductor.status()).toMatchObject({
-                role: 'conversation', sessionId: 'sess-status', opened: true, turn: { kind: 'discord', channelId: 'chan-1', envelopeId: envelope.id, authorId: 'user-status' },
+                role: 'conversation', sessionId: 'sess-status', lifecycle: 'open', opened: true, turn: { kind: 'discord', channelId: 'chan-1', envelopeId: envelope.id, authorId: 'user-status' },
             });
+        });
+    });
+
+    describe('status().lifecycle', () => {
+        it('lifecycle: a freshly built conductor is new', () => {
+            const h = build();
+
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'new', opened: false, shuttingDown: false });
+        });
+
+        it('lifecycle: open() in flight before init is opening, then open once it resolves', async () => {
+            const h = build();
+            const openPromise = h.conductor.open();
+            await flush();
+
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'opening', opened: false, shuttingDown: false });
+
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open', opened: true, shuttingDown: false });
+        });
+
+        it('lifecycle: between system/init and open() finishing it stays opening while submit still rejects as not open', async () => {
+            const h = build();
+            const openPromise = h.conductor.open();
+            await flush();
+            // An already-aborted signal makes submit a side-effect-free readiness probe: it
+            // rejects 'Conductor is not open' before the open finishes, and resolves 'withdrawn'
+            // (never queuing anything) once it has.
+            const aborted = AbortSignal.abort();
+            const samples: Promise<string>[] = [];
+            const sample = (): void => {
+                const { lifecycle } = h.conductor.status();
+                samples.push(h.conductor.submit(discordEnvelope(), { priority: 'normal', signal: aborted })
+                    .then(result => `${lifecycle}:${result.status}`)
+                    .catch((error: unknown) => `${lifecycle}:${(error as Error).message}`));
+            };
+
+            h.instances[0].emit(frames.init('sess-1'));
+            sample();
+            for(let i = 0; i < 10; i += 1) {
+                // eslint-disable-next-line no-await-in-loop -- samples the projection at every microtask tick of the open's continuations, which is the window under test
+                await Promise.resolve();
+                sample();
+            }
+            await openPromise;
+
+            expect(new Set(await Promise.all(samples))).toEqual(new Set(['opening:Conductor is not open', 'open:withdrawn']));
+        });
+
+        it('lifecycle: a mid-life crash is reopening until the replacement opens, then open again', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'reopening', opened: true, shuttingDown: false });
+
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open', opened: true, shuttingDown: false });
+        });
+
+        it('lifecycle: an exhausted reopen is failed, and a later open() moves it back through opening to open', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].fail(new Error('resume also failed'));
+            await flush();
+            h.instances[2].fail(new Error('fresh open also failed'));
+            await flush();
+
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'failed', opened: false, shuttingDown: false });
+
+            const reopened = h.conductor.open();
+            await flush();
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'opening', opened: false, shuttingDown: false });
+
+            h.instances[3].emit(frames.init('sess-1'));
+            await reopened;
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open', opened: true, shuttingDown: false });
+        });
+
+        it('lifecycle: open() rejecting before its session ever initialised is failed', async () => {
+            const h = build();
+            const openPromise = h.conductor.open();
+            await flush();
+            h.instances[0].fail(new Error('boom'));
+            await expect(openPromise).rejects.toThrow('boom');
+
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'failed', opened: false, shuttingDown: false });
+        });
+
+        it('lifecycle: a failed resume whose handle was discarded is opening (not open) while the fresh fallback is in flight, and failed once that fallback fails too', async () => {
+            const h = build();
+            await h.resumeStore.save('conversation', 'sess-old');
+            h.resumeStore.scriptSaveRejection(new Error('DynamoDB throttled'));
+            const openPromise = h.conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-old'));
+            await flush();
+
+            // finishOpen set the internal opened flag before its save rejected and the resumed
+            // handle was discarded; no handle is current, so the projection is not 'open'.
+            expect(h.instances[0].closeCalls).toBe(1);
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'opening', opened: false, shuttingDown: false });
+
+            h.instances[1].fail(new Error('fresh fallback failed'));
+            await expect(openPromise).rejects.toThrow('fresh fallback failed');
+
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'failed', opened: false, shuttingDown: false });
+        });
+
+        it('lifecycle: a fresh open whose handle stayed live is open even though open() rejected on its resume-store save', async () => {
+            const h = build();
+            h.resumeStore.scriptSaveRejection(new Error('DynamoDB throttled'));
+            const openPromise = h.conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-fresh'));
+            await expect(openPromise).rejects.toThrow('DynamoDB throttled');
+
+            expect(h.instances[0].closeCalls).toBe(0);
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open', opened: true, shuttingDown: false });
+        });
+
+        it('lifecycle: shutdown() after open is closing at once and closed after it resolves', async () => {
+            const h = build();
+            await openWith(h);
+
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closing', opened: false, shuttingDown: true });
+
+            await shutdownPromise;
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closed', opened: false, shuttingDown: true });
+        });
+
+        it('lifecycle: shutdown() during a crash reopen is closing while the reopen is still in flight, then closed', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+            await flush();
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closing', opened: false, shuttingDown: true });
+
+            h.instances[1].emit(frames.init('sess-1'));
+            await flush();
+            await shutdownPromise;
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closed', opened: false, shuttingDown: true });
+        });
+
+        it('lifecycle: shutdown() before any open goes closing then closed', async () => {
+            const h = build();
+
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+            expect(h.conductor.status().lifecycle).toBe('closing');
+
+            await shutdownPromise;
+            expect(h.conductor.status().lifecycle).toBe('closed');
         });
     });
 
@@ -3011,7 +3222,7 @@ describe('createConductor', () => {
         it('with a running turn: waits turnWaitMs, then interrupts, then flushes and closes', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-1' });
             await flush();
 
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
@@ -3024,13 +3235,14 @@ describe('createConductor', () => {
             await flush();
             expect(h.instances[0].interruptCalls).toBe(1);
             expect(h.logger.debug).toHaveBeenCalledWith(
-                { reason: 'shutdown turn-wait elapsed' },
+                { reason: 'shutdown turn-wait elapsed', source: 'shutdown' },
                 'Conductor requesting interrupt'
             );
 
             h.instances[0].resolveInterrupt();
             h.instances[0].emit(frames.resultInterrupted());
             await shutdownPromise;
+            await expect(submitted).resolves.toMatchObject({ status: 'interrupted', cancellationSource: 'shutdown' });
 
             expect(h.journal.flushCount).toBe(1);
             expect(h.instances[0].closeCalls).toBe(1);
@@ -3874,7 +4086,7 @@ describe('createConductor', () => {
         h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'bad request', api_error_status: 400 }));
         const result = await resultPromise;
 
-        expect(result.isError).toBe(true);
+        expect(result.status).toBe('failed');
     });
 
     describe('adoptWakeTurn() (R2: background-work wake turns adopt the launching envelope)', () => {
@@ -3937,7 +4149,7 @@ describe('createConductor', () => {
             expect(onWakeTurnSettled).toHaveBeenCalledTimes(1);
             expect(onWakeTurnSettled).toHaveBeenCalledWith(
                 expect.objectContaining({ id: submitted[0]?.envelopeId, kind: 'task', channelId: 'chan-C', authorId: 'user-U' }),
-                expect.objectContaining({ response: 'root wake reply', isError: false })
+                expect.objectContaining({ response: 'root wake reply', status: 'completed' })
             );
         });
 
@@ -3996,7 +4208,7 @@ describe('createConductor', () => {
                 expect.objectContaining({
                     id: taskEnvelopeId, mode: 'query', kind: 'task', channelId: 'chan-C', authorId: 'user-U', text: 'done',
                 }),
-                expect.objectContaining({ response: 'done', isError: false })
+                expect.objectContaining({ response: 'done', status: 'completed' })
             );
         });
 
@@ -4547,7 +4759,7 @@ describe('createConductor', () => {
             expect(onWakeTurnSettled).toHaveBeenCalledTimes(1);
             expect(onWakeTurnSettled).toHaveBeenCalledWith(
                 expect.objectContaining({ kind: 'task', text: 'background work finished' }),
-                expect.objectContaining({ response: 'reported', isError: false })
+                expect.objectContaining({ response: 'reported', status: 'completed' })
             );
 
             h.instances[0].emit(frames.assistantText('now answering the peer'));
@@ -4586,7 +4798,7 @@ describe('createConductor', () => {
 
             expect(onWakeTurnSettled).toHaveBeenCalledWith(
                 expect.objectContaining({ kind: 'task', text: 'background work finished' }),
-                expect.objectContaining({ response: 'reported', isError: false })
+                expect.objectContaining({ response: 'reported', status: 'completed' })
             );
         });
 
@@ -4887,7 +5099,7 @@ describe('createConductor', () => {
             expect(turnPrompts(h.instances[1])).toHaveLength(1);
 
             h.instances[1].emit(frames.resultSuccess());
-            await expect(resultPromise).resolves.toEqual(expect.objectContaining({ envelopeId: envelope.id, isError: false }));
+            await expect(resultPromise).resolves.toEqual(expect.objectContaining({ envelopeId: envelope.id, status: 'completed' }));
         });
 
         it('waits for a running turn to end before reopening', async () => {
@@ -4927,7 +5139,7 @@ describe('createConductor', () => {
             expect(turnPrompts(h.instances[1])).toHaveLength(1);
 
             h.instances[1].emit(frames.resultSuccess());
-            await expect(queued).resolves.toEqual(expect.objectContaining({ isError: false }));
+            await expect(queued).resolves.toEqual(expect.objectContaining({ status: 'completed' }));
         });
 
         it('holds the reopen while the turn-end compaction check is still outstanding', async () => {
@@ -4978,7 +5190,7 @@ describe('createConductor', () => {
             // Held through the whole window, then played on the replacement session.
             expect(turnPrompts(h.instances[1])).toHaveLength(1);
             h.instances[1].emit(frames.resultSuccess());
-            await expect(queued).resolves.toEqual(expect.objectContaining({ isError: false }));
+            await expect(queued).resolves.toEqual(expect.objectContaining({ status: 'completed' }));
         });
 
         it('an envelope submitted while the requested reopen is in flight is held, not routed into the orphaned queue', async () => {
@@ -4999,7 +5211,7 @@ describe('createConductor', () => {
             expect(turnPrompts(h.instances[1])).toHaveLength(1);
 
             h.instances[1].emit(frames.resultSuccess());
-            await expect(pendingSubmit).resolves.toEqual(expect.objectContaining({ isError: false }));
+            await expect(pendingSubmit).resolves.toEqual(expect.objectContaining({ status: 'completed' }));
         });
 
         it('falls back to a fresh session when the resume attempt fails', async () => {
@@ -5427,7 +5639,7 @@ describe('createConductor', () => {
             const withdrawn = h.conductor.submit(discordEnvelope({ text: 'withdraw B' }), { priority: 'normal', signal: controller.signal });
             const following = h.conductor.submit(discordEnvelope({ text: 'run C' }), { priority: 'normal' });
             controller.abort();
-            await expect(withdrawn).resolves.toMatchObject({ outcome: 'withdrawn' });
+            await expect(withdrawn).resolves.toMatchObject({ status: 'withdrawn' });
             h.instances[0].emit(frames.resultSuccess());
             await active;
             await flush();
@@ -6287,7 +6499,7 @@ describe('createConductor', () => {
                 await flush();
                 expect(turnPrompts(h.instances[1])).toHaveLength(1);
                 h.instances[1].emit(frames.resultSuccess());
-                await expect(queued).resolves.toEqual(expect.objectContaining({ isError: false }));
+                await expect(queued).resolves.toEqual(expect.objectContaining({ status: 'completed' }));
             });
         });
 
@@ -6489,7 +6701,7 @@ describe('createConductor', () => {
             await flush();
 
             expect(h.instances[0].closeCalls).toBe(1);
-            expect(h.conductor.status().opened).toBe(false);
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closed', opened: false });
             expect(h.journal.byKind('session_opened')).toEqual([]);
             expect(await openOutcome).toEqual(new Error('Conductor is shutting down; the session was not opened'));
         });

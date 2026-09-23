@@ -47,19 +47,24 @@ class FakeConductor implements Conductor {
 
     private withdrawnResult(envelope: Envelope): TurnResult {
         return {
-            envelopeId: envelope.id, response: null, wasInterrupted: true, partialWork: new StreamTracker().getProgress(), sessionId: undefined, isError: false, contextUsagePercent: 3, outcome: 'withdrawn',
+            status: 'withdrawn', envelopeId: envelope.id, response: null, sessionId: undefined, contextUsagePercent: 3, cancellationSource: 'caller_signal',
         };
     }
 
-    /** Resolves the oldest still-pending `submit()` call with `overrides` merged onto a plain success result. */
-    settleOldest(overrides: Partial<TurnResult> = {}): Envelope {
+    /** Resolves the oldest still-pending `submit()` call with `overrides` merged onto a plain completed result. */
+    settleOldest(overrides: { response?: string, contextUsagePercent?: number } = {}): Envelope {
+        return this.settleOldestWith(envelopeId => ({
+            status: 'completed', envelopeId, response: 'ok', sessionId: 'sess-1', contextUsagePercent: 42, ...overrides,
+        }));
+    }
+
+    /** Resolves the oldest still-pending `submit()` call with the result `build` makes for its envelope id. */
+    settleOldestWith(build: (envelopeId: string) => TurnResult): Envelope {
         const next = this.pending.shift();
         if(!next) {
             throw new Error('FakeConductor.settleOldest: no pending submit() call');
         }
-        next.resolve({
-            envelopeId: next.envelope.id, response: 'ok', wasInterrupted: false, partialWork: new StreamTracker().getProgress(), sessionId: 'sess-1', isError: false, contextUsagePercent: 42, ...overrides,
-        });
+        next.resolve(build(next.envelope.id));
         return next.envelope;
     }
 
@@ -85,7 +90,7 @@ class FakeConductor implements Conductor {
     deliver = (): Promise<never> => Promise.reject(new Error('FakeConductor.deliver is unused by conductor-processor.ts'));
     interruptCurrent = (): Promise<void> => Promise.resolve();
     status = (): ConductorStatus => ({
-        role: 'conversation', sessionId: 'sess-1', opened: true, shuttingDown: false, queueLength: this.pending.length, turn: null,
+        role: 'conversation', sessionId: 'sess-1', lifecycle: 'open', opened: true, shuttingDown: false, queueLength: this.pending.length, turn: null,
     });
 
     shutdown = (): Promise<void> => Promise.resolve();
@@ -341,13 +346,51 @@ describe('createConductorProcessor', () => {
         expect(logger.warn).toHaveBeenCalledWith('createConductorProcessor: processor called with an empty context batch');
     });
 
+    it.each<[TurnResult['status'], (envelopeId: string) => TurnResult, boolean]>([
+        ['completed', envelopeId => ({
+            status: 'completed', envelopeId, response: 'ok', sessionId: 'sess-1', contextUsagePercent: 0,
+        }), false],
+        ['failed', envelopeId => ({
+            status: 'failed', envelopeId, response: null, sessionId: 'sess-1', contextUsagePercent: 0, error: new Error('turn failed'),
+        }), false],
+        ['interrupted', envelopeId => ({
+            status: 'interrupted', envelopeId, response: null, sessionId: 'sess-1', contextUsagePercent: 0, partialWork: new StreamTracker().getProgress(), cancellationSource: 'human_preempt',
+        }), true],
+        ['withdrawn', envelopeId => ({
+            status: 'withdrawn', envelopeId, response: null, sessionId: 'sess-1', contextUsagePercent: 0, cancellationSource: 'caller_signal',
+        }), true],
+    ])('maps a %s TurnResult onto ProcessResult.wasInterrupted', async (_status, build, wasInterrupted) => {
+        const resultPromise = processor([makeContext({ messageId: 'msg-1' })], null, new AbortController().signal);
+        await flush();
+        conductor.settleOldestWith(build);
+
+        await expect(resultPromise).resolves.toMatchObject({ wasInterrupted, sessionId: 'sess-1' });
+    });
+
+    it.each<[string, (envelopeId: string) => TurnResult]>([
+        ['failed', envelopeId => ({
+            status: 'failed', envelopeId, response: null, sessionId: 'sess-1', contextUsagePercent: 0, error: new Error('turn failed'),
+        })],
+        ['interrupted', envelopeId => ({
+            status: 'interrupted', envelopeId, response: null, sessionId: 'sess-1', contextUsagePercent: 0, partialWork: new StreamTracker().getProgress(), cancellationSource: 'human_preempt',
+        })],
+    ])('still marks events seen and the memory block injected for a %s turn (only a withdrawn one never reached the SDK)', async (_status, build) => {
+        const resultPromise = processor([makeContext({ messageId: 'msg-1' })], null, new AbortController().signal);
+        await flush();
+        conductor.settleOldestWith(build);
+        await resultPromise;
+
+        expect(contextPolicy.markEventsSeen).toHaveBeenCalledTimes(1);
+        expect(contextPolicy.markInjected).toHaveBeenCalledTimes(1);
+    });
+
     it('logs contextUsagePercent on every settled result, including a withdrawn one', async () => {
         coordinator.handleMessage(makeContext({ messageId: 'msg-A1' }), makeDiscordMessage('chan-1', 'msg-A1', 'first'));
         await flush();
         conductor.settleOldest({ contextUsagePercent: 17 });
         await flush();
 
-        expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ contextUsagePercent: 17 }), 'Conductor turn settled');
+        expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ contextUsagePercent: 17, status: 'completed' }), 'Conductor turn settled');
 
         logger.info.mockClear();
 
@@ -357,7 +400,7 @@ describe('createConductorProcessor', () => {
         jest.advanceTimersByTime(100);
         await flush();
 
-        expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ contextUsagePercent: 3, outcome: 'withdrawn' }), 'Conductor turn settled');
+        expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ contextUsagePercent: 3, status: 'withdrawn' }), 'Conductor turn settled');
     });
 
     it('marks the memory block injected (with the loaded block, R1 fingerprint contract), and still marks events seen for a completed turn', async () => {

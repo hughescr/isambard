@@ -210,12 +210,13 @@ export interface SubmitOptions {
     /**
      * Ties this submission to the caller's abort contract (P9, design section 6): aborting while
      * the envelope is still held host-side (queued behind another turn) withdraws it — `submit()`
-     * resolves `{ wasInterrupted: true, response: null, outcome: 'withdrawn' }` and nothing ever
-     * reaches the SDK; aborting while this envelope's own turn is already running calls
-     * {@link Conductor.interruptCurrent} scoped to `requestingChannelId` and resolves with
-     * `outcome: 'interrupted'`; aborting while a DIFFERENT channel's turn is running never
-     * interrupts that turn — this envelope is still only queued, so it is withdrawn like any
-     * other held envelope.
+     * resolves `{ status: 'withdrawn', cancellationSource: 'caller_signal' }` and nothing ever
+     * reaches the SDK; aborting while this envelope's own turn is already running interrupts it,
+     * scoped to `requestingChannelId` like {@link Conductor.interruptCurrent}, and resolves
+     * `{ status: 'interrupted', cancellationSource: 'caller_signal' }` (unless another source had
+     * already interrupted that turn — the first source wins); aborting while a DIFFERENT
+     * channel's turn is running never interrupts that turn — this envelope is still only queued,
+     * so it is withdrawn like any other held envelope.
      */
     signal?:              AbortSignal
 }
@@ -232,15 +233,25 @@ export interface ShutdownOptions {
     deadlineMs: number
 }
 
-/** The outcome of one submitted turn, resolved by {@link Conductor.submit}. */
-export interface TurnResult {
+/**
+ * What asked for a running turn to be interrupted (or, for `'caller_signal'` only, for a queued
+ * envelope to be withdrawn). When several sources ask for the same turn, the first one wins.
+ *
+ * - `'caller_signal'` — the submitter's own {@link SubmitOptions.signal} aborted.
+ * - `'human_preempt'` — a `'human'`-priority envelope arrived for the channel whose Discord turn
+ *   is running.
+ * - `'human_wait'` — a human envelope waited behind a background turn past
+ *   `humanWaitTargetMs` (or, while a tool was still pending, `humanWaitCeilingMs`).
+ * - `'compaction_ceiling'` — a `/compact` turn outlived the compaction guard's ceiling.
+ * - `'interrupt_current'` — an explicit {@link Conductor.interruptCurrent} call.
+ * - `'shutdown'` — {@link Conductor.shutdown}'s `turnWaitMs` elapsed with the turn still running.
+ */
+export type CancellationSource = 'caller_signal' | 'human_preempt' | 'human_wait' | 'compaction_ceiling' | 'interrupt_current' | 'shutdown';
+
+/** The fields every {@link TurnResult} arm carries. */
+interface TurnResultBase {
     envelopeId:          string
-    /** The final assistant text, or `null` when the turn errored or was interrupted before producing one. */
-    response:            string | null
-    wasInterrupted:      boolean
-    partialWork:         StreamProgress
     sessionId:           string | undefined
-    isError:             boolean
     /**
      * The context-usage percentage most recently known to the conductor's ledger at the moment
      * this turn settled (design 3.3/P9: 'every result logs the getContextUsage percentage'). This
@@ -250,21 +261,56 @@ export interface TurnResult {
      * `submit()` resolution on an extra SDK round trip. `0` before any turn has ever completed.
      */
     contextUsagePercent: number
-    /**
-     * Set only when this turn ended via the caller's {@link SubmitOptions.signal}: `'withdrawn'`
-     * when the envelope was still queued and never reached the SDK, `'interrupted'` when its turn
-     * was already running. Absent for an ordinary completion, a retry-exhausted failure, or an
-     * interrupt from any other source (a same-channel human envelope, the human-wait ceiling, a
-     * shutdown) — those are already fully described by `wasInterrupted`/`isError`.
-     */
-    outcome?:            'withdrawn' | 'interrupted'
+}
+
+/** The `status`-discriminated part of a {@link TurnResult}. */
+type TurnResultArm
+    = | { status: 'completed', response: string }
+      | { status: 'failed', response: null, error: Error }
+      | { status: 'interrupted', response: null, partialWork: StreamProgress, cancellationSource: CancellationSource }
+      | { status: 'withdrawn', response: null, cancellationSource: 'caller_signal' };
+
+/**
+ * How one submitted turn ended, resolved by {@link Conductor.submit}, discriminated on `status`:
+ *
+ * - `'completed'` — the SDK returned a successful result; `response` is its final text.
+ * - `'failed'` — an error result that was not (or could no longer be) retried, or a non-success
+ *   result the SDK did not flag `is_error`; `error` describes it.
+ * - `'interrupted'` — the turn reached the SDK and was interrupted; `cancellationSource` says who
+ *   asked. An interrupted turn never carries a reply.
+ * - `'withdrawn'` — the envelope was still held host-side when the caller's signal aborted, so
+ *   it never reached the SDK and has no partial work.
+ *
+ * Every arm keeps `response`, so a reader that only wants "the reply, if any" can read it
+ * without switching on `status`.
+ */
+export type TurnResult = TurnResultBase & TurnResultArm;
+
+/**
+ * The conductor's lifecycle, as reported by {@link ConductorStatus.lifecycle}. Reuses
+ * `session.ts`'s per-handle `SessionState` words where the meanings coincide, and adds the
+ * conductor-only states: `'new'` (never opened), `'reopening'` (replacing a session that went
+ * away) and `'closing'` (shutdown in progress). See {@link lifecycleAcceptsWork}.
+ */
+export type ConductorLifecycle = 'new' | 'opening' | 'open' | 'reopening' | 'failed' | 'closing' | 'closed';
+
+/**
+ * The single definition of "this conductor can own and buffer work": `'open'`, or `'reopening'`
+ * (work is held until the replacement session opens).
+ */
+export function lifecycleAcceptsWork(lifecycle: ConductorLifecycle): boolean {
+    return lifecycle === 'open' || lifecycle === 'reopening';
 }
 
 /** A snapshot of the conductor's current state, returned by {@link Conductor.status}. */
 export interface ConductorStatus {
     role:         SessionRole
     sessionId:    string | undefined
+    /** Where the conductor is in its lifecycle — see {@link ConductorLifecycle} and `Conductor.status`'s projection. */
+    lifecycle:    ConductorLifecycle
+    /** @deprecated Use `lifecycle` (with {@link lifecycleAcceptsWork}); derived from it as `lifecycle === 'open' || lifecycle === 'reopening'`. */
     opened:       boolean
+    /** @deprecated Use `lifecycle`; derived from it as `lifecycle === 'closing' || lifecycle === 'closed'`. */
     shuttingDown: boolean
     queueLength:  number
     turn: {
@@ -467,6 +513,7 @@ export interface Conductor {
     deliver:                       (envelopeId: string, send: () => Promise<SendOutcome>) => Promise<DeliverResult>
     interruptCurrent:              (options?: InterruptCurrentOptions) => Promise<void>
     subscribeTurn:                 (handler: (turnId: string, frame: SDKMessage) => void) => () => void
+    /** A snapshot of the conductor's state; its `lifecycle` is a projection with a fixed precedence (see `currentLifecycle` in `createConductor`). */
     status:                        () => ConductorStatus
     shutdown:                      (options: ShutdownOptions) => Promise<void>
     /** The compaction guard's live threshold percentage — see {@link CompactionGuard.getThresholdPercent}. */
@@ -509,8 +556,6 @@ interface QueuedItem {
     deferred:               Deferred
     /** Removes this item's `abort` listener from the caller's {@link SubmitOptions.signal}, when one was given. Set by `submit()`, cleared once run so it fires at most once per item — including across retries, which reuse the same `QueuedItem`. */
     abortCleanup?:          () => void
-    /** True once `handleSubmitAbort` has called {@link interruptCurrentTurnInternal} for this item's own running turn — distinguishes an interrupt this signal caused from one triggered by any other source, so only the former settles with `outcome: 'interrupted'`. */
-    abortedViaSignal?:      boolean
     /**
      * True once `handleSubmitAbort` withdrew this item while it was neither the running turn nor
      * in `pendingQueue` — i.e. waiting out a `scheduleRetry` backoff timer between attempts.
@@ -533,24 +578,25 @@ interface ActiveTurn {
      * subscriber that keys off `ledger.turn.id` — the presence synopsis attachment — is already
      * live for this turn's first frame.
      */
-    id:                 string
+    id:               string
     /** `undefined` for a spontaneous SDK-initiated turn nobody submitted. */
-    item?:              QueuedItem
-    kind:               TurnKind
-    channelId?:         string
+    item?:            QueuedItem
+    kind:             TurnKind
+    channelId?:       string
     /** The turn's originating envelope author (R2) — see {@link ConductorStatus.turn}. */
-    authorId?:          string
-    tracker:            StreamTracker
-    interruptRequested: boolean
-    escalationArmed:    boolean
-    escalationTimer?:   TimerHandle
+    authorId?:        string
+    tracker:          StreamTracker
+    /** Who first asked for this turn to be interrupted; `undefined` while nobody has. Set once by {@link interruptCurrentTurnInternal}. */
+    interruptSource?: CancellationSource
+    escalationArmed:  boolean
+    escalationTimer?: TimerHandle
     /**
      * The wire uuid {@link InputQueue.push} stamped on this turn's user message — set only for a
      * turn the host pushed (`beginTurn`); `undefined` for an adopted wake/peer turn or a
      * spontaneous one, which the CLI started itself. A `result` frame whose echo is non-empty
      * but does not name it answers some other message and must not settle this turn.
      */
-    wireUuid?:          string
+    wireUuid?:        string
 }
 
 /** A no-op {@link Deferred} for envelopes the conductor submits to itself (`/compact`, a continuation note). */
@@ -608,6 +654,15 @@ export function createConductor(params: CreateConductorParams): Conductor {
 
     let opened = false;
     let shuttingDown = false;
+    /**
+     * Where the boot path last stood, for {@link currentLifecycle}: `'new'` before any
+     * {@link open} call, `'opening'` from the start of one, `'failed'` once one rejected or a
+     * reopen gave up. Deliberately not advanced to `'open'` when {@link open} succeeds: it is
+     * reported only while no session handle is current, and a successful open always leaves one.
+     */
+    let bootPhase: Extract<ConductorLifecycle, 'new' | 'opening' | 'failed'> = 'new';
+    /** True once {@link shutdown} has made its final close. */
+    let closed = false;
     /** Populated once by {@link runBootRecovery} at the start of {@link open}; guards {@link deliver} against re-sending an envelope a prior process already delivered. */
     let deliveryGuard: DeliveryGuard | undefined;
     /** True from the moment a mid-life close is observed until a replacement session (resumed or fresh) has opened — or reopening has been given up on entirely, or `shutdown()` overtook the reopen, in which case it is simply left set (every reader tests {@link shuttingDown} first). Gates {@link processQueue}, {@link submitCompact} and {@link appendWithoutTurn} so no envelope is ever pushed into the dead handle's orphaned {@link InputQueue} while a reopen is in flight. */
@@ -804,7 +859,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             journal.append({ type: 'compaction_failed', at: now(), error: event.reason ?? 'compaction attempt did not complete' });
             // Stryker disable next-line llm: reason is string | undefined, so == and === agree against a string literal
             if(event.reason === 'timeout' && currentTurn?.kind === 'compact') {
-                void interruptCurrentTurnInternal('compaction ceiling exceeded');
+                void interruptCurrentTurnInternal('compaction_ceiling', 'compaction ceiling exceeded');
             }
             return;
         }
@@ -936,7 +991,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
         const at = now();
         currentTurn = {
-            id: item.envelope.id, item, kind: item.envelope.kind, channelId: item.envelope.channelId, authorId: item.envelope.authorId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+            id: item.envelope.id, item, kind: item.envelope.kind, channelId: item.envelope.channelId, authorId: item.envelope.authorId, tracker: new StreamTracker(), escalationArmed: false,
         };
         const meta: EnvelopeMeta = {
             id: item.envelope.id, kind: item.envelope.kind, queuedAt: at, channelId: item.envelope.channelId, seed: item.envelope.synopsisSeed,
@@ -984,14 +1039,15 @@ export function createConductor(params: CreateConductorParams): Conductor {
         beginTurn(next);
     }
 
-    async function interruptCurrentTurnInternal(reason: string | undefined): Promise<void> {
+    /** Interrupts the running turn, recording `source` on it unless another source already asked (the first source wins). */
+    async function interruptCurrentTurnInternal(source: CancellationSource, reason: string | undefined): Promise<void> {
         const handle = currentHandleRef;
-        if(handle === undefined || currentTurn === null || currentTurn.interruptRequested) {
+        if(handle === undefined || currentTurn === null || currentTurn.interruptSource !== undefined) {
             return;
         }
-        currentTurn.interruptRequested = true;
+        currentTurn.interruptSource = source;
         ledgerStore.dispatch({ type: 'interrupt_requested', at: now() });
-        logger.debug({ reason }, 'Conductor requesting interrupt');
+        logger.debug({ reason, source }, 'Conductor requesting interrupt');
         try {
             await handle.interrupt();
         } catch (error) {
@@ -1014,11 +1070,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
         const progress = currentTurn.tracker.getProgress();
         if(progress.pendingToolUse !== null) {
             currentTurn.escalationTimer = clock.setTimer(() => {
-                void interruptCurrentTurnInternal('human wait ceiling elapsed');
+                void interruptCurrentTurnInternal('human_wait', 'human wait ceiling elapsed');
             }, config.humanWaitCeilingMs - config.humanWaitTargetMs);
             return;
         }
-        void interruptCurrentTurnInternal('human wait target elapsed');
+        void interruptCurrentTurnInternal('human_wait', 'human wait target elapsed');
     }
 
     function routeIncoming(item: QueuedItem): void {
@@ -1036,7 +1092,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         if(item.priority === 'urgent' && currentTurn.kind === 'discord'
           && item.requestingChannelId !== undefined && item.requestingChannelId === currentTurn.channelId) {
             enqueue(item);
-            void interruptCurrentTurnInternal('human envelope for the running channel');
+            void interruptCurrentTurnInternal('human_preempt', 'human envelope for the running channel');
             return;
         }
         // Stryker restore llm
@@ -1050,7 +1106,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
 
     /** Injects a `continuation`-kind envelope ahead of everything else queued when an interrupted background turn (a spontaneous notification, or an adopted R2 task wake) left meaningful partial work behind. */
     function injectContinuationNoteIfInterruptedBackgroundTurn(turn: ActiveTurn, progress: StreamProgress): void {
-        if(!isBackgroundKind(turn.kind) || !turn.interruptRequested) {
+        if(!isBackgroundKind(turn.kind) || turn.interruptSource === undefined) {
             return;
         }
         const note = buildContinuationNote(progress);
@@ -1077,20 +1133,22 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     /** Resolves `item`'s `submit()` promise as a non-retryable failure and journals `turn_failed`. */
-    function failTurn(turn: ActiveTurn, item: QueuedItem, progress: StreamProgress, error: Error, contextUsagePercent: number): void {
+    function failTurn(turn: ActiveTurn, item: QueuedItem, error: Error, contextUsagePercent: number): void {
         clearAbortListener(item);
         journal.append({ type: 'turn_failed', at: now(), envelopeId: item.envelope.id, kind: turn.kind, error: error.message });
-        item.deferred.resolve({ envelopeId: item.envelope.id, response: null, wasInterrupted: false, partialWork: progress, sessionId: currentSessionId, isError: true, contextUsagePercent });
+        item.deferred.resolve({
+            status: 'failed', envelopeId: item.envelope.id, response: null, sessionId: currentSessionId, contextUsagePercent, error,
+        });
     }
 
     /** An `is_error` result: retries per `retryPolicy` when the classified error is transient/rate-limited and attempts remain, else fails the turn. */
-    function settleErroredTurn(turn: ActiveTurn, item: QueuedItem, progress: StreamProgress, frame: ResultFrame, contextUsagePercent: number): void {
+    function settleErroredTurn(turn: ActiveTurn, item: QueuedItem, frame: ResultFrame, contextUsagePercent: number): void {
         const error = resultFrameToError(frame);
         const classification = classifyError(error);
         // Stryker disable next-line llm: attempts and maxAttempts are both integers (attempts starts at 1 and is only incremented; maxAttempts is z.int()), so `< maxAttempts` and `<= maxAttempts - 1` are the same comparison
         const canRetry = (classification.category === 'transient' || classification.category === 'rate_limited') && item.attempts < retryPolicy.maxAttempts;
         if(!canRetry) {
-            failTurn(turn, item, progress, error, contextUsagePercent);
+            failTurn(turn, item, error, contextUsagePercent);
             return;
         }
         item.attempts += 1;
@@ -1098,7 +1156,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     function settleTurn(turn: ActiveTurn, frame: ResultFrame): void {
-        const wasInterrupted = turn.interruptRequested;
+        const { interruptSource } = turn;
         const progress = turn.tracker.getProgress();
 
         injectContinuationNoteIfInterruptedBackgroundTurn(turn, progress);
@@ -1114,13 +1172,13 @@ export function createConductor(params: CreateConductorParams): Conductor {
         // with no extra latency or SDK call.
         const contextUsagePercent = ledgerStore.get().context.percentage;
 
-        if(!wasInterrupted && frame.is_error) {
-            settleErroredTurn(turn, item, progress, frame, contextUsagePercent);
+        if(interruptSource === undefined && frame.is_error) {
+            settleErroredTurn(turn, item, frame, contextUsagePercent);
             return;
         }
 
         clearAbortListener(item);
-        const response = !wasInterrupted && frame.subtype === 'success' ? frame.result : null;
+        const response = interruptSource === undefined && frame.subtype === 'success' ? frame.result : null;
         const truncated = response !== null && response.length > TURN_RESPONSE_TEXT_CAP;
         journal.append({
             // Stryker disable next-line llm: TurnKind is the nonempty EnvelopeKind literal union, so the fallback cannot be selected.
@@ -1128,9 +1186,21 @@ export function createConductor(params: CreateConductorParams): Conductor {
             ...(response === null ? {} : { responseText: truncated ? response.slice(0, TURN_RESPONSE_TEXT_CAP) : response }),
             ...(truncated ? { truncated: true } : {}),
         });
+        const settled = { envelopeId: item.envelope.id, sessionId: currentSessionId, contextUsagePercent };
+        if(interruptSource !== undefined) {
+            item.deferred.resolve({
+                ...settled, status: 'interrupted', response: null, partialWork: progress, cancellationSource: interruptSource,
+            });
+            return;
+        }
+        if(frame.subtype === 'success') {
+            item.deferred.resolve({ ...settled, status: 'completed', response: frame.result });
+            return;
+        }
+        // A non-success result the SDK did not flag `is_error` (an `error_*` subtype): no reply,
+        // and nothing retried it — a failure, journaled above as a reply-less `turn_completed`.
         item.deferred.resolve({
-            envelopeId: item.envelope.id, response, wasInterrupted, partialWork: progress, sessionId: currentSessionId, isError: false, contextUsagePercent,
-            ...(item.abortedViaSignal === true ? { outcome: 'interrupted' as const } : {}),
+            ...settled, status: 'failed', response: null, error: resultFrameToError(frame),
         });
     }
 
@@ -1224,7 +1294,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             envelope, priority: 'normal', attempts: retryPolicy.maxAttempts, deferred: buildWakeSettledDeferred(envelope),
         };
         currentTurn = {
-            id: envelope.id, item, kind: 'task', channelId: envelope.channelId, authorId: envelope.authorId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+            id: envelope.id, item, kind: 'task', channelId: envelope.channelId, authorId: envelope.authorId, tracker: new StreamTracker(), escalationArmed: false,
         };
         const meta: EnvelopeMeta = {
             id: envelope.id, kind: envelope.kind, queuedAt: at, channelId: envelope.channelId, seed: envelope.synopsisSeed,
@@ -1267,7 +1337,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             envelope, priority: 'normal', attempts: retryPolicy.maxAttempts, deferred: internalDeferred(),
         };
         currentTurn = {
-            id: envelope.id, item, kind: 'peer', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+            id: envelope.id, item, kind: 'peer', tracker: new StreamTracker(), escalationArmed: false,
         };
         ledgerStore.dispatch({
             type: 'turn_submitted', envelope: { id: envelope.id, kind: 'peer', queuedAt: at, seed: envelope.synopsisSeed }, at,
@@ -1316,7 +1386,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             const at = now();
             const turnId = bareNotificationTurnId(at);
             currentTurn = {
-                id: turnId, kind: 'notification', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+                id: turnId, kind: 'notification', tracker: new StreamTracker(), escalationArmed: false,
             };
             // Dispatched here — still inside onFrame, BEFORE notifyTurnSubscribers — so the
             // presence synopsis attachment (which opens a handler from the ledger's turn) is live
@@ -1800,6 +1870,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         } catch (reopenError) {
             reopening = false;
             opened = false;
+            bootPhase = 'failed';
             // The fresh-open fallback may itself have opened a live handle before its own
             // finishOpen rejected — close it rather than merely dropping the reference, which
             // would otherwise leak the CLI subprocess.
@@ -2046,9 +2117,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * Boot open (#98): each attempt builds its own bundle just before its query — `restart_resume`
      * for the stored session, `fresh` for a fresh open or the fallback after that resume failed, so
      * a brand-new transcript is never handed a resume-only bundle. Shutdown during any of it rejects
-     * rather than falling back (see {@link openForBoot}).
+     * rather than falling back (see {@link openForBoot}). Wrapped by {@link open}, which only
+     * records {@link bootPhase} around it.
      */
-    async function open(): Promise<{ sessionId: string, resumed: boolean }> {
+    async function openBoot(): Promise<{ sessionId: string, resumed: boolean }> {
         const recovery = await runBootRecovery();
         const stored = await resumeStore.load(role);
         if(stored !== undefined) {
@@ -2077,36 +2149,45 @@ export function createConductor(params: CreateConductorParams): Conductor {
         return { sessionId, resumed: false };
     }
 
-    /** The `TurnResult` for an envelope withdrawn (never reached the SDK) because its `signal` aborted while it was still held. */
+    /** {@link openBoot}, bracketed by the {@link bootPhase} bookkeeping {@link currentLifecycle} reads; the open itself is unchanged. */
+    async function open(): Promise<{ sessionId: string, resumed: boolean }> {
+        bootPhase = 'opening';
+        try {
+            return await openBoot();
+        } catch (error) {
+            bootPhase = 'failed';
+            throw error;
+        }
+    }
+
+    /** The `status: 'withdrawn'` {@link TurnResult} for an envelope that never reached the SDK because its `signal` aborted while it was still held — so it has no partial work, and only the caller's signal can have withdrawn it. */
     function withdrawnResult(item: QueuedItem): TurnResult {
         return {
+            status:              'withdrawn',
             envelopeId:          item.envelope.id,
             response:            null,
-            wasInterrupted:      true,
-            partialWork:         new StreamTracker().getProgress(),
             sessionId:           currentSessionId,
-            isError:             false,
             contextUsagePercent: ledgerStore.get().context.percentage,
-            outcome:             'withdrawn',
+            cancellationSource:  'caller_signal',
         };
     }
 
     /**
      * Handles `item`'s `signal` firing `abort` (see {@link SubmitOptions.signal}): when `item` is
-     * the turn currently running, interrupts it (scoped to `requestingChannelId` like any other
-     * interrupt) and marks it so {@link settleTurn} reports `outcome: 'interrupted'` once it ends;
-     * otherwise `item` is still only queued (whether idle, behind this envelope's own channel's
-     * prior turn, or behind an unrelated channel's turn — the abort contract withdraws rather than
-     * interrupting in every one of those cases) — removed from `pendingQueue` and resolved as
-     * `'withdrawn'` without ever reaching `beginTurn`/the SDK. A no-op if `item` has already
-     * settled by some other path (its listener is removed the moment it does, so this only runs
-     * for an item still genuinely in flight).
+     * the turn currently running, interrupts it with source `'caller_signal'` (scoped to
+     * `requestingChannelId` like any other interrupt), so {@link settleTurn} reports
+     * `status: 'interrupted'` once it ends — unless another source interrupted it first, which
+     * then stays the reported source; otherwise `item` is still only queued (whether idle, behind
+     * this envelope's own channel's prior turn, or behind an unrelated channel's turn — the abort
+     * contract withdraws rather than interrupting in every one of those cases) — removed from
+     * `pendingQueue` and resolved `status: 'withdrawn'` without ever reaching `beginTurn`/the SDK.
+     * A no-op if `item` has already settled by some other path (its listener is removed the
+     * moment it does, so this only runs for an item still genuinely in flight).
      */
     function handleSubmitAbort(item: QueuedItem): void {
         clearAbortListener(item);
         if(currentTurn?.item === item) {
-            item.abortedViaSignal = true;
-            void interruptCurrentTurnInternal('submit() signal aborted');
+            void interruptCurrentTurnInternal('caller_signal', 'submit() signal aborted');
             return;
         }
         // Stryker disable next-line llm: a QueuedItem is enqueued at most once at a time (shifted out before beginTurn, re-queued only after), so indexOf === lastIndexOf over a queue of distinct references
@@ -2187,7 +2268,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             logger.warn({ requestingChannelId: options.requestingChannelId, turnChannelId: currentTurn.channelId }, 'interruptCurrent ignored: requesting channel does not own the running turn');
             return;
         }
-        await interruptCurrentTurnInternal(options.reason);
+        await interruptCurrentTurnInternal('interrupt_current', options.reason);
     }
 
     function subscribeTurn(handler: (turnId: string, frame: SDKMessage) => void): () => void {
@@ -2197,14 +2278,51 @@ export function createConductor(params: CreateConductorParams): Conductor {
         };
     }
 
+    /**
+     * The {@link ConductorLifecycle} this conductor is in — a documented PROJECTION of its state,
+     * not a state machine that forbids overlaps. Precedence, first match wins:
+     *
+     * 1. `'closed'` — {@link shutdown} has made its final close.
+     * 2. `'closing'` — {@link shutdown} has begun. It can overtake a reopen still in flight, so
+     *    it outranks `'reopening'`.
+     * 3. `'reopening'` — a replacement for a session that went away is being opened.
+     * 4. `'open'` — a session handle is current AND the `opened` flag {@link submit} gates on is
+     *    set, so work can be owned. Both are needed: the handle alone is current from `system/init`
+     *    on, a few continuations before `finishOpen` sets `opened`, and reporting `'open'` in that
+     *    window would let a caller (the notification bridge) burn a dedupe key on a submit that
+     *    rejects; the flag alone is left stale by a failed resume's discarded handle. A fresh open
+     *    whose handle stayed live still reports `'open'` even if {@link open} then rejected (its
+     *    `resumeStore.save` failed), since `finishOpen` set the flag before that save.
+     * 5. {@link bootPhase} — `'new'`, `'opening'`, or `'failed'` (the last open rejected with no
+     *    live handle, or a reopen gave up). `'failed'` is recoverable: calling {@link open}
+     *    again moves it back through `'opening'`.
+     */
+    function currentLifecycle(): ConductorLifecycle {
+        if(closed) {
+            return 'closed';
+        }
+        if(shuttingDown) {
+            return 'closing';
+        }
+        if(reopening) {
+            return 'reopening';
+        }
+        if(currentHandleRef !== undefined && opened) {
+            return 'open';
+        }
+        return bootPhase;
+    }
+
     function status(): ConductorStatus {
+        const lifecycle = currentLifecycle();
         return {
             role,
-            sessionId:   currentSessionId,
-            opened,
-            shuttingDown,
-            queueLength: pendingQueue.length,
-            turn:        currentTurn === null
+            sessionId:    currentSessionId,
+            lifecycle,
+            opened:       lifecycleAcceptsWork(lifecycle),
+            shuttingDown: lifecycle === 'closing' || lifecycle === 'closed',
+            queueLength:  pendingQueue.length,
+            turn:         currentTurn === null
                 ? null
                 : {
                     kind: currentTurn.kind, channelId: currentTurn.channelId, envelopeId: currentTurn.item?.envelope.id, authorId: currentTurn.authorId,
@@ -2254,7 +2372,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 // on the no-op interrupt path because the hard-deadline race observes that turn.
                 // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, sonarjs/different-types-comparison -- the await lets afterResult set currentTurn back to null despite TypeScript retaining the outer narrowing
                 if(currentTurn !== null) {
-                    await interruptCurrentTurnInternal('shutdown turn-wait elapsed');
+                    await interruptCurrentTurnInternal('shutdown', 'shutdown turn-wait elapsed');
                 }
             }
             if(currentSessionId !== undefined) {
@@ -2274,6 +2392,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         await Promise.race([graceful, deadline]);
         clock.clearTimer(deadlineTimer);
         currentHandleRef?.close();
+        closed = true;
     }
 
     return {

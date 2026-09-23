@@ -148,11 +148,11 @@ export function createQuotaNotes(params: CreateQuotaNotesParams): QuotaNotes {
             return;
         }
         const delivered = notify({
-            source:    'quota',
-            wake:      false,
+            source: 'quota',
+            wake:   false,
             at,
-            dedupeKey: `${name}:reset:${resetsAtKey(state.resetsAtMs)}`,
-            text:      `Quota: the ${WINDOW_LABEL[name]} window has reset; it was at ${Math.round(state.resetNote)}%.`,
+            key:    `${name}:reset:${resetsAtKey(state.resetsAtMs)}`,
+            text:   `Quota: the ${WINDOW_LABEL[name]} window has reset; it was at ${Math.round(state.resetNote)}%.`,
         });
         if(delivered) {
             state.resetNote = undefined;
@@ -171,11 +171,11 @@ export function createQuotaNotes(params: CreateQuotaNotesParams): QuotaNotes {
         }
         const highest = Math.max(...crossed);
         const delivered = notify({
-            source:    'quota',
-            wake:      false,
+            source: 'quota',
+            wake:   false,
             at,
-            dedupeKey: `${name}:${highest}:${resetsAtKey(state.resetsAtMs)}`,
-            text:      `Quota: the ${WINDOW_LABEL[name]} window has passed ${highest}% (now ${Math.round(state.peak)}%) of the shared Claude subscription.`,
+            key:    `${name}:${highest}:${resetsAtKey(state.resetsAtMs)}`,
+            text:   `Quota: the ${WINDOW_LABEL[name]} window has passed ${highest}% (now ${Math.round(state.peak)}%) of the shared Claude subscription.`,
         });
         if(delivered) {
             for(const percent of crossed) {

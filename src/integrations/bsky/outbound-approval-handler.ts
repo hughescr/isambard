@@ -152,10 +152,10 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         // rejection's own uuid so a retried/duplicate delivery of the same rejection cannot
         // wake the conductor twice.
         this.notify?.({
-            source:    'bsky-approval',
-            text:      `Bluesky ${rejectionItem.type} rejected: ${reason}`,
-            wake:      true,
-            dedupeKey: `bsky-approval:${uuid}:rejected`,
+            source: 'bsky-approval',
+            text:   `Bluesky ${rejectionItem.type} rejected: ${reason}`,
+            wake:   true,
+            key:    `${uuid}:rejected`,
         });
 
         void this.activityLogger?.log({ type: rejectionItem.type === 'dm' ? 'bsky-dm-rejected' : 'bsky-post-rejected', summary: 'Bluesky post/DM rejected' }).catch((err) => {

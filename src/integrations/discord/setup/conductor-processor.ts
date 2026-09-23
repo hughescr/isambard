@@ -228,7 +228,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         }
 
         logger.info({
-            envelopeId: envelope.id, contextUsagePercent: result.contextUsagePercent, outcome: result.outcome,
+            envelopeId: envelope.id, contextUsagePercent: result.contextUsagePercent, status: result.status,
         }, 'Conductor turn settled');
 
         // Gap 2 (post-compaction reset inputs): only mark when the envelope actually reached the
@@ -240,7 +240,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         // `shouldInjectMemory` was false the block was unchanged, so re-recording the same
         // fingerprint is a no-op; when it was true, this is exactly the mark the next turn's
         // comparison needs.
-        if(result.outcome !== 'withdrawn') {
+        if(result.status !== 'withdrawn') {
             contextPolicy.markEventsSeen();
             // Best-effort: unlike markEventsSeen/markInjected (synchronous, in-memory, cannot
             // throw), markStateTopSetSeen performs a real DynamoDB query. The turn has already
@@ -262,7 +262,9 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         return {
             response:       result.response,
             sessionId:      result.sessionId,
-            wasInterrupted: result.wasInterrupted,
+            // The Discord MessageProcessor contract's boolean: the turn was cut short, whether it
+            // reached the SDK (interrupted) or not (withdrawn).
+            wasInterrupted: result.status === 'interrupted' || result.status === 'withdrawn',
             streamTracker,
             envelopeId:     envelope.id,
         };

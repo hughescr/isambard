@@ -131,9 +131,9 @@ export interface BuildEmailProcessorCallbacksDeps {
  * `onUnsafe`/`onAuthFailed`), each paired with a `notify()` call to the shared notification
  * bridge (Q7, plan amendment B2) alongside the existing admin-channel embed/content payload.
  * `onSafe`/`onReview`/`onAuthFailed` accumulate (`wake:false`); `onUnsafe` wakes (`wake:true`) —
- * matching the design's "admin approval outcomes" wake row. Every `dedupeKey` is keyed on the
+ * matching the design's "admin approval outcomes" wake row. Every notify `key` is keyed on the
  * email's `uid`, which is stable for the life of that message. Extracted from `setupEmail` (and
- * exported directly) so mutation coverage on `wake`/`dedupeKey` is real rather than absorbed by
+ * exported directly) so mutation coverage on `wake`/`key` is real rather than absorbed by
  * `setupEmail`'s integration-wiring Stryker-disable block below.
  * @param deps - client, admin channel id, optional Discord capability facade, and the shared notify function
  * @returns The `ProcessEmailCallbacks` passed to `EmailProcessor`
@@ -153,10 +153,10 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
             // Fire-and-forget: a `false` return (e.g. conductor not yet open at boot) is not
             // retried or logged here — deliberate per Q7 plan amendment B2.
             notify({
-                source:    'email',
-                wake:      false,
-                dedupeKey: `email-safe:${email.uid}`,
-                text:      `Safe email from ${email.from.address} — not on allowlist. Subject: ${email.subject}`,
+                source: 'email',
+                wake:   false,
+                key:    `safe:${email.uid}`,
+                text:   `Safe email from ${email.from.address} — not on allowlist. Subject: ${email.subject}`,
             });
         },
         onReview: async (email, _verdict) => {
@@ -171,10 +171,10 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
             // Fire-and-forget: a `false` return (e.g. conductor not yet open at boot) is not
             // retried or logged here — deliberate per Q7 plan amendment B2.
             notify({
-                source:    'email',
-                wake:      false,
-                dedupeKey: `email-review:${email.uid}`,
-                text:      `Email needs review: ${email.subject}`,
+                source: 'email',
+                wake:   false,
+                key:    `review:${email.uid}`,
+                text:   `Email needs review: ${email.subject}`,
             });
         },
         onUnsafe: async (email, verdict) => {
@@ -189,10 +189,10 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
             // Fire-and-forget: a `false` return (e.g. conductor not yet open at boot) is not
             // retried or logged here — deliberate per Q7 plan amendment B2.
             notify({
-                source:    'email',
-                wake:      true,
-                dedupeKey: `email-unsafe:${email.uid}`,
-                text:      `Unsafe email quarantined: ${email.subject}`,
+                source: 'email',
+                wake:   true,
+                key:    `unsafe:${email.uid}`,
+                text:   `Unsafe email quarantined: ${email.subject}`,
             });
         },
         onAuthFailed: async (email) => {
@@ -206,10 +206,10 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
             // Fire-and-forget: a `false` return (e.g. conductor not yet open at boot) is not
             // retried or logged here — deliberate per Q7 plan amendment B2.
             notify({
-                source:    'email',
-                wake:      false,
-                dedupeKey: `email-auth-failed:${email.uid}`,
-                text:      `Allowlisted sender ${email.from.address} failed auth check. Subject: ${email.subject}`,
+                source: 'email',
+                wake:   false,
+                key:    `auth-failed:${email.uid}`,
+                text:   `Allowlisted sender ${email.from.address} failed auth check. Subject: ${email.subject}`,
             });
         },
     };

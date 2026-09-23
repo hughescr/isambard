@@ -52,7 +52,7 @@ describe('createHealthOutageCoalescer', () => {
         notify = mock((_params: NotifyParams) => true);
     });
 
-    test('two services going offline inside the window submit exactly one envelope naming both, with the exact source/text/dedupeKey', () => {
+    test('two services going offline inside the window submit exactly one envelope naming both, with the exact source/text/key', () => {
         const coalescer = createHealthOutageCoalescer({ clock, notify });
 
         coalescer.report(change({ service: 'discord', epoch: 1 }));
@@ -65,10 +65,10 @@ describe('createHealthOutageCoalescer', () => {
         expect(params.source).toBe('health');
         expect(params.wake).toBe(true);
         expect(params.text).toBe('Service(s) offline: discord, email');
-        expect(params.dedupeKey).toBe('discord:1+email:1');
+        expect(params.key).toBe('discord:1+email:1');
     });
 
-    test('the dedupeKey is order-independent: reporting the same two services in the opposite order yields the identical sorted key', () => {
+    test('the notify key is order-independent: reporting the same two services in the opposite order yields the identical sorted key', () => {
         const coalescer = createHealthOutageCoalescer({ clock, notify });
 
         coalescer.report(change({ service: 'email', epoch: 1 }));
@@ -77,7 +77,8 @@ describe('createHealthOutageCoalescer', () => {
 
         expect(notify).toHaveBeenCalledTimes(1);
         const [params] = notify.mock.calls[0];
-        expect(params.dedupeKey).toBe('discord:1+email:1');
+        expect(params.source).toBe('health');
+        expect(params.key).toBe('discord:1+email:1');
     });
 
     test('a transition at exactly windowMs is still coalesced; one tick past opens a second envelope', () => {
@@ -316,7 +317,7 @@ describe('createHealthNotificationListener', () => {
         const [params] = notify.mock.calls[0];
         expect(params.wake).toBe(false);
         expect(params.source).toBe('health');
-        expect(params.dedupeKey).toBe('health:bsky:3:online');
+        expect(params.key).toBe('bsky:3:online');
         // Review finding: pins the exact accumulate body so a StringLiteral mutant emptying it
         // (or an LLM mutant swapping previousState/newState) is caught here rather than surviving
         // unasserted.
