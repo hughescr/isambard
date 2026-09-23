@@ -11,6 +11,7 @@ import { describe, test, expect, mock, spyOn, beforeEach, afterEach, jest } from
 import { ActivityType, type Client } from 'discord.js';
 import * as frames from '../../../../helpers/sdk-frames';
 import { createLedgerStore, type LedgerStore } from '@/agent/session/ledger';
+import { createChannelId } from '@/agent/types';
 import type { DiscordConfig } from '@/config';
 import * as presenceModule from '@/integrations/discord/presence';
 import type { PresenceManager, PresenceManagerDeps } from '@/integrations/discord/presence/manager';
@@ -352,7 +353,7 @@ describe('setupConductorPresence', () => {
         mockPresenceManager.applyView.mockClear();
 
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
 
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
@@ -392,7 +393,7 @@ describe('setupConductorPresence', () => {
         mockPresenceManager.applyView.mockClear();
 
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
 
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
@@ -448,7 +449,7 @@ describe('setupConductorPresence', () => {
 
         paused = true;
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
 
         const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
@@ -536,7 +537,7 @@ describe('setupConductorPresence', () => {
         // First frame: opens the turn into a digest-less 'responding' phase. Blocked by the
         // (always-false) throttle — matching production, where the placeholder already consumed it.
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
         conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(0) });
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
@@ -603,7 +604,7 @@ describe('setupConductorPresence', () => {
         // A turn opens well past the setup tick's own (idle) window, so its placeholder applies.
         now = 20_000;
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(now), channelId: 'chan-1' }, at: new Date(now),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(now), channelId: createChannelId('chan-1') }, at: new Date(now),
         });
         conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(now) });
         const turnId = conversation.get().turn?.id;
@@ -636,7 +637,7 @@ describe('setupConductorPresence', () => {
             getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
         conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(0) });
         const turnId = conversation.get().turn?.id;
@@ -672,7 +673,7 @@ describe('setupConductorPresence', () => {
             getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
         conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(0) });
         const turnId = conversation.get().turn?.id;
@@ -698,7 +699,7 @@ describe('setupConductorPresence', () => {
             getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
         mockPresenceManager.applyView.mockClear();
 
@@ -711,7 +712,7 @@ describe('setupConductorPresence', () => {
         // the active placeholder goes out as usual.
         jest.advanceTimersByTime(IDLE_SETTLE_MS / 2);
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-2', kind: 'discord', queuedAt: new Date(2), channelId: 'chan-1' }, at: new Date(2),
+            type: 'turn_submitted', envelope: { id: 'env-2', kind: 'discord', queuedAt: new Date(2), channelId: createChannelId('chan-1') }, at: new Date(2),
         });
         expect(jest.getTimerCount()).toBe(0);
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
@@ -736,7 +737,7 @@ describe('setupConductorPresence', () => {
         });
         throttle.record.mockClear();
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
         mockPresenceManager.applyView.mockClear();
 
@@ -772,7 +773,7 @@ describe('setupConductorPresence', () => {
             getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
         mockPresenceManager.applyView.mockClear();
         conversation.dispatch({ type: 'sdk_frame', frame: frames.resultSuccess(), at: new Date(1) });
@@ -800,12 +801,12 @@ describe('setupConductorPresence', () => {
             getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
         conversation.dispatch({ type: 'sdk_frame', frame: frames.resultSuccess(), at: new Date(1) });
         expect(queuedIdleCallback).toBeDefined();
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-2', kind: 'discord', queuedAt: new Date(2), channelId: 'chan-1' }, at: new Date(2),
+            type: 'turn_submitted', envelope: { id: 'env-2', kind: 'discord', queuedAt: new Date(2), channelId: createChannelId('chan-1') }, at: new Date(2),
         });
         const applyCount = mockPresenceManager.applyView.mock.calls.length;
 
@@ -825,7 +826,7 @@ describe('setupConductorPresence', () => {
             getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
         conversation.dispatch({ type: 'sdk_frame', frame: frames.resultSuccess(), at: new Date(1) });
         mockPresenceManager.applyView.mockClear();
@@ -850,7 +851,7 @@ describe('setupConductorPresence', () => {
         unsubscribeLedgers();
 
         conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: createChannelId('chan-1') }, at: new Date(0),
         });
 
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();

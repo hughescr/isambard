@@ -10,6 +10,7 @@ import {
     parseTaskNotification,
     type TaskLaunch
 } from '@/agent/session/task-launch-registry';
+import { createChannelId, createUserId } from '@/agent/types';
 
 /** Distinct default-capacity boundary is 200 — see the `DEFAULT_TASK_LAUNCH_CAPACITY` boundary test below. */
 const DEFAULT_CAPACITY_UNDER_TEST = 200;
@@ -21,8 +22,8 @@ function launch(overrides: Partial<TaskLaunch> = {}): TaskLaunch {
         toolName:   'Agent',
         envelopeId: 'env-1',
         kind:       'discord',
-        channelId:  'chan-1',
-        authorId:   'user-1',
+        channelId:  createChannelId('chan-1'),
+        authorId:   createUserId('user-1'),
         launchedAt: new Date('2026-09-08T00:00:00Z'),
         ...overrides,
     };
@@ -155,6 +156,14 @@ describe('createTaskLaunchRegistry', () => {
 
             expect(registry.lookup({ taskId: 'task-1', toolUseId: 'tool-1' })).toEqual(launch());
             expect(journal.entries()).toEqual([]);
+        });
+
+        it('drops empty legacy source IDs when seeding a launch while retaining its task', () => {
+            const registry = createTaskLaunchRegistry();
+            registry.seed([{
+                type: 'task_launched', at: new Date(0), taskId: 'legacy', toolUseId: 'tool-legacy', toolName: 'Agent', envelopeId: 'env-legacy', kind: 'discord', channelId: '', authorId: '',
+            }]);
+            expect(registry.lookup({ taskId: 'legacy', toolUseId: 'tool-legacy' })).toMatchObject({ taskId: 'legacy', channelId: undefined, authorId: undefined });
         });
 
         it('seeded entries are subject to the same capacity eviction as record()', () => {

@@ -174,10 +174,10 @@ describe('toEnvelopeInput', () => {
 
         expect(input).toEqual({
             messageId:   'msg-1',
-            channelId:   'chan-1',
+            channelId:   createChannelId('chan-1'),
             channelName: 'general',
             guildName:   'My Guild',
-            authorId:    'user-1',
+            authorId:    createUserId('user-1'),
             authorName:  'Craig',
             content:     'first\n\nsecond',
             images,

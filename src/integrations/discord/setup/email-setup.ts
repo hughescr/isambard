@@ -8,7 +8,7 @@ import type { EmailConfig } from '@/config';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import type { ChannelContent, DiscordCapability } from '@/integrations/discord/capability';
-import { type ChannelId, createChannelId } from '@/integrations/discord/types';
+import type { ChannelId } from '@/integrations/discord/types';
 import {
     EmailClassifier,
     EmailProcessor,
@@ -115,7 +115,7 @@ export interface BuildEmailProcessorCallbacksDeps {
     /** Discord client instance, used when `discordCapability` is not provided */
     client:                Client
     /** Admin Discord channel ID to post notifications to */
-    adminDiscordChannelId: string
+    adminDiscordChannelId: ChannelId
     /**
      * Optional Discord capability facade. When provided, admin channel notifications use the
      * facade (with outbox fallback when Discord is offline) instead of calling channel.send()
@@ -380,7 +380,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         outboundApprovalHandler,
         wildDuckClient,
         allowlist,
-        adminChannelId: createChannelId(emailConfig.adminDiscordChannelId),
+        adminChannelId: emailConfig.adminDiscordChannelId,
         sendApprovalRequest,
         createEmailMcpServerInstance,
     };
@@ -397,7 +397,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
  */
 async function sendToAdminChannel(
     client:             Client,
-    channelId:          string,
+    channelId:          ChannelId,
     payload:            ChannelContent,
     errorMsg:           string,
     discordCapability?: DiscordCapability

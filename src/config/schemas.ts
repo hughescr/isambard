@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { channelIdSchema } from './discord-ids';
 import { resolveTimezone } from '@/utils';
 
 // Log level enum schema
@@ -55,7 +56,7 @@ export const emailConfigSchema = z.object({
     pollFallbackMs:                 z.number().int().positive().default(300_000),    // 5 min
     sseReconnectDelayMs:            z.number().int().positive().default(5000),
     maxBodySizeBytes:               z.number().int().positive().default(50_000),
-    adminDiscordChannelId:          z.string().min(1),
+    adminDiscordChannelId:          channelIdSchema,
     wildDuckApiUrl:                 z.url(),
     sendReservoirCapacity:          z.number().int().positive().default(24),
     sendReservoirRefillRatePerHour: z.number().positive().default(1),

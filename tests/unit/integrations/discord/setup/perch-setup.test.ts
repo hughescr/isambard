@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:tes
 import { mockLogger } from '../../../../setup';
 import * as agentModule from '@/agent';
 import { type SendOutcome, type PerchConfig, type TurnResult  } from '@/agent';
+import { createChannelId } from '@/agent/types';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
 import { setupPerchDriverAndScheduler } from '@/integrations/discord/setup/perch-setup';
 
@@ -259,7 +260,7 @@ describe('setupPerchDriverAndScheduler', () => {
 
             expect(innerDeliver).toHaveBeenCalledTimes(1);
             expect(channelRegistry.getWellKnownChannel).not.toHaveBeenCalled();
-            expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] });
+            expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: createChannelId('channel-1'), messageIds: [] });
             expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
                 envelopeId: 'env-perch-1', kind: 'perch', text: 'Perch summary text',
             }));
@@ -288,7 +289,7 @@ describe('setupPerchDriverAndScheduler', () => {
 
             expect(channelRegistry.getWellKnownChannel).toHaveBeenCalledWith('perch-time');
             // `deliver` journals the target reported by the sender's tagged result.
-            expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] });
+            expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: createChannelId('channel-1'), messageIds: [] });
             expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
                 envelopeId: 'env-wrapup-1', kind: 'wrapup', channelId: 'perch-time-channel-id', text: 'Wrapping up soon',
             }));
@@ -393,7 +394,7 @@ describe('setupPerchDriverAndScheduler', () => {
 
             await getConductor()?.submit({ id: 'env-1', kind: 'perch' }, { priority: 'normal' });
 
-            expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'queued', channelId: 'channel-1', outboxIds: ['outbox-1'] });
+            expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'queued', channelId: createChannelId('channel-1'), outboxIds: ['outbox-1'] });
             expect(mockLogger.error).not.toHaveBeenCalled();
         });
     });

@@ -10,6 +10,7 @@ import * as loggerModule from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import * as agentModule from '@/agent';
 import type { SendOutcome } from '@/agent';
+import { createChannelId } from '@/agent/types';
 import { InvariantViolationError } from '@/errors';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
 import {
@@ -136,7 +137,7 @@ describe('submitAndDeliverConductorEnvelope', () => {
 
         expect(conductor.deliver).toHaveBeenCalledWith('e1', expect.any(Function));
         expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({ envelopeId: 'e1', kind: 'catchup', text: 'ok' }));
-        expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] });
+        expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: createChannelId('channel-1'), messageIds: [] });
         expect(warnSpy).toHaveBeenCalledTimes(warnCount);
     });
 
@@ -410,7 +411,7 @@ describe('runConductorInboxInit', () => {
             envelopeId: 'env-task', kind: 'task', channelId: 'fallback-chan', text: 'a stale reply',
         }));
         // The delivery guard records the channel actually written to, not an empty string
-        expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] });
+        expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: createChannelId('channel-1'), messageIds: [] });
     });
 
     test('a task envelope that kept its own channel is redelivered there, never consulting the fallback', async () => {
@@ -506,7 +507,7 @@ describe('runConductorInboxInit', () => {
         expect(sendEnvelopeResponseSpy).not.toHaveBeenCalled();
     });
 
-    test('a redelivered catch-up envelope (no channelId on the recovered item) reports an empty channelId to the conductor, not undefined', async () => {
+    test('a redelivered catch-up envelope reports the resolved fallback channel ID', async () => {
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         let deliveredResult: SendOutcome | undefined;
         const conductor = makeFakeConductor({
@@ -524,7 +525,7 @@ describe('runConductorInboxInit', () => {
 
         await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
 
-        expect(deliveredResult).toEqual({ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] });
+        expect(deliveredResult).toEqual({ kind: 'committed', disposition: 'sent', channelId: createChannelId('channel-1'), messageIds: [] });
     });
 
     test('replays received-but-unhandled messages as one discord-kind envelope submission per channel', async () => {
@@ -587,6 +588,25 @@ describe('runConductorInboxInit', () => {
 
         const [envelope] = conductor.submit.mock.calls.find(([e]: [{ kind: string }]) => e.kind === 'discord')! as unknown as [{ authorId: string }];
         expect(envelope.authorId).toBe('snowflake-alice');
+    });
+
+    test('replay without a historical author ID omits attribution but preserves its display name and watermark', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
+        const conductor = makeFakeConductor();
+        const inboxManager = makeFakeInboxManager({
+            replayUnhandled: mock(async () => [
+                { id: '100', channelId: 'chan-1', channelName: 'general', guildId: 'guild-1', author: 'Alice', content: 'hi', timestamp: new Date(0).toISOString(), isRead: false },
+            ]),
+        });
+
+        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));
+
+        const [envelope] = conductor.submit.mock.calls.find(([e]: [{ kind: string }]) => e.kind === 'discord')! as unknown as [{ authorId?: string, channelId: string, text: string }];
+        expect(envelope.authorId).toBeUndefined();
+        expect(envelope.channelId).toBe('chan-1');
+        expect(envelope.text).toContain('@Alice · channelId=chan-1 · messageIds=[100]');
+        expect(envelope.text).not.toContain('authorId=');
+        expect(inboxManager.recordHandled).toHaveBeenCalledWith(createChannelId('chan-1'), '100', new Date(0).toISOString());
     });
 
     test('the replay envelope carries a caveat that these messages may already have been seen or answered', async () => {
@@ -875,7 +895,7 @@ describe('runConductorInboxInit', () => {
             await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
 
             expect(deliveredResult).toEqual({
-                kind: 'committed', disposition: 'queued', channelId: 'channel-1', outboxIds: ['outbox-2'],
+                kind: 'committed', disposition: 'queued', channelId: createChannelId('channel-1'), outboxIds: ['outbox-2'],
             });
         });
 

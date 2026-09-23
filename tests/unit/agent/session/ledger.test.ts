@@ -15,6 +15,7 @@ import {
     reduceLedger
 } from '@/agent/session/ledger';
 import { ENVELOPE_KINDS, type EnvelopeMeta } from '@/agent/session/types';
+import { createChannelId } from '@/agent/types';
 
 const SENTINEL = new Date('2099-01-01T00:00:00Z');
 const T1 = new Date('2026-09-04T12:00:00Z');
@@ -92,7 +93,7 @@ describe('reduceLedger: turn_submitted', () => {
     it('decrements queued.human for a discord envelope and opens the turn', () => {
         const queued = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'envelope_queued', kind: 'discord', at: T1 }));
 
-        const ledger = reduceLedger(queued, frozenEvent({ type: 'turn_submitted', envelope: envelope({ queuedAt: T1, channelId: 'chan-1' }), at: T2 }));
+        const ledger = reduceLedger(queued, frozenEvent({ type: 'turn_submitted', envelope: envelope({ queuedAt: T1, channelId: createChannelId('chan-1') }), at: T2 }));
 
         expect(ledger.queued).toEqual({ human: 0, other: 0 });
         expect(ledger.turn).toEqual({
@@ -101,7 +102,7 @@ describe('reduceLedger: turn_submitted', () => {
             startedAt:    T2,
             queuedAt:     T1,
             envelopeId:   'env-1',
-            channelId:    'chan-1',
+            channelId:    createChannelId('chan-1'),
             phase:        null,
             interrupting: false,
         });
@@ -795,13 +796,13 @@ describe('reduceLedger: tasks', () => {
 
     it('task_started stamps channelId and turnId from the open turn', () => {
         const opened = reduceLedger(initialLedger('conversation'), frozenEvent({
-            type: 'turn_submitted', at: T1, envelope: envelope({ id: 'turn-7', channelId: 'chan-9' }),
+            type: 'turn_submitted', at: T1, envelope: envelope({ id: 'turn-7', channelId: createChannelId('chan-9') }),
         }));
 
         const ledger = startTask(opened, { task_id: 'task-1' }, T2);
 
         expect(ledger.tasks[0]?.turnId).toBe('turn-7');
-        expect(ledger.tasks[0]?.channelId).toBe('chan-9');
+        expect(ledger.tasks[0]?.channelId).toBe(createChannelId('chan-9'));
     });
 
     it('task_started leaves channelId and turnId unset when no turn is open', () => {
@@ -893,25 +894,25 @@ describe('reduceLedger: tasks', () => {
         expect(created.tasks[0]?.channelId).toBeUndefined();
 
         const opened = reduceLedger(created, frozenEvent({
-            type: 'turn_submitted', at: T2, envelope: envelope({ id: 'turn-7', channelId: 'chan-9' }),
+            type: 'turn_submitted', at: T2, envelope: envelope({ id: 'turn-7', channelId: createChannelId('chan-9') }),
         }));
         const ledger = startTask(opened, { task_id: 'task-1' }, T3);
 
-        expect(ledger.tasks[0]).toMatchObject({ channelId: 'chan-9', turnId: 'turn-7' });
+        expect(ledger.tasks[0]).toMatchObject({ channelId: createChannelId('chan-9'), turnId: 'turn-7' });
     });
 
     it('task_started never moves a tracked task onto the currently open turn', () => {
         const firstTurn = reduceLedger(initialLedger('conversation'), frozenEvent({
-            type: 'turn_submitted', at: T1, envelope: envelope({ id: 'turn-7', channelId: 'chan-9' }),
+            type: 'turn_submitted', at: T1, envelope: envelope({ id: 'turn-7', channelId: createChannelId('chan-9') }),
         }));
         const started = startTask(firstTurn, { task_id: 'task-1' }, T1);
         const secondTurn = reduceLedger(started, frozenEvent({
-            type: 'turn_submitted', at: T2, envelope: envelope({ id: 'turn-8', channelId: 'chan-4' }),
+            type: 'turn_submitted', at: T2, envelope: envelope({ id: 'turn-8', channelId: createChannelId('chan-4') }),
         }));
 
         const ledger = startTask(secondTurn, { task_id: 'task-1' }, T3);
 
-        expect(ledger.tasks[0]).toMatchObject({ channelId: 'chan-9', turnId: 'turn-7' });
+        expect(ledger.tasks[0]).toMatchObject({ channelId: createChannelId('chan-9'), turnId: 'turn-7' });
     });
 
     it.each(['completed', 'failed', 'stopped'] as const)('task_notification with status %s moves the task to finishedTasks', (status) => {
@@ -1270,14 +1271,14 @@ describe('reduceLedger: tasks', () => {
     // entirely, and files the rest under `${channelId}:${turnId}`.
     it('background_tasks_changed stamps a new entry with the open turn\'s channelId and turnId', () => {
         const opened = reduceLedger(initialLedger('conversation'), frozenEvent({
-            type: 'turn_submitted', at: T1, envelope: envelope({ id: 'turn-7', channelId: 'chan-9' }),
+            type: 'turn_submitted', at: T1, envelope: envelope({ id: 'turn-7', channelId: createChannelId('chan-9') }),
         }));
 
         const ledger = reduceLedger(opened, frozenEvent({
             type: 'sdk_frame', at: T2, frame: frames.backgroundTasksChanged([{ task_id: 'task-2', task_type: 'local_agent', description: 'new task' }]),
         }));
 
-        expect(ledger.tasks[0]?.channelId).toBe('chan-9');
+        expect(ledger.tasks[0]?.channelId).toBe(createChannelId('chan-9'));
         expect(ledger.tasks[0]?.turnId).toBe('turn-7');
     });
 

@@ -25,6 +25,8 @@ export {
     type IdleSignalsConfig
 } from './schemas';
 
+export { channelIdSchema, userIdSchema, type ChannelId, type UserId } from './discord-ids';
+
 export {
     loadConfig,
     loadDynamoDBConfig

@@ -6,7 +6,7 @@ import type { InboxManager } from '../inbox';
 import type { IngressGate } from '../ingress-gate';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from '../response-sender';
-import { createChannelId, isDmScope, type ChannelId, type ChannelScope } from '../types';
+import { createChannelId, createUserId, isDmScope, type ChannelId, type ChannelScope } from '../types';
 import {
     type PerchConfig, type Conductor, type SessionJournal, type QueryEnvelope, type UndeliveredEnvelope, type ContextPolicy,
     type TimeHeaderProvider,
@@ -23,11 +23,11 @@ import { resolveTimezone, truncateToWordBoundary } from '@/utils';
  */
 interface ReplayableMessage {
     id:          string
-    channelId:   string
+    channelId:   ChannelId
     channelName: string
     guildId:     ChannelScope
     author:      string
-    /** The real Discord user id (snowflake) — falls back to {@link author} (a display name) only for pre-P10 callers that never set it. */
+    /** The real Discord user ID, absent in historical inbox rows. */
     authorId?:   string
     content:     string
     timestamp:   string
@@ -117,7 +117,7 @@ export async function submitAndDeliverConductorEnvelope(envelope: QueryEnvelope,
             const sendResult = await sendEnvelopeResponse({
                 envelopeId: envelope.id,
                 kind:       envelope.kind,
-                channelId:  envelope.channelId ? createChannelId(envelope.channelId) : undefined,
+                channelId:  envelope.channelId,
                 text:       result.response,
                 responseRouter,
                 client,
@@ -364,14 +364,14 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
      * boot (see the sibling `catch` in {@link submitReplay}, which keeps one channel's failure
      * from blocking the rest).
      */
-    async function submitReplayChannel(channelId: string, channelMessages: readonly ReplayableMessage[]): Promise<void> {
+    async function submitReplayChannel(channelId: ChannelId, channelMessages: readonly ReplayableMessage[]): Promise<void> {
         const newest = channelMessages[channelMessages.length - 1]!;
         const envelope = buildDiscordEnvelope({
             messages: channelMessages.map(message => ({
                 messageId: message.id,
                 content:   `${message.author}: ${message.content}`,
             })),
-            authorId:         newest.authorId ?? newest.author,
+            authorId:         newest.authorId === undefined ? undefined : createUserId(newest.authorId),
             authorName:       newest.author,
             channelId,
             channelName:      newest.channelName,
@@ -383,11 +383,11 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
         });
         await submitAndDeliverConductorEnvelope(envelope, envelopeDeps);
         // Stryker disable next-line llm: submitReplay groups messages by message.channelId, so newest.channelId always equals channelId here and the swap is unobservable.
-        await inboxManager.recordHandled(createChannelId(channelId), newest.id, newest.timestamp);
+        await inboxManager.recordHandled(channelId, newest.id, newest.timestamp);
     }
 
     async function submitReplay(messages: readonly ReplayableMessage[]): Promise<void> {
-        const byChannel = new Map<string, ReplayableMessage[]>();
+        const byChannel = new Map<ChannelId, ReplayableMessage[]>();
         for(const message of messages) {
             // Stryker disable next-line llm: get returns a truthy array or undefined, and message.channelId is already a string, so || and + '' are equivalent mutations.
             const existing = byChannel.get(message.channelId) ?? [];

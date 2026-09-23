@@ -13,6 +13,7 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { ButtonStyle, type Client } from 'discord.js';
 import { mockLogger } from '../../../../setup';
 import type { NotifyParams } from '@/agent';
+import { createChannelId } from '@/agent/types';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { setupEmail, buildEmailProcessorCallbacks, type EmailSetupOptions } from '@/integrations/discord/setup/email-setup';
@@ -80,7 +81,7 @@ const MINIMAL_EMAIL_CONFIG = {
     pollFallbackMs:                 300_000,
     sseReconnectDelayMs:            5000,
     maxBodySizeBytes:               50_000,
-    adminDiscordChannelId:          'admin-channel-id',
+    adminDiscordChannelId:          createChannelId('admin-channel-id'),
     wildDuckApiUrl:                 'http://localhost:8080',
     sendReservoirCapacity:          24,
     sendReservoirRefillRatePerHour: 1,
@@ -475,7 +476,7 @@ describe('setupEmail — createEmailMcpServerInstance', () => {
 });
 
 describe('buildEmailProcessorCallbacks', () => {
-    const adminDiscordChannelId = 'admin-channel-id';
+    const adminDiscordChannelId = createChannelId('admin-channel-id');
     let notify: ReturnType<typeof makeNotify>;
     let sendToChannel: ReturnType<typeof mock<(channelId: string, content: unknown, options?: unknown) => Promise<{ status: 'sent' }>>>;
     let discordCapability: { sendToChannel: typeof sendToChannel };

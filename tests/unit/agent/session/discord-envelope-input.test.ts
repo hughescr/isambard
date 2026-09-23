@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type * as agentBarrel from '@/agent';
 import type { DiscordEnvelopeInput } from '@/agent/session/discord-envelope-input';
+import { createChannelId, createUserId } from '@/agent/types';
 
 // Compile-time-only assertions live in this file (same convention as ports.test.ts): each
 // `describe`/`it` carries exactly one runtime `expect` so `jest/expect-expect` is satisfied
@@ -10,10 +11,10 @@ describe('DiscordEnvelopeInput', () => {
     it('is satisfiable with every field, including a populated channelList, with no `as` casts', () => {
         const input: DiscordEnvelopeInput = {
             messageId:   'msg-1',
-            channelId:   'chan-1',
+            channelId:   createChannelId('chan-1'),
             channelName: 'general',
             guildName:   'My Guild',
-            authorId:    'user-1',
+            authorId:    createUserId('user-1'),
             authorName:  'Craig',
             content:     'hello',
             images:      [{
@@ -29,9 +30,9 @@ describe('DiscordEnvelopeInput', () => {
     it('is satisfiable with only its required fields — guildName and images are optional', () => {
         const input: DiscordEnvelopeInput = {
             messageId:   'msg-2',
-            channelId:   'chan-dm',
+            channelId:   createChannelId('chan-dm'),
             channelName: 'DM',
-            authorId:    'user-2',
+            authorId:    createUserId('user-2'),
             authorName:  'Someone',
             content:     'hi',
             isDM:        true,
@@ -48,7 +49,7 @@ describe('DiscordEnvelopeInput', () => {
         // barrel actually re-exports it rather than shadowing it with something structurally
         // similar declared elsewhere.
         const fromDirectImport: DiscordEnvelopeInput = {
-            messageId: 'x', channelId: 'c', channelName: 'c', authorId: 'a', authorName: 'a', content: '', isDM: false, channelList: [],
+            messageId: 'x', channelId: createChannelId('c'), channelName: 'c', authorId: createUserId('a'), authorName: 'a', content: '', isDM: false, channelList: [],
         };
         const viaBarrel: agentBarrel.DiscordEnvelopeInput = fromDirectImport;
 

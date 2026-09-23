@@ -31,6 +31,7 @@ import type { Logger } from '@hughescr/logger';
 import { classifyClaudeError } from '../claude-retry';
 import { buildContinuationNote } from '../continuation-prompt-builder';
 import { StreamTracker, type StreamProgress  } from '../stream-tracker';
+import type { ChannelId, UserId } from '../types';
 import type { BootKind } from './boot-bundle';
 import { createCompactionGuard, type CompactionFailureReason, type CompactionGuard } from './compaction-guard';
 import { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';
@@ -206,7 +207,7 @@ export type SubmitPriority = 'urgent' | 'normal';
 /** Options accepted by {@link Conductor.submit}. */
 export interface SubmitOptions {
     priority:             SubmitPriority
-    requestingChannelId?: string
+    requestingChannelId?: ChannelId
     /**
      * Ties this submission to the caller's abort contract (P9, design section 6): aborting while
      * the envelope is still held host-side (queued behind another turn) withdraws it — `submit()`
@@ -223,7 +224,7 @@ export interface SubmitOptions {
 
 /** Options accepted by {@link Conductor.interruptCurrent}. */
 export interface InterruptCurrentOptions {
-    requestingChannelId?: string
+    requestingChannelId?: ChannelId
     reason?:              string
 }
 
@@ -315,10 +316,10 @@ export interface ConductorStatus {
     queueLength:  number
     turn: {
         kind:        TurnKind
-        channelId?:  string
+        channelId?:  ChannelId
         envelopeId?: string
         /** The turn's originating envelope author (R2) — `undefined` for a bare spontaneous `notification` turn, or a `task` turn whose {@link CreateConductorParams.taskLaunches} lookup found no launch record. */
-        authorId?:   string
+        authorId?:   UserId
     } | null
 }
 
@@ -406,8 +407,8 @@ export interface CreateConductorParams {
 
 /** A caller's delivery result, distinguishing durable delivery from intentional non-delivery. */
 export type SendOutcome
-    = | { kind: 'committed', disposition: 'sent', channelId: string, messageIds: string[] }
-      | { kind: 'committed', disposition: 'queued', channelId: string, outboxIds: string[] }
+    = | { kind: 'committed', disposition: 'sent', channelId: ChannelId, messageIds: string[] }
+      | { kind: 'committed', disposition: 'queued', channelId: ChannelId, outboxIds: string[] }
       | { kind: 'skipped', reason: string };
 
 /** The outcome of a {@link Conductor.deliver} call. */
@@ -551,7 +552,7 @@ interface QueuedItem {
      */
     envelope:               QueryEnvelope | AdoptedPeerEnvelope
     priority:               SubmitPriority
-    requestingChannelId?:   string
+    requestingChannelId?:   ChannelId
     attempts:               number
     deferred:               Deferred
     /** Removes this item's `abort` listener from the caller's {@link SubmitOptions.signal}, when one was given. Set by `submit()`, cleared once run so it fires at most once per item — including across retries, which reuse the same `QueuedItem`. */
@@ -582,9 +583,9 @@ interface ActiveTurn {
     /** `undefined` for a spontaneous SDK-initiated turn nobody submitted. */
     item?:            QueuedItem
     kind:             TurnKind
-    channelId?:       string
+    channelId?:       ChannelId
     /** The turn's originating envelope author (R2) — see {@link ConductorStatus.turn}. */
-    authorId?:        string
+    authorId?:        UserId
     tracker:          StreamTracker
     /** Who first asked for this turn to be interrupted; `undefined` while nobody has. Set once by {@link interruptCurrentTurnInternal}. */
     interruptSource?: CancellationSource

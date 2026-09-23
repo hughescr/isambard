@@ -13,15 +13,15 @@
  *
  * @module agent/session/discord-envelope-input
  */
-import type { PlatformImage } from '../types';
+import type { ChannelId, PlatformImage, UserId } from '../types';
 
 /** One Discord message, translated to the shape the conductor's envelope builders consume. */
 export interface DiscordEnvelopeInput {
     messageId:   string
-    channelId:   string
+    channelId:   ChannelId
     channelName: string
     guildName?:  string
-    authorId:    string
+    authorId:    UserId
     authorName:  string
     content:     string
     images?:     PlatformImage[]

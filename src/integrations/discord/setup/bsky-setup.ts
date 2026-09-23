@@ -2,6 +2,7 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import type { ActivityLogger, NotifyFn } from '@/agent';
+import type { ChannelId } from '@/config';
 import { ChannelNotAccessibleError } from '@/errors';
 import {
     BskyCheckpointManager,
@@ -34,7 +35,7 @@ export interface BskySetupOptions {
     /** Discord client instance */
     client:                      Client
     /** Discord channel ID for admin approval embeds */
-    adminDiscordChannelId:       string
+    adminDiscordChannelId:       ChannelId
     /** Approval saga backend for durable approval workflows */
     approvalSagaBackend:         ApprovalSagaBackend
     /** Optional activity logger for recording approval events */

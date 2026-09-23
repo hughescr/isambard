@@ -4,6 +4,7 @@ import { FakeClock } from '../../../helpers/fake-clock';
 import { createPerchDriver, type PerchDriverDeps, type PerchSlotHooks } from '@/agent/perch/perch-driver';
 import type { PerchConfig } from '@/agent/perch/types';
 import type { Conductor, ConductorStatus, Envelope, SubmitOptions, TurnResult } from '@/agent/session';
+import { createChannelId } from '@/agent/types';
 import type { ActivityLogger } from '@/storage';
 
 /** Flushes enough microtask ticks for a promise chain (e.g. an awaited contextBuilder call) to settle. */
@@ -297,7 +298,7 @@ describe('createPerchDriver', () => {
         // running when the hourly trigger fired, so the slot's own submit() call only enqueues
         // behind it (conductor.status().turn stays the foreign turn) — armInterruptTimer must
         // never interrupt THAT turn just because the driver's own `slotRunning` flag is true.
-        conductor.setActiveTurn({ kind: 'discord', envelopeId: 'live-discord-1', channelId: 'chan-1' });
+        conductor.setActiveTurn({ kind: 'discord', envelopeId: 'live-discord-1', channelId: createChannelId('chan-1') });
         const driver = createPerchDriver(deps);
         driver.runSlot('afternoon');
 
@@ -311,7 +312,7 @@ describe('createPerchDriver', () => {
         const driver = createPerchDriver(deps);
         driver.runSlot('afternoon');
         const slotEnvelopeId = conductor.submissions[0].envelope.id;
-        conductor.setActiveTurn({ kind: 'discord', envelopeId: slotEnvelopeId, channelId: 'chan-1' });
+        conductor.setActiveTurn({ kind: 'discord', envelopeId: slotEnvelopeId, channelId: createChannelId('chan-1') });
 
         const interruptAt = (MAX_SESSION_MINUTES + INTERRUPT_GRACE_MINUTES) * MINUTE_MS;
         clock.advance(interruptAt);
@@ -331,7 +332,7 @@ describe('createPerchDriver', () => {
     });
 
     test('interrupts the slot turn once it becomes the conductor\'s active turn, even though it started out queued behind another', () => {
-        conductor.setActiveTurn({ kind: 'discord', envelopeId: 'live-discord-1', channelId: 'chan-1' });
+        conductor.setActiveTurn({ kind: 'discord', envelopeId: 'live-discord-1', channelId: createChannelId('chan-1') });
         const driver = createPerchDriver(deps);
         driver.runSlot('afternoon');
         const slotEnvelopeId = conductor.submissions[0].envelope.id;

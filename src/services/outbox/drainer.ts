@@ -89,7 +89,7 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
             }
 
             // If the batch was full and the service is still up, schedule another drain
-            // Stryker disable next-line llm: dequeue issues one DynamoDB Query with Limit = batchSize and never paginates, so items.length cannot exceed batchSize and === and >= coincide.
+            // Stryker disable next-line llm: dequeue caps returned valid items at batchSize even when malformed rows require multiple pages, so items.length cannot exceed batchSize and === and >= coincide.
             const batchFull = items.length === batchSize;
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stopped can be set true by stop() between awaits
             if(batchFull && registry.isAvailable(service) && !stopped) {

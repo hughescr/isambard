@@ -1,11 +1,12 @@
 import type { TextChannel } from 'discord.js';
+import type { ChannelId } from '@/config';
 import { ChannelNotFoundByIdError } from '@/errors';
 import { splitMessage } from '@/integrations/discord/messages';
 import { withDiscordRetry } from '@/integrations/discord/retry';
 import type { OutboxItem } from '@/services';
 
 export interface OutboxReplayDeps {
-    fetchChannel(channelId: string): Promise<TextChannel | null>
+    fetchChannel(channelId: ChannelId): Promise<TextChannel | null>
 }
 
 /** Creates the Discord delivery function used by the persistent outbox drainer. */

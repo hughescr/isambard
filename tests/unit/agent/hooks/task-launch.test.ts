@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, jest } from 'bun:test';
 import type { HookCallback, PostToolUseHookInput, UserPromptSubmitHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { createTaskLaunchHooks, type CreateTaskLaunchHooksParams } from '@/agent/hooks/task-launch';
 import type { Conductor, ConductorStatus } from '@/agent/session';
+import { createChannelId, createUserId } from '@/agent/types';
 
 const BASE_HOOK_FIELDS = {
     session_id:      'sess-1',
@@ -55,7 +56,7 @@ const FAKE_NOW_MS = 1_757_000_000_000;
 
 function build(overrides: Partial<CreateTaskLaunchHooksParams> = {}): Harness {
     const record = jest.fn();
-    const status = jest.fn(() => statusWithTurn({ kind: 'discord', channelId: 'chan-1', envelopeId: 'env-1', authorId: 'user-1' }));
+    const status = jest.fn(() => statusWithTurn({ kind: 'discord', channelId: createChannelId('chan-1'), envelopeId: 'env-1', authorId: createUserId('user-1') }));
     const adoptWakeTurn = jest.fn();
     const logger = { debug: jest.fn(), warn: jest.fn(), error: jest.fn() };
     const clock = { now: jest.fn(() => FAKE_NOW_MS) };
@@ -240,7 +241,7 @@ describe('createTaskLaunchHooks', () => {
             const h = build({
                 conductor: {
                     status: jest.fn(() => statusWithTurn({
-                        kind: 'task', channelId: 'chan-task', envelopeId: 'env-task', authorId: 'user-task',
+                        kind: 'task', channelId: createChannelId('chan-task'), envelopeId: 'env-task', authorId: createUserId('user-task'),
                     })),
                     adoptWakeTurn: jest.fn(),
                 },

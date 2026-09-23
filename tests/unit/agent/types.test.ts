@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'bun:test';
 import { channelIdSchema, userIdSchema, type AgentStreamEvent, type SystemEvent } from '../../../src/agent/types';
+import { channelIdSchema as configChannelIdSchema, userIdSchema as configUserIdSchema, type ChannelId, type UserId } from '@/config';
 
 describe('platform identifier schemas', () => {
+    it('re-exports the canonical config brands without changing their validation', () => {
+        const channel: ChannelId = channelIdSchema.parse('c');
+        const user: UserId = userIdSchema.parse('u');
+        expect(channel).toBe(configChannelIdSchema.parse('c'));
+        expect(user).toBe(configUserIdSchema.parse('u'));
+        expect(channelIdSchema).toBe(configChannelIdSchema);
+        expect(userIdSchema).toBe(configUserIdSchema);
+    });
+
     it('requires a non-empty value for both identifier brands', () => {
         for(const schema of [channelIdSchema, userIdSchema]) {
             expect(schema.safeParse('').success).toBe(false);

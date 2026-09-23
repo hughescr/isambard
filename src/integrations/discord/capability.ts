@@ -1,4 +1,5 @@
 import type { Client, Message, TextChannel, EmbedBuilder, ActionRowBuilder } from 'discord.js';
+import type { ChannelId } from '@/config';
 import { withDiscordRetry } from '@/integrations/discord/retry';
 import { serializedDiscordPayloadSchema, type ServiceHealthRegistry, type OutboxBackend, type OutboxItem, type OutboxPriority, type OutboxItemType } from '@/services';
 
@@ -53,12 +54,12 @@ export interface DiscordCapability {
      * Send content to a channel by ID.
      * Falls back to outbox when Discord is not ready (unless skipOutbox is set).
      */
-    sendToChannel(channelId: string, content: ChannelContent, options?: SendOptions): Promise<SendResult>
+    sendToChannel(channelId: ChannelId, content: ChannelContent, options?: SendOptions): Promise<SendResult>
     /**
      * Fetch a text channel by ID. Returns null when Discord is not ready or the
      * channel cannot be resolved.
      */
-    fetchChannel(channelId: string): Promise<TextChannel | null>
+    fetchChannel(channelId: ChannelId): Promise<TextChannel | null>
 }
 
 export interface DiscordCapabilityLogger {
@@ -86,7 +87,7 @@ function isTextSendable(channel: unknown): channel is TextChannel {
 /**
  * Build an OutboxItem for a failed Discord send, ready to enqueue.
  */
-function buildOutboxItem(channelId: string, content: ChannelContent, options: SendOptions | undefined): OutboxItem {
+function buildOutboxItem(channelId: ChannelId, content: ChannelContent, options: SendOptions | undefined): OutboxItem {
     return {
         id:          crypto.randomUUID(),
         createdAt:   new Date().toISOString(),
@@ -120,7 +121,7 @@ export class DiscordCapabilityImpl implements DiscordCapability {
         return this.client !== undefined && this.deps.registry.isAvailable('discord');
     }
 
-    async sendToChannel(channelId: string, content: ChannelContent, options?: SendOptions): Promise<SendResult> {
+    async sendToChannel(channelId: ChannelId, content: ChannelContent, options?: SendOptions): Promise<SendResult> {
         if(this.isReady() && this.client !== undefined) {
             try {
                 const channel = await this.client.channels.fetch(channelId);
@@ -146,7 +147,7 @@ export class DiscordCapabilityImpl implements DiscordCapability {
         return { status: 'unavailable' };
     }
 
-    async fetchChannel(channelId: string): Promise<TextChannel | null> {
+    async fetchChannel(channelId: ChannelId): Promise<TextChannel | null> {
         // Stryker disable next-line llm: this.client is Client | undefined and never null, and !isReady() already short-circuits when it is undefined, so loose nullish and strict undefined checks coincide.
         if(!this.isReady() || this.client === undefined) {
             return null;

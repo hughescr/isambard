@@ -9,7 +9,7 @@
  * @module agent/session/types
  */
 import type { Options, Query, SDKControlGetContextUsageResponse, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { PlatformImage } from '../types';
+import type { ChannelId, PlatformImage, UserId } from '../types';
 
 /** Which of the two concurrent sessions a piece of state belongs to. */
 export type SessionRole = 'conversation' | 'perch';
@@ -71,7 +71,7 @@ export interface EnvelopeMeta {
     id:         string
     kind:       EnvelopeKind
     queuedAt:   Date
-    channelId?: string
+    channelId?: ChannelId
     /** The submitting {@link Envelope.synopsisSeed}, carried through to `LedgerTurn.seed` so the presence synopsis attachment can seed a generation without reaching back for the envelope. */
     seed?:      string
     perch?: {
@@ -122,12 +122,12 @@ interface NoSource {
     peer?:      never
 }
 
-/** A `discord` envelope: a human's message, so it always names its channel and author. */
+/** A `discord` envelope: a human's message with a channel and human origin. Historical replay may omit the author ID. */
 export interface DiscordQueryEnvelope extends EnvelopeBase {
     mode:      'query'
     kind:      'discord'
-    channelId: string
-    authorId:  string
+    channelId: ChannelId
+    authorId?: UserId
     /** The human origin forwarded to the SDK's `SDKUserMessage.origin`. */
     origin:    { kind: 'human' }
     peer?:     never
@@ -140,8 +140,8 @@ export interface DiscordQueryEnvelope extends EnvelopeBase {
 export interface TaskQueryEnvelope extends EnvelopeBase {
     mode:       'query'
     kind:       'task'
-    channelId?: string
-    authorId?:  string
+    channelId?: ChannelId
+    authorId?:  UserId
     origin?:    never
     peer?:      never
 }
@@ -210,7 +210,7 @@ export interface DeliverableEnvelope {
     id:         string
     kind:       EnvelopeKind
     text:       string
-    channelId?: string
+    channelId?: ChannelId
 }
 
 /**

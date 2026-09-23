@@ -4,7 +4,6 @@ import type { DiscordCapability } from '../capability';
 import { ENVELOPE_KIND_TO_CHANNEL, type ResponseRouter } from '../channel-registry';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse, type SendEnvelopeResponseResult } from '../response-sender';
-import { createChannelId } from '../types';
 import type { Conductor, DeliverableEnvelope, TurnResult } from '@/agent';
 import { ResponseUnavailableError } from '@/errors';
 
@@ -78,7 +77,7 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
             return sendEnvelopeResponse({
                 envelopeId: envelope.id,
                 kind:       envelope.kind,
-                channelId:  envelope.channelId ? createChannelId(envelope.channelId) : undefined,
+                channelId:  envelope.channelId,
                 text,
                 responseRouter,
                 client,

@@ -6,34 +6,11 @@
  */
 
 import type { MessageCreateOptions } from 'discord.js';
-import { z } from 'zod';
 import type { TextBlock, ThinkingBlock, ToolUseBlock } from './stream-extractors';
+import { channelIdSchema, userIdSchema, type ChannelId, type UserId } from '@/config';
 
-// ============================================================================
-// Platform-Agnostic Branded IDs
-// ============================================================================
-
-/**
- * ChannelId is a branded type representing a channel identifier.
- * Platform-agnostic — used by agent module for type safety.
- */
-export const channelIdSchema = z
-    .string()
-    .min(1, 'Channel ID cannot be empty')
-    .brand<'ChannelId'>();
-
-export type ChannelId = z.infer<typeof channelIdSchema>;
-
-/**
- * UserId is a branded type representing a user identifier.
- * Platform-agnostic — used by agent module for type safety.
- */
-export const userIdSchema = z
-    .string()
-    .min(1, 'User ID cannot be empty')
-    .brand<'UserId'>();
-
-export type UserId = z.infer<typeof userIdSchema>;
+export { channelIdSchema, userIdSchema } from '@/config';
+export type { ChannelId, UserId } from '@/config';
 
 /** Information about a resolved user, including the validated platform ID. */
 export interface ResolvedUser {

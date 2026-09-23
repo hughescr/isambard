@@ -16,6 +16,7 @@
  * @module agent/session/task-launch-registry
  */
 import { isPlainObject } from 'lodash-es';
+import { channelIdSchema, userIdSchema, type ChannelId, type UserId } from '../types';
 import type { SessionJournal } from './ports';
 import type { EnvelopeKind, JournalEntry } from './types';
 
@@ -35,8 +36,8 @@ export interface TaskLaunch {
     toolName:     string
     envelopeId:   string
     kind:         EnvelopeKind
-    channelId?:   string
-    authorId?:    string
+    channelId?:   ChannelId
+    authorId?:    UserId
     description?: string
     launchedAt:   Date
 }
@@ -205,7 +206,7 @@ export function createTaskLaunchRegistry(params: CreateTaskLaunchRegistryParams 
         for(const entry of entries) {
             if(entry.type === 'task_launched') {
                 insert({
-                    taskId: entry.taskId, toolUseId: entry.toolUseId, toolName: entry.toolName, envelopeId: entry.envelopeId, kind: entry.kind, channelId: entry.channelId, authorId: entry.authorId, description: entry.description, launchedAt: entry.at,
+                    taskId: entry.taskId, toolUseId: entry.toolUseId, toolName: entry.toolName, envelopeId: entry.envelopeId, kind: entry.kind, channelId: channelIdSchema.safeParse(entry.channelId).data, authorId: userIdSchema.safeParse(entry.authorId).data, description: entry.description, launchedAt: entry.at,
                 });
             }
         }

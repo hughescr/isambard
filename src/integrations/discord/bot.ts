@@ -27,7 +27,7 @@ import { setupPerchDriverAndScheduler } from './setup/perch-setup';
 import { setupConductorPresence, type ConductorPresenceSession } from './setup/presence-setup';
 import { createWakeTurnDelivery } from './setup/wake-delivery';
 import { setupTaskBoard } from './task-board/setup';
-import { createChannelId, createUserId, type ChannelId } from './types';
+import { createUserId, type ChannelId } from './types';
 import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type DeliverableEnvelope, type Envelope, type TimeHeaderProvider, type PerchSlotHooks, type TurnResult  } from '@/agent';
 import {
     DEFAULT_TASK_BOARD_CONFIG,
@@ -784,7 +784,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
             if(turn?.kind === 'discord' && turn.channelId !== undefined && turn.id !== lastTurnIdByLedger.get(store)) {
                 lastTurnIdByLedger.set(store, turn.id);
-                addRecentChannel(createChannelId(turn.channelId));
+                addRecentChannel(turn.channelId);
             }
         }));
         const unsubscribeAll = (): void => {

@@ -1815,7 +1815,7 @@ describe('Discord Event Handlers', () => {
                 expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
                     kind: 'discord', channelId: PERCH_CHANNEL_ID, text: 'Nothing much to report.',
                 }));
-                expect(perchConductor.deliveredPayloads).toEqual([{ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] }]);
+                expect(perchConductor.deliveredPayloads).toEqual([{ kind: 'committed', disposition: 'sent', channelId: createChannelId('channel-1'), messageIds: [] }]);
                 expect(perchConductor.deliveryErrors).toEqual([]);
                 expect(mockInboxManager.recordHandled).toHaveBeenCalledWith(PERCH_CHANNEL_ID, mockMessage.id, mockMessage.createdAt.toISOString());
             });
@@ -2245,7 +2245,7 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 expect(perchConductor.deliveryErrors).toEqual([]);
-                expect(perchConductor.deliveredPayloads).toEqual([{ kind: 'committed', disposition: 'queued', channelId: 'channel-1', outboxIds: ['outbox-1'] }]);
+                expect(perchConductor.deliveredPayloads).toEqual([{ kind: 'committed', disposition: 'queued', channelId: createChannelId('channel-1'), outboxIds: ['outbox-1'] }]);
             });
 
             it('a real delivery failure (not the not-sent sentinel) is logged but the watermark still advances', async () => {

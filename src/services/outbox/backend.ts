@@ -1,3 +1,5 @@
+import { QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
 import { OutboxKeyGenerator } from './key-generator';
 import { outboxItemSchema, type OutboxItem } from './types';
 import { DynamoTableAccess } from '@/storage';
@@ -31,16 +33,31 @@ export class OutboxBackend extends DynamoTableAccess {
      * Does not remove them from the outbox.
      */
     async dequeue(service: string, limit = 10): Promise<OutboxItem[]> {
-        const items = await this.query({
-            KeyConditionExpression:    '#pk = :pk',
-            ExpressionAttributeNames:  { '#pk': 'PK' },
-            ExpressionAttributeValues: {
-                ':pk': OutboxKeyGenerator.createServicePK(service),
-            },
-            ScanIndexForward: true,
-            Limit:            limit,
-        });
-        return items.map(item => outboxItemSchema.parse(item));
+        const valid: OutboxItem[] = [];
+        let cursor: Record<string, unknown> | undefined;
+        do {
+            // eslint-disable-next-line no-await-in-loop -- each query must use the preceding page's cursor
+            const page = await this.docClient.send(new QueryCommand({
+                TableName:                 this.tableName,
+                KeyConditionExpression:    '#pk = :pk',
+                ExpressionAttributeNames:  { '#pk': 'PK' },
+                ExpressionAttributeValues: { ':pk': OutboxKeyGenerator.createServicePK(service) },
+                ScanIndexForward:          true,
+                Limit:                     limit - valid.length,
+                ...(cursor === undefined ? {} : { ExclusiveStartKey: cursor }),
+            }));
+            for(const item of page.Items ?? []) {
+                const raw: Record<string, unknown> = item;
+                const parsed = outboxItemSchema.safeParse(raw);
+                if(parsed.success) {
+                    valid.push(parsed.data);
+                } else {
+                    logger.warn({ service, pk: raw.PK, sk: raw.SK, error: parsed.error }, 'Skipping malformed outbox item');
+                }
+            }
+            cursor = page.LastEvaluatedKey;
+        } while(cursor !== undefined && valid.length < limit);
+        return valid.slice(0, limit);
     }
 
     /**

@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
+import { createChannelId } from '@/agent/types';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
 import type { OutboxBackend } from '@/services/outbox/backend';
 import { createOutboxDrainer, type OutboxDrainerDeps, type OutboxDrainer } from '@/services/outbox/drainer';
@@ -15,7 +16,7 @@ function makeItem(overrides?: Partial<OutboxItem>): OutboxItem {
         createdAt:   CREATED,
         type:        'agent_response',
         service:     'discord',
-        destination: 'channel-123',
+        destination: createChannelId('channel-123'),
         payload:     { text: 'Hello' },
         priority:    'medium',
         dedupeKey:   'dedup-abc',

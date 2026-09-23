@@ -83,7 +83,7 @@ import {
     type CalendarAgendaSource,
     type PerchSlotHooks
 } from '@/agent';
-import { type SessionConfig, loadRetryConfig  } from '@/config';
+import { type UserId, type SessionConfig, loadRetryConfig  } from '@/config';
 import type { ServiceHealthRegistry } from '@/services';
 
 /**
@@ -444,9 +444,9 @@ export async function createConversationConductor(params: CreateConversationCond
     // on Discord — closed over here rather than exposed on Conductor's public interface (which
     // has no concept of "recent author"); the only observer of a submitted Envelope's authorId
     // is whoever calls submit(), so this module wraps the conductor's own submit() to capture it.
-    let recentAuthors: string[] = [];
-    function recordRecentAuthor(authorId: string | undefined): void {
-        // Stryker disable next-line llm: authorId is a non-empty Discord snowflake (or a min(1) display name on replay) or undefined, never null or '', so the loose-undefined and falsy variants of this guard coincide with the strict one.
+    let recentAuthors: UserId[] = [];
+    function recordRecentAuthor(authorId: UserId | undefined): void {
+        // Stryker disable next-line llm: authorId is a validated non-empty Discord user ID or undefined, never null or '', so the loose-undefined and falsy variants of this guard coincide with the strict one.
         if(authorId === undefined) {
             return;
         }

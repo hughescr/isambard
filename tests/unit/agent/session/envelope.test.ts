@@ -10,10 +10,11 @@ import {
     buildContinuationEnvelope,
     buildBootEnvelope,
     buildCompactEnvelope,
-    toSdkUserMessage
+    toSdkUserMessage,
+    type BuildDiscordEnvelopeParams
 } from '../../../../src/agent/session/envelope';
 import type { Envelope } from '../../../../src/agent/session/types';
-import type { EnvelopeSourceMessage, PlatformImage } from '../../../../src/agent/types';
+import { createChannelId, createUserId, type EnvelopeSourceMessage, type PlatformImage } from '../../../../src/agent/types';
 
 const now = new Date('2026-09-04T22:07:00Z');
 const timezone = 'America/Los_Angeles';
@@ -32,12 +33,26 @@ afterEach(() => {
 });
 
 describe('buildDiscordEnvelope', () => {
+    test('rejects a bare channel string in the builder contract', () => {
+        // @ts-expect-error -- a Discord channel must be validated at ingress
+        const rawChannel: BuildDiscordEnvelopeParams['channelId'] = 'c';
+        expect(String(rawChannel)).toBe('c');
+    });
+
+    test('omits absent historical author ID without losing the display name', () => {
+        const envelope = buildDiscordEnvelope({
+            messages: [makeMessage()], authorName: 'craig', channelId: createChannelId('c'), channelName: 'general', isDM: false, now, timezone, timeHeader,
+        });
+        expect(envelope.authorId).toBeUndefined();
+        expect(envelope.text).toContain('@craig · channelId=c · messageIds=[msg-1]');
+        expect(envelope.text).not.toContain('authorId=');
+    });
     test('renders the channel header exactly, with timeHeader first in the body', () => {
         const envelope = buildDiscordEnvelope({
             messages:    [makeMessage()],
-            authorId:    'author-1',
+            authorId:    createUserId('author-1'),
             authorName:  'craig',
-            channelId:   'chan-1',
+            channelId:   createChannelId('chan-1'),
             channelName: 'general',
             isDM:        false,
             now,
@@ -52,9 +67,9 @@ describe('buildDiscordEnvelope', () => {
     test('renders the DM header form', () => {
         const envelope = buildDiscordEnvelope({
             messages:    [makeMessage()],
-            authorId:    'author-1',
+            authorId:    createUserId('author-1'),
             authorName:  'craig',
-            channelId:   'dm-1',
+            channelId:   createChannelId('dm-1'),
             channelName: 'ignored-for-dm',
             isDM:        true,
             now,
@@ -67,7 +82,7 @@ describe('buildDiscordEnvelope', () => {
 
     test('includes the guild name in the channel header when provided', () => {
         const envelope = buildDiscordEnvelope({
-            messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', guildName: 'Home Server', isDM: false, now, timezone, timeHeader,
+            messages: [makeMessage()], authorId: createUserId('a'), authorName: 'craig', channelId: createChannelId('c'), channelName: 'general', guildName: 'Home Server', isDM: false, now, timezone, timeHeader,
         });
 
         expect(envelope.text.startsWith('[DISCORD #general (Home Server) · 2026-09-04 14:07 PT · @craig · channelId=c · authorId=a · messageIds=[msg-1]]')).toBe(true);
@@ -75,7 +90,7 @@ describe('buildDiscordEnvelope', () => {
 
     test('joins only the sections that are actually present, with no blank-line gaps for absent optional sections', () => {
         const envelope = buildDiscordEnvelope({
-            messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
+            messages: [makeMessage()], authorId: createUserId('a'), authorName: 'craig', channelId: createChannelId('c'), channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
 
         const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig · channelId=c · authorId=a · messageIds=[msg-1]]';
@@ -84,7 +99,7 @@ describe('buildDiscordEnvelope', () => {
 
     test('omits [Service health], [About this user], [Recent events], [State changed], [Calendar] and [Channels] when their inputs are absent', () => {
         const envelope = buildDiscordEnvelope({
-            messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
+            messages: [makeMessage()], authorId: createUserId('a'), authorName: 'craig', channelId: createChannelId('c'), channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
 
         expect(envelope.text).not.toContain('[Service health]');
@@ -98,9 +113,9 @@ describe('buildDiscordEnvelope', () => {
     test('omits [Calendar] when calendarChanged is explicitly undefined', () => {
         const envelope = buildDiscordEnvelope({
             messages:        [makeMessage()],
-            authorId:        'a',
+            authorId:        createUserId('a'),
             authorName:      'craig',
-            channelId:       'c',
+            channelId:       createChannelId('c'),
             channelName:     'general',
             isDM:            false,
             now,
@@ -115,9 +130,9 @@ describe('buildDiscordEnvelope', () => {
     test('renders [Calendar] with only the full agenda text on isFirst, ignoring any populated added/removed/changed lists', () => {
         const envelope = buildDiscordEnvelope({
             messages:        [makeMessage()],
-            authorId:        'a',
+            authorId:        createUserId('a'),
             authorName:      'craig',
-            channelId:       'c',
+            channelId:       createChannelId('c'),
             channelName:     'general',
             isDM:            false,
             now,
@@ -136,9 +151,9 @@ describe('buildDiscordEnvelope', () => {
     test('renders [Calendar] with a +/-/~ change list followed by the full agenda text when not isFirst', () => {
         const envelope = buildDiscordEnvelope({
             messages:        [makeMessage()],
-            authorId:        'a',
+            authorId:        createUserId('a'),
             authorName:      'craig',
-            channelId:       'c',
+            channelId:       createChannelId('c'),
             channelName:     'general',
             isDM:            false,
             now,
@@ -161,9 +176,9 @@ describe('buildDiscordEnvelope', () => {
     test('does not leave a dangling trailing newline when a change list is present but the agenda text is empty', () => {
         const envelope = buildDiscordEnvelope({
             messages:        [makeMessage()],
-            authorId:        'a',
+            authorId:        createUserId('a'),
             authorName:      'craig',
-            channelId:       'c',
+            channelId:       createChannelId('c'),
             channelName:     'general',
             isDM:            false,
             now,
@@ -179,9 +194,9 @@ describe('buildDiscordEnvelope', () => {
     test('renders [Calendar] with just the full agenda text when not isFirst but nothing changed', () => {
         const envelope = buildDiscordEnvelope({
             messages:        [makeMessage()],
-            authorId:        'a',
+            authorId:        createUserId('a'),
             authorName:      'craig',
-            channelId:       'c',
+            channelId:       createChannelId('c'),
             channelName:     'general',
             isDM:            false,
             now,
@@ -196,9 +211,9 @@ describe('buildDiscordEnvelope', () => {
     test('keeps a one-character agenda, the tightest non-empty part, instead of filtering it out with the empties', () => {
         const envelope = buildDiscordEnvelope({
             messages:        [makeMessage()],
-            authorId:        'a',
+            authorId:        createUserId('a'),
             authorName:      'craig',
-            channelId:       'c',
+            channelId:       createChannelId('c'),
             channelName:     'general',
             isDM:            false,
             now,
@@ -215,9 +230,9 @@ describe('buildDiscordEnvelope', () => {
     test('omits [State changed] when stateChanged is explicitly undefined', () => {
         const envelope = buildDiscordEnvelope({
             messages:     [makeMessage()],
-            authorId:     'a',
+            authorId:     createUserId('a'),
             authorName:   'craig',
-            channelId:    'c',
+            channelId:    createChannelId('c'),
             channelName:  'general',
             isDM:         false,
             now,
@@ -232,9 +247,9 @@ describe('buildDiscordEnvelope', () => {
     test('omits [State changed] when stateChanged has all three lists empty', () => {
         const envelope = buildDiscordEnvelope({
             messages:     [makeMessage()],
-            authorId:     'a',
+            authorId:     createUserId('a'),
             authorName:   'craig',
-            channelId:    'c',
+            channelId:    createChannelId('c'),
             channelName:  'general',
             isDM:         false,
             now,
@@ -249,9 +264,9 @@ describe('buildDiscordEnvelope', () => {
     test('renders [State changed] with only +added lines when only added is non-empty', () => {
         const envelope = buildDiscordEnvelope({
             messages:     [makeMessage()],
-            authorId:     'a',
+            authorId:     createUserId('a'),
             authorName:   'craig',
-            channelId:    'c',
+            channelId:    createChannelId('c'),
             channelName:  'general',
             isDM:         false,
             now,
@@ -266,9 +281,9 @@ describe('buildDiscordEnvelope', () => {
     test('renders [State changed] with only -removed lines when only removed is non-empty', () => {
         const envelope = buildDiscordEnvelope({
             messages:     [makeMessage()],
-            authorId:     'a',
+            authorId:     createUserId('a'),
             authorName:   'craig',
-            channelId:    'c',
+            channelId:    createChannelId('c'),
             channelName:  'general',
             isDM:         false,
             now,
@@ -283,9 +298,9 @@ describe('buildDiscordEnvelope', () => {
     test('renders [State changed] with only ~changed lines when only changed is non-empty', () => {
         const envelope = buildDiscordEnvelope({
             messages:     [makeMessage()],
-            authorId:     'a',
+            authorId:     createUserId('a'),
             authorName:   'craig',
-            channelId:    'c',
+            channelId:    createChannelId('c'),
             channelName:  'general',
             isDM:         false,
             now,
@@ -300,9 +315,9 @@ describe('buildDiscordEnvelope', () => {
     test('renders [State changed] with +/-/~ lines for added, removed and changed, and places it after [Recent events] and before [Channels]', () => {
         const envelope = buildDiscordEnvelope({
             messages:     [makeMessage()],
-            authorId:     'a',
+            authorId:     createUserId('a'),
             authorName:   'craig',
-            channelId:    'c',
+            channelId:    createChannelId('c'),
             channelName:  'general',
             isDM:         false,
             now,
@@ -324,9 +339,9 @@ describe('buildDiscordEnvelope', () => {
     test('places [Calendar] after [State changed] and before [Channels]', () => {
         const envelope = buildDiscordEnvelope({
             messages:        [makeMessage()],
-            authorId:        'a',
+            authorId:        createUserId('a'),
             authorName:      'craig',
-            channelId:       'c',
+            channelId:       createChannelId('c'),
             channelName:     'general',
             isDM:            false,
             now,
@@ -347,9 +362,9 @@ describe('buildDiscordEnvelope', () => {
     test('includes [Service health]/[About this user]/[Recent events]/[Channels] only when provided, each with its content', () => {
         const envelope = buildDiscordEnvelope({
             messages:        [makeMessage()],
-            authorId:        'a',
+            authorId:        createUserId('a'),
             authorName:      'craig',
-            channelId:       'c',
+            channelId:       createChannelId('c'),
             channelName:     'general',
             isDM:            false,
             now,
@@ -372,9 +387,9 @@ describe('buildDiscordEnvelope', () => {
     test('renders a continuationNote verbatim, between [Channels] and the message texts', () => {
         const envelope = buildDiscordEnvelope({
             messages:         [makeMessage({ content: 'second message' })],
-            authorId:         'a',
+            authorId:         createUserId('a'),
             authorName:       'craig',
-            channelId:        'c',
+            channelId:        createChannelId('c'),
             channelName:      'general',
             isDM:             false,
             now,
@@ -390,7 +405,7 @@ describe('buildDiscordEnvelope', () => {
 
     test('omits any continuation-note section when continuationNote is not given', () => {
         const envelope = buildDiscordEnvelope({
-            messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
+            messages: [makeMessage()], authorId: createUserId('a'), authorName: 'craig', channelId: createChannelId('c'), channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
 
         expect(envelope.text).not.toContain('[RESUME NOTE]');
@@ -398,7 +413,7 @@ describe('buildDiscordEnvelope', () => {
 
     test('does not render [Recent events] for an empty array', () => {
         const envelope = buildDiscordEnvelope({
-            messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader, newEvents: [],
+            messages: [makeMessage()], authorId: createUserId('a'), authorName: 'craig', channelId: createChannelId('c'), channelName: 'general', isDM: false, now, timezone, timeHeader, newEvents: [],
         });
 
         expect(envelope.text).not.toContain('[Recent events]');
@@ -410,7 +425,7 @@ describe('buildDiscordEnvelope', () => {
                 makeMessage({ content: 'first message' }),
                 makeMessage({ content: 'second message' }),
             ],
-            authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
+            authorId: createUserId('a'), authorName: 'craig', channelId: createChannelId('c'), channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
 
         const firstIndex = envelope.text.indexOf('first message');
@@ -426,7 +441,7 @@ describe('buildDiscordEnvelope', () => {
                 makeMessage({ messageId: 'msg-2', content: 'second message' }),
                 makeMessage({ messageId: 'msg-3', content: 'third message' }),
             ],
-            authorId: 'author-9', authorName: 'craig', channelId: 'chan-9', channelName: 'general', isDM: false, now, timezone, timeHeader,
+            authorId: createUserId('author-9'), authorName: 'craig', channelId: createChannelId('chan-9'), channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
 
         expect(envelope.text.split('\n', 1)[0]).toBe(
@@ -436,13 +451,13 @@ describe('buildDiscordEnvelope', () => {
 
     test('sets origin, channelId, authorId, mode query, kind discord, createdAt now', () => {
         const envelope = buildDiscordEnvelope({
-            messages: [makeMessage()], authorId: 'author-9', authorName: 'craig', channelId: 'chan-9', channelName: 'general', isDM: false, now, timezone, timeHeader,
+            messages: [makeMessage()], authorId: createUserId('author-9'), authorName: 'craig', channelId: createChannelId('chan-9'), channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
 
         expect(envelope.kind).toBe('discord');
         expect(envelope.origin).toEqual({ kind: 'human' });
-        expect(envelope.channelId).toBe('chan-9');
-        expect(envelope.authorId).toBe('author-9');
+        expect(envelope.channelId).toBe(createChannelId('chan-9'));
+        expect(envelope.authorId).toBe(createUserId('author-9'));
         expect(envelope.mode).toBe('query');
         expect(envelope.createdAt).toBe(now);
     });
@@ -450,7 +465,7 @@ describe('buildDiscordEnvelope', () => {
     test('carries images through to the envelope', () => {
         const images: PlatformImage[] = [{ filename: 'a.png', mediaType: 'image/png', base64Data: 'AAAA', originalSize: 4 }];
         const envelope = buildDiscordEnvelope({
-            messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader, images,
+            messages: [makeMessage()], authorId: createUserId('a'), authorName: 'craig', channelId: createChannelId('c'), channelName: 'general', isDM: false, now, timezone, timeHeader, images,
         });
 
         expect(envelope.images).toBe(images);
@@ -693,7 +708,7 @@ describe('toSdkUserMessage', () => {
     // envelope is sent `shouldQuery:false` (the only kind the SDK answers with a bare, absorbed
     // ack), and an adopted peer keeps the `true` it carried before the contract split (#60).
     const discordParams = {
-        messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
+        messages: [makeMessage()], authorId: createUserId('a'), authorName: 'craig', channelId: createChannelId('c'), channelName: 'general', isDM: false, now, timezone, timeHeader,
     };
     const perchParams = {
         slotName: 'evening', now, timezone, endsAt: new Date('2026-09-05T02:45:00Z'), suggestionLevel: 1, slotHint: 'hint', perchContext: 'context', timeHeader,
@@ -733,7 +748,7 @@ describe('toSdkUserMessage', () => {
 
     test('origin is present for a discord envelope', () => {
         const envelope: Envelope = buildDiscordEnvelope({
-            messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
+            messages: [makeMessage()], authorId: createUserId('a'), authorName: 'craig', channelId: createChannelId('c'), channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
 
         const sdkMessage = toSdkUserMessage(envelope);
@@ -747,9 +762,9 @@ describe('synopsisSeed', () => {
     test('buildDiscordEnvelope seeds from the raw message contents, never the header', () => {
         const envelope = buildDiscordEnvelope({
             messages:    [makeMessage({ content: 'first line' }), makeMessage({ content: 'second line' })],
-            authorId:    'author-1',
+            authorId:    createUserId('author-1'),
             authorName:  'craig',
-            channelId:   'chan-1',
+            channelId:   createChannelId('chan-1'),
             channelName: 'general',
             isDM:        false,
             now,

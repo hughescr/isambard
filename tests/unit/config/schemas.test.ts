@@ -1,4 +1,5 @@
 import { describe, test, expect } from 'bun:test';
+import { channelIdSchema } from '@/config/discord-ids';
 import {
     appConfigSchema,
     agentConfigSchema,
@@ -354,7 +355,7 @@ describe('emailConfigSchema', () => {
         const result = emailConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data.adminDiscordChannelId).toBe('987654321098765432');
+            expect(result.data.adminDiscordChannelId).toBe(channelIdSchema.parse('987654321098765432'));
         }
     });
 

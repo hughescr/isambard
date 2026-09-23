@@ -496,9 +496,9 @@ async function submitPerchChannelMessage(
             messageId: message.id,
             content:   `${message.author.username}: ${message.cleanContent}`,
         }],
-        authorId:    message.author.id,
+        authorId:    createUserId(message.author.id),
         authorName:  message.author.username,
-        channelId:   message.channel.id,
+        channelId,
         channelName: channel.name,
         isDM:        false,
         now:         new Date(),
@@ -515,7 +515,7 @@ async function submitPerchChannelMessage(
     // message's perch turn was attempted" regardless of outcome.
     let result: { response: string | null } | undefined;
     try {
-        result = await perch.conductor.submit(envelope, { priority: 'normal', requestingChannelId: message.channel.id });
+        result = await perch.conductor.submit(envelope, { priority: 'normal', requestingChannelId: channelId });
     } catch (err) {
         logger.error({ err, channelId: message.channel.id, msg: 'Perch-channel envelope submission failed' });
     }

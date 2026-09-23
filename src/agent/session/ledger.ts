@@ -13,6 +13,7 @@
  */
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { logger, type Logger } from '@hughescr/logger';
+import type { ChannelId } from '../types';
 import { type ActivityPhase, phaseFromFrame } from './activity-phase';
 import type { ContextUsageSummary, EnvelopeKind, EnvelopeMeta, SessionRole } from './types';
 
@@ -30,7 +31,7 @@ export interface LedgerTurn {
     startedAt:     Date
     queuedAt?:     Date
     envelopeId?:   string
-    channelId?:    string
+    channelId?:    ChannelId
     phase:         ActivityPhase | null
     firstTokenAt?: Date
     interrupting:  boolean
@@ -87,7 +88,7 @@ export interface LedgerTask {
     /** True when the SDK registered the task in the background (`is_backgrounded`); a foreground task blocks its spawning tool call. */
     background:  boolean
     /** Channel of the turn that was open when the task started; undefined for perch or turn-less launches. */
-    channelId?:  string
+    channelId?:  ChannelId
     /** Id of the turn that was open at `task_started` — groups tasks into one board. */
     turnId?:     string
     startedAt:   Date

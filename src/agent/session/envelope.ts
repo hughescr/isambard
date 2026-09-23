@@ -23,7 +23,7 @@
  */
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { buildMultimodalContent } from '../multimodal-message-builder';
-import type { EnvelopeSourceMessage, PlatformImage } from '../types';
+import type { ChannelId, EnvelopeSourceMessage, PlatformImage, UserId } from '../types';
 import { buildCatchupText } from './catchup-text';
 import type { AccumulationEnvelope, AdoptedPeerEnvelope, DiscordQueryEnvelope, Envelope, QueryEnvelope } from './types';
 import { formatEnvelopeStamp } from '@/utils';
@@ -115,9 +115,9 @@ function formatDiscordChannelSegment(isDM: boolean, channelName: string, guildNa
 /** Inputs to {@link buildDiscordEnvelope}. */
 export interface BuildDiscordEnvelopeParams {
     messages:          EnvelopeSourceMessage[]
-    authorId:          string
+    authorId?:         UserId
     authorName:        string
-    channelId:         string
+    channelId:         ChannelId
     channelName:       string
     guildName?:        string
     isDM:              boolean
@@ -173,7 +173,8 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Discor
     const stamp = formatEnvelopeStamp(now, timezone);
     const channelSegment = formatDiscordChannelSegment(isDM, channelName, guildName);
     const sourceMessageIds = messages.map(message => message.messageId);
-    const header = `[DISCORD ${channelSegment} · ${stamp} · @${authorName} · channelId=${channelId} · authorId=${authorId} · messageIds=[${sourceMessageIds.join(', ')}]]`;
+    const authorSegment = authorId === undefined ? '' : ` · authorId=${authorId}`;
+    const header = `[DISCORD ${channelSegment} · ${stamp} · @${authorName} · channelId=${channelId}${authorSegment} · messageIds=[${sourceMessageIds.join(', ')}]]`;
 
     const messageText = messages.map(message => message.content).join('\n');
     const text = joinSections([

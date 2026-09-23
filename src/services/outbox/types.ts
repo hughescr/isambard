@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { serializedDiscordPayloadSchema } from './discord-payload';
+import { channelIdSchema } from '@/config';
 import { epochSecondsSchema } from '@/storage';
 
 const outboxItemTypeSchema = z.enum([
@@ -28,7 +29,7 @@ export const outboxItemSchema = z.object({
     createdAt:   z.iso.datetime(),
     type:        outboxItemTypeSchema,
     service:     z.enum(['discord']),
-    destination: z.string(),
+    destination: channelIdSchema,
     payload:     outboxPayloadSchema,
     priority:    outboxPrioritySchema,
     dedupeKey:   z.string(),

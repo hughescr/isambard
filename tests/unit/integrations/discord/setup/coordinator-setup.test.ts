@@ -212,7 +212,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
             envelopeId: 'env-999', kind: 'discord', channelId: '123', text: 'hello',
         }));
         expect(deliver).toHaveBeenCalledWith('env-999', expect.any(Function));
-        expect(deliveredPayloads).toEqual([{ kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] }]);
+        expect(deliveredPayloads).toEqual([{ kind: 'committed', disposition: 'sent', channelId: createChannelId('channel-1'), messageIds: [] }]);
         expect(addRecentChannel).toHaveBeenCalledWith('123');
     });
 
@@ -587,8 +587,8 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         }, discordMessage, batch);
 
         expect(deliverCalls).toEqual([
-            { kind: 'committed', disposition: 'sent', channelId: 'channel-1', messageIds: [] },
-            { kind: 'committed', disposition: 'queued', channelId: 'channel-1', outboxIds: ['outbox-1'] },
+            { kind: 'committed', disposition: 'sent', channelId: createChannelId('channel-1'), messageIds: [] },
+            { kind: 'committed', disposition: 'queued', channelId: createChannelId('channel-1'), outboxIds: ['outbox-1'] },
             { kind: 'skipped', reason: 'no-response' },
         ]);
     });

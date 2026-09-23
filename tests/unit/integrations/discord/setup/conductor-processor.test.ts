@@ -224,8 +224,8 @@ describe('createConductorProcessor', () => {
         expect(conductor.submitCalls).toHaveLength(1);
         const { envelope, options } = conductor.submitCalls[0];
         expect(envelope.kind).toBe('discord');
-        expect(envelope.channelId).toBe('chan-1');
-        expect(envelope.authorId).toBe('user-1');
+        expect(envelope.channelId).toBe(createChannelId('chan-1'));
+        expect(envelope.authorId).toBe(createUserId('user-1'));
         expect(envelope.text).toContain('general');
         expect(options).toMatchObject({ priority: 'urgent', requestingChannelId: 'chan-1' });
         expect(contextPolicy.shouldInjectUserMemory).toHaveBeenCalledWith('user-1', '');

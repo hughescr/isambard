@@ -16,6 +16,7 @@ import * as frames from '../../helpers/sdk-frames';
 import { mockLogger } from '../../setup';
 import { DEFAULT_STEP_PERCENT, createLedgerStore, formatTimeHeader, type ContextBuilder, type DiscordQueryEnvelope, type Envelope, type QueryEnvelope, type QuotaFetch, type QuotaFetchResponse, type TimeHeaderProvider } from '@/agent';
 import type { JournalEntry } from '@/agent/session/types';
+import { createChannelId, createUserId, type UserId } from '@/agent/types';
 import * as mcpServersModule from '@/app/mcp-servers';
 import type { McpSharedDeps } from '@/app/mcp-servers';
 import { createConversationConductor, createPerchConductor, createSessionAmbience, type CreateConversationConductorParams, type CreatePerchConductorParams, type SessionAmbience } from '@/app/sessions';
@@ -454,9 +455,9 @@ describe('createConversationConductor', () => {
 
         const submitPromise = conductor.submit(
             {
-                id: 'env-1', mode: 'query', kind: 'discord', text: 'hi', channelId: 'chan-1', authorId: 'user-42', origin: { kind: 'human' }, createdAt: new Date(0),
+                id: 'env-1', mode: 'query', kind: 'discord', text: 'hi', channelId: createChannelId('chan-1'), authorId: createUserId('user-42'), origin: { kind: 'human' }, createdAt: new Date(0),
             },
-            { priority: 'urgent', requestingChannelId: 'chan-1' }
+            { priority: 'urgent', requestingChannelId: createChannelId('chan-1') }
         );
         await flush();
         h.instances[0].emit(frames.resultSuccess());
@@ -1010,14 +1011,14 @@ describe('createConversationConductor', () => {
             h.instances[0].emit(frames.init('sess-1'));
             await openPromise;
 
-            async function submitDiscord(authorId: string | undefined, envelopeId: string): Promise<void> {
+            async function submitDiscord(authorId: UserId | undefined, envelopeId: string): Promise<void> {
                 const submitPromise = conductor.submit(
                     {
-                        // An authorless discord envelope is unrepresentable since #60; the assertion
-                        // keeps pinning recordRecentAuthor's own undefined guard at runtime.
-                        id: envelopeId, mode: 'query', kind: 'discord', text: 'hi', channelId: 'chan-1', authorId: authorId!, origin: { kind: 'human' }, createdAt: new Date(0),
+                        // Replayed Discord envelopes can lack the historical author's ID;
+                        // this pins recordRecentAuthor's undefined guard.
+                        id: envelopeId, mode: 'query', kind: 'discord', text: 'hi', channelId: createChannelId('chan-1'), authorId: authorId!, origin: { kind: 'human' }, createdAt: new Date(0),
                     },
-                    { priority: 'urgent', requestingChannelId: 'chan-1' }
+                    { priority: 'urgent', requestingChannelId: createChannelId('chan-1') }
                 );
                 await flush();
                 h.instances[0].emit(frames.resultSuccess());
@@ -1028,7 +1029,7 @@ describe('createConversationConductor', () => {
                 const submitPromise = conductor.submit(
                     {
                         // `task` is the one non-discord contract that carries an author.
-                        id: envelopeId, mode: 'query', kind: 'task', text: 'note', authorId: 'user-NON-DISCORD', createdAt: new Date(0),
+                        id: envelopeId, mode: 'query', kind: 'task', text: 'note', authorId: createUserId('user-NON-DISCORD'), createdAt: new Date(0),
                     },
                     { priority: 'normal' }
                 );
@@ -1056,9 +1057,9 @@ describe('createConversationConductor', () => {
             const { submitDiscord, submitNonDiscord, freshFallbackBundle } = await openForAuthors(h);
 
             // 'user-A' appears twice — dedupe should keep it once, most recent.
-            await submitDiscord('user-A', 'env-A1');
-            await submitDiscord('user-B', 'env-B1');
-            await submitDiscord('user-A', 'env-A2');
+            await submitDiscord(createUserId('user-A'), 'env-A1');
+            await submitDiscord(createUserId('user-B'), 'env-B1');
+            await submitDiscord(createUserId('user-A'), 'env-A2');
             // A non-discord envelope must not be recorded as a recent author.
             await submitNonDiscord('env-notify-1');
             // An undefined authorId must not blow up or be recorded.
@@ -1077,12 +1078,12 @@ describe('createConversationConductor', () => {
             const h = build();
             const { submitDiscord, freshFallbackBundle } = await openForAuthors(h);
 
-            await submitDiscord('user-A', 'env-A1');
-            await submitDiscord('user-B', 'env-B1');
+            await submitDiscord(createUserId('user-A'), 'env-A1');
+            await submitDiscord(createUserId('user-B'), 'env-B1');
             // Fill past the 10-entry cap.
             for(let i = 0; i < 10; i += 1) {
                 // eslint-disable-next-line no-await-in-loop -- sequential submits against one fake session, deliberately serialised
-                await submitDiscord(`user-${i}`, `env-${i}`);
+                await submitDiscord(createUserId(`user-${i}`), `env-${i}`);
             }
 
             const bundle = await freshFallbackBundle();
@@ -1120,7 +1121,7 @@ describe('createConversationConductor', () => {
 
         function discordEnvelope(overrides: Partial<DiscordQueryEnvelope> = {}): DiscordQueryEnvelope {
             return {
-                id: 'discord-1', mode: 'query', kind: 'discord', text: 'hello', channelId: 'chan-C', authorId: 'user-U', origin: { kind: 'human' }, createdAt: new Date(0), ...overrides,
+                id: 'discord-1', mode: 'query', kind: 'discord', text: 'hello', channelId: createChannelId('chan-C'), authorId: createUserId('user-U'), origin: { kind: 'human' }, createdAt: new Date(0), ...overrides,
             };
         }
 
@@ -1152,7 +1153,7 @@ describe('createConversationConductor', () => {
             expect(postToolUseHook).toBeDefined();
             expect(userPromptSubmitHook).toBeDefined();
 
-            const discordResult = conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: 'chan-C' });
+            const discordResult = conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: createChannelId('chan-C') });
             await flush();
 
             await postToolUseHook?.(postToolUseInput(), undefined, { signal: new AbortController().signal });
@@ -1162,14 +1163,14 @@ describe('createConversationConductor', () => {
             await flush();
 
             expect(h.journal.byKind('task_launched')).toEqual([
-                expect.objectContaining({ taskId: 'agent-X', toolUseId: 'tool-T', channelId: 'chan-C', authorId: 'user-U' }),
+                expect.objectContaining({ taskId: 'agent-X', toolUseId: 'tool-T', channelId: createChannelId('chan-C'), authorId: createUserId('user-U') }),
             ]);
 
             await userPromptSubmitHook?.(userPromptSubmitInput(), undefined, { signal: new AbortController().signal });
             h.instances[0].emit(frames.assistantText('done here'));
             await flush();
 
-            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'task', channelId: 'chan-C' });
+            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'task', channelId: createChannelId('chan-C') });
 
             h.instances[0].emit(frames.resultSuccess({ result: 'done here' }));
             await flush();
@@ -1182,7 +1183,7 @@ describe('createConversationConductor', () => {
             const h = build();
             jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
             h.journal.scriptReadSince([
-                { type: 'task_launched', at: new Date(0), taskId: 'seed-task', toolUseId: 'seed-tool', toolName: 'Agent', envelopeId: 'seed-env', kind: 'discord', channelId: 'seeded-chan', authorId: 'seeded-user' },
+                { type: 'task_launched', at: new Date(0), taskId: 'seed-task', toolUseId: 'seed-tool', toolName: 'Agent', envelopeId: 'seed-env', kind: 'discord', channelId: createChannelId('seeded-chan'), authorId: createUserId('seeded-user') },
             ]);
 
             const { conductor } = await createConversationConductor(h.params);
@@ -1195,7 +1196,7 @@ describe('createConversationConductor', () => {
             h.instances[0].emit(frames.assistantText('seeded summary'));
             await flush();
 
-            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'task', channelId: 'seeded-chan' });
+            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'task', channelId: createChannelId('seeded-chan') });
         });
 
         it('setWakeTurnDelivery(fn) delivers a settled wake turn to the attached function instead of warning', async () => {
@@ -2170,7 +2171,7 @@ describe('createPerchConductor', () => {
             jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
             h.journal.scriptReadSince([
                 {
-                    type: 'task_launched', at: new Date(0), taskId: 'seed-task', toolUseId: 'seed-tool', toolName: 'Agent', envelopeId: 'seed-env', kind: 'perch', channelId: 'seeded-chan', authorId: 'seeded-user',
+                    type: 'task_launched', at: new Date(0), taskId: 'seed-task', toolUseId: 'seed-tool', toolName: 'Agent', envelopeId: 'seed-env', kind: 'perch', channelId: createChannelId('seeded-chan'), authorId: createUserId('seeded-user'),
                 },
             ]);
 
@@ -2197,7 +2198,7 @@ describe('createPerchConductor', () => {
             // actually populated the registry — an unseeded lookup would carry neither.
             expect(delivery).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    kind: 'perch', text: 'perch task done', channelId: 'seeded-chan', authorId: 'seeded-user',
+                    kind: 'perch', text: 'perch task done', channelId: createChannelId('seeded-chan'), authorId: createUserId('seeded-user'),
                 }),
                 expect.objectContaining({ response: 'perch task done' })
             );

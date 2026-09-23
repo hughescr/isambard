@@ -3,7 +3,7 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Conductor } from '../../../../src/agent/session/conductor';
 import { buildBootEnvelope, buildCompactEnvelope, buildPeerEnvelope } from '../../../../src/agent/session/envelope';
 import { ENVELOPE_KINDS, type Envelope, type EnvelopeMeta, type JournalEntry, type SessionQuery } from '../../../../src/agent/session/types';
-import type { SystemEvent } from '../../../../src/agent/types';
+import { createChannelId, createUserId, type SystemEvent } from '../../../../src/agent/types';
 // @ts-expect-error -- McpServerRole was retired in favour of the shared SessionRole
 import type { McpServerRole } from '../../../../src/app';
 // @ts-expect-error -- PresenceRole was retired in favour of the shared SessionRole
@@ -107,7 +107,7 @@ describe('envelope contracts (#60)', () => {
     it('rejects a discord envelope carrying peer metadata', () => {
         // @ts-expect-error -- peer metadata belongs only to the adopted peer contract
         const discordWithPeer: Envelope = {
-            id: 'd1', mode: 'query', kind: 'discord', text: 't', channelId: 'c', authorId: 'a', origin: { kind: 'human' }, createdAt, peer: { from: 'uds:/tmp/cc-socks/1.sock' },
+            id: 'd1', mode: 'query', kind: 'discord', text: 't', channelId: createChannelId('c'), authorId: createUserId('a'), origin: { kind: 'human' }, createdAt, peer: { from: 'uds:/tmp/cc-socks/1.sock' },
         };
 
         expect<unknown>(discordWithPeer).toHaveProperty('peer');
@@ -122,8 +122,16 @@ describe('envelope contracts (#60)', () => {
         expect<unknown>(queryingBoot).toHaveProperty('mode', 'query');
     });
 
-    it('rejects a discord envelope without its channel, author and human origin', () => {
-        // @ts-expect-error -- a discord envelope always carries its channel, author and human origin
+    it('allows a replayed discord envelope without an author ID', () => {
+        const replay: Envelope = {
+            id: 'd2', mode: 'query', kind: 'discord', text: 't', channelId: createChannelId('c'), origin: { kind: 'human' }, createdAt,
+        };
+
+        expect(replay).not.toHaveProperty('authorId');
+    });
+
+    it('rejects a discord envelope without its channel and human origin', () => {
+        // @ts-expect-error -- a discord envelope always carries its channel and human origin
         const sourcelessDiscord: Envelope = {
             id: 'd2', mode: 'query', kind: 'discord', text: 't', createdAt,
         };
@@ -147,7 +155,7 @@ describe('EnvelopeMeta', () => {
             id:        'e1',
             kind:      'perch',
             queuedAt:  new Date('2026-09-04T12:00:00Z'),
-            channelId: 'chan-1',
+            channelId: createChannelId('chan-1'),
             perch:     { slot: 'evening', endsAt: new Date('2026-09-04T19:45:00Z') },
         };
 

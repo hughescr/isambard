@@ -1,10 +1,21 @@
 import { describe, test, expect, mock } from 'bun:test';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type Client, type Message, type TextChannel } from 'discord.js';
+import { createChannelId } from '../../../../src/agent/types';
 import { ChannelNotFoundByIdError } from '../../../../src/errors';
-import { DiscordCapabilityImpl, type DiscordCapabilityDeps, type DiscordCapabilityLogger, type SendOptions } from '../../../../src/integrations/discord/capability';
+import { DiscordCapabilityImpl, type DiscordCapability, type DiscordCapabilityDeps, type DiscordCapabilityLogger, type SendOptions } from '../../../../src/integrations/discord/capability';
 import { createOutboxReplayDeliverFn } from '../../../../src/integrations/discord/outbox-replay';
 import type { ServiceHealthRegistry } from '../../../../src/services/health-registry';
 import type { OutboxBackend, OutboxItem } from '../../../../src/services/outbox';
+
+describe('DiscordCapability ID contracts', () => {
+    test('rejects unvalidated strings for both send and fetch', () => {
+        // @ts-expect-error -- the send port requires a validated ChannelId
+        const sendId: Parameters<DiscordCapability['sendToChannel']>[0] = 'raw';
+        // @ts-expect-error -- the fetch port requires a validated ChannelId
+        const fetchId: Parameters<DiscordCapability['fetchChannel']>[0] = 'raw';
+        expect([String(sendId), String(fetchId)]).toEqual(['raw', 'raw']);
+    });
+});
 
 // ---- factory helpers ----
 
@@ -41,7 +52,7 @@ function makeOutboxItem(overrides: Partial<OutboxItem>): OutboxItem {
         createdAt:   '2026-09-22T12:00:00.000Z',
         type:        'email_approval',
         service:     'discord',
-        destination: 'ch-1',
+        destination: createChannelId('ch-1'),
         payload:     {},
         priority:    'medium',
         dedupeKey:   'dedupe',
@@ -123,7 +134,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap } = makeCapability(true);
         cap.setClient(client);
 
-        const result = await cap.sendToChannel('channel-1', 'Hello world');
+        const result = await cap.sendToChannel(createChannelId('channel-1'), 'Hello world');
         expect(result.status).toBe('sent');
         if(result.status === 'sent') {
             expect(result.message).toBe(sentMessage);
@@ -138,7 +149,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         cap.setClient(client);
 
         const content = { content: 'text', embeds: [], components: [] };
-        const result  = await cap.sendToChannel('channel-1', content);
+        const result  = await cap.sendToChannel(createChannelId('channel-1'), content);
         expect(result.status).toBe('sent');
     });
 
@@ -147,7 +158,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap } = makeCapability(true);
         cap.setClient(client);
 
-        const result = await cap.sendToChannel('channel-1', 'Hi');
+        const result = await cap.sendToChannel(createChannelId('channel-1'), 'Hi');
         expect(result.status).toBe('unavailable');
     });
 
@@ -158,7 +169,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap } = makeCapability(true);
         cap.setClient(client);
 
-        const result = await cap.sendToChannel('channel-1', 'Hi');
+        const result = await cap.sendToChannel(createChannelId('channel-1'), 'Hi');
         expect(result.status).toBe('unavailable');
     });
 
@@ -171,7 +182,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap, logger } = makeCapability(true, outbox);
         cap.setClient(client);
 
-        const result = await cap.sendToChannel('channel-1', 'Hello');
+        const result = await cap.sendToChannel(createChannelId('channel-1'), 'Hello');
         expect(result.status).toBe('queued');
         expect(outbox.enqueue).toHaveBeenCalledTimes(1);
         expect(logger.warn).toHaveBeenCalledTimes(1);
@@ -183,7 +194,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap } = makeCapability(false, outbox);
         // No client set → not ready
 
-        const result = await cap.sendToChannel('channel-1', 'Hello');
+        const result = await cap.sendToChannel(createChannelId('channel-1'), 'Hello');
         expect(result.status).toBe('queued');
         expect(outbox.enqueue).toHaveBeenCalledTimes(1);
     });
@@ -192,7 +203,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap } = makeCapability(false);
         // No client, no outbox
 
-        const result = await cap.sendToChannel('channel-1', 'Hello');
+        const result = await cap.sendToChannel(createChannelId('channel-1'), 'Hello');
         expect(result.status).toBe('unavailable');
     });
 
@@ -200,7 +211,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
 
-        const result = await cap.sendToChannel('channel-1', 'Hello', { skipOutbox: true });
+        const result = await cap.sendToChannel(createChannelId('channel-1'), 'Hello', { skipOutbox: true });
         expect(result.status).toBe('unavailable');
         expect(outbox.enqueue).not.toHaveBeenCalled();
     });
@@ -214,7 +225,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap } = makeCapability(true, outbox);
         cap.setClient(client);
 
-        const result = await cap.sendToChannel('channel-1', 'Hello', { skipOutbox: true });
+        const result = await cap.sendToChannel(createChannelId('channel-1'), 'Hello', { skipOutbox: true });
         expect(result.status).toBe('unavailable');
         expect(outbox.enqueue).not.toHaveBeenCalled();
     });
@@ -223,19 +234,19 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
 
-        await cap.sendToChannel('my-channel-42', 'Test content');
+        await cap.sendToChannel(createChannelId('my-channel-42'), 'Test content');
         const calls  = (outbox.enqueue as ReturnType<typeof mock>).mock.calls;
         expect(calls).toHaveLength(1);
         const item   = calls[0][0] as OutboxItem;
         expect(item.service).toBe('discord');
-        expect(item.destination).toBe('my-channel-42');
+        expect(item.destination).toBe(createChannelId('my-channel-42'));
     });
 
     test('outbox item default type is agent_response', async () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
 
-        await cap.sendToChannel('ch-1', 'Hello');
+        await cap.sendToChannel(createChannelId('ch-1'), 'Hello');
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.type).toBe('agent_response');
     });
@@ -245,7 +256,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap }  = makeCapability(false, outbox);
         const options: SendOptions = { type: 'perch_output' };
 
-        await cap.sendToChannel('ch-1', 'Hello', options);
+        await cap.sendToChannel(createChannelId('ch-1'), 'Hello', options);
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.type).toBe('perch_output');
     });
@@ -254,7 +265,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
 
-        await cap.sendToChannel('ch-1', 'Hello');
+        await cap.sendToChannel(createChannelId('ch-1'), 'Hello');
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.priority).toBe('medium');
     });
@@ -264,7 +275,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap }  = makeCapability(false, outbox);
         const options: SendOptions = { priority: 'high' };
 
-        await cap.sendToChannel('ch-1', 'Hello', options);
+        await cap.sendToChannel(createChannelId('ch-1'), 'Hello', options);
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.priority).toBe('high');
     });
@@ -273,7 +284,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
 
-        await cap.sendToChannel('ch-1', 'Hello');
+        await cap.sendToChannel(createChannelId('ch-1'), 'Hello');
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.id).toMatch(/^[0-9a-f-]{36}$/u);
         expect(new Date(item.createdAt).toISOString()).toBe(item.createdAt);
@@ -284,7 +295,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap }  = makeCapability(false, outbox);
         const options: SendOptions = { epoch: 5 };
 
-        await cap.sendToChannel('ch-1', 'Hello', options);
+        await cap.sendToChannel(createChannelId('ch-1'), 'Hello', options);
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.epoch).toBe(5);
     });
@@ -293,7 +304,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
 
-        await cap.sendToChannel('ch-1', 'Hello');
+        await cap.sendToChannel(createChannelId('ch-1'), 'Hello');
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.epoch).toBe(0);
     });
@@ -302,7 +313,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
 
-        await cap.sendToChannel('ch-1', 'Hello');
+        await cap.sendToChannel(createChannelId('ch-1'), 'Hello');
 
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.dedupeKey).toMatch(/^[0-9a-f-]{36}$/u);
@@ -313,7 +324,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const { cap }  = makeCapability(false, outbox);
         const options: SendOptions = { dedupeKey: 'my-custom-key' };
 
-        await cap.sendToChannel('ch-1', 'Hello', options);
+        await cap.sendToChannel(createChannelId('ch-1'), 'Hello', options);
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.dedupeKey).toBe('my-custom-key');
     });
@@ -322,7 +333,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
 
-        await cap.sendToChannel('ch-1', 'my text content');
+        await cap.sendToChannel(createChannelId('ch-1'), 'my text content');
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.payload.text).toBe('my text content');
     });
@@ -335,7 +346,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
             new ButtonBuilder().setCustomId('approve').setLabel('Approve').setStyle(ButtonStyle.Success)
         );
 
-        await cap.sendToChannel('ch-1', { content: 'object text', embeds: [embed], components: [row] });
+        await cap.sendToChannel(createChannelId('ch-1'), { content: 'object text', embeds: [embed], components: [row] });
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.payload.text).toBe('object text');
         expect(item.payload.embeds).toEqual([embed.toJSON()]);
@@ -346,7 +357,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
 
-        await cap.sendToChannel('ch-1', { content: 'object text' });
+        await cap.sendToChannel(createChannelId('ch-1'), { content: 'object text' });
 
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.payload).toEqual({ text: 'object text' });
@@ -358,7 +369,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const outbox  = makeOutboxBackend();
         const { cap } = makeCapability(false, outbox);
 
-        const result = await cap.sendToChannel('ch-1', 'Hello');
+        const result = await cap.sendToChannel(createChannelId('ch-1'), 'Hello');
         const item   = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(result.status).toBe('queued');
         if(result.status === 'queued') {
@@ -375,7 +386,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const outbox = { enqueue: mock(() => enqueueRejection) } as unknown as OutboxBackend;
         const { cap } = makeCapability(false, outbox);
 
-        await expect(cap.sendToChannel('ch-1', 'Hello')).rejects.toThrow('outbox down');
+        await expect(cap.sendToChannel(createChannelId('ch-1'), 'Hello')).rejects.toThrow('outbox down');
     });
 
     test('queues builder content as JSON-serialisable Discord API data', async () => {
@@ -386,7 +397,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
             new ButtonBuilder().setCustomId('approve').setLabel('Approve').setStyle(ButtonStyle.Success)
         );
 
-        await cap.sendToChannel('ch-1', { embeds: [embed], components: [row] });
+        await cap.sendToChannel(createChannelId('ch-1'), { embeds: [embed], components: [row] });
 
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.payload.embeds).toEqual([embed.toJSON()]);
@@ -484,7 +495,7 @@ describe('DiscordCapabilityImpl.fetchChannel', () => {
         const { cap } = makeCapability(true);
         cap.setClient(client);
 
-        const result = await cap.fetchChannel('ch-1');
+        const result = await cap.fetchChannel(createChannelId('ch-1'));
         expect(result).toBe(channel);
     });
 
@@ -494,7 +505,7 @@ describe('DiscordCapabilityImpl.fetchChannel', () => {
         const { cap } = makeCapability(true);
         cap.setClient(client);
 
-        const result = await cap.fetchChannel('ch-1');
+        const result = await cap.fetchChannel(createChannelId('ch-1'));
         expect(result).toBeNull();
     });
 
@@ -502,7 +513,7 @@ describe('DiscordCapabilityImpl.fetchChannel', () => {
         const { cap } = makeCapability(true);
         // No setClient called
 
-        const result = await cap.fetchChannel('ch-1');
+        const result = await cap.fetchChannel(createChannelId('ch-1'));
         expect(result).toBeNull();
     });
 
@@ -512,7 +523,7 @@ describe('DiscordCapabilityImpl.fetchChannel', () => {
         const { cap } = makeCapability(false);
         cap.setClient(client);
 
-        const result = await cap.fetchChannel('ch-1');
+        const result = await cap.fetchChannel(createChannelId('ch-1'));
         expect(result).toBeNull();
     });
 
@@ -527,7 +538,7 @@ describe('DiscordCapabilityImpl.fetchChannel', () => {
         const { cap, logger } = makeCapability(true);
         cap.setClient(errorClient);
 
-        const result = await cap.fetchChannel('ch-1');
+        const result = await cap.fetchChannel(createChannelId('ch-1'));
         expect(result).toBeNull();
         expect(logger.warn).toHaveBeenCalledWith({ error: 'network error', channelId: 'ch-1' }, 'Discord fetchChannel failed, returning null');
     });
@@ -543,7 +554,7 @@ describe('DiscordCapabilityImpl.fetchChannel', () => {
         const { cap, logger } = makeCapability(true);
         cap.setClient(errorClient);
 
-        await cap.fetchChannel('ch-1');
+        await cap.fetchChannel(createChannelId('ch-1'));
         expect(logger.warn).toHaveBeenCalledTimes(1);
     });
 
@@ -553,7 +564,7 @@ describe('DiscordCapabilityImpl.fetchChannel', () => {
         const { cap } = makeCapability(true);
         cap.setClient(client);
 
-        await cap.fetchChannel('ch-42');
+        await cap.fetchChannel(createChannelId('ch-42'));
         expect(client.channels.fetch).toHaveBeenCalledWith('ch-42');
     });
 });

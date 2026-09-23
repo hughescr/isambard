@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { channelIdSchema } from '@/config';
 import { serializedDiscordPayloadSchema } from '@/services/outbox/discord-payload';
 import { outboxItemSchema, type OutboxItem } from '@/services/outbox/types';
 
@@ -15,6 +16,12 @@ const validItem = {
 };
 
 describe('outboxItemSchema', () => {
+    test('accepts a nonempty branded destination and rejects an empty destination', () => {
+        const valid = outboxItemSchema.parse({ ...validItem, epoch: 0 });
+        expect(valid.destination).toBe(channelIdSchema.parse('channel-123'));
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, destination: '' }).success).toBe(false);
+    });
+
     test('accepts epoch zero and rejects negative epochs', () => {
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0 }).success).toBe(true);
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: -1 }).success).toBe(false);

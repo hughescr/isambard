@@ -14,6 +14,7 @@ import type { Client } from 'discord.js';
 import { makeHealthRegistry } from '../../../../helpers/fake-health-registry';
 import { mockLogger } from '../../../../setup';
 import type { NotifyParams } from '@/agent';
+import { createChannelId } from '@/agent/types';
 import { ChannelNotAccessibleError } from '@/errors';
 import { createAtUri, createCid, type BlueskyClient } from '@/integrations/bsky';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
@@ -50,7 +51,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
             docClient:             makeMockDocClient(),
             tableName:             'test-table',
             client:                {} as unknown as Client,
-            adminDiscordChannelId: 'admin-channel-id',
+            adminDiscordChannelId: createChannelId('admin-channel-id'),
             approvalSagaBackend:   {} as unknown as ApprovalSagaBackend,
             personAllowlist:       {
                 isAllowed:       mock((_platform: string, _value: string) => false),
@@ -241,7 +242,7 @@ describe('setupBsky — Q8 DM poller and notify threading', () => {
             docClient:             makeMockDocClient(),
             tableName:             'test-table',
             client:                {} as unknown as Client,
-            adminDiscordChannelId: 'admin-channel-id',
+            adminDiscordChannelId: createChannelId('admin-channel-id'),
             approvalSagaBackend:   {} as unknown as ApprovalSagaBackend,
             personAllowlist:       {
                 isAllowed:       mock((_platform: string, _value: string) => false),
