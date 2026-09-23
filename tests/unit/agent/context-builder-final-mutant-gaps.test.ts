@@ -138,7 +138,7 @@ describe('context builder final mutation boundaries', () => {
         store.listByLayer = mock(async () => ({ items: [] }));
         const calendarService = {
             registry: { getAllCalendars: mock(async () => [{}]) },
-            client:   { getContextEvents: mock(async () => ({ events: [{ uid: 'event', summary: 'Late event', start: new Date('2026-03-19T06:30:00.000Z'), end: new Date('2026-03-19T07:00:00.000Z'), isAllDay: false, calendarLabel: 'Main' }], failed: [] })) },
+            client:   { getContextEvents: mock(async () => ({ events: [{ uid: 'event', summary: 'Late event', time: { kind: 'timed', start: new Date('2026-03-19T06:30:00.000Z'), end: new Date('2026-03-19T07:00:00.000Z') }, calendarLabel: 'Main' }], failed: [] })) },
         } as unknown as CalendarService;
         const result = await createContextBuilder({ backend: store, calendarService }).buildUserMessagePrefix('u', 'America/Los_Angeles');
         expect(result).toContain('Today (Wed Mar 18)');
@@ -156,7 +156,7 @@ describe('context builder final mutation boundaries', () => {
             registry: { getAllCalendars: mock(async () => [{}]) },
             client:   { getContextEvents: mock(async () => {
                 jest.setSystemTime(new Date('2026-03-19T00:00:00.000Z'));
-                return { events: [{ uid: 'event', summary: 'Late event', start: new Date('2026-03-18T22:00:00.000Z'), end: new Date('2026-03-18T22:30:00.000Z'), isAllDay: false, calendarLabel: 'Main' }], failed: [] };
+                return { events: [{ uid: 'event', summary: 'Late event', time: { kind: 'timed', start: new Date('2026-03-18T22:00:00.000Z'), end: new Date('2026-03-18T22:30:00.000Z') }, calendarLabel: 'Main' }], failed: [] };
             }) },
         } as unknown as CalendarService;
 

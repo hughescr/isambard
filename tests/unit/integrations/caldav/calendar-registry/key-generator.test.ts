@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'bun:test';
+import { ZodError } from 'zod';
 import { CalendarRegistryKeyGenerator } from '@/integrations/caldav/calendar-registry/key-generator';
 
 describe('CalendarRegistryKeyGenerator', () => {
@@ -46,29 +47,56 @@ describe('CalendarRegistryKeyGenerator', () => {
         });
     });
 
-    describe('parseUserId', () => {
-        it('should parse valid PK correctly', () => {
-            const userId = CalendarRegistryKeyGenerator.parseUserId('CALCAL#user-123');
-
-            expect(userId).toBe('user-123');
+    describe('createKeys', () => {
+        it('encodes a personal scope as CALCAL#{userId}', () => {
+            expect(CalendarRegistryKeyGenerator.createKeys({ kind: 'personal', userId: 'u1' })).toEqual({ PK: 'CALCAL#u1', SK: 'CALENDARS' });
         });
 
-        it('should parse long user ID correctly', () => {
+        it('encodes the shared scope as the unchanged CALCAL#SHARED key', () => {
+            expect(CalendarRegistryKeyGenerator.createKeys({ kind: 'shared' })).toEqual({ PK: 'CALCAL#SHARED', SK: 'CALENDARS' });
+        });
+
+        it('rejects a personal user ID that would collide with the shared key', () => {
+            const collide = (): void => {
+                CalendarRegistryKeyGenerator.createUserKeys('SHARED');
+            };
+            expect(collide).toThrow('Personal user ID SHARED collides with the shared registry key');
+            expect(collide).toThrow(expect.objectContaining({ context: expect.objectContaining({ location: 'CalendarRegistryKeyGenerator.createKeys' }) }));
+        });
+
+        it('rejects an empty personal user ID', () => {
+            expect(() => CalendarRegistryKeyGenerator.createUserKeys('')).toThrow(ZodError);
+        });
+    });
+
+    describe('legacyUserId', () => {
+        it('writes SHARED for the shared scope and the user ID for a personal scope', () => {
+            expect(CalendarRegistryKeyGenerator.legacyUserId({ kind: 'shared' })).toBe('SHARED');
+            expect(CalendarRegistryKeyGenerator.legacyUserId({ kind: 'personal', userId: 'u1' })).toBe('u1');
+        });
+    });
+
+    describe('parseScope', () => {
+        it('decodes CALCAL#SHARED to the shared scope', () => {
+            expect(CalendarRegistryKeyGenerator.parseScope('CALCAL#SHARED')).toEqual({ kind: 'shared' });
+        });
+
+        it('decodes CALCAL#u1 to a personal scope', () => {
+            expect(CalendarRegistryKeyGenerator.parseScope('CALCAL#u1')).toEqual({ kind: 'personal', userId: 'u1' });
+        });
+
+        it('decodes a long user ID correctly', () => {
             const longUserId = 'user-1234567890-abcdef';
-            const userId = CalendarRegistryKeyGenerator.parseUserId(`CALCAL#${longUserId}`);
-
-            expect(userId).toBe(longUserId);
+            expect(CalendarRegistryKeyGenerator.parseScope(`CALCAL#${longUserId}`)).toEqual({ kind: 'personal', userId: longUserId });
         });
 
-        it('should handle empty userId portion', () => {
-            const userId = CalendarRegistryKeyGenerator.parseUserId('CALCAL#');
-
-            expect(userId).toBe('');
+        it('rejects an empty personal identifier', () => {
+            expect(() => CalendarRegistryKeyGenerator.parseScope('CALCAL#')).toThrow(ZodError);
         });
 
         it('should throw error for invalid PK prefix', () => {
             const parseInvalidPrefix = (): void => {
-                CalendarRegistryKeyGenerator.parseUserId('INVALID#user-123');
+                CalendarRegistryKeyGenerator.parseScope('INVALID#user-123');
             };
 
             expect(parseInvalidPrefix).toThrow('Invalid PK format: expected CALCAL#..., got INVALID#user-123');
@@ -76,27 +104,38 @@ describe('CalendarRegistryKeyGenerator', () => {
                 parseInvalidPrefix();
             } catch (error) {
                 expect(error).toMatchObject({
-                    context: { location: 'CalendarRegistryKeyGenerator.parseUserId' },
+                    context: { location: 'CalendarRegistryKeyGenerator.parseScope' },
                 });
             }
         });
 
         it('should throw error for missing prefix', () => {
             expect(() => {
-                CalendarRegistryKeyGenerator.parseUserId('user-123');
+                CalendarRegistryKeyGenerator.parseScope('user-123');
             }).toThrow('Invalid PK format: expected CALCAL#..., got user-123');
         });
 
         it('should throw error for lowercase prefix', () => {
             expect(() => {
-                CalendarRegistryKeyGenerator.parseUserId('calcal#user-123');
+                CalendarRegistryKeyGenerator.parseScope('calcal#user-123');
             }).toThrow('Invalid PK format: expected CALCAL#..., got calcal#user-123');
         });
 
         it('rejects a key whose expected prefix appears only in the value', () => {
-            expect(() => CalendarRegistryKeyGenerator.parseUserId('OTHER#CALCAL#user-123')).toThrow(
-                expect.objectContaining({ context: expect.objectContaining({ location: 'CalendarRegistryKeyGenerator.parseUserId' }) })
+            expect(() => CalendarRegistryKeyGenerator.parseScope('OTHER#CALCAL#user-123')).toThrow(
+                expect.objectContaining({ context: expect.objectContaining({ location: 'CalendarRegistryKeyGenerator.parseScope' }) })
             );
+        });
+    });
+
+    describe('scope codec', () => {
+        it('round trips distinct personal and shared scopes', () => {
+            expect(CalendarRegistryKeyGenerator.parseScope(CalendarRegistryKeyGenerator.createKeys({ kind: 'personal', userId: 'u1' }).PK)).toEqual({ kind: 'personal', userId: 'u1' });
+            expect(CalendarRegistryKeyGenerator.parseScope(CalendarRegistryKeyGenerator.createKeys({ kind: 'shared' }).PK)).toEqual({ kind: 'shared' });
+        });
+
+        it('round trips a personal user ID containing the key separator', () => {
+            expect(CalendarRegistryKeyGenerator.parseScope(CalendarRegistryKeyGenerator.createUserKeys('a#b').PK)).toEqual({ kind: 'personal', userId: 'a#b' });
         });
     });
 
@@ -119,12 +158,11 @@ describe('CalendarRegistryKeyGenerator', () => {
     });
 
     describe('round-trip consistency', () => {
-        it('should maintain userId through createUserKeys and parseUserId', () => {
+        it('should maintain userId through createUserKeys and parseScope', () => {
             const originalUserId = 'user-abc-123';
             const keys = CalendarRegistryKeyGenerator.createUserKeys(originalUserId);
-            const parsedUserId = CalendarRegistryKeyGenerator.parseUserId(keys.PK);
 
-            expect(parsedUserId).toBe(originalUserId);
+            expect(CalendarRegistryKeyGenerator.parseScope(keys.PK)).toEqual({ kind: 'personal', userId: originalUserId });
         });
 
         it('should identify shared keys created by createSharedKeys', () => {

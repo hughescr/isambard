@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { formatCalendarContext } from '@/integrations/caldav/formatter';
-import { type CalendarEvent } from '@/integrations/caldav/types';
+import { createLocalDate, createLocalDateTime, type CalendarEvent } from '@/integrations/caldav/types';
 
 const TZ = 'America/Los_Angeles';
 
@@ -8,18 +8,54 @@ const TZ = 'America/Los_Angeles';
 // Test mock uses fixed offsets: LA=UTC-8 (PST), ET=UTC-5 (EST)
 const NOW = new Date('2026-03-18T18:00:00Z');
 
-function makeEvent(overrides: Partial<CalendarEvent> & Pick<CalendarEvent, 'summary' | 'start' | 'end'>): CalendarEvent {
+function makeEvent(overrides: Partial<CalendarEvent> & { summary: string, start: Date, end: Date, isAllDay?: boolean, timezone?: string }): CalendarEvent {
+    const { start, end, isAllDay, timezone, ...fields } = overrides;
     return {
         uid:           `uid-${overrides.summary}`,
-        isAllDay:      false,
         calendarLabel: 'Work',
-        ...overrides,
+        time:          isAllDay
+            ? { kind: 'all_day', start: createLocalDate(start.toISOString().slice(0, 10)), endExclusive: createLocalDate(end.toISOString().slice(0, 10)) }
+            : { kind: 'timed', start, end, timezone },
+        ...fields,
+    };
+}
+
+function makeFloating(summary: string, start: string, end: string): CalendarEvent {
+    return {
+        uid:           `uid-${summary}`,
+        summary,
+        calendarLabel: 'Work',
+        time:          { kind: 'floating', start: createLocalDateTime(start), end: createLocalDateTime(end) },
     };
 }
 
 describe.concurrent('formatCalendarContext', () => {
     it('returns empty string for empty events array', () => {
         expect(formatCalendarContext([], NOW, TZ)).toBe('');
+    });
+
+    it('keeps a March 1 all-day date on March 1 west of UTC', () => {
+        const event = makeEvent({ summary: 'Date-only', start: new Date('2026-03-01T00:00:00Z'), end: new Date('2026-03-02T00:00:00Z'), isAllDay: true });
+        const result = formatCalendarContext([event], new Date('2026-03-01T18:00:00Z'), TZ);
+        expect(result).toContain('Today (Sun Mar 1)');
+        expect(result).toContain('All day: Date-only');
+        expect(result).not.toContain('Feb 28');
+    });
+
+    it('renders a floating wall-clock time in the display zone with no suffix', () => {
+        const event = makeFloating('Floating', '2026-03-18T09:00:00', '2026-03-18T09:30:00');
+        expect(formatCalendarContext([event], NOW, TZ)).toBe('## Calendar\n### Today (Wed Mar 18)\n- 09:00–09:30 PST: Floating [Work]');
+        expect(formatCalendarContext([event], NOW, 'Asia/Tokyo')).toBe('## Calendar\n### Yesterday (Wed Mar 18)\n- 09:00–09:30 JST: Floating [Work]');
+    });
+
+    it('orders a floating event among timed events by its display-zone start', () => {
+        const events = [
+            makeEvent({ summary: 'Timed 10:00', start: new Date('2026-03-18T18:00:00Z'), end: new Date('2026-03-18T18:30:00Z') }),
+            makeFloating('Floating 09:30', '2026-03-18T09:30:00', '2026-03-18T09:45:00'),
+            makeEvent({ summary: 'Timed 09:00', start: new Date('2026-03-18T17:00:00Z'), end: new Date('2026-03-18T17:30:00Z') }),
+        ];
+        const lines = formatCalendarContext(events, NOW, TZ).split('\n').filter(line => line.startsWith('- '));
+        expect(lines.map(line => line.slice(line.lastIndexOf(': ') + 2))).toEqual(['Timed 09:00 [Work]', 'Floating 09:30 [Work]', 'Timed 10:00 [Work]']);
     });
 
     it('formats a single timed event with 24h time, TZ abbreviation, and UTC suffix', () => {
@@ -332,20 +368,12 @@ describe.concurrent('formatCalendarContext', () => {
 
     it('sorts all-day events by start time and timed events by start time, all-day first', () => {
         // Shuffled input order: timed-late, all-day-A, timed-early, all-day-B
-        // Expected output order: all-day-A (earlier start), all-day-B (later start),
-        //   timed-early, timed-late
+        // Expected output order: all-day-A, all-day-B (both 2026-03-18; equal sort
+        //   positions keep input order), timed-early, timed-late
         //
-        // Crucially, Timed Early (09:00Z) starts BEFORE All Day A (12:00Z), so if
-        // line 52's "return 1" branch is broken (mutated to false/empty), the
-        // getTime() fallthrough sorts Timed Early before All Day A. This catches:
-        //   - Line 52 ConditionalExpression → false
-        //   - Line 52 BooleanLiteral
-        //   - Line 52 BlockStatement → {}
-        //
-        // Also, putting a timed event first (before all-day events) in the input
-        // catches the line 49 LogicalOperator mutant (&&→||): with ||, timed-vs-timed
-        // comparisons short-circuit on !b.isAllDay=true and incorrectly return -1,
-        // producing wrong order [Timed Late, Timed Early, All Day B, All Day A].
+        // Timed Early (09:00Z) starts before any all-day date could be mistaken for an
+        // instant, so all-day ranges must outrank it by variant, not by time; and a
+        // timed event first in the input catches a reversed or summed comparator.
         const events = [
             makeEvent({
                 summary: 'Timed Late',

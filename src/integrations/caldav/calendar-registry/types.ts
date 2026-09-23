@@ -34,9 +34,19 @@ export const calendarServerEntrySchema = z.object({
 
 export type CalendarServerEntry = z.infer<typeof calendarServerEntrySchema>;
 
-// Full registry record for a user
+/**
+ * Who a registry record belongs to: one user, or every user (shared/public calendars). The
+ * persisted form lives in the key generator: the record's PK encodes the scope and is authoritative.
+ */
+export const calendarRegistryScopeSchema = z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('personal'), userId: z.string().min(1) }),
+    z.strictObject({ kind: z.literal('shared') }),
+]);
+export type CalendarRegistryScope = z.infer<typeof calendarRegistryScopeSchema>;
+
+// Full registry record for either scope
 export const calendarRegistryRecordSchema = z.object({
-    userId:    z.string().min(1),
+    scope:     calendarRegistryScopeSchema,
     servers:   z.array(calendarServerEntrySchema),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),

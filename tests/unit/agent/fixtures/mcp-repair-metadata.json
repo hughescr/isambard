@@ -1,10 +1,10 @@
 {
   "caldav": {
     "name": "caldav",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "tools": {
       "getCalendarEvents": {
-        "description": "Get calendar events for a user in a specific date range. Returns events from all calendars associated with the user plus shared/public calendars.",
+        "description": "Get calendar events for a user in a specific date range, including shared calendars. Each event.time is all_day (dates, exclusive end), floating (zone-less local times), or timed (ISO instants and source timezone).",
         "annotations": {
           "title": "Get Calendar Events",
           "readOnlyHint": true,
@@ -23,7 +23,7 @@
         }
       },
       "getUpcomingEvents": {
-        "description": "Get upcoming calendar events for a user over the next N days. Convenience wrapper that defaults to 7 days.",
+        "description": "Get upcoming calendar events over the next N days (default 7). Each event.time is all_day (dates, exclusive end), floating (zone-less local times), or timed (ISO instants and source timezone).",
         "annotations": {
           "title": "Get Upcoming Events",
           "readOnlyHint": true,

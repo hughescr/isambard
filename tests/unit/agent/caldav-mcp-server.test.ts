@@ -4,7 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { createCaldavMCPServer, type UserResolveResult } from '../../../src/agent/caldav-mcp-server';
-import type { CalDAVClient, CalendarRegistryBackend, CalendarEvent, CalendarEventsResult } from '../../../src/integrations/caldav';
+import { createLocalDate, createLocalDateTime, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, type CalendarEventsResult } from '../../../src/integrations/caldav';
 import type { CalendarServerEntry } from '../../../src/integrations/caldav/calendar-registry/types';
 import { textContent } from '../../setup';
 
@@ -28,15 +28,16 @@ const mockServerEntry = (overrides: Partial<CalendarServerEntry> = {}): Calendar
     ...overrides,
 });
 
-const mockEvent = (overrides: Partial<CalendarEvent> = {}): CalendarEvent => ({
-    uid:           'event-uid-1',
-    summary:       'Team standup',
-    start:         new Date('2026-03-18T09:00:00.000Z'),
-    end:           new Date('2026-03-18T09:30:00.000Z'),
-    isAllDay:      false,
-    calendarLabel: 'Home',
-    ...overrides,
-});
+const mockEvent = (overrides: Partial<CalendarEvent> & { end?: Date, timezone?: string } = {}): CalendarEvent => {
+    const { end, timezone, ...fields } = overrides;
+    return {
+        uid:           'event-uid-1',
+        summary:       'Team standup',
+        calendarLabel: 'Home',
+        time:          { kind: 'timed', start: new Date('2026-03-18T09:00:00.000Z'), end: end ?? new Date('2026-03-18T09:30:00.000Z'), timezone },
+        ...fields,
+    };
+};
 
 describe.concurrent('createCaldavMCPServer', () => {
     let mockClient:   CalDAVClient;
@@ -78,12 +79,12 @@ describe.concurrent('createCaldavMCPServer', () => {
             expect(server.name).toBe('caldav');
             expect(server.instance).toBeDefined();
             expect(server.type).toBe('sdk');
-            expect((server.instance as unknown as RegisteredToolInstance).server._serverInfo.version).toBe('1.0.0');
+            expect((server.instance as unknown as RegisteredToolInstance).server._serverInfo.version).toBe('2.0.0');
         });
 
         test.each([
-            ['getCalendarEvents', 'Get calendar events for a user in a specific date range. Returns events from all calendars associated with the user plus shared/public calendars.'],
-            ['getUpcomingEvents', 'Get upcoming calendar events for a user over the next N days. Convenience wrapper that defaults to 7 days.'],
+            ['getCalendarEvents', 'Get calendar events for a user in a specific date range, including shared calendars. Each event.time is all_day (dates, exclusive end), floating (zone-less local times), or timed (ISO instants and source timezone).'],
+            ['getUpcomingEvents', 'Get upcoming calendar events over the next N days (default 7). Each event.time is all_day (dates, exclusive end), floating (zone-less local times), or timed (ISO instants and source timezone).'],
             ['listUserCalendars', 'List all calendar labels configured for a user. Shows calendar names grouped by server, without exposing URLs or credentials.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
             const server = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
@@ -136,6 +137,24 @@ describe.concurrent('createCaldavMCPServer', () => {
             expect(days.safeParse(0).success).toBe(false);
             expect(days.safeParse(-1).success).toBe(false);
         });
+    });
+
+    test.each(['getCalendarEvents', 'getUpcomingEvents'])('%s serializes each time variant without a false instant', async (toolName) => {
+        (mockClient.getEvents as ReturnType<typeof mock>).mockResolvedValueOnce({ events: [
+            mockEvent({ uid: 'date', time: { kind: 'all_day', start: createLocalDate('2026-03-01'), endExclusive: createLocalDate('2026-03-02') } }),
+            mockEvent({ uid: 'floating', time: { kind: 'floating', start: createLocalDateTime('2026-03-01T09:00:00'), end: createLocalDateTime('2026-03-01T10:00:00') } }),
+            mockEvent({ uid: 'timed', time: { kind: 'timed', start: new Date('2026-03-01T09:00:00Z'), end: new Date('2026-03-01T10:00:00Z'), timezone: 'Etc/UTC' } }),
+        ], failed: [] });
+        const server = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+        const handler = getToolHandler(server, toolName);
+        const result = await handler({ user: 'user-123', startDate: '2026-03-01', endDate: '2026-03-02' });
+        const parsed = JSON.parse(textContent(result.content[0])) as { events: { uid: string, time: Record<string, unknown> }[] };
+        expect(parsed.events.map(event => ({ uid: event.uid, time: event.time }))).toEqual([
+            { uid: 'date', time: { kind: 'all_day', start: '2026-03-01', endExclusive: '2026-03-02' } },
+            { uid: 'floating', time: { kind: 'floating', start: '2026-03-01T09:00:00', end: '2026-03-01T10:00:00' } },
+            { uid: 'timed', time: { kind: 'timed', start: '2026-03-01T09:00:00.000Z', end: '2026-03-01T10:00:00.000Z', timezone: 'Etc/UTC' } },
+        ]);
+        expect(parsed.events[0]).not.toHaveProperty('start');
     });
 
     describe('getCalendarEvents tool', () => {
@@ -194,9 +213,9 @@ describe.concurrent('createCaldavMCPServer', () => {
             const result = await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
 
             const text   = textContent(result.content[0]);
-            const parsed = JSON.parse(text) as { events: { start: string, end: string }[] };
-            expect(parsed.events[0].start).toBe('2026-03-18T09:00:00.000Z');
-            expect(parsed.events[0].end).toBe('2026-03-18T09:30:00.000Z');
+            const parsed = JSON.parse(text) as { events: { time: { kind: string, start: string, end: string } }[] };
+            expect(parsed.events[0].time).toMatchObject({ kind: 'timed', start: '2026-03-18T09:00:00.000Z', end: '2026-03-18T09:30:00.000Z' });
+            expect(parsed.events[0]).not.toHaveProperty('start');
         });
 
         test('preserves event identity and calendar metadata while serializing dates', async () => {
@@ -215,9 +234,7 @@ describe.concurrent('createCaldavMCPServer', () => {
                 summary:       'Calendar identity',
                 calendarLabel: 'Shared',
                 location:      'Room 4',
-                timezone:      'America/Los_Angeles',
-                start:         '2026-03-18T09:00:00.000Z',
-                end:           '2026-03-18T09:30:00.000Z',
+                time:          { kind: 'timed', timezone: 'America/Los_Angeles', start: '2026-03-18T09:00:00.000Z', end: '2026-03-18T09:30:00.000Z' },
             });
         });
 
@@ -391,9 +408,9 @@ describe.concurrent('createCaldavMCPServer', () => {
             const result = await handler({ user: 'user-123' });
 
             const text   = textContent(result.content[0]);
-            const parsed = JSON.parse(text) as { events: { start: string, end: string }[] };
-            expect(parsed.events[0].start).toBe('2026-03-18T09:00:00.000Z');
-            expect(parsed.events[0].end).toBe('2026-03-18T09:30:00.000Z');
+            const parsed = JSON.parse(text) as { events: { time: { kind: string, start: string, end: string } }[] };
+            expect(parsed.events[0].time).toMatchObject({ kind: 'timed', start: '2026-03-18T09:00:00.000Z', end: '2026-03-18T09:30:00.000Z' });
+            expect(parsed.events[0]).not.toHaveProperty('start');
         });
 
         test('preserves event identity and reports exactly one failed expansion', async () => {

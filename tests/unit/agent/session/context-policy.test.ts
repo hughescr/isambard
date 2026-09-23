@@ -2,7 +2,7 @@ import { afterEach, describe, expect, jest, test } from 'bun:test';
 import { makeHealthEntry, makeHealthRegistry } from '../../../helpers/fake-health-registry';
 import { dayWindow } from '@/agent/session/calendar-delta';
 import { createContextPolicy, type EventsDeltaSource, type StateTopSetSource, type CalendarAgendaSource } from '@/agent/session/context-policy';
-import type { CalendarEvent } from '@/integrations/caldav';
+import { createLocalDateTime, type CalendarEvent } from '@/integrations/caldav';
 import { serviceNameSchema, type ServiceHealthEntry, type ServiceName } from '@/services/types';
 import { createMemoryPath, type MemoryToolItemData } from '@/storage';
 
@@ -28,9 +28,7 @@ function makeEvent(nowMs: number, overrides: Partial<CalendarEvent> = {}): Calen
     return {
         uid:           'uid-1',
         summary:       'Standup',
-        start:         new Date(window.startMs + HOUR_MS),
-        end:           new Date(window.startMs + HOUR_MS + 30 * 60 * 1000),
-        isAllDay:      false,
+        time:          { kind: 'timed', start: new Date(window.startMs + HOUR_MS), end: new Date(window.startMs + HOUR_MS + 30 * 60 * 1000) },
         calendarLabel: 'Work',
         ...overrides,
     };
@@ -378,6 +376,24 @@ describe('createContextPolicy — stateTopSetDelta / markStateTopSetSeen', () =>
 });
 
 describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
+    test('display zone scopes an early floating event and repeated same-day polls stay unchanged', async () => {
+        let t = new Date('2026-03-01T17:00:00Z').getTime();
+        const event = makeEvent(t, { time: { kind: 'floating', start: createLocalDateTime('2026-03-01T01:00:00'), end: createLocalDateTime('2026-03-01T01:30:00') } });
+        const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockResolvedValue([event]);
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
+        const first = await policy.calendarDelta('u1', TZ);
+        expect(first.events).toEqual([event]);
+        expect(first.agenda).toHaveLength(1);
+        policy.markCalendarSeen('u1');
+        t += 2 * HOUR_MS;
+        const second = await policy.calendarDelta('u1', TZ);
+        expect(second.polled).toBe(true);
+        expect(second.added).toEqual([]);
+        expect(second.changed).toEqual([]);
+        expect(second.removed).toEqual([]);
+        expect(second.agenda).toEqual(first.agenda);
+    });
+
     test('the first calendarDelta call for a user polls and reports isFirst with empty lists', async () => {
         const t = T0;
         const events = [makeEvent(t)];
@@ -404,9 +420,8 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
         const inWindowEvent = makeEvent(t, { uid: 'in-window' });
         // Entirely before the window: both start and end are before window.startMs.
         const outOfWindowEvent = makeEvent(t, {
-            uid:   'out-of-window',
-            start: new Date(window.startMs - 2 * HOUR_MS),
-            end:   new Date(window.startMs - HOUR_MS),
+            uid:  'out-of-window',
+            time: { kind: 'timed', start: new Date(window.startMs - 2 * HOUR_MS), end: new Date(window.startMs - HOUR_MS) },
         });
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockResolvedValue([outOfWindowEvent, inWindowEvent]);
         const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
@@ -510,7 +525,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
         let t = T0;
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>()
             .mockResolvedValueOnce([makeEvent(t, { uid: 'uid-1' })])
-            .mockResolvedValueOnce([makeEvent(t, { uid: 'uid-1' }), makeEvent(t, { uid: 'uid-2', start: new Date(dayWindow(t, TZ).startMs + 3 * HOUR_MS), end: new Date(dayWindow(t, TZ).startMs + 4 * HOUR_MS) })]);
+            .mockResolvedValueOnce([makeEvent(t, { uid: 'uid-1' }), makeEvent(t, { uid: 'uid-2', time: { kind: 'timed', start: new Date(dayWindow(t, TZ).startMs + 3 * HOUR_MS), end: new Date(dayWindow(t, TZ).startMs + 4 * HOUR_MS) } })]);
         const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
 
         await policy.calendarDelta('u1', TZ);

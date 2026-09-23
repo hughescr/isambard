@@ -33,7 +33,7 @@ describe('public numeric schema boundaries', () => {
         ['calendarEntry.label', calendarEntrySchema, { ...calendarEntry, label: 'x' }],
         ['calendarServerEntry.description', calendarServerEntrySchema, { ...server, description: 'x' }],
         ['calendarServerEntry.username', calendarServerEntrySchema, { ...server, username: 'x' }],
-        ['calendarRegistryRecord.userId', calendarRegistryRecordSchema, { userId: 'x', servers: [], createdAt: timestamp, updatedAt: timestamp }],
+        ['calendarRegistryRecord.scope.personal.userId', calendarRegistryRecordSchema, { scope: { kind: 'personal', userId: 'x' }, servers: [], createdAt: timestamp, updatedAt: timestamp }],
         ['channelMetadata.channelName', channelMetadataSchema, { channelId: 'x', guildId: 'DM', channelName: 'x', discoveredAt: timestamp, lastSeenAt: timestamp, updatedAt: timestamp }],
         ['discordMessageContext.messageId', discordMessageContextSchema, { guildId: 'x', channelId: 'x', userId: 'x', messageId: 'x', content: '', timestamp, botUserId: 'x' }],
         ['contactIdentifier.value', contactIdentifierSchema, { ...contactIdentifier, value: 'x' }],

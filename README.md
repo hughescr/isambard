@@ -18,7 +18,7 @@ A core goal of Isambard is to use available model capacity economically. Izzy ca
 - **Time Awareness** - Temporal context injection and relative time formatting
 - **Email Integration** - Inbox reading and outbound email via WildDuck HTTP API with SSE push notifications and admin approval workflow
 - **Bluesky Integration** - AT Protocol client for feeds, posts, DMs, and social graph with Discord-based approval workflow
-- **Calendar Integration** - Read-only CalDAV access with per-user calendar registry via Discord slash commands
+- **Calendar Integration** - Read-only CalDAV access with personal/shared calendar registry via Discord slash commands. Calendar MCP event responses carry a discriminated `time` object: `all_day` local dates (`endExclusive`), `floating` zone-less local date-times, or `timed` ISO instants and optional source timezone; no top-level instant pair is synthesized for date-only or floating events.
 - **Contacts System** - Cross-platform address book with identity resolution for unified person references
 - **Media Processing** - Video analysis with scene detection, transcription, and spectrogram generation
 - **Wikipedia Lookup** - Article retrieval for knowledge context

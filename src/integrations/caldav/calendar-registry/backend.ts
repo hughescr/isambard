@@ -71,7 +71,7 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
 
         const record: CalendarRegistryRecord = existing
             ? { ...existing, servers: [...existing.servers, server], updatedAt: now }
-            : { userId, servers: [server], createdAt: now, updatedAt: now };
+            : { scope: { kind: 'personal', userId }, servers: [server], createdAt: now, updatedAt: now };
 
         await this.#putRecord(keys, record);
     }
@@ -114,7 +114,7 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
 
         const record: CalendarRegistryRecord = existing
             ? { ...existing, servers: [...existing.servers, server], updatedAt: now }
-            : { userId: 'SHARED', servers: [server], createdAt: now, updatedAt: now };
+            : { scope: { kind: 'shared' }, servers: [server], createdAt: now, updatedAt: now };
 
         await this.#putRecord(keys, record);
     }
@@ -145,7 +145,7 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
 
     /**
      * List all user IDs that have calendar registrations.
-     * Scans for CALCAL# prefix items with SK=CALENDARS, excluding SHARED.
+     * Scans for CALCAL# prefix items with SK=CALENDARS and keeps the personal scopes their PKs decode to.
      * Acceptable scan for a personal assistant with very few users (~1-5).
      */
     async listRegisteredUserIds(): Promise<string[]> {
@@ -162,8 +162,8 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
         );
 
         return items
-            .map(item => CalendarRegistryKeyGenerator.parseUserId(item.PK as string))
-            .filter(id => id !== 'SHARED');
+            .map(item => CalendarRegistryKeyGenerator.parseScope(item.PK as string))
+            .flatMap(scope => (scope.kind === 'personal' ? [scope.userId] : []));
     }
 
     async #getRecord(keys: CalendarRegistryKeys): Promise<CalendarRegistryRecord | null> {
@@ -176,12 +176,16 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
             return null;
         }
 
-        return stripDynamoKeys(result) as CalendarRegistryRecord;
+        // Tolerant read: the PK is the authoritative scope. A legacy row carries only `userId`
+        // (`SHARED` for the shared record), and any stored `userId`/`scope` body attribute is ignored.
+        const { userId: _legacyUserId, ...body } = stripDynamoKeys(result);
+        return { ...body, scope: CalendarRegistryKeyGenerator.parseScope(keys.PK) } as CalendarRegistryRecord;
     }
 
     async #putRecord(keys: CalendarRegistryKeys, record: CalendarRegistryRecord): Promise<void> {
+        // Dual write: the legacy `userId` attribute stays on every row so a pre-scope build can still read it during rollout or after a rollback.
         await this.putItem(
-            { ...record, PK: keys.PK, SK: keys.SK },
+            { ...record, userId: CalendarRegistryKeyGenerator.legacyUserId(record.scope), PK: keys.PK, SK: keys.SK },
             'CalendarRegistry.putRecord'
         );
     }

@@ -1118,9 +1118,7 @@ describe('createContextBuilder loading methods', () => {
         const fakeEvent = {
             uid:           'evt-001',
             summary:       'Team meeting',
-            start:         new Date('2026-03-18T10:00:00Z'),
-            end:           new Date('2026-03-18T11:00:00Z'),
-            isAllDay:      false,
+            time:          { kind: 'timed' as const, start: new Date('2026-03-18T10:00:00Z'), end: new Date('2026-03-18T11:00:00Z') },
             calendarLabel: 'Main',
             status:        'confirmed' as const,
         };
@@ -2681,7 +2679,7 @@ describe('createContextBuilder loading methods', () => {
                     getAllCalendars:       mock(async () => [{ serverId: 'server', description: 'Order', serverUrl: 'https://calendar.example', username: 'user', password: 'pass', calendars: [{ calendarPath: '/order', label: 'Order' }] }]),
                 },
                 client: {
-                    getContextEvents: mock(async () => ({ events: [{ uid: 'calendar-order', summary: 'Calendar order marker', start: new Date('2026-03-18T11:00:00.000Z'), end: new Date('2026-03-18T12:00:00.000Z'), isAllDay: false, calendarLabel: 'Order', status: 'confirmed' as const }], failed: [] })),
+                    getContextEvents: mock(async () => ({ events: [{ uid: 'calendar-order', summary: 'Calendar order marker', time: { kind: 'timed', start: new Date('2026-03-18T11:00:00.000Z'), end: new Date('2026-03-18T12:00:00.000Z') }, calendarLabel: 'Order', status: 'confirmed' as const }], failed: [] })),
                 },
             } as unknown as CalendarService;
             const emailService = {

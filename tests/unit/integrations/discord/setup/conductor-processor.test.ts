@@ -13,7 +13,7 @@ import {
     type AgendaEntry, type Conductor, type ConductorStatus, type ContextPolicy, type DiscordEnvelopeInput, type SubmitOptions, type TurnResult, StreamTracker, formatTimeHeader
 } from '@/agent';
 import type { Envelope } from '@/agent/session/types';
-import { formatCalendarContext, type CalendarEvent } from '@/integrations/caldav';
+import { createLocalDate, createLocalDateTime, formatCalendarContext, type CalendarEvent } from '@/integrations/caldav';
 import { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import { createConductorProcessor, type DiscordEnvelopeProvider } from '@/integrations/discord/setup/conductor-processor';
 import type { ResolvedDiscordNames } from '@/integrations/discord/setup/discord-envelope-provider';
@@ -621,34 +621,39 @@ describe('createConductorProcessor', () => {
     });
 
     describe('Q12: calendar delta and health note wiring', () => {
-        function makeAgendaEntry(overrides: Partial<AgendaEntry> = {}): AgendaEntry {
+        function makeAgendaEntry(overrides: Partial<AgendaEntry> & { isAllDay?: boolean } = {}): AgendaEntry {
+            const { isAllDay, ...fields } = overrides;
             return {
-                uid:      'evt-1',
-                start:    '2026-09-04T16:00:00.000Z',
-                end:      '2026-09-04T17:00:00.000Z',
-                summary:  'Team sync',
-                isAllDay: false,
-                ...overrides,
+                uid:     'evt-1',
+                summary: 'Team sync',
+                time:    isAllDay
+                    ? { kind: 'all_day', start: createLocalDate('2026-09-04'), endExclusive: createLocalDate('2026-09-05') }
+                    : { kind: 'timed', start: new Date('2026-09-04T16:00:00.000Z'), end: new Date('2026-09-04T17:00:00.000Z') },
+                ...fields,
             };
         }
 
-        /** Mirrors `conductor-processor.ts`'s own `formatAgendaLine`: `HH:mm–HH:mm summary` in `America/Los_Angeles`, computed via luxon rather than hardcoded so it is not sensitive to the fake-timers-active DST-offset quirk (see the module's own note near `formatAgendaLine`). */
         function expectedAgendaLine(entry: AgendaEntry): string {
-            if(entry.isAllDay) {
-                return `All day: ${entry.summary}`;
+            switch(entry.time.kind) {
+                case 'all_day': {
+                    return `All day: ${entry.summary}`;
+                }
+                case 'floating': {
+                    return `${entry.time.start.slice(11, 16)}–${entry.time.end.slice(11, 16)} ${entry.summary}`;
+                }
+                case 'timed': {
+                    const start = DateTime.fromJSDate(entry.time.start, { zone: 'America/Los_Angeles' }).toFormat('HH:mm');
+                    const end = DateTime.fromJSDate(entry.time.end, { zone: 'America/Los_Angeles' }).toFormat('HH:mm');
+                    return `${start}–${end} ${entry.summary}`;
+                }
             }
-            const start = DateTime.fromISO(entry.start, { zone: 'America/Los_Angeles' }).toFormat('HH:mm');
-            const end = DateTime.fromISO(entry.end, { zone: 'America/Los_Angeles' }).toFormat('HH:mm');
-            return `${start}–${end} ${entry.summary}`;
         }
 
         function makeCalendarEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
             return {
                 uid:           'evt-1',
                 summary:       'Team sync',
-                start:         new Date('2026-09-04T16:00:00.000Z'),
-                end:           new Date('2026-09-04T17:00:00.000Z'),
-                isAllDay:      false,
+                time:          { kind: 'timed', start: new Date('2026-09-04T16:00:00.000Z'), end: new Date('2026-09-04T17:00:00.000Z') },
                 calendarLabel: 'Work',
                 ...overrides,
             };
@@ -677,8 +682,9 @@ describe('createConductorProcessor', () => {
             const addedEntry = makeAgendaEntry();
             const removedEntry = makeAgendaEntry({ uid: 'evt-2', summary: 'Old meeting' });
             const changedEntry = makeAgendaEntry({ uid: 'evt-3', summary: 'Moved lunch', isAllDay: true });
+            const floatingEntry = makeAgendaEntry({ uid: 'evt-4', summary: 'Floating meeting', time: { kind: 'floating', start: createLocalDateTime('2026-09-04T09:00:00'), end: createLocalDateTime('2026-09-04T09:30:00') } });
             const delta = {
-                agenda: [addedEntry], events: [event], added: [addedEntry], removed: [removedEntry], changed: [changedEntry], isFirst: false, polled: true,
+                agenda: [addedEntry, floatingEntry], events: [event], added: [addedEntry, floatingEntry], removed: [removedEntry], changed: [changedEntry], isFirst: false, polled: true,
             };
             contextPolicy = makeContextPolicy({
                 calendarDelta: jest.fn(() => Promise.resolve(delta)),
@@ -696,9 +702,9 @@ describe('createConductorProcessor', () => {
             expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({
                 calendarChanged: {
                     agenda:  expectedAgendaText,
-                    added:   [expectedAgendaLine(addedEntry)],
-                    removed: [expectedAgendaLine(removedEntry)],
-                    changed: [expectedAgendaLine(changedEntry)],
+                    added:   ['08:00–09:00 Team sync', '09:00–09:30 Floating meeting'],
+                    removed: ['08:00–09:00 Old meeting'],
+                    changed: ['All day: Moved lunch'],
                     isFirst: false,
                 },
                 healthNote: 'Email is degraded.',

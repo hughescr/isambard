@@ -334,10 +334,12 @@ export function createContextPolicy(params: CreateContextPolicyParams): ContextP
             // `loadCalendarAgenda` returns several days (CalDAV's rolling query window), but the
             // added/removed/changed lists below are diffed on this one day's window, so the
             // `events` a caller renders alongside them must cover exactly that same day (see the
-            // `CalendarDelta.events` doc).
-            const events = eventsInWindow(fetchedEvents, window);
+            // `CalendarDelta.events` doc). `timezone` is also the display zone the window filter and
+            // agenda projection use: all-day dates are matched against this zone's local day and
+            // floating wall-clock times are resolved in it.
+            const events = eventsInWindow(fetchedEvents, window, timezone);
             // Stryker disable next-line llm: toAgenda reapplies the same window filter, so passing raw or already-filtered events is equivalent
-            const agenda = toAgenda(events, window);
+            const agenda = toAgenda(events, window, timezone);
             calendarPollCache.set(userId, { agenda, events, polledAtMs: nowMs, window });
             const diff = diffAgenda(calendarBaselines.get(userId), agenda);
             return { agenda, events, ...diff, polled: true };

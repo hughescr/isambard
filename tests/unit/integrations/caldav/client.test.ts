@@ -1,10 +1,11 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { DateTime } from 'luxon';
+import * as ical from 'node-ical';
 import { mockLogger } from '../../../setup';
 import { CaldavAuthError, CaldavTimeoutError } from '@/errors';
 import { createCalendarServerId, type CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
 import { CalDAVClient, type CalDAVClientDependencies } from '@/integrations/caldav/client';
-import type { CalendarEventsResult } from '@/integrations/caldav/types';
+import { createCalendarTimeRange, createLocalDateTime, type CalendarEventsResult, type LocalDateTime } from '@/integrations/caldav/types';
 import type { ServiceHealthRegistry } from '@/services';
 
 // ---------------------------------------------------------------------------
@@ -103,6 +104,16 @@ function makeVEvent(overrides: Record<string, unknown> = {}): Record<string, unk
         dtstamp:  new Date('2025-06-15T12:00:00.000Z'),
         ...overrides,
     };
+}
+
+/** A timed node-ical value: a Date carrying node-ical's runtime `tz` (here the `Etc/UTC` it attaches to a `Z` DATE-TIME). */
+function utcDate(iso: string): Date {
+    return Object.assign(new Date(iso), { tz: 'Etc/UTC' });
+}
+
+/** The host-local wall clock of an instant: how the client reads a floating node-ical Date, which node-ical built from host-local components. */
+function hostWallClock(iso: string): LocalDateTime {
+    return createLocalDateTime(DateTime.fromJSDate(new Date(iso), { zone: 'system' }).toFormat("yyyy-MM-dd'T'HH:mm:ss"));
 }
 
 function makeHealthRegistry(): {
@@ -441,10 +452,24 @@ describe('CalDAVClient.getEvents', () => {
             uid:           'event-uid-1',
             summary:       'Test Meeting',
             calendarLabel: 'Personal',
-            isAllDay:      false,
         });
-        expect(events[0]?.start).toBeInstanceOf(Date);
-        expect(events[0]?.end).toBeInstanceOf(Date);
+        expect(events[0]?.time).toEqual({ kind: 'floating', start: hostWallClock('2025-06-15T14:00:00.000Z'), end: hostWallClock('2025-06-15T15:00:00.000Z') });
+    });
+
+    test('orders mixed all-day, floating and timed events by the zone-independent sort key', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeCalendarObject('ics')]);
+        mockParseICS.mockImplementation((): Record<string, unknown> => ({
+            timed:    makeVEvent({ uid: 'timed', start: utcDate('2025-06-15T08:00:00.000Z'), end: utcDate('2025-06-15T09:00:00.000Z') }),
+            floating: makeVEvent({ uid: 'floating', start: new Date(2025, 5, 15, 9), end: new Date(2025, 5, 15, 10) }),
+            allDay:   makeVEvent({ uid: 'all-day', start: new Date(2025, 5, 15), end: new Date(2025, 5, 16), datetype: 'date' }),
+            previous: makeVEvent({ uid: 'previous', start: utcDate('2025-06-14T23:00:00.000Z'), end: utcDate('2025-06-14T23:30:00.000Z') }),
+        }));
+
+        const { events } = await createClient().getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+
+        expect(events.map(event => event.uid)).toEqual(['previous', 'all-day', 'floating', 'timed']);
     });
 
     test('sorts events by start time', async () => {
@@ -1090,20 +1115,96 @@ describe('CalDAVClient event extraction', () => {
         const { events } = await extractEvents([makeVEvent()]);
 
         expect(events[0]).toMatchObject({
-            uid:      'event-uid-1',
-            summary:  'Test Meeting',
-            isAllDay: false,
+            uid:     'event-uid-1',
+            summary: 'Test Meeting',
         });
     });
 
-    test('maps a one-off VEVENT start and end to their own distinct instants', async () => {
+    test('real node-ical ICS classifies DATE, floating, UTC and TZID values into time variants', async () => {
+        const ics = [
+            'BEGIN:VCALENDAR', 'VERSION:2.0',
+            'BEGIN:VEVENT', 'UID:day', 'DTSTART;VALUE=DATE:20260301', 'DTEND;VALUE=DATE:20260302', 'SUMMARY:Day', 'END:VEVENT',
+            'BEGIN:VEVENT', 'UID:float', 'DTSTART:20260301T090000', 'DTEND:20260301T100000', 'SUMMARY:Float', 'END:VEVENT',
+            'BEGIN:VEVENT', 'UID:utc', 'DTSTART:20260301T090000Z', 'DTEND:20260301T100000Z', 'SUMMARY:UTC', 'END:VEVENT',
+            'BEGIN:VEVENT', 'UID:zoned', 'DTSTART;TZID=America/New_York:20260301T090000', 'DTEND;TZID=America/New_York:20260301T100000', 'SUMMARY:Zoned', 'END:VEVENT',
+            'END:VCALENDAR',
+        ].join('\n');
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeCalendarObject(ics)]);
+        mockParseICS.mockImplementation((body): Record<string, unknown> => ical.sync.parseICS(body));
+        const { events, failed } = await createClient().getEvents([makeServer()], new Date('2026-03-01'), new Date('2026-03-03'));
+        expect(failed).toEqual([]);
+        expect(events.find(event => event.uid === 'day')?.time).toEqual(createCalendarTimeRange({ kind: 'all_day', start: '2026-03-01', endExclusive: '2026-03-02' }));
+        expect(events.find(event => event.uid === 'float')?.time).toEqual(createCalendarTimeRange({ kind: 'floating', start: '2026-03-01T09:00:00', end: '2026-03-01T10:00:00' }));
+        expect(events.find(event => event.uid === 'utc')?.time).toEqual({ kind: 'timed', start: new Date('2026-03-01T09:00:00Z'), end: new Date('2026-03-01T10:00:00Z'), timezone: 'Etc/UTC' });
+        expect(events.find(event => event.uid === 'zoned')?.time).toEqual({ kind: 'timed', start: new Date('2026-03-01T14:00:00Z'), end: new Date('2026-03-01T15:00:00Z'), timezone: 'America/New_York' });
+    });
+
+    test('malformed timed endpoint reports one failed event without discarding a valid neighbor', async () => {
+        const { events, failed } = await extractEvents([
+            makeVEvent({ uid: 'bad', start: Object.assign(new Date('invalid'), { tz: 'Etc/UTC' }) }),
+            makeVEvent({ uid: 'good' }),
+        ]);
+        expect(events.map(event => event.uid)).toEqual(['good']);
+        expect(failed).toEqual([{ uid: 'bad', reason: 'RangeError: Invalid timed calendar endpoints' }]);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            { uid: 'bad', error: new RangeError('Invalid timed calendar endpoints') },
+            'Failed to decode calendar event time; it will appear in failed[] for caller visibility'
+        );
+    });
+
+    test('an invalid floating end Date reports a failed event instead of a sentinel wall time', async () => {
+        const { events, failed } = await extractEvents([
+            makeVEvent({ uid: 'nan-end', end: new Date(Number.NaN) }),
+            makeVEvent({ uid: 'good' }),
+        ]);
+        expect(events.map(event => event.uid)).toEqual(['good']);
+        expect(failed).toEqual([{ uid: 'nan-end', reason: 'RangeError: Invalid floating calendar time: Invalid DateTime' }]);
+    });
+
+    test('an invalid all-day end Date reports a failed event instead of a sentinel date', async () => {
+        const { events, failed } = await extractEvents([
+            makeVEvent({ uid: 'nan-day', start: new Date(2025, 5, 15), end: new Date(Number.NaN), datetype: 'date' }),
+        ]);
+        expect(events).toEqual([]);
+        expect(failed).toEqual([{ uid: 'nan-day', reason: 'RangeError: Invalid calendar date: Invalid DateTime' }]);
+    });
+
+    test('malformed all-day dates report a failed event with the constructor reason', async () => {
+        const { events, failed } = await extractEvents([
+            makeVEvent({ uid: 'backwards', start: new Date(2025, 5, 16), end: new Date(2025, 5, 15), datetype: 'date' }),
+        ]);
+        expect(events).toEqual([]);
+        expect(failed).toEqual([{ uid: 'backwards', reason: 'RangeError: All-day end 2025-06-15 must be after start 2025-06-16' }]);
+    });
+
+    test('maps a one-off floating VEVENT to its host-local wall-clock start and end', async () => {
         const { events } = await extractEvents([makeVEvent({
             start: new Date('2025-06-15T14:00:00.000Z'),
             end:   new Date('2025-06-15T15:30:00.000Z'),
         })]);
 
-        expect(events[0]?.start).toEqual(new Date('2025-06-15T14:00:00.000Z'));
-        expect(events[0]?.end).toEqual(new Date('2025-06-15T15:30:00.000Z'));
+        expect(events[0]?.time).toEqual({ kind: 'floating', start: hostWallClock('2025-06-15T14:00:00.000Z'), end: hostWallClock('2025-06-15T15:30:00.000Z') });
+    });
+
+    test('maps a one-off all-day VEVENT to its host-local dates with exclusive end', async () => {
+        const { events } = await extractEvents([makeVEvent({ start: new Date(2025, 5, 15), end: new Date(2025, 5, 17), datetype: 'date' })]);
+
+        expect(events[0]?.time).toEqual(createCalendarTimeRange({ kind: 'all_day', start: '2025-06-15', endExclusive: '2025-06-17' }));
+    });
+
+    test('an unparsed raw string end keeps the legacy instant reading even beside a zoned Date start', async () => {
+        const { events } = await extractEvents([makeVEvent({ start: utcDate('2025-06-15T14:00:00.000Z'), end: '2025-06-15T15:00:00.000Z' })]);
+
+        expect(events[0]?.time).toEqual({ kind: 'timed', start: new Date('2025-06-15T14:00:00.000Z'), end: new Date('2025-06-15T15:00:00.000Z'), timezone: undefined });
+    });
+
+    test('an unparseable raw string time reports a failed event', async () => {
+        const { events, failed } = await extractEvents([makeVEvent({ uid: 'garbage', start: 'not-a-date', end: 'not-a-date' })]);
+
+        expect(events).toEqual([]);
+        expect(failed).toEqual([{ uid: 'garbage', reason: 'RangeError: Invalid timed calendar endpoints' }]);
     });
 
     test('uses (No title) when summary is missing', async () => {
@@ -1166,20 +1267,20 @@ describe('CalDAVClient event extraction', () => {
 
     // --- isAllDay ---
 
-    test('isAllDay is false for DATE-TIME events', async () => {
+    test('a DATE-TIME event is not all-day', async () => {
         const { events } = await extractEvents([makeVEvent({ datetype: 'date-time' })]);
-        expect(events[0]?.isAllDay).toBe(false);
+        expect(events[0]?.time.kind).toBe('floating');
     });
 
-    test('isAllDay is true when datetype is date', async () => {
-        const { events } = await extractEvents([makeVEvent({ datetype: 'date' })]);
-        expect(events[0]?.isAllDay).toBe(true);
+    test('a datetype date event is all-day', async () => {
+        const { events } = await extractEvents([makeVEvent({ datetype: 'date', start: new Date(2025, 5, 15), end: new Date(2025, 5, 16) })]);
+        expect(events[0]?.time).toEqual(createCalendarTimeRange({ kind: 'all_day', start: '2025-06-15', endExclusive: '2025-06-16' }));
     });
 
-    test('isAllDay is true when start.dateOnly is true', async () => {
-        const allDayStart = Object.assign(new Date('2025-06-15'), { dateOnly: true as const });
-        const { events } = await extractEvents([makeVEvent({ start: allDayStart, datetype: 'date-time' })]);
-        expect(events[0]?.isAllDay).toBe(true);
+    test('a start.dateOnly event is all-day', async () => {
+        const allDayStart = Object.assign(new Date(2025, 5, 15), { dateOnly: true as const });
+        const { events } = await extractEvents([makeVEvent({ start: allDayStart, end: new Date(2025, 5, 16), datetype: 'date-time' })]);
+        expect(events[0]?.time).toEqual(createCalendarTimeRange({ kind: 'all_day', start: '2025-06-15', endExclusive: '2025-06-16' }));
     });
 
     // --- status normalization ---
@@ -1316,48 +1417,36 @@ describe('CalDAVClient event extraction', () => {
 
     // --- start/end conversion ---
 
-    test('converts non-Date start/end to Date objects', async () => {
+    test('raw string start and end keep the legacy instant reading with no source timezone', async () => {
         const startStr = '2025-06-15T14:00:00.000Z';
         const endStr   = '2025-06-15T15:00:00.000Z';
         const { events } = await extractEvents([
             makeVEvent({ start: startStr, end: endStr }),
         ]);
-        expect(events[0]?.start).toEqual(new Date(startStr));
-        expect(events[0]?.end).toEqual(new Date(endStr));
+        expect(events[0]?.time).toEqual({ kind: 'timed', start: new Date(startStr), end: new Date(endStr), timezone: undefined });
     });
 
     // --- timezone extraction ---
 
-    test('extracts timezone from start.tz for timed events', async () => {
+    test('a start carrying tz is a timed range in that source timezone', async () => {
         const startWithTz = Object.assign(new Date('2025-06-15T14:00:00.000Z'), { tz: 'America/New_York' });
         const { events } = await extractEvents([
             makeVEvent({ start: startWithTz, datetype: 'date-time' }),
         ]);
-        expect(events[0]?.timezone).toBe('America/New_York');
+        expect(events[0]?.time).toEqual({ kind: 'timed', start: new Date('2025-06-15T14:00:00.000Z'), end: new Date('2025-06-15T15:00:00.000Z'), timezone: 'America/New_York' });
     });
 
-    test('timezone is undefined when start has no tz property', async () => {
-        const { events } = await extractEvents([makeVEvent()]);
-        expect(events[0]?.timezone).toBeUndefined();
+    test('a start with an empty tz is floating rather than timed', async () => {
+        const { events } = await extractEvents([makeVEvent({ start: Object.assign(new Date('2025-06-15T14:00:00.000Z'), { tz: '' }) })]);
+        expect(events[0]?.time).toEqual({ kind: 'floating', start: hostWallClock('2025-06-15T14:00:00.000Z'), end: hostWallClock('2025-06-15T15:00:00.000Z') });
     });
 
-    test('timezone is undefined for all-day events even if start.tz is present', async () => {
-        const startWithTz = Object.assign(new Date('2025-06-15'), { tz: 'America/New_York', dateOnly: true as const });
+    test('an all-day event ignores a start tz and stays date-valued', async () => {
+        const startWithTz = Object.assign(new Date(2025, 5, 15), { tz: 'America/New_York', dateOnly: true as const });
         const { events } = await extractEvents([
-            makeVEvent({ start: startWithTz, datetype: 'date-time' }),
+            makeVEvent({ start: startWithTz, end: new Date(2025, 5, 16), datetype: 'date-time' }),
         ]);
-        // isAllDay is true due to dateOnly, so timezone must be suppressed
-        expect(events[0]?.isAllDay).toBe(true);
-        expect(events[0]?.timezone).toBeUndefined();
-    });
-
-    test('timezone is undefined for date-type all-day events', async () => {
-        const startWithTz = Object.assign(new Date('2025-06-15T00:00:00.000Z'), { tz: 'America/Los_Angeles' });
-        const { events } = await extractEvents([
-            makeVEvent({ start: startWithTz, datetype: 'date' }),
-        ]);
-        expect(events[0]?.isAllDay).toBe(true);
-        expect(events[0]?.timezone).toBeUndefined();
+        expect(events[0]?.time).toEqual(createCalendarTimeRange({ kind: 'all_day', start: '2025-06-15', endExclusive: '2025-06-16' }));
     });
 });
 
@@ -1846,10 +1935,10 @@ describe('CalDAVClient recurring event expansion', () => {
     });
 
     test('recurring event with rrule produces expanded instances with correct occurrence dates', async () => {
-        const masterStart = new Date('2025-02-23T14:00:00.000Z');
-        const masterEnd   = new Date('2025-02-23T15:00:00.000Z');
-        const occurrenceStart = new Date('2025-06-15T14:00:00.000Z');
-        const occurrenceEnd   = new Date('2025-06-15T15:00:00.000Z');
+        const masterStart = utcDate('2025-02-23T14:00:00.000Z');
+        const masterEnd   = utcDate('2025-02-23T15:00:00.000Z');
+        const occurrenceStart = utcDate('2025-06-15T14:00:00.000Z');
+        const occurrenceEnd   = utcDate('2025-06-15T15:00:00.000Z');
 
         const masterEvent = makeVEvent({
             uid:     'recurring-uid',
@@ -1876,9 +1965,139 @@ describe('CalDAVClient recurring event expansion', () => {
         expect(events).toHaveLength(1);
         expect(failed).toHaveLength(0);
         expect(events[0]?.uid).toBe('recurring-uid');
-        expect(events[0]?.start).toEqual(occurrenceStart);
-        expect(events[0]?.end).toEqual(occurrenceEnd);
+        expect(events[0]?.time).toEqual({ kind: 'timed', start: occurrenceStart, end: occurrenceEnd, timezone: 'Etc/UTC' });
         expect(events[0]?.summary).toBe('Weekly Meeting');
+    });
+
+    test('a timed recurrence instance keeps its own instant and copied source timezone', async () => {
+        const masterEvent = makeVEvent({ uid: 'zoned-series', start: Object.assign(new Date('2026-03-02T14:00:00.000Z'), { tz: 'America/New_York' }), rrule: { freq: 'WEEKLY' } });
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [{
+            start:       Object.assign(new Date('2026-03-09T13:00:00.000Z'), { tz: 'America/New_York' }),
+            end:         new Date('2026-03-09T14:00:00.000Z'),
+            summary:     'Zoned',
+            isFullDay:   false,
+            isRecurring: true,
+            isOverride:  false,
+            event:       masterEvent,
+        }]);
+
+        const { events } = await extractEvents([masterEvent]);
+
+        expect(events[0]?.time).toEqual({ kind: 'timed', start: new Date('2026-03-09T13:00:00.000Z'), end: new Date('2026-03-09T14:00:00.000Z'), timezone: 'America/New_York' });
+    });
+
+    test('a floating recurrence instance takes the series wall time on its nominal date', async () => {
+        const seriesStart = new Date(2025, 1, 23, 9, 15, 30);
+        const masterEvent = makeVEvent({ uid: 'floating-series', start: seriesStart, end: new Date(2025, 1, 23, 10), rrule: { freq: 'WEEKLY' } });
+        // node-ical expands a floating RRULE in UTC: each instance is a whole number of UTC days after the series start.
+        const instanceStart = new Date(seriesStart.getTime() + 112 * 86_400_000);
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [{
+            start:       instanceStart,
+            end:         new Date(instanceStart.getTime() + 45 * 60_000),
+            summary:     'Floating',
+            isFullDay:   false,
+            isRecurring: true,
+            isOverride:  false,
+            event:       masterEvent,
+        }]);
+
+        const { events, failed } = await extractEvents([masterEvent]);
+
+        expect(failed).toEqual([]);
+        expect(events[0]?.time).toEqual(createCalendarTimeRange({ kind: 'floating', start: '2025-06-15T09:15:30', end: '2025-06-15T10:00:30' }));
+    });
+
+    test('a floating override instance keeps its own rescheduled wall time', async () => {
+        const masterEvent = makeVEvent({ uid: 'floating-override', start: new Date(2025, 5, 9, 9), end: new Date(2025, 5, 9, 10), rrule: { freq: 'WEEKLY' } });
+        const overrideEvent = makeVEvent({ uid: 'floating-override', start: new Date(2025, 5, 16, 13, 30), end: new Date(2025, 5, 16, 14), recurrenceid: new Date(2025, 5, 16, 9) });
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [{
+            start:       new Date(2025, 5, 16, 13, 30),
+            end:         new Date(2025, 5, 16, 14),
+            summary:     'Moved',
+            isFullDay:   false,
+            isRecurring: true,
+            isOverride:  true,
+            event:       overrideEvent,
+        }]);
+
+        const { events } = await extractEvents([masterEvent]);
+
+        expect(events[0]?.time).toEqual(createCalendarTimeRange({ kind: 'floating', start: '2025-06-16T13:30:00', end: '2025-06-16T14:00:00' }));
+    });
+
+    describe('under a DST host zone', () => {
+        const originalTz = process.env.TZ;
+
+        beforeEach(() => {
+            process.env.TZ = 'America/Los_Angeles';
+        });
+
+        afterEach(() => {
+            // Bun only re-reads TZ on assignment (deleting it keeps the last zone), and `bun test` defaults to UTC.
+            process.env.TZ = originalTz ?? 'Etc/UTC';
+            if(originalTz === undefined) {
+                delete process.env.TZ;
+            }
+        });
+
+        test('a floating daily recurrence keeps 09:00 wall time after the host springs forward', async () => {
+            const master = makeVEvent({ uid: 'floating-dst', start: new Date(2026, 2, 7, 9), end: new Date(2026, 2, 7, 10), rrule: { freq: 'DAILY' } });
+            // 09:00 PST on Mar 7 is 17:00Z; node-ical's UTC expansion keeps 17:00Z, which reads 10:00 PDT on Mar 9.
+            mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [{
+                start:       new Date('2026-03-09T17:00:00Z'),
+                end:         new Date('2026-03-09T18:00:00Z'),
+                summary:     'Daily',
+                isFullDay:   false,
+                isRecurring: true,
+                isOverride:  false,
+                event:       master,
+            }]);
+
+            const { events, failed } = await extractEvents([master]);
+
+            expect(failed).toEqual([]);
+            expect(events[0]?.time).toEqual(createCalendarTimeRange({ kind: 'floating', start: '2026-03-09T09:00:00', end: '2026-03-09T10:00:00' }));
+        });
+
+        test('a floating override after the host springs forward keeps its own wall time, not a series offset', async () => {
+            const master = makeVEvent({ uid: 'floating-dst-override', start: new Date(2026, 2, 7, 9), end: new Date(2026, 2, 7, 10), rrule: { freq: 'DAILY' } });
+            const moved = makeVEvent({ uid: 'floating-dst-override', start: new Date(2026, 2, 9, 13, 30), end: new Date(2026, 2, 9, 14), recurrenceid: new Date(2026, 2, 9, 9) });
+            mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [{
+                start:       moved.start as Date,
+                end:         moved.end as Date,
+                summary:     'Moved',
+                isFullDay:   false,
+                isRecurring: true,
+                isOverride:  true,
+                event:       moved,
+            }]);
+
+            const { events } = await extractEvents([master]);
+
+            expect(events[0]?.time).toEqual(createCalendarTimeRange({ kind: 'floating', start: '2026-03-09T13:30:00', end: '2026-03-09T14:00:00' }));
+        });
+
+        test('real node-ical floating weekly series whose first interval spans spring-forward keeps its five-hour wall-clock end', async () => {
+            const ics = [
+                'BEGIN:VCALENDAR', 'VERSION:2.0',
+                'BEGIN:VEVENT', 'UID:overnight', 'DTSTART:20260307T230000', 'DTEND:20260308T040000', 'RRULE:FREQ=WEEKLY;COUNT=3', 'SUMMARY:Overnight', 'END:VEVENT',
+                'END:VCALENDAR',
+            ].join('\n');
+            mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+            mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+            mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeCalendarObject(ics)]);
+            mockParseICS.mockImplementation((body): Record<string, unknown> => ical.sync.parseICS(body));
+            mockExpandRecurringEvent.mockImplementation((event, options): MockEventInstance[] => ical.expandRecurringEvent(event as unknown as ical.VEvent, options as unknown as ical.ExpandRecurringEventOptions) as unknown as MockEventInstance[]);
+
+            const { events, failed } = await createClient().getEvents([makeServer()], new Date('2026-03-01T00:00:00Z'), new Date('2026-03-31T00:00:00Z'));
+
+            expect(failed).toEqual([]);
+            expect(events.map(event => event.time)).toEqual([
+                createCalendarTimeRange({ kind: 'floating', start: '2026-03-07T23:00:00', end: '2026-03-08T04:00:00' }),
+                createCalendarTimeRange({ kind: 'floating', start: '2026-03-14T23:00:00', end: '2026-03-15T04:00:00' }),
+                createCalendarTimeRange({ kind: 'floating', start: '2026-03-21T23:00:00', end: '2026-03-22T04:00:00' }),
+            ]);
+        });
     });
 
     test('recurring event produces multiple instances within the range', async () => {
@@ -1913,8 +2132,10 @@ describe('CalDAVClient recurring event expansion', () => {
 
         const { events } = await extractEvents([masterEvent]);
         expect(events).toHaveLength(2);
-        expect(events[0]?.start).toEqual(instance1Start);
-        expect(events[1]?.start).toEqual(instance2Start);
+        expect(events.map(event => event.time)).toEqual([
+            { kind: 'floating', start: hostWallClock('2025-06-15T10:00:00.000Z'), end: hostWallClock('2025-06-15T11:00:00.000Z') },
+            { kind: 'floating', start: hostWallClock('2025-06-16T10:00:00.000Z'), end: hostWallClock('2025-06-16T11:00:00.000Z') },
+        ]);
     });
 
     test('recurring event expansion passes start and end date range to expandRecurringEvent', async () => {
@@ -1987,8 +2208,8 @@ describe('CalDAVClient recurring event expansion', () => {
 
         mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [
             {
-                start:       new Date('2025-06-15'),
-                end:         new Date('2025-06-16'),
+                start:       new Date(2025, 5, 15),
+                end:         new Date(2025, 5, 16),
                 summary:     'Annual Event',
                 isFullDay:   true,
                 isRecurring: true,
@@ -1999,8 +2220,7 @@ describe('CalDAVClient recurring event expansion', () => {
 
         const { events } = await extractEvents([masterEvent]);
         expect(events).toHaveLength(1);
-        expect(events[0]?.isAllDay).toBe(true);
-        expect(events[0]?.timezone).toBeUndefined();
+        expect(events[0]?.time).toEqual(createCalendarTimeRange({ kind: 'all_day', start: '2025-06-15', endExclusive: '2025-06-16' }));
     });
 
     // -----------------------------------------------------------------------
@@ -2242,7 +2462,7 @@ describe('CalDAVClient recurring event expansion', () => {
 
         const { events } = await extractEvents([masterEvent]);
         expect(events).toHaveLength(1);
-        expect(events[0]?.timezone).toBe('America/Chicago');
+        expect(events[0]?.time).toMatchObject({ kind: 'timed', timezone: 'America/Chicago' });
     });
 
     test('recurring event that produces zero instances is silently excluded and logs debug', async () => {

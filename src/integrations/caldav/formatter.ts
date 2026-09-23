@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
-import type { CalendarEvent } from './types';
+import { dayOrderMs, displayDay, resolveToInstant } from './time-range';
+import type { CalendarEvent, CalendarTimeRange } from './types';
 
 /**
  * Format calendar events for context injection.
@@ -27,8 +28,7 @@ export function formatCalendarContext(
     const dayGroups = new Map<string, CalendarEvent[]>();
 
     for(const event of events) {
-        const eventDT  = DateTime.fromJSDate(event.start, { zone: timezone });
-        const dayKey   = eventDT.toFormat('yyyy-MM-dd');
+        const dayKey   = displayDay(event.time, timezone);
         const existing = dayGroups.get(dayKey) ?? [];
         existing.push(event);
         dayGroups.set(dayKey, existing);
@@ -46,17 +46,7 @@ export function formatCalendarContext(
         sections.push(`### ${dayLabel}`);
 
         // Sort events: all-day first, then by start time
-        const sorted = dayEvents.toSorted((a, b) => {
-            if(a.isAllDay && !b.isAllDay) {
-                // Stryker disable next-line NumberLiteralValue: only the sign of a comparator result orders the sort, so -1 and -2 are indistinguishable.
-                return -1;
-            }
-            if(!a.isAllDay && b.isAllDay) {
-                // Stryker disable next-line NumberLiteralValue: only the sign of a comparator result orders the sort, and Bun's stable toSorted never distinguishes 1 from 0 for this branch (verified exhaustively over 335k inputs); killing it would pin engine comparator call order.
-                return 1;
-            }
-            return a.start.getTime() - b.start.getTime();
-        });
+        const sorted = dayEvents.toSorted((a, b) => dayOrderMs(a.time, timezone) - dayOrderMs(b.time, timezone));
 
         for(const event of sorted) {
             sections.push(formatEventLine(event, timezone));
@@ -84,16 +74,16 @@ function formatDayLabel(dayDT: DateTime, todayStart: DateTime): string {
     return `${dayName} ${dateStr}`;
 }
 
-function formatTimeRange(start: Date, end: Date, zone: string): string {
-    const startDT = DateTime.fromJSDate(start, { zone });
-    const endDT   = DateTime.fromJSDate(end, { zone });
+function formatTimeRange(startMs: number, endMs: number, zone: string): string {
+    const startDT = DateTime.fromMillis(startMs, { zone });
+    const endDT   = DateTime.fromMillis(endMs, { zone });
     const startTime = startDT.toFormat('HH:mm');
     const endTime   = endDT.toFormat('HH:mm');
     const abbr      = startDT.toFormat('ZZZZ');
     return `${startTime}–${endTime} ${abbr}`;
 }
 
-function buildTimeSuffix(event: CalendarEvent, displayTimezone: string): string {
+function buildTimeSuffix(time: Extract<CalendarTimeRange, { kind: 'timed' }>, displayTimezone: string): string {
     // Collect all relevant timezones, deduplicate, preserve order.
     // Primary display timezone is already shown by formatEventLine, so skip it.
     const seen = new Set<string>([displayTimezone]);
@@ -101,7 +91,7 @@ function buildTimeSuffix(event: CalendarEvent, displayTimezone: string): string 
 
     // Event's native timezone (from iCal data)
     // Stryker disable next-line llm: the very next guard is a truthiness check, and undefined and '' are both falsy there, so the `|| ''` fallback is inert.
-    const eventTz = event.timezone;
+    const eventTz = time.timezone;
     if(eventTz && !seen.has(eventTz)) {
         // Stryker disable next-line ArrayMethodSwap: suffixZones is newly allocated and still empty here, so this first insertion has the same order.
         suffixZones.push(eventTz);
@@ -117,19 +107,30 @@ function buildTimeSuffix(event: CalendarEvent, displayTimezone: string): string 
         return '';
     }
 
-    const parts = suffixZones.map(tz => formatTimeRange(event.start, event.end, tz));
+    const parts = suffixZones.map(tz => formatTimeRange(time.start.getTime(), time.end.getTime(), tz));
     return ` (${parts.join(' / ')})`;
 }
 
 function formatEventLine(event: CalendarEvent, izzyTimezone: string): string {
     let line: string;
 
-    if(event.isAllDay) {
-        line = `- All day: ${event.summary}`;
-    } else {
-        const izzyRange = formatTimeRange(event.start, event.end, izzyTimezone);
-        const suffix    = buildTimeSuffix(event, izzyTimezone);
-        line = `- ${izzyRange}${suffix}: ${event.summary}`;
+    switch(event.time.kind) {
+        case 'all_day': {
+            line = `- All day: ${event.summary}`;
+            break;
+        }
+        case 'floating': {
+            // A floating time has no native zone, so there is no suffix: it is shown in (and means) the display zone.
+            const { startMs, endMs } = resolveToInstant(event.time, izzyTimezone);
+            line = `- ${formatTimeRange(startMs, endMs, izzyTimezone)}: ${event.summary}`;
+            break;
+        }
+        case 'timed': {
+            const izzyRange = formatTimeRange(event.time.start.getTime(), event.time.end.getTime(), izzyTimezone);
+            const suffix = buildTimeSuffix(event.time, izzyTimezone);
+            line = `- ${izzyRange}${suffix}: ${event.summary}`;
+            break;
+        }
     }
 
     // Calendar label

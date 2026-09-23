@@ -34,7 +34,7 @@ import {
     buildDiscordEnvelope, buildResumeNote, formatTimeHeader, StreamTracker,
     type AgendaEntry, type BuildDiscordEnvelopeParams, type CalendarDelta, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type PlatformImage, type StateTopSetDelta, type TimeHeaderProvider
 } from '@/agent';
-import { formatCalendarContext } from '@/integrations/caldav';
+import { formatCalendarContext, resolveToInstant } from '@/integrations/caldav';
 
 /**
  * The slice of `discord-envelope-provider.ts` this processor depends on, gathered into one
@@ -86,14 +86,20 @@ const EMPTY_CALENDAR_DELTA: CalendarDelta = {
 };
 // Stryker restore BooleanLiteral
 
-/** One `+`/`-`/`~` change-list line for an `AgendaEntry`: `HH:mm–HH:mm summary` in `timezone`, or `All day: summary` for an all-day entry — mirrors `formatCalendarContext`'s own `formatEventLine` convention so the change list and the full agenda text read consistently. */
+/** One `+`/`-`/`~` change-list line for an `AgendaEntry`: `HH:mm–HH:mm summary` in `timezone` (a floating entry's wall-clock times resolved in that zone), or `All day: summary` for an all-day entry — mirrors `formatCalendarContext`'s own `formatEventLine` convention so the change list and the full agenda text read consistently. */
 function formatAgendaLine(entry: AgendaEntry, timezone: string): string {
-    if(entry.isAllDay) {
-        return `All day: ${entry.summary}`;
+    switch(entry.time.kind) {
+        case 'all_day': {
+            return `All day: ${entry.summary}`;
+        }
+        case 'floating':
+        case 'timed': {
+            const { startMs, endMs } = resolveToInstant(entry.time, timezone);
+            const start = DateTime.fromMillis(startMs, { zone: timezone }).toFormat('HH:mm');
+            const end = DateTime.fromMillis(endMs, { zone: timezone }).toFormat('HH:mm');
+            return `${start}–${end} ${entry.summary}`;
+        }
     }
-    const start = DateTime.fromISO(entry.start, { zone: timezone }).toFormat('HH:mm');
-    const end = DateTime.fromISO(entry.end, { zone: timezone }).toFormat('HH:mm');
-    return `${start}–${end} ${entry.summary}`;
 }
 
 /**

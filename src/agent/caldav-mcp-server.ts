@@ -2,8 +2,28 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpJsonResult, withHealthGuard, withToolErrorHandling } from './mcp-helpers';
-import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
+import type { CalDAVClient, CalendarRegistryBackend, CalendarEvent } from '@/integrations/caldav';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
+
+/** Date-only and floating tool values must never masquerade as ISO instants. */
+function serializeEvent(event: CalendarEvent): Record<string, unknown> {
+    let time: Record<string, unknown>;
+    switch(event.time.kind) {
+        case 'all_day': {
+            time = { kind: 'all_day', start: event.time.start, endExclusive: event.time.endExclusive };
+            break;
+        }
+        case 'floating': {
+            time = { kind: 'floating', start: event.time.start, end: event.time.end };
+            break;
+        }
+        case 'timed': {
+            time = { kind: 'timed', start: event.time.start.toISOString(), end: event.time.end.toISOString(), timezone: event.time.timezone };
+            break;
+        }
+    }
+    return { ...event, time };
+}
 
 /**
  * Result of resolving a user name to a Discord user ID.
@@ -70,11 +90,11 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
 
     return createSdkMcpServer({
         name:    'caldav',
-        version: '1.0.0',
+        version: '2.0.0',
         tools:   [
             tool(
                 'getCalendarEvents',
-                'Get calendar events for a user in a specific date range. Returns events from all calendars associated with the user plus shared/public calendars.',
+                'Get calendar events for a user in a specific date range, including shared calendars. Each event.time is all_day (dates, exclusive end), floating (zone-less local times), or timed (ISO instants and source timezone).',
                 {
                     user:      z.string().min(1).describe("Person's name to look up calendars for (e.g., 'Craig')"),
                     startDate: z.string().describe('Start date in ISO 8601 format (e.g., 2026-03-18)'),
@@ -93,11 +113,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
 
                         const { events, failed } = await client.getEvents(servers, new Date(args.startDate), new Date(args.endDate));
                         return mcpJsonResult({
-                            events: events.map(e => ({
-                                ...e,
-                                start: e.start.toISOString(),
-                                end:   e.end.toISOString(),
-                            })),
+                            events:       events.map(event => serializeEvent(event)),
                             count:        events.length,
                             failedCount:  failed.length > 0 ? failed.length : undefined,
                             failedEvents: failed.length > 0 ? failed.map(f => f.uid) : undefined,
@@ -108,7 +124,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
 
             tool(
                 'getUpcomingEvents',
-                'Get upcoming calendar events for a user over the next N days. Convenience wrapper that defaults to 7 days.',
+                'Get upcoming calendar events over the next N days (default 7). Each event.time is all_day (dates, exclusive end), floating (zone-less local times), or timed (ISO instants and source timezone).',
                 {
                     user: z.string().min(1).describe("Person's name to look up calendars for (e.g., 'Craig')"),
                     days: z.number().int().positive().optional().describe('Number of days to look ahead (default: 7)'),
@@ -129,11 +145,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                         const end              = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
                         const { events, failed } = await client.getEvents(servers, now, end);
                         return mcpJsonResult({
-                            events: events.map(e => ({
-                                ...e,
-                                start: e.start.toISOString(),
-                                end:   e.end.toISOString(),
-                            })),
+                            events:       events.map(event => serializeEvent(event)),
                             count:        events.length,
                             daysAhead:    days,
                             failedCount:  failed.length > 0 ? failed.length : undefined,

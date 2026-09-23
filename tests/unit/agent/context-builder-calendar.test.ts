@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createContextBuilder, type CalendarService } from '../../../src/agent/context-builder';
 import { CaldavAuthError, CaldavTimeoutError } from '../../../src/errors';
-import type { CalDAVClient, CalendarRegistryBackend, CalendarEventsResult, CalendarServerEntry } from '../../../src/integrations/caldav';
+import { createLocalDate, type CalDAVClient, type CalendarRegistryBackend, type CalendarEventsResult, type CalendarServerEntry } from '../../../src/integrations/caldav';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import { createMemoryPath } from '../../../src/storage/memory-tool/types';
 import { mockLogger } from '../../setup';
@@ -25,9 +25,7 @@ describe('createContextBuilder calendar context injection', () => {
     const fakeEvent = {
         uid:           'evt-001',
         summary:       'Team meeting',
-        start:         new Date('2026-03-18T10:00:00Z'),
-        end:           new Date('2026-03-18T11:00:00Z'),
-        isAllDay:      false,
+        time:          { kind: 'timed' as const, start: new Date('2026-03-18T10:00:00Z'), end: new Date('2026-03-18T11:00:00Z') },
         calendarLabel: 'Main',
         status:        'confirmed' as const,
     };
@@ -397,9 +395,7 @@ describe('createContextBuilder calendar context injection', () => {
             mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [{
                 uid:           'evt-allday',
                 summary:       'UTC perch event',
-                start:         new Date('2026-03-18T00:00:00Z'),
-                end:           new Date('2026-03-19T00:00:00Z'),
-                isAllDay:      true,
+                time:          { kind: 'all_day', start: createLocalDate('2026-03-18'), endExclusive: createLocalDate('2026-03-19') },
                 calendarLabel: 'Work',
             }], failed: [] }));
 
@@ -762,9 +758,7 @@ describe('createContextBuilder calendar context injection', () => {
             mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [{
                 uid:           'evt-allday',
                 summary:       'All day event',
-                start:         new Date('2026-03-18T00:00:00Z'),
-                end:           new Date('2026-03-19T00:00:00Z'),
-                isAllDay:      true,
+                time:          { kind: 'all_day', start: createLocalDate('2026-03-18'), endExclusive: createLocalDate('2026-03-19') },
                 calendarLabel: 'Main',
             }], failed: [] }));
 
@@ -787,9 +781,7 @@ describe('createContextBuilder calendar context injection', () => {
             mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [{
                 uid:           'evt-allday',
                 summary:       'UTC event',
-                start:         new Date('2026-03-18T00:00:00Z'),
-                end:           new Date('2026-03-19T00:00:00Z'),
-                isAllDay:      true,
+                time:          { kind: 'all_day', start: createLocalDate('2026-03-18'), endExclusive: createLocalDate('2026-03-19') },
                 calendarLabel: 'Work',
             }], failed: [] }));
 

@@ -1,13 +1,73 @@
 import { logger } from '@hughescr/logger';
+import { DateTime } from 'luxon';
 import * as ical from 'node-ical';
 import { expandRecurringEvent } from 'node-ical';
 import { createDAVClient, type DAVCalendar, type DAVCalendarObject } from 'tsdav';
 import type { CalendarServerEntry } from './calendar-registry/types';
-import type { CalendarInfo, CalendarEvent, CalendarEventsResult, FailedCalendarEvent } from './types';
+import { calendarSortKey } from './time-range';
+import { createCalendarTimeRange, type CalendarInfo, type CalendarEvent, type CalendarEventsResult, type FailedCalendarEvent, type CalendarTimeRange } from './types';
 import { CaldavAuthError, CaldavTimeoutError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services';
 
 const CONSECUTIVE_FAILURE_THRESHOLD = 3;
+
+/** What node-ical decoded for one VEVENT's (or one recurrence instance's) time. */
+interface IcalTimeSource {
+    start:        ical.DateWithTimeZone | undefined
+    end:          ical.DateWithTimeZone | undefined
+    isAllDay:     boolean
+    /** The series DTSTART, set only for an RRULE-generated (non-override) instance. */
+    seriesStart?: ical.DateWithTimeZone
+}
+
+const HOST_DATE_FORMAT = 'yyyy-MM-dd';
+const HOST_WALL_CLOCK_FORMAT = "yyyy-MM-dd'T'HH:mm:ss";
+
+/** node-ical builds DATE and zone-less DATE-TIME values from host-local components (`new Date(y, m, d, …)`), so read them back the same way (Luxon's default zone is the host zone). */
+function hostLocal(date: Date, format: string): string {
+    return DateTime.fromJSDate(date).toFormat(format);
+}
+
+/**
+ * Classifies node-ical's decoded values into a checked {@link CalendarTimeRange}:
+ * - a value node-ical could not parse is left as a raw string; it keeps the legacy `new Date(string)` instant reading;
+ * - an all-day event's dates are its host-local calendar components (node-ical's exclusive DTEND);
+ * - a `Date` carrying node-ical's runtime `tz` (a TZID, a borrowed VTIMEZONE, or `Etc/UTC` for a `Z` value) is a timed instant;
+ * - any other `Date` is a floating wall-clock time. node-ical expands a floating RRULE in UTC, so an
+ *   RRULE-generated instance's host-local hours drift across a host DST change: its nominal wall
+ *   time is the series DTSTART's wall time advanced by the instance's elapsed offset from it, and it
+ *   keeps the series' wall-clock span (DTSTART to DTEND), not node-ical's elapsed duration.
+ *
+ * Throws `RangeError` (from {@link createCalendarTimeRange}) when the values do not form a valid range.
+ */
+function buildTimeRange({ start, end, isAllDay, seriesStart }: IcalTimeSource): CalendarTimeRange {
+    if(!(start instanceof Date) || !(end instanceof Date)) {
+        return createCalendarTimeRange({ kind: 'timed', start: new Date(String(start)), end: new Date(String(end)) });
+    }
+    if(isAllDay) {
+        return createCalendarTimeRange({ kind: 'all_day', start: hostLocal(start, HOST_DATE_FORMAT), endExclusive: hostLocal(end, HOST_DATE_FORMAT) });
+    }
+    // boundary cast: node-ical DateWithTimeZone lacks a `.tz` property in its .d.ts; the property exists at runtime and contains the TZID string
+    const timezone = (start as Date & { tz?: string }).tz;
+    if(timezone) {
+        return createCalendarTimeRange({ kind: 'timed', start, end, timezone });
+    }
+    if(!(seriesStart instanceof Date)) {
+        return createCalendarTimeRange({ kind: 'floating', start: hostLocal(start, HOST_WALL_CLOCK_FORMAT), end: hostLocal(end, HOST_WALL_CLOCK_FORMAT) });
+    }
+    // node-ical gives every instance the series' elapsed (DTEND - DTSTART) duration, which differs from its
+    // wall-clock span when that first interval crosses a host DST change; map it back onto the series wall clock.
+    const seriesWallStart = DateTime.fromISO(hostLocal(seriesStart, HOST_WALL_CLOCK_FORMAT), { zone: 'utc' });
+    const seriesWallEnd = DateTime.fromISO(hostLocal(new Date(seriesStart.getTime() + end.getTime() - start.getTime()), HOST_WALL_CLOCK_FORMAT), { zone: 'utc' });
+    const nominalStart = seriesWallStart.plus(start.getTime() - seriesStart.getTime());
+    const nominalEnd = nominalStart.plus(seriesWallEnd.diff(seriesWallStart));
+    return createCalendarTimeRange({ kind: 'floating', start: nominalStart.toFormat(HOST_WALL_CLOCK_FORMAT), end: nominalEnd.toFormat(HOST_WALL_CLOCK_FORMAT) });
+}
+
+/** Zone-independent order for merged raw events by {@link calendarSortKey}; the stable sort keeps server/parse order for equal keys. */
+function compareRawEvents(a: CalendarEvent, b: CalendarEvent): number {
+    return calendarSortKey(a.time).localeCompare(calendarSortKey(b.time));
+}
 
 interface CachedResult {
     events:    CalendarEvent[]
@@ -124,7 +184,7 @@ export class CalDAVClient {
 
         return {
             // Stryker disable next-line llm: sorting mutates only this fresh local array, so returned ordered contents are identical.
-            events: allEvents.toSorted((a, b) => a.start.getTime() - b.start.getTime()),
+            events: allEvents.toSorted(compareRawEvents),
             failed: allFailed,
         };
     }
@@ -275,7 +335,7 @@ export class CalDAVClient {
                 continue;
             }
 
-            events.push(this.#buildCalendarEvent(vevent, vevent.start, vevent.end, this.#isAllDay(vevent), calendarLabel));
+            this.#appendEvent(events, failed, vevent, { start: vevent.start, end: vevent.end, isAllDay: this.#isAllDay(vevent) }, calendarLabel);
         }
 
         return { events, failed };
@@ -303,31 +363,40 @@ export class CalDAVClient {
             return { events: [], failed: [] };
         }
 
-        return {
-            events: instances.map((instance) => {
-                const instanceVEvent = instance.event;
-                return this.#buildCalendarEvent(instanceVEvent, instance.start, instance.end, instance.isFullDay, calendarLabel);
-            }),
-            failed: [],
-        };
+        const events: CalendarEvent[] = [];
+        const failed: FailedCalendarEvent[] = [];
+        for(const instance of instances) {
+            // An override instance carries its own rescheduled start; only RRULE-generated instances need the series DTSTART.
+            const seriesStart = instance.isOverride ? undefined : vevent.start;
+            this.#appendEvent(events, failed, instance.event, { start: instance.start, end: instance.end, isAllDay: instance.isFullDay, seriesStart }, calendarLabel);
+        }
+        return { events, failed };
     }
 
-    #buildCalendarEvent(vevent: ical.VEvent, start: ical.DateWithTimeZone | undefined, end: ical.DateWithTimeZone | undefined, isAllDay: boolean, calendarLabel: string): CalendarEvent {
-        // boundary cast: node-ical DateWithTimeZone lacks a `.tz` property in its .d.ts; the property exists at runtime and contains the TZID string
-        const startTz = (start as unknown as Record<string, unknown> | undefined)?.tz as string | undefined;
+    /** Appends the decoded event, or — when its time cannot be decoded — a `failed[]` entry, so one bad VEVENT never costs its neighbours. */
+    #appendEvent(events: CalendarEvent[], failed: FailedCalendarEvent[], vevent: ical.VEvent, source: IcalTimeSource, calendarLabel: string): void {
+        let time: CalendarTimeRange;
+        try {
+            time = buildTimeRange(source);
+        } catch (error) {
+            logger.warn({ uid: vevent.uid, error }, 'Failed to decode calendar event time; it will appear in failed[] for caller visibility');
+            failed.push({ uid: vevent.uid, reason: String(error) });
+            return;
+        }
+        events.push(this.#buildCalendarEvent(vevent, time, calendarLabel));
+    }
+
+    #buildCalendarEvent(vevent: ical.VEvent, time: CalendarTimeRange, calendarLabel: string): CalendarEvent {
         return {
             uid:          vevent.uid,
             summary:      this.#extractParameterValue(vevent.summary) ?? '(No title)',
-            start:        start instanceof Date ? start : new Date(String(start)),
-            end:          end instanceof Date ? end : new Date(String(end)),
+            time,
             location:     this.#extractParameterValue(vevent.location) ?? undefined,
             description:  this.#extractParameterValue(vevent.description) ?? undefined,
             attendees:    this.#extractAttendees(vevent),
-            isAllDay,
             calendarLabel,
             status:       this.#normalizeStatus(vevent.status),
             recurrenceId: vevent.recurrenceid ? String(vevent.recurrenceid) : undefined,
-            timezone:     isAllDay ? undefined : startTz,
         };
     }
 

@@ -3,6 +3,7 @@ import {
     calendarEntrySchema,
     calendarServerEntrySchema,
     calendarRegistryRecordSchema,
+    calendarRegistryScopeSchema,
     createCalendarServerId,
     isCalendarServerId
 } from '@/integrations/caldav/calendar-registry/types';
@@ -200,15 +201,29 @@ describe('calendarServerEntrySchema', () => {
     });
 });
 
+describe('calendarRegistryScopeSchema', () => {
+    test('accepts the shared scope and a nonempty personal scope', () => {
+        expect(calendarRegistryScopeSchema.parse({ kind: 'shared' })).toEqual({ kind: 'shared' });
+        expect(calendarRegistryScopeSchema.parse({ kind: 'personal', userId: 'u' })).toEqual({ kind: 'personal', userId: 'u' });
+    });
+
+    test('rejects an empty personal owner and extra fields on either arm', () => {
+        expect(() => calendarRegistryScopeSchema.parse({ kind: 'personal', userId: '' })).toThrow();
+        expect(() => calendarRegistryScopeSchema.parse({ kind: 'shared', userId: 'u1' })).toThrow();
+        expect(() => calendarRegistryScopeSchema.parse({ kind: 'personal', userId: 'u1', extra: true })).toThrow();
+        expect(() => calendarRegistryScopeSchema.parse({ kind: 'team' })).toThrow();
+    });
+});
+
 describe('calendarRegistryRecordSchema', () => {
     test('should parse valid CalendarRegistryRecord with no servers', () => {
         const record = calendarRegistryRecordSchema.parse({
-            userId:    'user-123',
+            scope:     { kind: 'personal', userId: 'user-123' },
             servers:   [],
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
         });
-        expect(record.userId).toBe('user-123');
+        expect(record.scope).toEqual({ kind: 'personal', userId: 'user-123' });
         expect(record.servers).toHaveLength(0);
         expect(record.createdAt).toBe('2026-01-01T00:00:00.000Z');
         expect(record.updatedAt).toBe('2026-01-01T00:00:00.000Z');
@@ -216,7 +231,7 @@ describe('calendarRegistryRecordSchema', () => {
 
     test('should parse valid CalendarRegistryRecord with servers', () => {
         const record = calendarRegistryRecordSchema.parse({
-            userId:  'user-456',
+            scope:   { kind: 'personal', userId: 'user-456' },
             servers: [
                 {
                     serverId:    VALID_UUID,
@@ -235,7 +250,7 @@ describe('calendarRegistryRecordSchema', () => {
 
     test('should reject empty userId', () => {
         expect(() => calendarRegistryRecordSchema.parse({
-            userId:    '',
+            scope:     { kind: 'personal', userId: '' },
             servers:   [],
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
@@ -244,7 +259,7 @@ describe('calendarRegistryRecordSchema', () => {
 
     test('should reject invalid createdAt', () => {
         expect(() => calendarRegistryRecordSchema.parse({
-            userId:    'user-123',
+            scope:     { kind: 'personal', userId: 'user-123' },
             servers:   [],
             createdAt: 'not-a-date',
             updatedAt: '2026-01-01T00:00:00.000Z',
@@ -253,7 +268,7 @@ describe('calendarRegistryRecordSchema', () => {
 
     test('should reject invalid updatedAt', () => {
         expect(() => calendarRegistryRecordSchema.parse({
-            userId:    'user-123',
+            scope:     { kind: 'personal', userId: 'user-123' },
             servers:   [],
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: 'not-a-date',
@@ -266,12 +281,12 @@ describe('calendarRegistryRecordSchema', () => {
 
     test('should accept single-character userId', () => {
         const record = calendarRegistryRecordSchema.parse({
-            userId:    'u',
+            scope:     { kind: 'personal', userId: 'u' },
             servers:   [],
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
         });
-        expect(record.userId).toBe('u');
+        expect(record.scope).toEqual({ kind: 'personal', userId: 'u' });
     });
 });
 

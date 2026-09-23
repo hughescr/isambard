@@ -8,28 +8,31 @@ import {
     eventsInWindow,
     type AgendaEntry
 } from '../../../../src/agent/session/calendar-delta';
-import type { CalendarEvent } from '../../../../src/integrations/caldav';
+import { createLocalDate, createLocalDateTime, type CalendarEvent } from '../../../../src/integrations/caldav';
 
-function makeEntry(overrides: Partial<AgendaEntry> = {}): AgendaEntry {
+interface OldTime<T> { start?: T, end?: T, isAllDay?: boolean }
+function makeEntry(overrides: Partial<AgendaEntry> & OldTime<string> = {}): AgendaEntry {
+    const { start, end, isAllDay, ...fields } = overrides;
     return {
-        uid:      'uid-1',
-        start:    '2026-03-08T17:00:00.000Z',
-        end:      '2026-03-08T18:00:00.000Z',
-        summary:  'Meeting',
-        isAllDay: false,
-        ...overrides,
+        uid:     'uid-1',
+        summary: 'Meeting',
+        time:    isAllDay
+            ? { kind: 'all_day', start: createLocalDate('2026-03-08'), endExclusive: createLocalDate('2026-03-09') }
+            : { kind: 'timed', start: new Date(start ?? '2026-03-08T17:00:00.000Z'), end: new Date(end ?? '2026-03-08T18:00:00.000Z') },
+        ...fields,
     };
 }
 
-function makeEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
+function makeEvent(overrides: Partial<CalendarEvent> & OldTime<Date> = {}): CalendarEvent {
+    const { start, end, isAllDay, ...fields } = overrides;
     return {
-        uid:           'uid-1',
-        summary:       'Meeting',
-        start:         new Date('2026-03-08T17:00:00.000Z'),
-        end:           new Date('2026-03-08T18:00:00.000Z'),
-        isAllDay:      false,
+        uid:     'uid-1',
+        summary: 'Meeting',
+        time:    isAllDay
+            ? { kind: 'all_day', start: createLocalDate('2026-03-08'), endExclusive: createLocalDate('2026-03-09') }
+            : { kind: 'timed', start: start ?? new Date('2026-03-08T17:00:00.000Z'), end: end ?? new Date('2026-03-08T18:00:00.000Z') },
         calendarLabel: 'Work',
-        ...overrides,
+        ...fields,
     };
 }
 
@@ -62,11 +65,43 @@ describe('agendaFingerprint', () => {
         ['summary', { summary: 'Renamed meeting' }],
         ['location', { location: 'Room 2' }],
         ['status', { status: 'cancelled' }],
-        ['isAllDay', { isAllDay: true }],
+        ['time variant', { isAllDay: true }],
     ])('changing %s changes the fingerprint', (_field, overrides) => {
         const base    = makeEntry({ location: 'Room 1', status: 'confirmed' });
         const changed = makeEntry({ location: 'Room 1', status: 'confirmed', ...overrides });
         expect(agendaFingerprint(base)).not.toBe(agendaFingerprint(changed));
+    });
+
+    test('floating 09:00 and timed 09:00Z have distinct fingerprints even in UTC', () => {
+        const floating = makeEntry({ time: { kind: 'floating', start: createLocalDateTime('2026-03-08T09:00:00'), end: createLocalDateTime('2026-03-08T10:00:00') } });
+        const timed = makeEntry({ time: { kind: 'timed', start: new Date('2026-03-08T09:00:00Z'), end: new Date('2026-03-08T10:00:00Z') } });
+        expect(agendaFingerprint(floating)).not.toBe(agendaFingerprint(timed));
+        expect(agendaFingerprint(floating)).toContain('floating');
+        expect(agendaFingerprint(timed)).toContain('timed');
+    });
+
+    test('date endExclusive and timed source zone each change the fingerprint', () => {
+        const date = makeEntry({ time: { kind: 'all_day', start: createLocalDate('2026-03-08'), endExclusive: createLocalDate('2026-03-09') } });
+        const extended = makeEntry({ time: { kind: 'all_day', start: createLocalDate('2026-03-08'), endExclusive: createLocalDate('2026-03-10') } });
+        expect(agendaFingerprint(date)).not.toBe(agendaFingerprint(extended));
+        const utc = makeEntry({ time: { kind: 'timed', start: new Date('2026-03-08T17:00:00Z'), end: new Date('2026-03-08T18:00:00Z'), timezone: 'Etc/UTC' } });
+        const pacific = makeEntry({ time: { kind: 'timed', start: new Date('2026-03-08T17:00:00Z'), end: new Date('2026-03-08T18:00:00Z'), timezone: 'America/Los_Angeles' } });
+        expect(agendaFingerprint(utc)).not.toBe(agendaFingerprint(pacific));
+    });
+
+    test('an all-day fingerprint serializes the variant and both dates exactly', () => {
+        const entry = makeEntry({ isAllDay: true, location: 'Room 1', status: 'confirmed' });
+        expect(agendaFingerprint(entry)).toBe('{"time":{"kind":"all_day","start":"2026-03-08","endExclusive":"2026-03-09"},"summary":"Meeting","location":"Room 1","status":"confirmed"}');
+    });
+
+    test('a floating fingerprint serializes the variant and both wall-clock times exactly', () => {
+        const entry = makeEntry({ time: { kind: 'floating', start: createLocalDateTime('2026-03-08T09:00:00'), end: createLocalDateTime('2026-03-08T10:00:00') } });
+        expect(agendaFingerprint(entry)).toBe('{"time":{"kind":"floating","start":"2026-03-08T09:00:00","end":"2026-03-08T10:00:00"},"summary":"Meeting"}');
+    });
+
+    test('a timed fingerprint serializes ISO instants and the source timezone exactly', () => {
+        const entry = makeEntry({ time: { kind: 'timed', start: new Date('2026-03-08T17:00:00.000Z'), end: new Date('2026-03-08T18:00:00.000Z'), timezone: 'America/New_York' } });
+        expect(agendaFingerprint(entry)).toBe('{"time":{"kind":"timed","start":"2026-03-08T17:00:00.000Z","end":"2026-03-08T18:00:00.000Z","timezone":"America/New_York"},"summary":"Meeting"}');
     });
 
     test('a fingerprint does not depend on uid or recurrenceId', () => {
@@ -261,71 +296,81 @@ describe('toAgenda', () => {
 
     test('drops an event entirely before the window', () => {
         const event = makeEvent({ start: new Date('2026-03-08T01:00:00.000Z'), end: new Date('2026-03-08T02:00:00.000Z') });
-        expect(toAgenda([event], window)).toEqual([]);
+        expect(toAgenda([event], window, 'America/Los_Angeles')).toEqual([]);
     });
 
     test('drops an event entirely after the window', () => {
         const event = makeEvent({ start: new Date('2026-03-09T09:00:00.000Z'), end: new Date('2026-03-09T10:00:00.000Z') });
-        expect(toAgenda([event], window)).toEqual([]);
+        expect(toAgenda([event], window, 'America/Los_Angeles')).toEqual([]);
     });
 
     test('keeps an event straddling the start of the window', () => {
         const event = makeEvent({ start: new Date('2026-03-08T07:00:00.000Z'), end: new Date('2026-03-08T09:00:00.000Z') });
-        expect(toAgenda([event], window)).toHaveLength(1);
+        expect(toAgenda([event], window, 'America/Los_Angeles')).toHaveLength(1);
     });
 
     test('keeps an event straddling the end of the window (straddling midnight)', () => {
         const event = makeEvent({ start: new Date('2026-03-09T07:00:00.000Z'), end: new Date('2026-03-09T09:00:00.000Z') });
-        expect(toAgenda([event], window)).toHaveLength(1);
+        expect(toAgenda([event], window, 'America/Los_Angeles')).toHaveLength(1);
     });
 
     test('keeps an event fully inside the window', () => {
         const event = makeEvent({ start: new Date('2026-03-08T17:00:00.000Z'), end: new Date('2026-03-08T18:00:00.000Z') });
-        expect(toAgenda([event], window)).toHaveLength(1);
+        expect(toAgenda([event], window, 'America/Los_Angeles')).toHaveLength(1);
     });
 
     test('keeps an event ending exactly at window.startMs (inclusive lower boundary)', () => {
         const event = makeEvent({ start: new Date('2026-03-08T07:00:00.000Z'), end: new Date(window.startMs) });
-        expect(toAgenda([event], window)).toHaveLength(1);
+        expect(toAgenda([event], window, 'America/Los_Angeles')).toHaveLength(1);
     });
 
     test('drops an event ending one millisecond before window.startMs', () => {
         const event = makeEvent({ start: new Date('2026-03-08T06:00:00.000Z'), end: new Date(window.startMs - 1) });
-        expect(toAgenda([event], window)).toEqual([]);
+        expect(toAgenda([event], window, 'America/Los_Angeles')).toEqual([]);
     });
 
     test('keeps an event starting exactly at window.endMs (inclusive upper boundary)', () => {
         const event = makeEvent({ start: new Date(window.endMs), end: new Date('2026-03-09T09:00:00.000Z') });
-        expect(toAgenda([event], window)).toHaveLength(1);
+        expect(toAgenda([event], window, 'America/Los_Angeles')).toHaveLength(1);
     });
 
     test('drops an event starting one millisecond after window.endMs', () => {
         const event = makeEvent({ start: new Date(window.endMs + 1), end: new Date('2026-03-09T10:00:00.000Z') });
-        expect(toAgenda([event], window)).toEqual([]);
+        expect(toAgenda([event], window, 'America/Los_Angeles')).toEqual([]);
     });
 
-    test('maps CalendarEvent fields onto AgendaEntry, converting dates to ISO strings', () => {
+    test('maps CalendarEvent fields onto AgendaEntry, keeping the timed variant', () => {
         const event = makeEvent({
             uid:          'uid-9',
             recurrenceId: '2026-03-08',
             summary:      'Standup',
             location:     'Room 3',
             status:       'tentative',
-            isAllDay:     false,
             start:        new Date('2026-03-08T17:00:00.000Z'),
             end:          new Date('2026-03-08T17:30:00.000Z'),
         });
 
-        expect(toAgenda([event], window)).toEqual([{
+        expect(toAgenda([event], window, 'America/Los_Angeles')).toEqual([{
             uid:          'uid-9',
             recurrenceId: '2026-03-08',
-            start:        '2026-03-08T17:00:00.000Z',
-            end:          '2026-03-08T17:30:00.000Z',
+            time:         { kind: 'timed', start: new Date('2026-03-08T17:00:00.000Z'), end: new Date('2026-03-08T17:30:00.000Z') },
             summary:      'Standup',
             location:     'Room 3',
             status:       'tentative',
-            isAllDay:     false,
         }]);
+    });
+
+    test('timed agenda projection does not share mutable Date endpoints with cached events', () => {
+        const event = makeEvent();
+        const entry = toAgenda([event], window, 'America/Los_Angeles')[0];
+        if(event.time.kind !== 'timed' || entry.time.kind !== 'timed') {
+            throw new Error('Expected timed fixtures');
+        }
+        const original = agendaFingerprint(entry);
+        event.time.start.setTime(0);
+        event.time.end.setTime(0);
+        expect(agendaFingerprint(entry)).toBe(original);
+        expect(entry.time.start.getTime()).toBe(new Date('2026-03-08T17:00:00.000Z').getTime());
     });
 
     test('sorts by start time, then by agendaKey for same-start ties', () => {
@@ -333,13 +378,41 @@ describe('toAgenda', () => {
         const tieA   = makeEvent({ uid: 'uid-a', start: new Date('2026-03-08T17:00:00.000Z'), end: new Date('2026-03-08T17:30:00.000Z') });
         const tieB   = makeEvent({ uid: 'uid-b-tie', start: new Date('2026-03-08T17:00:00.000Z'), end: new Date('2026-03-08T17:30:00.000Z') });
 
-        const result = toAgenda([later, tieB, tieA], window);
+        const result = toAgenda([later, tieB, tieA], window, 'America/Los_Angeles');
 
         expect(result.map(entry => entry.uid)).toEqual(['uid-a', 'uid-b-tie', 'uid-b']);
     });
 
+    test('sorts by display day, then all-day first, then resolved start, then agendaKey', () => {
+        const allDay = (uid: string, start: string, endExclusive: string): CalendarEvent => makeEvent({ uid, time: { kind: 'all_day', start: createLocalDate(start), endExclusive: createLocalDate(endExclusive) } });
+        const events = [
+            makeEvent({ uid: 'timed-0900', start: new Date('2026-03-08T17:00:00.000Z'), end: new Date('2026-03-08T17:30:00.000Z') }),
+            makeEvent({ uid: 'floating-0830', time: { kind: 'floating', start: createLocalDateTime('2026-03-08T08:30:00'), end: createLocalDateTime('2026-03-08T08:45:00') } }),
+            allDay('all-day-b', '2026-03-08', '2026-03-09'),
+            makeEvent({ uid: 'floating-0930', time: { kind: 'floating', start: createLocalDateTime('2026-03-08T09:30:00'), end: createLocalDateTime('2026-03-08T09:45:00') } }),
+            allDay('all-day-a', '2026-03-08', '2026-03-09'),
+            allDay('multi-day', '2026-03-07', '2026-03-10'),
+        ];
+
+        const result = toAgenda(events, window, 'America/Los_Angeles');
+
+        expect(result.map(entry => entry.uid)).toEqual(['multi-day', 'all-day-a', 'all-day-b', 'floating-0830', 'timed-0900', 'floating-0930']);
+        expect(result[1]).toEqual({ uid: 'all-day-a', recurrenceId: undefined, time: events[4].time, summary: 'Meeting', location: undefined, status: undefined });
+    });
+
+    test('a floating entry moves with the display zone while a timed entry keeps its instant', () => {
+        const tokyoWindow = dayWindow(new Date('2026-03-08T03:00:00.000Z').getTime(), 'Asia/Tokyo');
+        const events = [
+            makeEvent({ uid: 'timed-0000z', start: new Date('2026-03-08T00:00:00.000Z'), end: new Date('2026-03-08T00:30:00.000Z') }),
+            makeEvent({ uid: 'floating-0830', time: { kind: 'floating', start: createLocalDateTime('2026-03-08T08:30:00'), end: createLocalDateTime('2026-03-08T08:45:00') } }),
+        ];
+
+        // In Tokyo the timed event is 09:00 JST, after the floating 08:30.
+        expect(toAgenda(events, tokyoWindow, 'Asia/Tokyo').map(entry => entry.uid)).toEqual(['floating-0830', 'timed-0000z']);
+    });
+
     test('returns [] for an empty events array', () => {
-        expect(toAgenda([], window)).toEqual([]);
+        expect(toAgenda([], window, 'America/Los_Angeles')).toEqual([]);
     });
 });
 
@@ -350,17 +423,49 @@ describe('eventsInWindow', () => {
         const inside  = makeEvent({ uid: 'inside', start: new Date('2026-03-08T17:00:00.000Z'), end: new Date('2026-03-08T18:00:00.000Z') });
         const outside = makeEvent({ uid: 'outside', start: new Date('2026-03-09T09:00:00.000Z'), end: new Date('2026-03-09T10:00:00.000Z') });
 
-        expect(eventsInWindow([inside, outside], window)).toEqual([inside]);
+        expect(eventsInWindow([inside, outside], window, 'America/Los_Angeles')).toEqual([inside]);
+    });
+
+    test('all-day March 1 exclusive end overlaps March 1 but not March 2', () => {
+        const event = makeEvent({ time: { kind: 'all_day', start: createLocalDate('2026-03-01'), endExclusive: createLocalDate('2026-03-02') } });
+        const march1 = dayWindow(new Date('2026-03-01T18:00:00Z').getTime(), 'America/Los_Angeles');
+        const march2 = dayWindow(new Date('2026-03-02T18:00:00Z').getTime(), 'America/Los_Angeles');
+        expect(eventsInWindow([event], march1, 'America/Los_Angeles')).toEqual([event]);
+        expect(eventsInWindow([event], march2, 'America/Los_Angeles')).toEqual([]);
+    });
+
+    test('all-day dates starting after the window day are dropped and a multi-day span covering it is kept', () => {
+        const march1 = dayWindow(new Date('2026-03-01T18:00:00Z').getTime(), 'America/Los_Angeles');
+        const tomorrow = makeEvent({ uid: 'tomorrow', time: { kind: 'all_day', start: createLocalDate('2026-03-02'), endExclusive: createLocalDate('2026-03-03') } });
+        const spanning = makeEvent({ uid: 'spanning', time: { kind: 'all_day', start: createLocalDate('2026-02-27'), endExclusive: createLocalDate('2026-03-04') } });
+        expect(eventsInWindow([tomorrow, spanning], march1, 'America/Los_Angeles')).toEqual([spanning]);
+    });
+
+    test('all-day window dates come from the display zone, not UTC', () => {
+        // 2026-03-01T20:00Z is already March 2 in Tokyo.
+        const tokyoDay = dayWindow(new Date('2026-03-01T20:00:00Z').getTime(), 'Asia/Tokyo');
+        const march1 = makeEvent({ uid: 'march-1', time: { kind: 'all_day', start: createLocalDate('2026-03-01'), endExclusive: createLocalDate('2026-03-02') } });
+        const march2 = makeEvent({ uid: 'march-2', time: { kind: 'all_day', start: createLocalDate('2026-03-02'), endExclusive: createLocalDate('2026-03-03') } });
+        expect(eventsInWindow([march1, march2], tokyoDay, 'Asia/Tokyo')).toEqual([march2]);
+    });
+
+    test('floating 09:00 resolves within the requested display-zone day, not UTC midnight', () => {
+        const event = makeEvent({ time: { kind: 'floating', start: createLocalDateTime('2026-03-01T09:00:00'), end: createLocalDateTime('2026-03-01T09:30:00') } });
+        const laWindow = dayWindow(new Date('2026-03-01T18:00:00Z').getTime(), 'America/Los_Angeles');
+        expect(eventsInWindow([event], laWindow, 'America/Los_Angeles')).toEqual([event]);
+        const instantWindow = { startMs: new Date('2026-03-01T17:15:00Z').getTime(), endMs: new Date('2026-03-01T17:20:00Z').getTime() };
+        expect(eventsInWindow([event], instantWindow, 'UTC')).toEqual([]);
+        expect(eventsInWindow([event], instantWindow, 'America/Los_Angeles')).toEqual([event]);
     });
 
     test('returns [] for an empty events array', () => {
-        expect(eventsInWindow([], window)).toEqual([]);
+        expect(eventsInWindow([], window, 'America/Los_Angeles')).toEqual([]);
     });
 
     test('toAgenda\'s output is exactly eventsInWindow\'s survivors, mapped to AgendaEntry', () => {
         const inside  = makeEvent({ uid: 'inside', start: new Date('2026-03-08T17:00:00.000Z'), end: new Date('2026-03-08T18:00:00.000Z') });
         const outside = makeEvent({ uid: 'outside', start: new Date('2026-03-09T09:00:00.000Z'), end: new Date('2026-03-09T10:00:00.000Z') });
 
-        expect(toAgenda([inside, outside], window).map(entry => entry.uid)).toEqual(eventsInWindow([inside, outside], window).map(event => event.uid));
+        expect(toAgenda([inside, outside], window, 'America/Los_Angeles').map(entry => entry.uid)).toEqual(eventsInWindow([inside, outside], window, 'America/Los_Angeles').map(event => event.uid));
     });
 });
