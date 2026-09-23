@@ -34,7 +34,7 @@ export interface BskySetupOptions {
     tableName:                   string
     /** Discord client instance */
     client:                      Client
-    /** Discord channel ID for admin approval embeds */
+    /** The admin review channel (top-level `config.adminDiscordChannelId`) for approval embeds */
     adminDiscordChannelId:       ChannelId
     /** Approval saga backend for durable approval workflows */
     approvalSagaBackend:         ApprovalSagaBackend

@@ -4,6 +4,7 @@ import { mockLogger } from '../../setup';
 import type { BrowserAdapter } from '@/agent/browser';
 import * as browserMcpModule from '@/agent/browser-mcp-server';
 import * as bskyMcpModule from '@/agent/bsky-mcp-server';
+import * as contactsMcpModule from '@/agent/contacts-mcp-server';
 import * as discordMcpModule from '@/agent/discord-mcp-server';
 import * as healthMcpModule from '@/agent/health-mcp-server';
 import * as inboxMcpModule from '@/agent/inbox-mcp-server';
@@ -24,7 +25,7 @@ import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import type { ServiceHealthRegistry } from '@/services';
 import type { TokenBucketRateLimiter } from '@/services/rate-limiters/token-bucket';
-import type { PersonAllowlist } from '@/storage';
+import type { ContactBackend, ContactChangeRequest, PersonAllowlist } from '@/storage';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 
 type McpServerInstance = ReturnType<typeof createMemoryMCPServer>;
@@ -139,6 +140,32 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         expect(result.mediaMcpServer).toBe(mockMediaMcpServer);
         expect(createMediaMcpServerSpy).toHaveBeenCalledTimes(1);
         expect(createMediaMcpServerSpy).toHaveBeenCalledWith();
+    });
+
+    test('creates contactsMcpServer from the grouped contacts deps', () => {
+        const mockContactsMcpServer = { name: 'contacts', version: '1.0.0' } as unknown as McpServerInstance;
+        const createContactsMcpServerSpy = spyOn(contactsMcpModule, 'createContactsMCPServer').mockReturnValue(mockContactsMcpServer);
+        spies.push(createContactsMcpServerSpy);
+        const backend = {} as unknown as ContactBackend;
+        const sendApprovalRequest = mock(async (_details: ContactChangeRequest): Promise<void> => { /* intentionally empty */ });
+
+        const result = buildConversationServers({ ...mockOptions, contacts: { backend, sendApprovalRequest } });
+
+        expect(result.contactsMcpServer).toBe(mockContactsMcpServer);
+        expect(createContactsMcpServerSpy).toHaveBeenCalledTimes(1);
+        const [contactsOptions] = createContactsMcpServerSpy.mock.calls[0];
+        expect(contactsOptions.backend).toBe(backend);
+        expect(contactsOptions.sendContactApprovalRequest).toBe(sendApprovalRequest);
+    });
+
+    test('contactsMcpServer is undefined when contacts is omitted', () => {
+        const createContactsMcpServerSpy = spyOn(contactsMcpModule, 'createContactsMCPServer');
+        spies.push(createContactsMcpServerSpy);
+
+        const result = buildConversationServers(mockOptions);
+
+        expect(result.contactsMcpServer).toBeUndefined();
+        expect(createContactsMcpServerSpy).not.toHaveBeenCalled();
     });
 
     test('should pass correct args to createMemoryMCPServer', () => {

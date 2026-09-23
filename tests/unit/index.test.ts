@@ -35,6 +35,7 @@ import * as staticPluginLoaderModule from '@/agent/plugin-loader';
 import * as staticQuestionRegistryModule from '@/agent/question-registry';
 import { createChannelId } from '@/agent/types';
 import * as staticAppLifecycleModule from '@/app/lifecycle';
+import * as staticMcpServersModule from '@/app/mcp-servers';
 import { createSessionAmbience as importedCreateSessionAmbience } from '@/app/sessions';
 import * as staticSessionsModule from '@/app/sessions';
 import type { SessionConfig } from '@/config';
@@ -42,6 +43,7 @@ import * as staticConfigModule from '@/config/loader';
 import * as staticIndexModule from '@/index';
 import * as staticBskyModule from '@/integrations/bsky';
 import * as staticDiscordModule from '@/integrations/discord/bot';
+import { DiscordCapabilityImpl } from '@/integrations/discord/capability';
 import * as staticChannelRegistryModule from '@/integrations/discord/channel-registry';
 import * as staticDiscordClientModule from '@/integrations/discord/client';
 import * as staticCheckpointModule from '@/integrations/discord/inbox';
@@ -83,6 +85,9 @@ const sessionConfig: SessionConfig = {
     timezone:                'UTC',
 };
 
+/** Top-level `config.adminDiscordChannelId` (the admin review channel) used by `wireHappyPath`. */
+const ADMIN_REVIEW_CHANNEL_ID = createChannelId('987654321098765432');
+
 /** Default `config.perch` for `wireHappyPath` — perch enabled, matching production defaults. `perchOverrides` lets a test disable it (`{ enabled: false }`) or tweak a field. */
 const defaultPerchConfig = {
     enabled:               true,
@@ -102,9 +107,10 @@ const defaultPerchConfig = {
  * perch or tweak a field (P12). `bskyEnabled` (Q8) additionally configures `config.bsky`, mocks
  * `BlueskyClient` (constructor + no-op `login`) and `setupBsky` (resolving with a stubbed
  * `dmPoller`, captured via the returned `dmPollerStart`/`dmPollerStop` mocks) so the bsky
- * composition-root block actually runs.
+ * composition-root block actually runs. `emailEnabled` (default true) set to false omits
+ * `config.email`, so tests can prove the admin review channel wiring does not depend on email.
  */
-function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false): {
+function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false, emailEnabled = true): {
     createBotSpy:      ReturnType<typeof spyOn>
     emailSetupSpy:     ReturnType<typeof spyOn>
     emailListenerStop: ReturnType<typeof mock>
@@ -125,7 +131,6 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
         outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
         wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
         allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-        adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
         sendApprovalRequest:          mock(async () => {}),
         createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
     });
@@ -208,17 +213,20 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
                 quota:         { pollIntervalMs: 300_000, perchPauseAtPercent: 90, notifyAtPercents: [75, 90] },
             },
             session: { ...sessionConfig, ...sessionOverrides },
-            email:   {
-                user:                           'user@example.com',
-                password:                       'emailpass',
-                pollFallbackMs:                 300_000,
-                sseReconnectDelayMs:            5000,
-                maxBodySizeBytes:               50_000,
-                adminDiscordChannelId:          createChannelId('987654321098765432'),
-                wildDuckApiUrl:                 'https://wildduck.example.com',
-                sendReservoirCapacity:          24,
-                sendReservoirRefillRatePerHour: 1,
-            },
+            ...(emailEnabled
+                ? {
+                    email: {
+                        user:                           'user@example.com',
+                        password:                       'emailpass',
+                        pollFallbackMs:                 300_000,
+                        sseReconnectDelayMs:            5000,
+                        maxBodySizeBytes:               50_000,
+                        wildDuckApiUrl:                 'https://wildduck.example.com',
+                        sendReservoirCapacity:          24,
+                        sendReservoirRefillRatePerHour: 1,
+                    },
+                }
+                : {}),
             discord: {
                 botToken:      'bot-token-123',
                 applicationId: 'app-id-456',
@@ -229,8 +237,9 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
                     idleRefreshIntervalMs: 300_000,
                 },
             },
-            perch:              { ...defaultPerchConfig, ...perchOverrides },
-            adminDiscordUserId: '423276934781468692',
+            perch:                 { ...defaultPerchConfig, ...perchOverrides },
+            adminDiscordUserId:    '423276934781468692',
+            adminDiscordChannelId: ADMIN_REVIEW_CHANNEL_ID,
             ...(bskyEnabled
                 ? { bsky: { handle: 'isambard.bsky.social', appPassword: 'app-password', serviceUrl: 'https://bsky.social' } }
                 : {}),
@@ -503,7 +512,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -518,7 +526,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -570,7 +579,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -585,7 +593,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -702,7 +711,6 @@ describe('createApp', () => {
                 outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
                 wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
                 allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:          mock(async () => {}),
                 createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
@@ -729,7 +737,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -744,7 +751,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -1266,6 +1274,68 @@ describe('createApp', () => {
             expect(bskyOptions.healthRegistry).toBeDefined();
         });
 
+        test('bsky present, email absent: safety rails are built and Bluesky stays enabled', async () => {
+            const { bskySetupSpy, emailSetupSpy, createBotSpy } = wireHappyPath(spies, {}, {}, true, false);
+            const createMcpSharedDepsSpy = spyOn(staticMcpServersModule, 'createMcpSharedDeps');
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+            });
+            spies.push(createMcpSharedDepsSpy, createConversationConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(emailSetupSpy).not.toHaveBeenCalled();
+            expect(bskySetupSpy).toHaveBeenCalledTimes(1);
+            const bskyOptions = bskySetupSpy!.mock.calls[0]?.[0] as { adminDiscordChannelId?: unknown };
+            expect(bskyOptions.adminDiscordChannelId).toBe(ADMIN_REVIEW_CHANNEL_ID);
+            expect(mockLogger.warn).not.toHaveBeenCalledWith({ msg: 'Bluesky client available but safety rails not configured — disabling Bluesky writes for this session' });
+
+            expect(createMcpSharedDepsSpy).toHaveBeenCalledTimes(1);
+            const mcpOptions = createMcpSharedDepsSpy.mock.calls[0][0];
+            expect(mcpOptions.bskyClient).toBeDefined();
+            expect(mcpOptions.contacts?.backend).toBeDefined();
+            expect(mcpOptions.contacts?.sendApprovalRequest).toEqual(expect.any(Function));
+
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as { adminReviewChannelId?: unknown };
+            expect(botOptions.adminReviewChannelId).toBe(ADMIN_REVIEW_CHANNEL_ID);
+        });
+
+        test('email absent: contact approval requests post to the top-level admin review channel', async () => {
+            wireHappyPath(spies, {}, {}, false, false);
+            const createMcpSharedDepsSpy = spyOn(staticMcpServersModule, 'createMcpSharedDeps');
+            const sendToChannelSpy = spyOn(DiscordCapabilityImpl.prototype, 'sendToChannel').mockResolvedValue({ status: 'sent' });
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+            });
+            spies.push(createMcpSharedDepsSpy, sendToChannelSpy, createConversationConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const sendApprovalRequest = createMcpSharedDepsSpy.mock.calls[0][0].contacts!.sendApprovalRequest;
+            await sendApprovalRequest({ action: 'create', displayName: 'Alice', addIdentifiers: [{ platform: 'email', value: 'alice@example.com' }] });
+
+            expect(sendToChannelSpy).toHaveBeenCalledTimes(1);
+            const [channelId, , sendOptions] = sendToChannelSpy.mock.calls[0];
+            expect(channelId).toBe(ADMIN_REVIEW_CHANNEL_ID);
+            expect(sendOptions).toEqual({ priority: 'high', type: 'contact_approval' });
+        });
+
+        test('threads the top-level admin review channel into setupEmail\'s options', async () => {
+            const { emailSetupSpy } = wireHappyPath(spies);
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+            });
+            spies.push(createConversationConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const emailOptions = emailSetupSpy.mock.calls[0]?.[0] as { adminDiscordChannelId?: unknown };
+            expect(emailOptions.adminDiscordChannelId).toBe(ADMIN_REVIEW_CHANNEL_ID);
+        });
+
         test('starts the dmPoller during app.start() and stops it during app.stop() (Q8)', async () => {
             const { dmPollerStart, dmPollerStop } = wireHappyPath(spies, {}, {}, true);
             // app.start() fires real healthRegistry.sendEvent transitions, which independently wake
@@ -1710,7 +1780,6 @@ describe('createApp', () => {
                 outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
                 wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
                 allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:          mock(async () => {}),
                 createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
@@ -1737,7 +1806,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -1752,7 +1820,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -1856,7 +1925,6 @@ describe('createApp', () => {
                 outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
                 wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
                 allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:          mock(async () => {}),
                 createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
@@ -1883,7 +1951,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -1898,7 +1965,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -2004,7 +2072,6 @@ describe('createApp', () => {
                 outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
                 wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
                 allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:          mock(async () => {}),
                 createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
@@ -2031,7 +2098,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -2046,7 +2112,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -2159,7 +2226,6 @@ describe('createApp', () => {
                 outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
                 wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
                 allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:          mock(async () => {}),
                 createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
@@ -2186,7 +2252,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -2201,7 +2266,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -2292,7 +2358,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -2307,7 +2372,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -2361,7 +2427,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -2376,7 +2441,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -2433,7 +2499,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -2448,7 +2513,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -2500,7 +2566,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -2515,7 +2580,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 
@@ -2637,7 +2703,6 @@ describe('createApp', () => {
                 outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
                 wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
                 allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:          mock(async () => {}),
                 createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
@@ -2664,7 +2729,6 @@ describe('createApp', () => {
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordChannelId:          createChannelId('987654321098765432'),
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
                     sendReservoirRefillRatePerHour: 1,
@@ -2679,7 +2743,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                adminDiscordUserId: '423276934781468692',
+                adminDiscordUserId:    '423276934781468692',
+                adminDiscordChannelId: createChannelId('987654321098765432'),
             });
             spies.push(loadConfigSpy);
 

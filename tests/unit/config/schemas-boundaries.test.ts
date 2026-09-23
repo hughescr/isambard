@@ -16,9 +16,9 @@ import {
 
 const agent = { oauthToken: 'x' };
 const discord = { botToken: 'x', applicationId: 'x', homeGuildId: '111222333444555666' };
-const email = { user: 'x', password: 'x', adminDiscordChannelId: 'x', wildDuckApiUrl: 'https://example.com' };
+const email = { user: 'x', password: 'x', wildDuckApiUrl: 'https://example.com' };
 const bsky = { handle: 'x', appPassword: 'x' };
-const config = { app: { nodeEnv: 'test', port: 1 }, agent, discord, adminDiscordUserId: 'x' };
+const config = { app: { nodeEnv: 'test', port: 1 }, agent, discord, adminDiscordUserId: 'x', adminDiscordChannelId: 'x' };
 
 describe('configuration schema boundaries', () => {
     test.each([
@@ -27,13 +27,13 @@ describe('configuration schema boundaries', () => {
         ['agent fallbackModel', agentConfigSchema, agent, 'fallbackModel'],
         ['email user', emailConfigSchema, email, 'user'],
         ['email password', emailConfigSchema, email, 'password'],
-        ['email adminDiscordChannelId', emailConfigSchema, email, 'adminDiscordChannelId'],
         ['discord botToken', discordConfigSchema, discord, 'botToken'],
         ['discord applicationId', discordConfigSchema, discord, 'applicationId'],
         ['bsky handle', bskyConfigSchema, bsky, 'handle'],
         ['bsky appPassword', bskyConfigSchema, bsky, 'appPassword'],
         ['dynamodb tableName', dynamoDBConfigSchema, {}, 'tableName'],
         ['config adminDiscordUserId', configSchema, config, 'adminDiscordUserId'],
+        ['config adminDiscordChannelId', configSchema, config, 'adminDiscordChannelId'],
     ])('%s accepts one character but rejects an empty string', (_name, schema, base, field) => {
         expect(schema.safeParse({ ...base, [field]: '' }).success).toBe(false);
         expect(schema.safeParse({ ...base, [field]: 'x' }).success).toBe(true);

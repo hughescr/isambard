@@ -98,6 +98,13 @@ The per-turn provider line combines Codex and DeepSeek data from utraque's provi
    bunx sst secret set DiscordApplicationId <application-id>
    ```
 
+   **Discord admin secrets (required):** the admin review channel receives every outbound
+   approval (email sends, Bluesky replies/DMs, contact changes), whichever integrations are enabled.
+   ```bash
+   bunx sst secret set AdminDiscordUserId <admin-discord-user-id>
+   bunx sst secret set AdminDiscordChannelId <admin-review-channel-id>
+   ```
+
    **Optional environment variables (in `.env`):**
    ```bash
    # Logger timezone (IANA format, defaults to system timezone)
@@ -109,16 +116,14 @@ The per-turn provider line combines Codex and DeepSeek data from utraque's provi
    PERCH_TEST_MODE_TRIGGER_ON_STARTUP=false
    ```
 
-   **Email integration secrets (active):**
+   **Email integration secrets (active):** approvals post to the Discord admin review channel (see Discord admin secrets).
    ```bash
    bunx sst secret set EmailUser <email-user>
    bunx sst secret set EmailPassword <email-password>
-   bunx sst secret set AdminDiscordUserId <admin-discord-user-id>
-   bunx sst secret set AdminDiscordChannelId <admin-discord-channel-id>
    bunx sst secret set WildDuckApiUrl <wildduck-api-url>
    ```
 
-   **Bluesky integration secrets (active):**
+   **Bluesky integration secrets (active):** approvals post to the Discord admin review channel (see Discord admin secrets).
    ```bash
    bunx sst secret set BskyHandle <handle>
    bunx sst secret set BskyAppPassword <app-password>

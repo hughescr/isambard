@@ -100,14 +100,14 @@ export interface MCPServersOptions {
     caldavRegistry?: CalendarRegistryBackend
 
     /**
-     * Optional contact backend for the contacts MCP server.
+     * Optional deps for the contacts MCP server. It needs both: the backend for lookups and the
+     * callback that posts create/update requests to the admin review channel (always wired, since
+     * that channel is required top-level config).
      */
-    contactBackend?: ContactBackend
-
-    /**
-     * Optional callback to send contact change approval requests to admin.
-     */
-    contactApprovalRequest?: (details: ContactChangeRequest) => Promise<void>
+    contacts?: {
+        backend:             ContactBackend
+        sendApprovalRequest: (details: ContactChangeRequest) => Promise<void>
+    }
 
     /**
      * Optional PersonHistoryCoordinator for the user context MCP server.
@@ -405,10 +405,10 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
 
     const wikipediaMcpServer = createWikipediaMCPServer();
 
-    const contactsMcpServer = options.contactBackend
+    const contactsMcpServer = options.contacts
         ? createContactsMCPServer({
-            backend:                    options.contactBackend,
-            sendContactApprovalRequest: options.contactApprovalRequest,
+            backend:                    options.contacts.backend,
+            sendContactApprovalRequest: options.contacts.sendApprovalRequest,
         })
         : undefined;
 

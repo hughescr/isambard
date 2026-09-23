@@ -243,10 +243,9 @@ describe('agentConfigSchema', () => {
 
 describe('emailConfigSchema', () => {
     const validEmailBase = {
-        user:                  'user@example.com',
-        password:              'secure-password',
-        adminDiscordChannelId: '987654321098765432',
-        wildDuckApiUrl:        'https://wildduck.example.com',
+        user:           'user@example.com',
+        password:       'secure-password',
+        wildDuckApiUrl: 'https://wildduck.example.com',
     };
 
     test('should apply default sseReconnectDelayMs = 5000 when not provided', () => {
@@ -317,46 +316,22 @@ describe('emailConfigSchema', () => {
         }
     });
 
-    test('should require adminDiscordChannelId (no default)', () => {
-        const configWithoutChannelId = {
-            ...validEmailBase,
-            adminDiscordChannelId: undefined,
-        };
-
-        const result = emailConfigSchema.safeParse(configWithoutChannelId);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject empty adminDiscordChannelId', () => {
-        const invalidConfig = {
-            ...validEmailBase,
-            adminDiscordChannelId: '',
-        };
-
-        const result = emailConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
-
-    test('accepts one-character email credentials and channel IDs', () => {
-        expect(emailConfigSchema.safeParse({
-            ...validEmailBase,
-            user:                  'x',
-            password:              'x',
-            adminDiscordChannelId: 'x',
-        }).success).toBe(true);
-    });
-
-    test('should accept valid adminDiscordChannelId', () => {
-        const config = {
+    test('emailConfigSchema strips a stray adminDiscordChannelId (the admin review channel is top-level)', () => {
+        const result = emailConfigSchema.safeParse({
             ...validEmailBase,
             adminDiscordChannelId: '987654321098765432',
-        };
+        });
 
-        const result = emailConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.adminDiscordChannelId).toBe(channelIdSchema.parse('987654321098765432'));
-        }
+        expect(result.data).not.toHaveProperty('adminDiscordChannelId');
+    });
+
+    test('accepts one-character email credentials', () => {
+        expect(emailConfigSchema.safeParse({
+            ...validEmailBase,
+            user:     'x',
+            password: 'x',
+        }).success).toBe(true);
     });
 
     test('should reject config without wildDuckApiUrl (required field)', () => {
@@ -596,13 +571,13 @@ describe('configSchema', () => {
                 oauthToken: 'test-oauth-token-12345',
             },
             email: {
-                user:                  'user@example.com',
-                password:              'secure-password',
-                adminDiscordChannelId: '987654321098765432',
-                wildDuckApiUrl:        'https://wildduck.example.com',
+                user:           'user@example.com',
+                password:       'secure-password',
+                wildDuckApiUrl: 'https://wildduck.example.com',
             },
-            adminDiscordUserId: '111111111111111111',
-            discord:            {
+            adminDiscordUserId:    '111111111111111111',
+            adminDiscordChannelId: '987654321098765432',
+            discord:               {
                 botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
                 applicationId: '123456789012345678',
                 homeGuildId:   createGuildId('111222333444555666'),
@@ -629,13 +604,13 @@ describe('configSchema', () => {
                 oauthToken: 'test-token',
             },
             email: {
-                user:                  'user@example.com',
-                password:              'secure-password',
-                adminDiscordChannelId: '987654321098765432',
-                wildDuckApiUrl:        'https://wildduck.example.com',
+                user:           'user@example.com',
+                password:       'secure-password',
+                wildDuckApiUrl: 'https://wildduck.example.com',
             },
-            adminDiscordUserId: '111111111111111111',
-            discord:            {
+            adminDiscordUserId:    '111111111111111111',
+            adminDiscordChannelId: '987654321098765432',
+            discord:               {
                 botToken:      'token',
                 applicationId: '123',
                 homeGuildId:   createGuildId('111222333444555666'),
@@ -660,8 +635,9 @@ describe('configSchema', () => {
             agent: {
                 oauthToken: 'test-token',
             },
-            adminDiscordUserId: '111111111111111111',
-            discord:            {
+            adminDiscordUserId:    '111111111111111111',
+            adminDiscordChannelId: '987654321098765432',
+            discord:               {
                 botToken:      'token',
                 applicationId: '123',
                 homeGuildId:   createGuildId('111222333444555666'),
@@ -694,11 +670,36 @@ describe('configSchema', () => {
 
     test('accepts a one-character administrator ID', () => {
         expect(configSchema.safeParse({
+            app:                   { nodeEnv: 'test', port: 1 },
+            agent:                 { oauthToken: 'x' },
+            discord:               { botToken: 'x', applicationId: 'x', homeGuildId: createGuildId('111222333444555666') },
+            adminDiscordUserId:    'x',
+            adminDiscordChannelId: 'x',
+        }).success).toBe(true);
+    });
+
+    describe('top-level adminDiscordChannelId (admin review channel)', () => {
+        const minimalConfig = {
             app:                { nodeEnv: 'test', port: 1 },
             agent:              { oauthToken: 'x' },
             discord:            { botToken: 'x', applicationId: 'x', homeGuildId: createGuildId('111222333444555666') },
-            adminDiscordUserId: 'x',
-        }).success).toBe(true);
+            adminDiscordUserId: '111111111111111111',
+        };
+
+        test('configSchema rejects a config without adminDiscordChannelId', () => {
+            expect(configSchema.safeParse(minimalConfig).success).toBe(false);
+        });
+
+        test('configSchema rejects an empty adminDiscordChannelId', () => {
+            expect(configSchema.safeParse({ ...minimalConfig, adminDiscordChannelId: '' }).success).toBe(false);
+        });
+
+        test('configSchema brands a valid top-level adminDiscordChannelId as a ChannelId', () => {
+            const result = configSchema.safeParse({ ...minimalConfig, adminDiscordChannelId: '987654321098765432' });
+
+            expect(result.success).toBe(true);
+            expect(result.data?.adminDiscordChannelId).toBe(channelIdSchema.parse('987654321098765432'));
+        });
     });
 });
 

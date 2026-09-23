@@ -81,11 +81,13 @@ const MINIMAL_EMAIL_CONFIG = {
     pollFallbackMs:                 300_000,
     sseReconnectDelayMs:            5000,
     maxBodySizeBytes:               50_000,
-    adminDiscordChannelId:          createChannelId('admin-channel-id'),
     wildDuckApiUrl:                 'http://localhost:8080',
     sendReservoirCapacity:          24,
     sendReservoirRefillRatePerHour: 1,
 };
+
+/** The admin review channel — top-level config, handed to setupEmail as its own option (not via emailConfig). */
+const ADMIN_REVIEW_CHANNEL_ID = createChannelId('review-7');
 
 interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<{ content: unknown[], isError?: boolean }>
@@ -104,13 +106,14 @@ describe('setupEmail — isSendableChannel type guard', () => {
     beforeEach(async () => {
         mockLogger.info.mockClear();
         options = {
-            emailConfig:        MINIMAL_EMAIL_CONFIG,
-            docClient:          makeMockDocClient(),
-            tableName:          'test-table',
-            client:             {} as unknown as Client,
-            adminDiscordUserId: 'admin-user-id',
+            emailConfig:           MINIMAL_EMAIL_CONFIG,
+            docClient:             makeMockDocClient(),
+            tableName:             'test-table',
+            client:                {} as unknown as Client,
+            adminDiscordUserId:    'admin-user-id',
+            adminDiscordChannelId: ADMIN_REVIEW_CHANNEL_ID,
             // Provide a pre-created wildDuckClient so WildDuck init() is skipped
-            wildDuckClient:     {
+            wildDuckClient:        {
                 getUserAddresses:   mock(async () => []),
                 getMessages:        mock(async () => ({ messages: [], nextCursor: undefined })),
                 uploadMessage:      mock(async () => ({ id: 'msg-id', uid: 1 })),
@@ -231,6 +234,22 @@ describe('setupEmail — isSendableChannel type guard', () => {
         expect(sleep).toHaveBeenCalledTimes(2);
     });
 
+    it('direct Discord delivery fetches the admin review channel passed as its own setup option', async () => {
+        const fetch = mock(async (_channelId: string) => ({ send: mock(async () => undefined) }));
+        options.client = { channels: { fetch } } as unknown as Client;
+        const result = await setupEmail(options);
+
+        await result.sendApprovalRequest('to@example.com', 'Test Subject', 123);
+
+        expect(fetch).toHaveBeenCalledWith(ADMIN_REVIEW_CHANNEL_ID);
+    });
+
+    it('does not expose the admin review channel on the email setup result', async () => {
+        const result = await setupEmail(options);
+
+        expect(result).not.toHaveProperty('adminChannelId');
+    });
+
     it('passes the complete approval payload and high-priority outbox metadata to Discord capability', async () => {
         const sendToChannel = mock<(channelId: string, payload: unknown, metadata: unknown) => Promise<{ status: 'sent' }>>(async () => ({ status: 'sent' as const }));
         options.discordCapability = { sendToChannel } as never;
@@ -240,7 +259,7 @@ describe('setupEmail — isSendableChannel type guard', () => {
 
         expect(sendToChannel).toHaveBeenCalledTimes(1);
         const [channelId, payload, metadata] = sendToChannel.mock.calls[0];
-        expect(channelId).toBe(MINIMAL_EMAIL_CONFIG.adminDiscordChannelId);
+        expect(channelId).toBe(ADMIN_REVIEW_CHANNEL_ID);
         expect((payload as { embeds: unknown[], components: unknown[] }).embeds).toHaveLength(1);
         expect((payload as { embeds: unknown[], components: unknown[] }).components).toHaveLength(1);
         expect(metadata).toEqual({ priority: 'high', type: 'email_approval' });
@@ -346,12 +365,13 @@ describe('setupEmail — createEmailMcpServerInstance', () => {
 
     beforeEach(() => {
         options = {
-            emailConfig:        MINIMAL_EMAIL_CONFIG,
-            docClient:          makeMockDocClient(),
-            tableName:          'test-table',
-            client:             { channels: { fetch: mock(async () => ({ send: mock(async () => undefined) })) } } as unknown as Client,
-            adminDiscordUserId: 'admin-user-id',
-            wildDuckClient:     {
+            emailConfig:           MINIMAL_EMAIL_CONFIG,
+            docClient:             makeMockDocClient(),
+            tableName:             'test-table',
+            client:                { channels: { fetch: mock(async () => ({ send: mock(async () => undefined) })) } } as unknown as Client,
+            adminDiscordUserId:    'admin-user-id',
+            adminDiscordChannelId: ADMIN_REVIEW_CHANNEL_ID,
+            wildDuckClient:        {
                 getUserAddresses:   mock(async () => []),
                 getMessages:        mock(async () => ({ messages: [], nextCursor: undefined })),
                 uploadMessage:      mock(async () => ({ id: 'msg-id', uid: 1 })),
@@ -417,7 +437,7 @@ describe('setupEmail — createEmailMcpServerInstance', () => {
         expect(response.isError).toBe(true);
         expect(sendToChannel).toHaveBeenCalledTimes(1);
         const [channelId, payload, metadata] = sendToChannel.mock.calls[0];
-        expect(channelId).toBe(MINIMAL_EMAIL_CONFIG.adminDiscordChannelId);
+        expect(channelId).toBe(ADMIN_REVIEW_CHANNEL_ID);
         expect((payload as { embeds: unknown[], components: unknown[] }).embeds).toHaveLength(1);
         expect((payload as { embeds: unknown[], components: unknown[] }).components).toHaveLength(1);
         expect(metadata).toEqual({ priority: 'high', type: 'email_notification' });

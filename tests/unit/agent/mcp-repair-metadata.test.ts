@@ -63,7 +63,7 @@ test('MCP tool catalog exposes stable descriptions, input help, and annotations'
             registry:    unusedBackend as unknown as Parameters<typeof createCaldavMCPServer>[0]['registry'],
             resolveUser: async () => ({ status: 'not_found' }),
         })),
-        contacts: serverMetadata(createContactsMCPServer({ backend: unusedBackend as unknown as Parameters<typeof createContactsMCPServer>[0]['backend'] })),
+        contacts: serverMetadata(createContactsMCPServer({ backend: unusedBackend as unknown as Parameters<typeof createContactsMCPServer>[0]['backend'], sendContactApprovalRequest: async () => { /* intentionally empty */ } })),
         inbox:    serverMetadata(createInboxMCPServer(
             unusedBackend as unknown as Parameters<typeof createInboxMCPServer>[0],
             unusedBackend as unknown as Parameters<typeof createInboxMCPServer>[1]
@@ -91,7 +91,7 @@ test('MCP input schemas enforce the documented nonempty and bounded inputs', () 
     expect(caldav.getCalendarEvents.inputSchema.shape.user.safeParse('').success).toBe(false);
     expect(caldav.getCalendarEvents.inputSchema.shape.user.safeParse('Craig').success).toBe(true);
 
-    const contacts = tools(createContactsMCPServer({ backend: unusedBackend as unknown as Parameters<typeof createContactsMCPServer>[0]['backend'] }));
+    const contacts = tools(createContactsMCPServer({ backend: unusedBackend as unknown as Parameters<typeof createContactsMCPServer>[0]['backend'], sendContactApprovalRequest: async () => { /* intentionally empty */ } }));
     const identifiers = contacts.requestContactCreate.inputSchema.shape.identifiers;
     expect(identifiers.safeParse([]).success).toBe(false);
     expect(identifiers.safeParse([{ platform: 'email', value: 'alice@example.com' }]).success).toBe(true);

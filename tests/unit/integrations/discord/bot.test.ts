@@ -4429,7 +4429,7 @@ describe('createDiscordBot', () => {
             }));
         });
 
-        test('muteChannel is called with adminChannelId on clientReady when emailSetup has adminChannelId', async () => {
+        test('muteChannel is called with adminReviewChannelId on clientReady with no email setup', async () => {
             const infoSpy = spyOn(loggerModule.logger, 'info');
             spies.push(infoSpy);
             const mockClient = {
@@ -4444,16 +4444,7 @@ describe('createDiscordBot', () => {
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
-            const adminChannelId = createChannelId('admin-channel-123');
-            const mockEmailSetup = {
-                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
-                reviewHandler:    { handleButton: mock(async () => undefined) },
-                allowlistHandler: { handle: mock(async () => undefined) },
-                emailMcpServer:   {},
-                imap:             {},
-                counters:         {},
-                adminChannelId,
-            } as unknown as EmailSetupResult;
+            const adminReviewChannelId = createChannelId('admin-channel-123');
 
             const muteChannelMock = mock(async () => undefined);
             const channelRegistryWithMute = {
@@ -4461,10 +4452,11 @@ describe('createDiscordBot', () => {
                 muteChannel: muteChannelMock,
             } as unknown as ChannelRegistryManager;
 
+            // No emailSetup: the admin review channel mute no longer depends on email being enabled
             createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: channelRegistryWithMute,
-                emailSetup:      mockEmailSetup,
+                adminReviewChannelId,
             });
 
             // muteChannel must NOT be called before clientReady fires
@@ -4477,11 +4469,11 @@ describe('createDiscordBot', () => {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
 
-            // muteChannel must be called once with the adminChannelId
+            // muteChannel must be called once with the admin review channel
             expect(muteChannelMock).toHaveBeenCalledTimes(1);
-            expect(muteChannelMock).toHaveBeenCalledWith(adminChannelId);
+            expect(muteChannelMock).toHaveBeenCalledWith(adminReviewChannelId);
             expect(infoSpy).toHaveBeenCalledWith({
-                msg: 'Admin email channel muted in channel registry',
+                msg: 'Admin review channel muted in channel registry',
             });
         });
 
@@ -4500,17 +4492,6 @@ describe('createDiscordBot', () => {
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
-            const adminChannelId = createChannelId('admin-channel-456');
-            const mockEmailSetup = {
-                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
-                reviewHandler:    { handleButton: mock(async () => undefined) },
-                allowlistHandler: { handle: mock(async () => undefined) },
-                emailMcpServer:   {},
-                imap:             {},
-                counters:         {},
-                adminChannelId,
-            } as unknown as EmailSetupResult;
-
             const muteChannelMock = mock(async () => {
                 throw new Error('DynamoDB unreachable');
             });
@@ -4520,9 +4501,9 @@ describe('createDiscordBot', () => {
             } as unknown as ChannelRegistryManager;
 
             const bot = createDiscordBot({
-                config:          mockConfig,
-                channelRegistry: channelRegistryWithMute,
-                emailSetup:      mockEmailSetup,
+                config:               mockConfig,
+                channelRegistry:      channelRegistryWithMute,
+                adminReviewChannelId: createChannelId('admin-channel-456'),
             });
 
             // Fire clientReady — muteChannel will throw, but clientReady must not throw
@@ -4538,11 +4519,11 @@ describe('createDiscordBot', () => {
             expect(mockClient.destroy).toHaveBeenCalledTimes(1);
             expect(warnSpy).toHaveBeenCalledWith({
                 error: 'DynamoDB unreachable',
-                msg:   'Failed to mute admin email channel — messages there may reach Izzy',
+                msg:   'Failed to mute admin review channel — messages there may reach Izzy',
             });
         });
 
-        test('muteChannel is NOT called when emailSetup has no adminChannelId', async () => {
+        test('muteChannel is NOT called when adminReviewChannelId is omitted', async () => {
             const mockClient = {
                 on:                 mock(() => mockClient),
                 once:               mock(() => mockClient),
@@ -4562,7 +4543,6 @@ describe('createDiscordBot', () => {
                 emailMcpServer:   {},
                 imap:             {},
                 counters:         {},
-                // no adminChannelId
             } as unknown as EmailSetupResult;
 
             const muteChannelMock = mock(async () => undefined);
@@ -4584,7 +4564,7 @@ describe('createDiscordBot', () => {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
 
-            // muteChannel must NOT be called when adminChannelId is absent
+            // muteChannel must NOT be called when adminReviewChannelId is absent (even with email enabled)
             expect(muteChannelMock).not.toHaveBeenCalled();
         });
     });
@@ -4972,7 +4952,7 @@ describe('createDiscordBot', () => {
             await Promise.all(sends);
         });
 
-        test('clientReady waits for admin email channel muting to finish', async () => {
+        test('clientReady waits for admin review channel muting to finish', async () => {
             const client = makeMockClientForConductor();
             const started = Promise.withResolvers<void>();
             const completion = Promise.withResolvers<void>();
@@ -4983,11 +4963,7 @@ describe('createDiscordBot', () => {
                     return completion.promise;
                 }),
             } as unknown as ChannelRegistryManager;
-            const emailSetup = {
-                adminChannelId: 'admin-email',
-                reviewHandler:  { handleButton: mock(async () => undefined) },
-            } as unknown as EmailSetupResult;
-            createDiscordBot({ config: mockConfig, client, channelRegistry, emailSetup });
+            createDiscordBot({ config: mockConfig, client, channelRegistry, adminReviewChannelId: createChannelId('admin-review') });
 
             const ready = triggerReady(client);
             await started.promise;
@@ -4997,7 +4973,7 @@ describe('createDiscordBot', () => {
                 completion.resolve();
             }
             await ready;
-            expect(channelRegistry.muteChannel).toHaveBeenCalledWith('admin-email');
+            expect(channelRegistry.muteChannel).toHaveBeenCalledWith('admin-review');
         });
 
         test('clientReady waits for the perch replay-exclusion lookup before completing inbox initialization', async () => {

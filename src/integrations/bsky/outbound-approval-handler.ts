@@ -35,7 +35,8 @@ export interface BskyOutboundApprovalHandlerDeps {
  * - bsky-send-reject-reason:{uuid}
  * - bsky-dm-reject-reason:{uuid}
  *
- * **Authorization**: Delegated to Discord channel permissions on `adminDiscordChannelId`.
+ * **Authorization**: Delegated to Discord channel permissions on the admin review channel
+ * (top-level `config.adminDiscordChannelId`).
  * No in-code user ID check is needed because only admins have access to that channel.
  * Discord channel-level ACL is the enforcement boundary.
  */

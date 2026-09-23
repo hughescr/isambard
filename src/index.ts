@@ -485,20 +485,21 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             logger.info('Setting up email integration...');
             try {
                 emailSetup = await setupEmail({
-                    emailConfig:        config.email,
-                    docClient:          storage.holder,
-                    tableName:          storage.tableName,
-                    client:             discordInfra.discordClient,
-                    adminDiscordUserId: config.adminDiscordUserId,
+                    emailConfig:           config.email,
+                    docClient:             storage.holder,
+                    tableName:             storage.tableName,
+                    client:                discordInfra.discordClient,
+                    adminDiscordUserId:    config.adminDiscordUserId,
+                    adminDiscordChannelId: config.adminDiscordChannelId,
                     activityLogger,
-                    wildDuckClient:     stableWildDuckClient,
+                    wildDuckClient:        stableWildDuckClient,
                     healthRegistry,
-                    reconnectionLoop:   emailReconnectionLoop,
+                    reconnectionLoop:      emailReconnectionLoop,
                     discordCapability,
                     approvalSagaBackend,
                     personAllowlist,
                     allowlistInteractionHandler,
-                    notify:             notificationBridge.notify,
+                    notify:                notificationBridge.notify,
                 });
                 // Construction rollback remains fatal; only graceful shutdown is best-effort.
                 registerCleanup({ name: 'email listener', run: () => emailSetup?.listener.stop() });
@@ -587,10 +588,10 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     }
     await initializeBlueskyIntegration();
 
-    // Set up Bluesky safety rails if bsky client was created and email config provides admin channel
+    // Set up Bluesky safety rails whenever a bsky client exists; approvals go to the admin review channel
     let bskySetup: BskySetupResult | undefined;
     async function initializeBlueskySafetyRails(): Promise<void> {
-        if(bskyClient && config.email) {
+        if(bskyClient) {
             try {
                 logger.info('Setting up Bluesky safety rails...');
                 bskySetup = await setupBsky({
@@ -598,7 +599,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                     docClient:             storage.holder,
                     tableName:             storage.tableName,
                     client:                discordInfra.discordClient,
-                    adminDiscordChannelId: config.email.adminDiscordChannelId,
+                    adminDiscordChannelId: config.adminDiscordChannelId,
                     activityLogger,
                     discordCapability,
                     approvalSagaBackend,
@@ -788,22 +789,18 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     // Set up Contacts approval handler (always available — DynamoDB is required)
     const contactApprovalHandler = new ContactApprovalHandler(storage.contactBackend, personAllowlist);
 
-    // Build sendContactApprovalRequest callback — posts approval embed to admin channel
-    // Only wired when email config provides the admin channel ID
-    const emailConfig = config.email;
-    const sendContactApprovalRequest = emailConfig
-        // eslint-disable-next-line @stylistic/no-extra-parens -- Babel 8 needs this disambiguation in Stryker's ternary parser.
-        ? (async (details: ContactChangeRequest): Promise<void> => {
-            const uuid = crypto.randomUUID();
-            contactApprovalHandler.storePendingRequest(uuid, details);
-            const { embed, actionRow } = buildContactApprovalEmbed(details, uuid);
-            await discordCapability.sendToChannel(
-                emailConfig.adminDiscordChannelId,
-                { embeds: [embed], components: [actionRow] },
-                { priority: 'high', type: 'contact_approval' }
-            );
-        })
-        : undefined;
+    // Build sendContactApprovalRequest callback — posts approval embed to the admin review channel.
+    // Always wired: the admin review channel is required top-level config, independent of email.
+    const sendContactApprovalRequest = async (details: ContactChangeRequest): Promise<void> => {
+        const uuid = crypto.randomUUID();
+        contactApprovalHandler.storePendingRequest(uuid, details);
+        const { embed, actionRow } = buildContactApprovalEmbed(details, uuid);
+        await discordCapability.sendToChannel(
+            config.adminDiscordChannelId,
+            { embeds: [embed], components: [actionRow] },
+            { priority: 'high', type: 'contact_approval' }
+        );
+    };
 
     const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService, calendarService, bskySetup?.rejectionBackend, healthRegistry);
 
@@ -855,8 +852,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             bskyRejectionBackend:      bskySetup?.rejectionBackend,
             caldavClient,
             caldavRegistry,
-            contactBackend:            storage.contactBackend,
-            contactApprovalRequest:    sendContactApprovalRequest,
+            contacts:                  { backend: storage.contactBackend, sendApprovalRequest: sendContactApprovalRequest },
             historyCoordinator,
             healthRegistry,
             discordReconnectionLoop,
@@ -1070,6 +1066,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         channelRegistry:          discordInfra.channelRegistry,
         contextBuilder:           contextLayer.contextBuilder,
         emailSetup,
+        adminReviewChannelId:     config.adminDiscordChannelId,
         bskySetup,
         allowlistHandler,
         allowlistInteractionHandler,

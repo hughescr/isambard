@@ -120,13 +120,13 @@ export function loadConfig(resources: SstResources = Resource): Config {
             compactThresholdMaxPercent: env.get('SESSION_COMPACT_THRESHOLD_MAX_PERCENT').asIntPositive(),
             compactTargetIntervalMs:    env.get('SESSION_COMPACT_TARGET_INTERVAL_MS').asIntPositive(),
         },
-        adminDiscordUserId: resources.AdminDiscordUserId.value,
-        email:              resources.EmailUser.value
+        adminDiscordUserId:    resources.AdminDiscordUserId.value,
+        adminDiscordChannelId: resources.AdminDiscordChannelId.value,
+        email:                 resources.EmailUser.value
             ? {
-                user:                  resources.EmailUser.value,
-                password:              resources.EmailPassword.value,
-                adminDiscordChannelId: resources.AdminDiscordChannelId.value,
-                wildDuckApiUrl:        resources.WildDuckApiUrl.value,
+                user:           resources.EmailUser.value,
+                password:       resources.EmailPassword.value,
+                wildDuckApiUrl: resources.WildDuckApiUrl.value,
             }
             : undefined,
         bsky: resources.BskyHandle.value && resources.BskyAppPassword.value

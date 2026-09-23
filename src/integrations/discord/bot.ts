@@ -174,6 +174,13 @@ export interface DiscordBotOptions {
     emailSetup?: EmailSetupResult
 
     /**
+     * The admin review channel (top-level `config.adminDiscordChannelId`). Muted in the channel
+     * registry at clientReady so the admin's messages there never reach Izzy, whether or not
+     * email is enabled. The composition root always supplies it; optional only for test fixtures.
+     */
+    adminReviewChannelId?: ChannelId
+
+    /**
      * Optional Bluesky setup result for approval workflow.
      * If provided, wires in bsky-send-* button and modal routing.
      */
@@ -486,7 +493,7 @@ function buildInteractionRoutes(deps: {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, client: providedClient, inboxManager, channelRegistry, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, journal, perchConductor, perchLedgerStore, perchJournal, shutdownTurnWaitMs, shutdownDeadlineMs, bootEventsWindowMs, bootLostTasks, clock: providedClock, notificationBridge, setWakeTurnDelivery, setPerchWakeTurnDelivery } = options;
+    const { config, identityContext, client: providedClient, inboxManager, channelRegistry, contextBuilder, emailSetup, adminReviewChannelId, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, journal, perchConductor, perchLedgerStore, perchJournal, shutdownTurnWaitMs, shutdownDeadlineMs, bootEventsWindowMs, bootLostTasks, clock: providedClock, notificationBridge, setWakeTurnDelivery, setPerchWakeTurnDelivery } = options;
     // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the one place this process actually terminates on a failed conductor open; see the option's own doc
     const exit: (code: number) => void = options.exit ?? (code => process.exit(code));
     const clock: Clock = providedClock ?? systemClock;
@@ -1117,21 +1124,21 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
             configurePerch();
 
-            async function muteAdminEmailChannel(): Promise<void> {
-                // Mute admin email channel so Craig's messages there don't reach Izzy
-                if(emailSetup?.adminChannelId) {
+            async function muteAdminReviewChannel(): Promise<void> {
+                // Mute the admin review channel so Craig's messages there don't reach Izzy
+                if(adminReviewChannelId) {
                     try {
-                        await channelRegistry.muteChannel(emailSetup.adminChannelId);
-                        logger.info({ msg: 'Admin email channel muted in channel registry' });
+                        await channelRegistry.muteChannel(adminReviewChannelId);
+                        logger.info({ msg: 'Admin review channel muted in channel registry' });
                     } catch (err) {
                         logger.warn({
                             error: err instanceof Error ? err.message : String(err),
-                            msg:   'Failed to mute admin email channel — messages there may reach Izzy',
+                            msg:   'Failed to mute admin review channel — messages there may reach Izzy',
                         });
                     }
                 }
             }
-            await muteAdminEmailChannel();
+            await muteAdminReviewChannel();
 
             function configureMessageProcessing(): void {
                 // Create message coordinator once the conductor has opened (MUST be before setupMessageProcessing)

@@ -56,7 +56,6 @@ export const emailConfigSchema = z.object({
     pollFallbackMs:                 z.number().int().positive().default(300_000),    // 5 min
     sseReconnectDelayMs:            z.number().int().positive().default(5000),
     maxBodySizeBytes:               z.number().int().positive().default(50_000),
-    adminDiscordChannelId:          channelIdSchema,
     wildDuckApiUrl:                 z.url(),
     sendReservoirCapacity:          z.number().int().positive().default(24),
     sendReservoirRefillRatePerHour: z.number().positive().default(1),
@@ -361,6 +360,11 @@ export const configSchema = z.object({
     reconciliation:        reconciliationConfigSchema.optional(),
     contactReconciliation: contactReconciliationConfigSchema.optional(),
     adminDiscordUserId:    z.string().min(1),
+    /**
+     * The Discord channel where the admin reviews every outbound action — email sends, Bluesky
+     * replies/DMs, contact create/update. Application-wide, not email-scoped.
+     */
+    adminDiscordChannelId: channelIdSchema,
     // Planned integrations (optional until implemented):
     email:                 emailConfigSchema.optional(),
     bsky:                  bskyConfigSchema.optional(),

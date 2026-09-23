@@ -13,6 +13,11 @@ export const discordBotToken = new sst.Secret('DiscordBotToken');
 export const discordHomeGuildId = new sst.Secret('DiscordHomeGuildId');
 export const discordApplicationId = new sst.Secret('DiscordApplicationId');
 
+// Discord admin (review channel + admin user; used by email, Bluesky and contact approvals).
+// Required at the top level of config regardless of which integrations are enabled.
+export const adminDiscordUserId = new sst.Secret('AdminDiscordUserId');
+export const adminDiscordChannelId = new sst.Secret('AdminDiscordChannelId');
+
 // Perch Time - configured via environment variables:
 // PERCH_ENABLED (default: 'true')
 // PERCH_TEST_MODE_FORCE_SLOT (default: undefined)
@@ -27,8 +32,6 @@ export const discordApplicationId = new sst.Secret('DiscordApplicationId');
 // Email (WildDuck)
 export const emailUser = new sst.Secret('EmailUser');
 export const emailPassword = new sst.Secret('EmailPassword');
-export const adminDiscordUserId = new sst.Secret('AdminDiscordUserId');
-export const adminDiscordChannelId = new sst.Secret('AdminDiscordChannelId');
 export const wildDuckApiUrl = new sst.Secret('WildDuckApiUrl');
 
 // Bluesky (AT Protocol)

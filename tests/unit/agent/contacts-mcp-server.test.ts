@@ -43,6 +43,9 @@ function asBackend(b: MockBackend): Parameters<typeof createContactsMCPServer>[0
     return b as unknown as Parameters<typeof createContactsMCPServer>[0]['backend'];
 }
 
+/** Approval callback for tests that never reach the approval step (it is a required dependency). */
+async function noopApproval(): Promise<void> { /* intentionally empty */ }
+
 describe.concurrent('createContactsMCPServer', () => {
     let mockBackend: MockBackend;
 
@@ -66,7 +69,7 @@ describe.concurrent('createContactsMCPServer', () => {
 
     describe('server creation', () => {
         test('should create MCP server with correct properties', () => {
-            const server = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
 
             expect(server).toBeDefined();
             expect(server.name).toBe('contacts');
@@ -82,7 +85,7 @@ describe.concurrent('createContactsMCPServer', () => {
             ['requestContactUpdate',  'Request an update to an existing contact. Requires admin approval before changes are saved.'],
             ['listContacts',          'List all known contacts in the address book.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
-            const server = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             expect(registeredTool.description).toBe(expectedDescription);
@@ -94,7 +97,7 @@ describe.concurrent('createContactsMCPServer', () => {
             ['requestContactCreate', ['displayName', 'identifiers', 'notes']],
             ['requestContactUpdate', ['personId', 'addIdentifiers', 'removeIdentifiers', 'notes']],
         ])('should have %s tool with correct input schema fields', (toolName, expectedFields) => {
-            const server = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             for(const field of expectedFields) {
@@ -105,7 +108,7 @@ describe.concurrent('createContactsMCPServer', () => {
 
     describe('lookupContact tool', () => {
         test('should return matching contacts as JSON with _internal stripped', async () => {
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContact');
 
             const result = await handler({ query: 'alice' });
@@ -122,7 +125,7 @@ describe.concurrent('createContactsMCPServer', () => {
 
         test('should return text message when no contacts found', async () => {
             mockBackend.fuzzyLookup.mockImplementation(async () => []);
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContact');
 
             const result = await handler({ query: 'nobody' });
@@ -135,7 +138,7 @@ describe.concurrent('createContactsMCPServer', () => {
             mockBackend.fuzzyLookup.mockImplementation(async () => {
                 throw new Error('DynamoDB error');
             });
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContact');
 
             const result = await handler({ query: 'alice' });
@@ -147,7 +150,7 @@ describe.concurrent('createContactsMCPServer', () => {
 
     describe('lookupContactId tool', () => {
         test('should return matching identifier values for the platform', async () => {
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContactId');
 
             const result = await handler({ personId: 'alice-wonderland', platform: 'email' });
@@ -161,7 +164,7 @@ describe.concurrent('createContactsMCPServer', () => {
 
         test('should return text message when contact not found', async () => {
             mockBackend.getContact.mockImplementation(async () => undefined);
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContactId');
 
             const result = await handler({ personId: 'nobody', platform: 'email' });
@@ -171,7 +174,7 @@ describe.concurrent('createContactsMCPServer', () => {
         });
 
         test('should return text message when contact has no identifier for the platform', async () => {
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContactId');
 
             const result = await handler({ personId: 'alice-wonderland', platform: 'discord' });
@@ -183,7 +186,7 @@ describe.concurrent('createContactsMCPServer', () => {
         test('should match a platform that is not the first identifier in the list', async () => {
             // Default makeContact() has email first and bsky second; this proves the
             // filter checks every identifier rather than only the first.
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContactId');
 
             const result = await handler({ personId: 'alice-wonderland', platform: 'bsky' });
@@ -197,7 +200,7 @@ describe.concurrent('createContactsMCPServer', () => {
             mockBackend.getContact.mockImplementation(async () => makeContact({
                 identifiers: [{ platform: 'Email', value: 'alice@example.com' } as unknown as ContactIdentifier],
             }));
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContactId');
 
             const result = await handler({ personId: 'alice-wonderland', platform: 'email' });
@@ -213,7 +216,7 @@ describe.concurrent('createContactsMCPServer', () => {
                     { platform: 'email', value: 'alice.wonder@example.com' },
                 ],
             }));
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContactId');
 
             const result = await handler({ personId: 'alice-wonderland', platform: 'email' });
@@ -225,7 +228,7 @@ describe.concurrent('createContactsMCPServer', () => {
 
         test('should return the backend contact personId, not the raw requested id', async () => {
             mockBackend.getContact.mockImplementation(async () => makeContact({ personId: 'alice-w' as PersonId }));
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContactId');
 
             const result = await handler({ personId: 'alice-wonderland', platform: 'email' });
@@ -239,7 +242,7 @@ describe.concurrent('createContactsMCPServer', () => {
             mockBackend.getContact.mockImplementation(async () => {
                 throw new Error('DynamoDB error');
             });
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContactId');
 
             const result = await handler({ personId: 'alice-wonderland', platform: 'email' });
@@ -282,19 +285,6 @@ describe.concurrent('createContactsMCPServer', () => {
 
             const callArgs = approvalCallback.mock.calls[0] as unknown as [ContactChangeRequest];
             expect(callArgs[0].notes).toBe('Met at conference');
-        });
-
-        test('should return error when no approval callback configured', async () => {
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
-            const handler = getToolHandler(server, 'requestContactCreate');
-
-            const result = await handler({
-                displayName: 'Bob Builder',
-                identifiers: [{ platform: 'email', value: 'bob@example.com' }],
-            });
-
-            expect(result.isError).toBe(true);
-            expect(textContent(result.content[0])).toContain('Contact creation requires admin approval but no approval channel is configured');
         });
 
         test('should return error result when callback throws', async () => {
@@ -430,30 +420,22 @@ describe.concurrent('createContactsMCPServer', () => {
 
         test('should return text message when contact not found', async () => {
             mockBackend.getContact.mockImplementation(async () => undefined);
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const approvalCallback = mock(async (): Promise<void> => { /* intentionally empty */ });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: approvalCallback });
             const handler = getToolHandler(server, 'requestContactUpdate');
 
             const result = await handler({ personId: 'nobody', notes: 'test' });
 
             expect(result.isError).toBeUndefined();
             expect(textContent(result.content[0])).toBe("Contact 'nobody' not found.");
-        });
-
-        test('should return error when no approval callback configured', async () => {
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
-            const handler = getToolHandler(server, 'requestContactUpdate');
-
-            const result = await handler({ personId: 'alice-wonderland', notes: 'test' });
-
-            expect(result.isError).toBe(true);
-            expect(textContent(result.content[0])).toContain('Contact updates require admin approval but no approval channel is configured');
+            expect(approvalCallback).not.toHaveBeenCalled();
         });
 
         test('should return error result when backend throws', async () => {
             mockBackend.getContact.mockImplementation(async () => {
                 throw new Error('DynamoDB error');
             });
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'requestContactUpdate');
 
             const result = await handler({ personId: 'alice-wonderland', notes: 'test' });
@@ -478,7 +460,7 @@ describe.concurrent('createContactsMCPServer', () => {
 
     describe('listContacts tool', () => {
         test('should return all contacts as JSON with _internal stripped', async () => {
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'listContacts');
 
             const result = await handler({});
@@ -493,7 +475,7 @@ describe.concurrent('createContactsMCPServer', () => {
 
         test('should return text message when no contacts exist', async () => {
             mockBackend.listContacts.mockImplementation(async () => []);
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'listContacts');
 
             const result = await handler({});
@@ -506,7 +488,7 @@ describe.concurrent('createContactsMCPServer', () => {
             mockBackend.listContacts.mockImplementation(async () => {
                 throw new Error('DynamoDB error');
             });
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'listContacts');
 
             const result = await handler({});
@@ -523,7 +505,7 @@ describe.concurrent('createContactsMCPServer', () => {
                 _internal:   { discordUserId: '987654321' },
             });
             mockBackend.listContacts.mockImplementation(async () => [makeContact(), contact2]);
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'listContacts');
 
             const result = await handler({});
@@ -540,7 +522,7 @@ describe.concurrent('createContactsMCPServer', () => {
         test('should work for contacts without _internal field', async () => {
             const contactWithoutInternal = makeContact({ _internal: undefined });
             mockBackend.fuzzyLookup.mockImplementation(async () => [contactWithoutInternal]);
-            const server  = createContactsMCPServer({ backend: asBackend(mockBackend) });
+            const server  = createContactsMCPServer({ backend: asBackend(mockBackend), sendContactApprovalRequest: noopApproval });
             const handler = getToolHandler(server, 'lookupContact');
 
             const result = await handler({ query: 'alice' });

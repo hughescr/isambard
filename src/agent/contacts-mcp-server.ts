@@ -1,15 +1,16 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { mcpErrorResult, mcpJsonResult, mcpTextResult, withToolErrorHandling } from './mcp-helpers';
+import { mcpJsonResult, mcpTextResult, withToolErrorHandling } from './mcp-helpers';
 import { contactIdentifierSchema, createPersonId, platformTypeSchema, type Contact, type ContactBackend, type ContactChangeRequest } from '@/storage';
 
 /**
  * Options for creating the Contacts MCP server.
  */
 interface ContactsMCPServerOptions {
-    backend:                     ContactBackend
-    sendContactApprovalRequest?: (details: ContactChangeRequest) => Promise<void>
+    backend:                    ContactBackend
+    /** Posts a contact change to the admin review channel; always wired (the channel is required top-level config). */
+    sendContactApprovalRequest: (details: ContactChangeRequest) => Promise<void>
 }
 
 /**
@@ -90,9 +91,6 @@ export function createContactsMCPServer(options: ContactsMCPServerOptions) {
                     notes:       z.string().optional().describe('Optional notes about the contact'),
                 },
                 withToolErrorHandling('requestContactCreate', async (args): Promise<CallToolResult> => {
-                    if(!sendContactApprovalRequest) {
-                        return mcpErrorResult('Contact creation requires admin approval but no approval channel is configured');
-                    }
                     const request: ContactChangeRequest = {
                         action:         'create',
                         displayName:    args.displayName,
@@ -123,10 +121,6 @@ export function createContactsMCPServer(options: ContactsMCPServerOptions) {
                     const contact = await backend.getContact(personId);
                     if(!contact) {
                         return mcpTextResult(`Contact '${args.personId}' not found.`);
-                    }
-
-                    if(!sendContactApprovalRequest) {
-                        return mcpErrorResult('Contact updates require admin approval but no approval channel is configured');
                     }
 
                     const request: ContactChangeRequest = {

@@ -44,6 +44,11 @@ export interface EmailSetupOptions {
     client:                      Client
     /** Admin Discord user ID for authorization checks */
     adminDiscordUserId:          string
+    /**
+     * The admin review channel (top-level `config.adminDiscordChannelId`), used for inbound review
+     * notices, outbound approval embeds and restricted-mailbox notices.
+     */
+    adminDiscordChannelId:       ChannelId
     /** @internal Dependency injection for testing (e.g. fast sleep) */
     _deps?:                      { sleep?: (ms: number) => Promise<void> }
     /** Optional activity logger for recording approval events */
@@ -91,8 +96,6 @@ export interface EmailSetupResult {
     wildDuckClient:               WildDuckClient
     /** The person allowlist — exposed so the caller can wire it into AllowlistCommandHandler */
     allowlist:                    PersonAllowlist
-    /** Discord channel ID for the admin email channel, used to auto-mute it at startup */
-    adminChannelId:               ChannelId
     /** sendApprovalRequest callback — exposed for testing the isSendableChannel type guard */
     sendApprovalRequest:          (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
     /**
@@ -233,7 +236,7 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
  * @returns Email components for lifecycle management
  */
 export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetupResult> {
-    const { emailConfig, client, adminDiscordUserId } = options;
+    const { emailConfig, client, adminDiscordUserId, adminDiscordChannelId } = options;
     const retryDeps = options._deps?.sleep ? { deps: { sleep: options._deps.sleep } } : {};
 
     // Create classifier; use the pre-loaded PersonAllowlist passed in by the caller
@@ -268,9 +271,9 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         { allowlist, classifier, wildDuckClient },
         buildEmailProcessorCallbacks({
             client,
-            adminDiscordChannelId: emailConfig.adminDiscordChannelId,
-            discordCapability:     options.discordCapability,
-            notify:                options.notify,
+            adminDiscordChannelId,
+            discordCapability: options.discordCapability,
+            notify:            options.notify,
         })
     );
 
@@ -315,16 +318,16 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         // When capability is available, use it for outbox fallback; otherwise retry channel.send() up to 3 times
         await (options.discordCapability
             ? options.discordCapability.sendToChannel(
-                emailConfig.adminDiscordChannelId,
+                adminDiscordChannelId,
                 { embeds: [embed], components: [actionRow] },
                 { priority: 'high', type: 'email_approval' }
             )
             : retryAsync(async () => {
-                const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
+                const channel = await client.channels.fetch(adminDiscordChannelId);
                 if(isSendableChannel(channel)) {
                     await channel.send({ embeds: [embed], components: [actionRow] });
                 } else {
-                    throw new ChannelNotAccessibleError(emailConfig.adminDiscordChannelId);
+                    throw new ChannelNotAccessibleError(adminDiscordChannelId);
                 }
             }, retryDeps));
     };
@@ -355,7 +358,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
             const { embed, actionRow } = buildRestrictedAccessEmbed(reference.folder, reference.uid, formatMailboxMessageRef(reference));
             await sendToAdminChannel(
                 client,
-                emailConfig.adminDiscordChannelId,
+                adminDiscordChannelId,
                 { embeds: [embed], components: [actionRow] },
                 'Failed to send restricted mailbox notification to admin channel',
                 options.discordCapability
@@ -380,7 +383,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         outboundApprovalHandler,
         wildDuckClient,
         allowlist,
-        adminChannelId: emailConfig.adminDiscordChannelId,
         sendApprovalRequest,
         createEmailMcpServerInstance,
     };

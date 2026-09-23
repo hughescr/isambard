@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { channelIdSchema } from '@/config/discord-ids';
 import { loadConfig, loadDynamoDBConfig, type SstResources, type DynamoDBResources } from '@/config/loader';
 import { ConfigValidationError } from '@/errors/config';
 import { resolveTimezone } from '@/utils/time';
@@ -23,8 +24,9 @@ function createMockResources(
         // Email secrets default to undefined (email config is optional)
         EmailUser:             { value: undefined },
         EmailPassword:         { value: undefined },
+        // Admin review surface: top-level and required, independent of email
         AdminDiscordUserId:    { value: '111111111111111111' },
-        AdminDiscordChannelId: { value: undefined },
+        AdminDiscordChannelId: { value: '987654321098765432' },
         WildDuckApiUrl:        { value: undefined },
         // Bluesky secrets default to undefined (bsky config is optional)
         BskyHandle:            { value: undefined },
@@ -358,6 +360,7 @@ describe.concurrent('loadConfig', () => {
             expect(config.email).toBeDefined();
             expect(config.email?.user).toBe('user@rungie.com');
             expect(config.email?.wildDuckApiUrl).toBe('https://wildduck.example.com');
+            expect(config.email).not.toHaveProperty('adminDiscordChannelId');
         });
 
         test('should apply schema defaults when email secrets are set', () => {
@@ -708,6 +711,27 @@ describe.concurrent('loadConfig - adminDiscordUserId', () => {
 
         expect(config.email).toBeUndefined();
         expect(config.adminDiscordUserId).toBe('222222222222222222');
+    });
+});
+
+describe.concurrent('loadConfig - adminDiscordChannelId', () => {
+    test('should throw when AdminDiscordChannelId is not set (required at top level)', () => {
+        const resources = createMockResources({
+            AdminDiscordChannelId: { value: undefined },
+        });
+
+        expect(() => loadConfig(resources)).toThrow(/adminDiscordChannelId/i);
+    });
+
+    test('loads top-level adminDiscordChannelId with email disabled', () => {
+        const resources = createMockResources({
+            AdminDiscordChannelId: { value: '555555555555555555' },
+            // EmailUser is NOT set — email config will be undefined
+        });
+        const config = loadConfig(resources);
+
+        expect(config.adminDiscordChannelId).toBe(channelIdSchema.parse('555555555555555555'));
+        expect(config.email).toBeUndefined();
     });
 });
 

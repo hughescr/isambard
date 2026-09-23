@@ -31,7 +31,8 @@ export interface EmailOutboundApprovalHandlerDeps {
  * Supports select menu customIds:
  * - email-allowlist-select:{uid}
  *
- * **Authorization**: Delegated to Discord channel permissions on `adminDiscordChannelId`.
+ * **Authorization**: Delegated to Discord channel permissions on the admin review channel
+ * (top-level `config.adminDiscordChannelId`).
  * No in-code user ID check is needed because only admins have access to that channel.
  * Discord channel-level ACL is the enforcement boundary.
  */
