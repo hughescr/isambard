@@ -46,13 +46,19 @@ function makeEmail(overrides: Partial<EmailMetadata> = {}): EmailMetadata {
     };
 }
 
-function makeVerdict(verdict: ClassifierVerdict['verdict'], overrides: Partial<ClassifierVerdict> = {}): ClassifierVerdict {
-    return {
-        verdict,
-        confidence: 0.9,
-        reason:     'Test reason',
-        ...overrides,
+function makeVerdict(
+    verdict: ClassifierVerdict['verdict'],
+    overrides: Partial<Pick<ClassifierVerdict, 'confidence' | 'reason'>> = {}
+): ClassifierVerdict {
+    const fields = {
+        confidence: overrides.confidence ?? 0.9,
+        reason:     overrides.reason ?? 'Test reason',
     };
+
+    if(verdict === 'spam' || verdict === 'unsafe') {
+        return { verdict, ...fields };
+    }
+    return { verdict, ...fields };
 }
 
 // ---------------------------------------------------------------------------

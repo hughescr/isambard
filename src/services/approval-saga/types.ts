@@ -19,24 +19,10 @@ export type ApprovalSagaType = z.infer<typeof approvalSagaTypeSchema>;
 
 /**
  * Minimal interface for creating approval sagas.
- * Satisfies ApprovalSagaBackend without crossing the services boundary into discord/email/bsky.
- * Used by outbound approval handlers to avoid importing the full ApprovalSagaBackend class.
+ * Avoids importing the full ApprovalSagaBackend class into outbound approval handlers.
  */
 export interface SagaWriter {
-    create(saga: {
-        id:                 string
-        state:              string
-        type:               string
-        params:             Record<string, unknown>
-        approvalChannelId?: string
-        approvalMessageId?: string
-        adminUserId?:       string
-        rejectionReason?:   string
-        lastError?:         string
-        createdAt:          string
-        updatedAt:          string
-        ttl?:               number
-    }): Promise<void>
+    create(saga: ApprovalSaga): Promise<void>
 }
 
 export const approvalSagaSchema = z.object({

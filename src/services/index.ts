@@ -19,7 +19,7 @@ export type { OutboxDrainer } from './outbox';
 export { createOutboxDrainer } from './outbox';
 
 // Approval saga
-export type { ApprovalSagaType, SagaExecutor, SagaWriter } from './approval-saga';
+export type { ApprovalSagaState, ApprovalSagaType, SagaExecutor, SagaWriter } from './approval-saga';
 export { ApprovalSagaBackend, createSagaExecutor } from './approval-saga';
 
 // Allowlist saga

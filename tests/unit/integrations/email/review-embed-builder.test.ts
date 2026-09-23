@@ -24,12 +24,11 @@ function makeEmail(overrides: Partial<EmailMetadata> = {}): EmailMetadata {
     };
 }
 
-function makeVerdict(overrides: Partial<ClassifierVerdict> = {}): ClassifierVerdict {
+function makeVerdict(overrides: Partial<Pick<ClassifierVerdict, 'confidence' | 'reason'>> = {}): ClassifierVerdict {
     return {
         verdict:    'unsafe',
-        confidence: 0.95,
-        reason:     'Contains phishing link',
-        ...overrides,
+        confidence: overrides.confidence ?? 0.95,
+        reason:     overrides.reason ?? 'Contains phishing link',
     };
 }
 

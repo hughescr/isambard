@@ -45,8 +45,15 @@ describe('sub-agent effort tiers', () => {
     }
 
     test('offers low, medium, high and xhigh — and never max, which not every model has', () => {
+        const exactRestrictedEfforts: readonly ['low', 'medium'] = LAUNCH_RESTRICTED_EFFORTS;
+        const validTierSubset: readonly (typeof SUBAGENT_EFFORTS)[number][] = LAUNCH_RESTRICTED_EFFORTS;
+        // @ts-expect-error -- launch-restricted efforts must remain members of the sub-agent tier list.
+        const invalidTierSubset: readonly (typeof SUBAGENT_EFFORTS)[number][] = ['low', 'not-a-tier'];
+
         expect(SUBAGENT_EFFORTS).toEqual(['low', 'medium', 'high', 'xhigh']);
-        expect(LAUNCH_RESTRICTED_EFFORTS).toEqual(['low', 'medium']);
+        expect(invalidTierSubset).toBeDefined();
+        expect(exactRestrictedEfforts).toEqual(['low', 'medium']);
+        expect(validTierSubset).toEqual(['low', 'medium']);
         expect(SUBAGENT_LAUNCH_TOOLS).toEqual(['Agent', 'Task', 'Workflow']);
     });
 

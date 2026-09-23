@@ -85,9 +85,15 @@ export const EXPLICIT_TOOLS = [
  * it is model-limited, so a launch naming it can fail on the very models a cheap tier picks.
  */
 export const SUBAGENT_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+type SubagentEffort = typeof SUBAGENT_EFFORTS[number];
 
 /** Effort tiers that may not launch further sub-agents or workflows of their own. */
-export const LAUNCH_RESTRICTED_EFFORTS: readonly string[] = ['low', 'medium'];
+export const LAUNCH_RESTRICTED_EFFORTS = ['low', 'medium'] as const satisfies readonly SubagentEffort[];
+
+function isLaunchRestrictedEffort(effort: SubagentEffort): boolean {
+    const restrictedEfforts: readonly SubagentEffort[] = LAUNCH_RESTRICTED_EFFORTS;
+    return restrictedEfforts.includes(effort);
+}
 
 /**
  * Tools a launch-restricted tier may not call. Three names on purpose: the SDK's launch tool is
@@ -97,7 +103,7 @@ export const LAUNCH_RESTRICTED_EFFORTS: readonly string[] = ['low', 'medium'];
  */
 export const SUBAGENT_LAUNCH_TOOLS: readonly string[] = ['Agent', 'Task', 'Workflow'];
 
-/** Model-pinned routes supplied by utraque. Names encode effort because AgentInput cannot. */
+/** Model-pinned routes supplied by utraque. Names encode effort because AgentInput cannot. Cross-provider routes retain their own restricted flag. */
 export const CROSS_PROVIDER_SUBAGENTS = {
     'astra-high':          { model: 'anthropic-compat.astra', effort: 'high', restricted: false },
     'luna-medium':         { model: 'anthropic-compat.luna', effort: 'medium', restricted: true },
@@ -131,7 +137,7 @@ export function buildSubagentAgents(subagentSystemPrompt: () => string, includeC
             description: `General-purpose Isambard sub-agent at ${effort} effort; pass the model on the launch.`,
             prompt,
             effort,
-            ...LAUNCH_RESTRICTED_EFFORTS.includes(effort) ? { disallowedTools: [...SUBAGENT_LAUNCH_TOOLS] } : {},
+            ...isLaunchRestrictedEffort(effort) ? { disallowedTools: [...SUBAGENT_LAUNCH_TOOLS] } : {},
         };
     }
 

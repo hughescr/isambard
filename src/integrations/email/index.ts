@@ -1,6 +1,8 @@
 export { EmailFolder } from '@/config';
 export {
     ClassifierVerdictType,
+    SPAM_CATEGORIES,
+    UNSAFE_CATEGORIES,
     classifierVerdictSchema,
     EmailIdentity
 } from './types';

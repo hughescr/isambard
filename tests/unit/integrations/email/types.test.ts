@@ -3,6 +3,8 @@ import { EmailFolder } from '@/config';
 import {
     ClassifierVerdictType,
     EmailIdentity,
+    SPAM_CATEGORIES,
+    UNSAFE_CATEGORIES,
     classifierVerdictSchema
 } from '@/integrations/email/types';
 
@@ -80,7 +82,7 @@ describe.concurrent('classifierVerdictSchema', () => {
             expect(result.data.verdict).toBe('safe');
             expect(result.data.confidence).toBeCloseTo(0.95, 2);
             expect(result.data.reason).toBe('Message passed all checks');
-            expect(result.data.category).toBeUndefined();
+            expect(result.data).not.toHaveProperty('category');
         }
     });
 
@@ -92,12 +94,35 @@ describe.concurrent('classifierVerdictSchema', () => {
         }
     });
 
-    test('should parse verdict with optional category', () => {
-        const withCategory = { ...validVerdict, category: 'newsletter' };
-        const result = classifierVerdictSchema.safeParse(withCategory);
+    test('pins the verdict-scoped category vocabularies', () => {
+        expect(UNSAFE_CATEGORIES).toEqual(['phishing', 'malware', 'social_engineering', 'prompt_injection', 'scam']);
+        expect(SPAM_CATEGORIES).toEqual(['marketing', 'newsletter', 'bulk', 'automated']);
+    });
+
+    test('keeps a valid unsafe category', () => {
+        const result = classifierVerdictSchema.safeParse({ ...validVerdict, verdict: 'unsafe', category: 'phishing' });
+
+        expect(result.success).toBe(true);
+        if(result.success && result.data.verdict === 'unsafe') {
+            expect(result.data.category).toBe('phishing');
+        }
+    });
+
+    test('drops a spam category that belongs to the unsafe vocabulary', () => {
+        const result = classifierVerdictSchema.safeParse({ ...validVerdict, verdict: 'spam', category: 'phishing' });
+
+        expect(result.success).toBe(true);
+        if(result.success && result.data.verdict === 'spam') {
+            expect(result.data.category).toBeUndefined();
+        }
+    });
+
+    test('drops categories from safe verdicts', () => {
+        const result = classifierVerdictSchema.safeParse({ ...validVerdict, category: 'x' });
+
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data.category).toBe('newsletter');
+            expect(result.data).not.toHaveProperty('category');
         }
     });
 

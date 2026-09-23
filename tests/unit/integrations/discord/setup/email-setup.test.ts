@@ -44,13 +44,16 @@ function makeEmail(overrides: Partial<EmailMetadata> = {}): EmailMetadata {
 }
 
 /** Minimal ClassifierVerdict fixture. */
-function makeVerdict(overrides: Partial<ClassifierVerdict> = {}): ClassifierVerdict {
-    return {
-        verdict:    ClassifierVerdictType.Uncertain,
-        confidence: 0.5,
-        reason:     'test reason',
-        ...overrides,
+function makeVerdict(
+    overrides: Partial<Pick<ClassifierVerdict, 'verdict' | 'confidence' | 'reason'>> = {}
+): ClassifierVerdict {
+    const verdict = overrides.verdict ?? ClassifierVerdictType.Uncertain;
+    const fields = {
+        confidence: overrides.confidence ?? 0.5,
+        reason:     overrides.reason ?? 'test reason',
     };
+
+    return { verdict, ...fields };
 }
 
 /** Build a mock DynamoDB document client whose send() always returns {} (empty item). */

@@ -50,6 +50,7 @@ function makeClassifier(): EmailClassifier {
 describe('EmailClassifier', () => {
     beforeEach(() => {
         mockLogger.info.mockClear();
+        mockLogger.warn.mockClear();
         mockLogger.error.mockClear();
         mockGenerateText.mockReset();
         mockGenerateText.mockResolvedValue(
@@ -92,7 +93,49 @@ describe('EmailClassifier', () => {
 
             expect(result.verdict).toBe('spam');
             expect(result.confidence).toBeCloseTo(0.88, 2);
-            expect(result.category).toBe('newsletter');
+            if(result.verdict === 'spam') {
+                expect(result.category).toBe('newsletter');
+            }
+        });
+
+        test('drops an out-of-scope spam category and logs it', async () => {
+            mockGenerateText.mockResolvedValue(makeVerdictJson({
+                verdict:    'spam',
+                confidence: 0.88,
+                reason:     'Suspicious marketing email',
+                category:   'phishing',
+            }));
+
+            const result = await makeClassifier().classify(makeEmail());
+
+            expect(result.verdict).toBe('spam');
+            if(result.verdict === 'spam') {
+                expect(result.category).toBeUndefined();
+            }
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                category: 'phishing',
+                verdict:  'spam',
+                msg:      'Dropped unsupported classifier category',
+            });
+        });
+
+        test('drops a category from a safe verdict and logs it', async () => {
+            mockGenerateText.mockResolvedValue(makeVerdictJson({
+                verdict:    'safe',
+                confidence: 0.97,
+                reason:     'Legitimate sender',
+                category:   'marketing',
+            }));
+
+            const result = await makeClassifier().classify(makeEmail());
+
+            expect(result.verdict).toBe('safe');
+            expect(result).not.toHaveProperty('category');
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                category: 'marketing',
+                verdict:  'safe',
+                msg:      'Dropped unsupported classifier category',
+            });
         });
 
         test('returns unsafe verdict with category', async () => {
@@ -109,7 +152,9 @@ describe('EmailClassifier', () => {
             }));
 
             expect(result.verdict).toBe('unsafe');
-            expect(result.category).toBe('prompt_injection');
+            if(result.verdict === 'unsafe') {
+                expect(result.category).toBe('prompt_injection');
+            }
         });
 
         test('returns uncertain verdict with no category', async () => {
@@ -123,7 +168,7 @@ describe('EmailClassifier', () => {
             const result = await classifier.classify(makeEmail());
 
             expect(result.verdict).toBe('uncertain');
-            expect(result.category).toBeUndefined();
+            expect(result).not.toHaveProperty('category');
         });
 
         test('optional category field absent remains undefined', async () => {
@@ -137,7 +182,7 @@ describe('EmailClassifier', () => {
             const result = await classifier.classify(makeEmail());
 
             expect(result.verdict).toBe('safe');
-            expect(result.category).toBeUndefined();
+            expect(result).not.toHaveProperty('category');
         });
     });
 
