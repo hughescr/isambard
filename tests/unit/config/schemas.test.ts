@@ -1465,6 +1465,7 @@ describe('sessionConfigSchema', () => {
             bootEventsWindowMs:      24 * 60 * 60 * 1000,
             shutdownTurnWaitMs:      60_000,
             shutdownDeadlineMs:      120_000,
+            reopenTaskWaitMs:        120_000,
             debounceMs:              250,
             timezone:                resolveTimezone(),
         });
@@ -1568,5 +1569,19 @@ describe('sessionConfigSchema', () => {
     test('rejects a non-positive compactTargetIntervalMs', () => {
         expect(sessionConfigSchema.safeParse({ compactTargetIntervalMs: 0 }).success).toBe(false);
         expect(sessionConfigSchema.safeParse({ compactTargetIntervalMs: -1 }).success).toBe(false);
+    });
+
+    // #97: how long a requested reopen waits for the old session's background tasks.
+    test('accepts a positive integer reopenTaskWaitMs', () => {
+        expect(sessionConfigSchema.parse({ reopenTaskWaitMs: 1 }).reopenTaskWaitMs).toBe(1);
+    });
+
+    test('rejects a non-integer reopenTaskWaitMs', () => {
+        expect(sessionConfigSchema.safeParse({ reopenTaskWaitMs: 60_000.5 }).success).toBe(false);
+    });
+
+    test('rejects a non-positive reopenTaskWaitMs', () => {
+        expect(sessionConfigSchema.safeParse({ reopenTaskWaitMs: 0 }).success).toBe(false);
+        expect(sessionConfigSchema.safeParse({ reopenTaskWaitMs: -1 }).success).toBe(false);
     });
 });

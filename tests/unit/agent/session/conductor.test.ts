@@ -4381,6 +4381,8 @@ describe('createConductor', () => {
             expect(h.ledgerStore.get().tasks).toHaveLength(1);
 
             h.conductor.requestReopen('an identity change');
+            // The fixture's task is backgrounded, so the reopen first waits it out (#97).
+            h.clock.advance(DEFAULT_CONFIG.reopenTaskWaitMs);
             await flush();
             h.instances[1].emit(frames.init('sess-1'));
             await flush();
@@ -4967,9 +4969,12 @@ describe('createConductor', () => {
 
             h.conductor.requestReopen('an identity change');
             await flush();
+            // #97: the reopen waits out reopenTaskWaitMs for the still-running tasks first.
+            h.clock.advance(DEFAULT_CONFIG.reopenTaskWaitMs);
+            await flush();
 
             expect(handshakeTextOf(h.instances[1])).toBe([
-                `[BOOT] Session reopened at 1970-01-01T00:00:07.000Z ${REQUESTED_OPENING}`,
+                `[BOOT] Session reopened at 1970-01-01T00:02:07.000Z ${REQUESTED_OPENING}`,
                 RESUMED_CONTINUITY,
                 `${TASKS_INTRO}\n- index the archive\n- summarise the inbox\n${TASKS_ADVICE}`,
                 HANDSHAKE_SUFFIX,
@@ -4990,12 +4995,14 @@ describe('createConductor', () => {
 
             h.conductor.requestReopen('an identity change');
             await flush();
+            h.clock.advance(DEFAULT_CONFIG.reopenTaskWaitMs);
+            await flush();
             h.clock.advance(1000);
             h.instances[1].fail(new Error('resume rejected by CLI'));
             await flush();
 
             expect(handshakeTextOf(h.instances[2])).toBe([
-                `[BOOT] Session reopened at 1970-01-01T00:00:08.000Z ${REQUESTED_OPENING}`,
+                `[BOOT] Session reopened at 1970-01-01T00:02:08.000Z ${REQUESTED_OPENING}`,
                 FALLBACK_CONTINUITY,
                 `${TASKS_INTRO}\n- index the archive\n- summarise the inbox\n${TASKS_ADVICE}`,
                 HANDSHAKE_SUFFIX,
@@ -5011,9 +5018,15 @@ describe('createConductor', () => {
 
             h.conductor.requestReopen('an identity change');
             await flush();
+            // #97: neither task finishes within reopenTaskWaitMs, so the reopen goes ahead at it.
+            h.clock.advance(DEFAULT_CONFIG.reopenTaskWaitMs);
+            await flush();
+            expect(h.instances).toHaveLength(2);
             // A notification the discarded reader had already buffered lands after the snapshot.
             h.instances[0].emit(frames.taskNotification('completed', { task_id: 'task-bg-1', tool_use_id: 'tool-bg-1' }));
             await flush();
+            // The request was consumed when the reopen started, so the late finish arms no recheck.
+            expect(h.clock.pending()).toBe(0);
             h.instances[1].emit(frames.init('sess-1'));
             await flush();
 
@@ -5022,6 +5035,585 @@ describe('createConductor', () => {
             expect(h.journal.byKind('task_finished').filter(entry => entry.taskId === 'task-bg-1')).toEqual([
                 { type: 'task_finished', at: expect.any(Date), taskId: 'task-bg-1', description: 'index the archive', outcome: 'completed' },
             ]);
+        });
+
+        describe('a requested reopen waits, bounded, for background work (#97)', () => {
+            const WAIT_MS = 120_000;
+            const SETTLE_MS = 5000;
+            const PENDING_WAKE_TTL_MS = 300_000;
+            const DEFER_MESSAGE = 'Deferring a requested reopen until the old session\'s background work has finished and its result has had a chance to reach the model (bounded by reopenTaskWaitMs)';
+            const CUT_OFF_MESSAGE = 'Reopening the session with background tasks still running: the wait for them (reopenTaskWaitMs) ran out, so the reopen handshake lists them as cut off';
+            const UNDELIVERED_MESSAGE = 'Reopening the session although a result may not have reached the model yet: the wait (reopenTaskWaitMs) ran out while a background task\'s wake or a peer message was still pending adoption, or within REOPEN_WAKE_SETTLE_MS of a task finishing; the reopen handshake does not mention it';
+            const TASK_PARAGRAPH = `${TASKS_INTRO}\n- index the archive\n${TASKS_ADVICE}`;
+
+            /** Opens, runs one turn that starts background task `task-bg-1` ("index the archive"), and ends that turn, all at t=0. */
+            async function openWithBackgroundTask(h: Harness): Promise<void> {
+                await openWith(h, 'sess-1');
+                await startOneTaskInTurn(h);
+                h.instances[0].emit(frames.resultSuccess());
+                await flush();
+            }
+
+            function emitTaskCompleted(h: Harness): void {
+                h.instances[0].emit(frames.taskNotification('completed', { task_id: 'task-bg-1', tool_use_id: 'tool-bg-1' }));
+            }
+
+            async function advance(h: Harness, ms: number): Promise<void> {
+                h.clock.advance(ms);
+                await flush();
+            }
+
+            function callsWithMessage(fn: ReturnType<typeof jest.fn>, message: string): unknown[][] {
+                return fn.mock.calls.filter(call => call[1] === message);
+            }
+
+            it('holds the reopen while a background task runs, and reopens exactly at reopenTaskWaitMs naming it as cut off', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+
+                h.conductor.requestReopen('an identity change');
+                await flush();
+                expect(h.instances).toHaveLength(1);
+                expect(h.instances[0].closeCalls).toBe(0);
+                expect(h.clock.pending()).toBe(1);
+                expect(callsWithMessage(h.logger.info, DEFER_MESSAGE)).toEqual([
+                    [{ reason: 'an identity change', tasks: ['index the archive'], waitAtMostMs: WAIT_MS }, DEFER_MESSAGE],
+                ]);
+
+                await advance(h, WAIT_MS - 1000);
+                // Progress from a task that is still running is not a finish: it neither opens a
+                // settle window (which would log an undelivered result below) nor re-arms.
+                h.instances[0].emit(frames.taskProgress({ task_id: 'task-bg-1', tool_use_id: 'tool-bg-1' }));
+                await flush();
+                await advance(h, 999);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(h.instances[0].closeCalls).toBe(1);
+                expect(h.clock.pending()).toBe(0);
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:02:00.000Z ${REQUESTED_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    TASK_PARAGRAPH,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+                expect(callsWithMessage(h.logger.warn, CUT_OFF_MESSAGE)).toEqual([
+                    [{ reason: 'an identity change', tasks: ['index the archive'], waitedMs: WAIT_MS }, CUT_OFF_MESSAGE],
+                ]);
+                expect(callsWithMessage(h.logger.warn, UNDELIVERED_MESSAGE)).toEqual([]);
+                expect(callsWithMessage(h.logger.info, DEFER_MESSAGE)).toHaveLength(1);
+
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+                expect(h.journal.byKind('task_lost').map(entry => entry.taskId)).toEqual(['task-bg-1']);
+            });
+
+            it('the reopen that cut a task off leaves no settle behind: a later request made during a turn reopens at that turn\'s end', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, WAIT_MS);
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+
+                void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                await flush();
+                h.conductor.requestReopen('a second change');
+                h.instances[1].emit(frames.resultSuccess());
+                await flush();
+
+                expect(h.instances).toHaveLength(3);
+            });
+
+            it('a task finishing during the wait: reopens exactly REOPEN_WAKE_SETTLE_MS after its task_notification, with no tasks paragraph and nothing lost', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 10_000);
+
+                emitTaskCompleted(h);
+                await flush();
+                expect(h.instances).toHaveLength(1);
+                expect(h.clock.pending()).toBe(1);
+
+                await advance(h, SETTLE_MS - 1);
+                expect(h.instances).toHaveLength(1);
+                expect(h.clock.pending()).toBe(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(h.clock.pending()).toBe(0);
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:15.000Z ${REQUESTED_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+                expect(callsWithMessage(h.logger.warn, CUT_OFF_MESSAGE)).toEqual([]);
+                expect(callsWithMessage(h.logger.warn, UNDELIVERED_MESSAGE)).toEqual([]);
+                expect(callsWithMessage(h.logger.info, DEFER_MESSAGE)).toHaveLength(1);
+
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+                expect(h.journal.byKind('task_lost')).toEqual([]);
+                expect(h.journal.byKind('task_finished').filter(entry => entry.taskId === 'task-bg-1')).toEqual([
+                    { type: 'task_finished', at: expect.any(Date), taskId: 'task-bg-1', description: 'index the archive', outcome: 'completed' },
+                ]);
+            });
+
+            it('one of two background tasks dropped near the deadline: still held for the other, which is cut off, and the fresh finish is logged as settling', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                await startTasksInTurn(h);
+                h.instances[0].emit(frames.resultSuccess());
+                await flush();
+                h.conductor.requestReopen('an identity change');
+                await advance(h, WAIT_MS - 1000);
+
+                // No task_notification: only the running-set diff can see task-bg-1 finish here.
+                h.instances[0].emit(frames.backgroundTasksChanged([{ task_id: 'task-bg-2', task_type: 'local_agent', description: 'summarise the inbox' }]));
+                await flush();
+                await advance(h, 999);
+                expect(h.instances).toHaveLength(1);
+                expect(h.clock.pending()).toBe(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:02:00.000Z ${REQUESTED_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    `${TASKS_INTRO}\n- summarise the inbox\n${TASKS_ADVICE}`,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+                expect(callsWithMessage(h.logger.warn, CUT_OFF_MESSAGE)).toEqual([
+                    [{ reason: 'an identity change', tasks: ['summarise the inbox'], waitedMs: WAIT_MS }, CUT_OFF_MESSAGE],
+                ]);
+                expect(callsWithMessage(h.logger.warn, UNDELIVERED_MESSAGE)).toEqual([
+                    [{ reason: 'an identity change', waitedMs: WAIT_MS, pendingAdoptions: [], settling: true }, UNDELIVERED_MESSAGE],
+                ]);
+            });
+
+            it('a pending wake holds the reopen past the settle window until its wake turn has run, then settles again from that turn\'s end', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 10_000);
+                emitTaskCompleted(h);
+                h.conductor.adoptWakeTurn({ taskId: 'task-bg-1', toolUseId: 'tool-bg-1', summary: 'archive indexed' });
+                await flush();
+
+                await advance(h, 60_000);
+                expect(h.instances).toHaveLength(1);
+
+                h.instances[0].emit(frames.assistantText('the archive is indexed', { parent_tool_use_id: null }));
+                await flush();
+                expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
+                h.instances[0].emit(frames.resultSuccess({ result: 'the archive is indexed' }));
+                await flush();
+                expect(h.instances).toHaveLength(1);
+                expect(h.journal.byKind('turn_completed').at(-1)).toMatchObject({ kind: 'task', responseText: 'the archive is indexed' });
+
+                await advance(h, SETTLE_MS - 1);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+                expect(h.instances).toHaveLength(2);
+                expect(h.instances[0].closeCalls).toBe(1);
+            });
+
+            it('a pending wake stops holding at its PENDING_WAKE_TTL_MS staleness boundary, well before a longer reopenTaskWaitMs', async () => {
+                const h = build({ config: sessionConfigSchema.parse({ reopenTaskWaitMs: 600_000 }) });
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 1000);
+                emitTaskCompleted(h);
+                h.conductor.adoptWakeTurn({ taskId: 'task-bg-1', toolUseId: 'tool-bg-1', summary: 'archive indexed' });
+                await flush();
+
+                // Stale once more than PENDING_WAKE_TTL_MS has elapsed since it was set at t=1000.
+                await advance(h, PENDING_WAKE_TTL_MS);
+                expect(h.instances).toHaveLength(1);
+                expect(h.clock.pending()).toBe(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(callsWithMessage(h.logger.warn, UNDELIVERED_MESSAGE)).toEqual([]);
+            });
+
+            it('a task finishing mid-turn: the settle window restarts at that turn\'s end, where a deferred wake is delivered', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                await startOneTaskInTurn(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 1000);
+                // Mid-turn, the request is not evaluated, so nothing is armed; a frame that finishes
+                // no background task does not arm anything either.
+                h.instances[0].emit(frames.taskProgress({ task_id: 'task-bg-1', tool_use_id: 'tool-bg-1' }));
+                await flush();
+                expect(h.clock.pending()).toBe(0);
+                emitTaskCompleted(h);
+                await flush();
+                await advance(h, 19_000);
+                expect(h.instances).toHaveLength(1);
+
+                h.instances[0].emit(frames.resultSuccess());
+                await flush();
+                expect(h.instances).toHaveLength(1);
+                await advance(h, SETTLE_MS - 1);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+            });
+
+            it('a foreground task stopped at the turn end neither holds nor settles the reopen', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                await flush();
+                h.instances[0].emit(frames.taskStarted({ task_id: 'task-fg', tool_use_id: 'tool-fg', description: 'foreground helper', is_backgrounded: false }));
+                await flush();
+
+                h.conductor.requestReopen('an identity change');
+                h.instances[0].emit(frames.resultSuccess());
+                await flush();
+
+                expect(h.instances).toHaveLength(2);
+                expect(callsWithMessage(h.logger.info, DEFER_MESSAGE)).toEqual([]);
+            });
+
+            it('background_tasks_changed dropping the task starts the settle window, and a late task_notification for it restarts it', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 10_000);
+
+                h.instances[0].emit(frames.backgroundTasksChanged([]));
+                await flush();
+                await advance(h, SETTLE_MS - 1);
+                expect(h.instances).toHaveLength(1);
+
+                // t=14,999: the notification for the already-dropped task restarts the window.
+                emitTaskCompleted(h);
+                await flush();
+                await advance(h, 1);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, SETTLE_MS - 2);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:19.999Z ${REQUESTED_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+            });
+
+            it('a late task_notification the ledger ignores (its finished record already evicted) still restarts the settle window', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 10_000);
+
+                h.instances[0].emit(frames.backgroundTasksChanged([]));
+                await flush();
+                await advance(h, SETTLE_MS - 1);
+                expect(h.instances).toHaveLength(1);
+
+                // t=14,999: an id in neither `tasks` nor `finishedTasks` — as for a record evicted
+                // past the finished-tasks cap — leaves the ledger unchanged by reference, so no
+                // ledger subscriber sees this frame; the window must restart all the same.
+                const ledgerBefore = h.ledgerStore.get();
+                h.instances[0].emit(frames.taskNotification('completed', { task_id: 'task-evicted', tool_use_id: 'tool-evicted' }));
+                await flush();
+                expect(h.ledgerStore.get()).toBe(ledgerBefore);
+                await advance(h, 1);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, SETTLE_MS - 2);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(handshakeTextOf(h.instances[1])).toContain('[BOOT] Session reopened at 1970-01-01T00:00:19.999Z ');
+            });
+
+            it('a repeated task_notification with an unchanged status still restarts the settle window', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 10_000);
+                emitTaskCompleted(h);
+                await flush();
+                await advance(h, 4000);
+
+                emitTaskCompleted(h);
+                await flush();
+                await advance(h, SETTLE_MS - 1);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(handshakeTextOf(h.instances[1])).toContain('[BOOT] Session reopened at 1970-01-01T00:00:19.000Z ');
+            });
+
+            it('an explicitly lost task releases the hold at once, with no settle window', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 10_000);
+
+                h.ledgerStore.dispatch({ type: 'task_lost', taskId: 'task-bg-1', at: new Date(h.clock.now()) });
+                await flush();
+                expect(h.instances).toHaveLength(1);
+                expect(h.clock.pending()).toBe(1);
+                await advance(h, 0);
+
+                expect(h.instances).toHaveLength(2);
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:10.000Z ${REQUESTED_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+            });
+
+            it('a second request during the wait keeps the ORIGINAL deadline and applies the later reason', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 30_000);
+
+                h.conductor.requestReopen('a second change');
+                await flush();
+                expect(h.clock.pending()).toBe(1);
+                await advance(h, WAIT_MS - 30_000 - 1);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(h.journal.byKind('session_reopen_requested').map(entry => entry.reason)).toEqual(['an identity change', 'a second change']);
+                expect(handshakeTextOf(h.instances[1])).toContain('[BOOT] Session reopened at 1970-01-01T00:02:00.000Z because the host deliberately closed the previous session process to apply a second change.');
+                expect(callsWithMessage(h.logger.warn, CUT_OFF_MESSAGE)).toEqual([
+                    [{ reason: 'a second change', tasks: ['index the archive'], waitedMs: WAIT_MS }, CUT_OFF_MESSAGE],
+                ]);
+                expect(callsWithMessage(h.logger.info, DEFER_MESSAGE)).toEqual([
+                    [{ reason: 'an identity change', tasks: ['index the archive'], waitAtMostMs: WAIT_MS }, DEFER_MESSAGE],
+                    [{ reason: 'a second change', tasks: ['index the archive'], waitAtMostMs: WAIT_MS - 30_000 }, DEFER_MESSAGE],
+                ]);
+            });
+
+            it('a request after a completed reopen starts a fresh deadline of its own', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                h.clock.advance(50_000);
+                h.conductor.requestReopen('an identity change');
+                await flush();
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+
+                void h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                await flush();
+                h.instances[1].emit(frames.taskStarted({ task_id: 'task-bg-9', tool_use_id: 'tool-bg-9', description: 'crawl the feed', is_backgrounded: true }));
+                h.instances[1].emit(frames.resultSuccess());
+                await flush();
+                h.conductor.requestReopen('a second change');
+                await advance(h, WAIT_MS - 1);
+                expect(h.instances).toHaveLength(2);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(3);
+            });
+
+            it('crash during the wait: the crash reopen lists the task, drops the satisfied request and clears its recheck', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 10_000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+                expect(h.instances).toHaveLength(2);
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:10.000Z ${CRASH_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    TASK_PARAGRAPH,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+
+                expect(h.logger.debug).toHaveBeenCalledWith({ reason: 'an identity change' }, 'Dropping a requested reopen an intervening open already satisfied');
+                expect(h.clock.pending()).toBe(0);
+                await advance(h, WAIT_MS);
+                expect(h.instances).toHaveLength(2);
+                expect(h.journal.byKind('session_opened').at(-1)).toMatchObject({ cause: 'crash_reopen' });
+            });
+
+            it('shutdown during the wait cancels it: no recheck timer is left and no reopen ever starts', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await flush();
+                expect(h.clock.pending()).toBe(1);
+
+                await h.conductor.shutdown({ turnWaitMs: 1000, deadlineMs: 2000 });
+
+                expect(h.clock.pending()).toBe(0);
+                await advance(h, WAIT_MS);
+                expect(h.instances).toHaveLength(1);
+                expect(h.instances[0].closeCalls).toBe(1);
+            });
+
+            it('a background task finishing during shutdown\'s grace period arms no recheck', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                await startOneTaskInTurn(h);
+                h.conductor.requestReopen('an identity change');
+                const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+                await flush();
+                const before = h.clock.pending();
+
+                emitTaskCompleted(h);
+                await flush();
+
+                expect(h.clock.pending()).toBe(before);
+                h.instances[0].emit(frames.resultSuccess());
+                await flush();
+                h.clock.runAll();
+                await shutdownPromise;
+                expect(h.instances).toHaveLength(1);
+            });
+
+            it('compaction: a deadline that passes during a /compact turn reopens once that turn ends', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, WAIT_MS - 1000);
+
+                h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+                h.instances[0].emit(frames.assistantText('a spontaneous note', { parent_tool_use_id: null }));
+                h.instances[0].emit(frames.resultSuccess());
+                await flush();
+                expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'compact' });
+
+                await advance(h, 2000);
+                expect(h.instances).toHaveLength(1);
+
+                h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 10 }));
+                h.instances[0].emit(frames.compactBoundary());
+                await flush();
+                expect(h.instances).toHaveLength(1);
+                h.instances[0].emit(frames.resultSuccess());
+                await flush();
+
+                expect(h.instances).toHaveLength(2);
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:02:01.000Z ${REQUESTED_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    TASK_PARAGRAPH,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+            });
+
+            it('a settle window that would run past the deadline is clamped to it, and the possibly undelivered result is logged', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, WAIT_MS - 1000);
+                emitTaskCompleted(h);
+                await flush();
+
+                await advance(h, 999);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(handshakeTextOf(h.instances[1])).toContain('[BOOT] Session reopened at 1970-01-01T00:02:00.000Z ');
+                expect(callsWithMessage(h.logger.warn, CUT_OFF_MESSAGE)).toEqual([]);
+                expect(callsWithMessage(h.logger.warn, UNDELIVERED_MESSAGE)).toEqual([
+                    [{ reason: 'an identity change', waitedMs: WAIT_MS, pendingAdoptions: [], settling: true }, UNDELIVERED_MESSAGE],
+                ]);
+            });
+
+            it('a pending wake that would run past the deadline is clamped to it, and logged as undelivered', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await advance(h, 10_000);
+                emitTaskCompleted(h);
+                h.conductor.adoptWakeTurn({ taskId: 'task-bg-1', toolUseId: 'tool-bg-1', summary: 'archive indexed' });
+                await flush();
+
+                await advance(h, WAIT_MS - 10_000 - 1);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(callsWithMessage(h.logger.warn, UNDELIVERED_MESSAGE)).toEqual([
+                    [{
+                        reason: 'an identity change', waitedMs: WAIT_MS, pendingAdoptions: [{ kind: 'wake', taskId: 'task-bg-1', toolUseId: 'tool-bg-1', summary: 'archive indexed', setAt: 10_000 }], settling: false,
+                    }, UNDELIVERED_MESSAGE],
+                ]);
+            });
+
+            it('a pending peer message holds the reopen too, up to the deadline, and is logged as undelivered there', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                const peer = peerEnvelope();
+                h.conductor.adoptPeerTurn(peer);
+                h.conductor.requestReopen('an identity change');
+                await flush();
+                expect(callsWithMessage(h.logger.info, DEFER_MESSAGE)).toEqual([
+                    [{ reason: 'an identity change', tasks: [], waitAtMostMs: WAIT_MS }, DEFER_MESSAGE],
+                ]);
+
+                await advance(h, WAIT_MS - 1);
+                expect(h.instances).toHaveLength(1);
+                await advance(h, 1);
+
+                expect(h.instances).toHaveLength(2);
+                expect(callsWithMessage(h.logger.warn, UNDELIVERED_MESSAGE)).toEqual([
+                    [{
+                        reason: 'an identity change', waitedMs: WAIT_MS, pendingAdoptions: [{ kind: 'peer', envelopeId: peer.id, setAt: 0 }], settling: false,
+                    }, UNDELIVERED_MESSAGE],
+                ]);
+            });
+
+            it('a reopen started at a turn end clears the recheck timer it no longer needs', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                h.conductor.adoptPeerTurn(peerEnvelope());
+                h.conductor.requestReopen('an identity change');
+                await flush();
+                expect(h.clock.pending()).toBe(1);
+                await advance(h, 1000);
+
+                h.instances[0].emit(frames.assistantText('peer reply', { parent_tool_use_id: null }));
+                await flush();
+                expect(h.conductor.status().turn).toMatchObject({ kind: 'peer' });
+                h.instances[0].emit(frames.resultSuccess());
+                await flush();
+
+                expect(h.instances).toHaveLength(2);
+                expect(h.clock.pending()).toBe(0);
+            });
+
+            it('no queued envelope starts on the old session during the wait; it plays on the replacement', async () => {
+                const h = build();
+                await openWithBackgroundTask(h);
+                h.conductor.requestReopen('an identity change');
+                await flush();
+
+                const queued = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+                await flush();
+                expect(turnPrompts(h.instances[0])).toHaveLength(1);
+
+                await advance(h, WAIT_MS);
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+                expect(turnPrompts(h.instances[1])).toHaveLength(1);
+                h.instances[1].emit(frames.resultSuccess());
+                await expect(queued).resolves.toEqual(expect.objectContaining({ isError: false }));
+            });
         });
 
         describe('the boot bundle on a reopen (#98)', () => {
@@ -5070,6 +5662,8 @@ describe('createConductor', () => {
 
                 h.conductor.requestReopen('an identity change');
                 await flush();
+                h.clock.advance(DEFAULT_CONFIG.reopenTaskWaitMs);
+                await flush();
                 expect(buildBootBundle).toHaveBeenCalledTimes(1);
                 h.clock.advance(1000);
                 h.instances[1].fail(new Error('resume rejected by CLI'));
@@ -5080,7 +5674,7 @@ describe('createConductor', () => {
                     [{ kind: 'fresh', cause: 'requested_reopen', lostTasks: [], undelivered: [] }],
                 ]);
                 expect(handshakeTextOf(h.instances[2])).toBe([
-                    `[BOOT] Session reopened at 1970-01-01T00:00:08.000Z ${REQUESTED_OPENING}`,
+                    `[BOOT] Session reopened at 1970-01-01T00:02:08.000Z ${REQUESTED_OPENING}`,
                     FALLBACK_CONTINUITY_RESEEDED,
                     `${TASKS_INTRO}\n- index the archive\n- summarise the inbox\n${TASKS_ADVICE}`,
                     HANDSHAKE_SUFFIX,

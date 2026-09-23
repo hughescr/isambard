@@ -115,6 +115,24 @@ const TURN_RESPONSE_TEXT_CAP = 200_000;
 const PENDING_WAKE_TTL_MS = 5 * 60 * 1000;
 
 /**
+ * How long a requested reopen keeps waiting after the last sign that a background task's result is
+ * still on its way to the model (#97): a `task_notification` frame, a background task leaving the
+ * running set for any reason other than loss, or a turn ending after either. The real SDK delivers
+ * a finished task's result as a wake — the `task_notification` frame, then the
+ * `<task-notification>` UserPromptSubmit hook, then `system/init`, then the woken turn's assistant
+ * frames — and a task that finished mid-turn is only woken once that turn has ended. Closing the
+ * session in any of those gaps loses the result, and a resumed CLI does not deliver it again.
+ *
+ * Once the hook has fired, the pending wake adoption itself holds the reopen (see
+ * {@link Conductor.adoptWakeTurn}); this window only covers the gaps before the hook. It is a
+ * best-effort quiet period, not a guarantee: the SDK promises an order, not a latency, so a wake
+ * slower than this can still be lost. That is why it is generous next to the sub-second gaps seen
+ * against the real SDK, and it never extends a wait past `reopenTaskWaitMs`. A timing fact of the
+ * SDK like {@link PENDING_WAKE_TTL_MS}, not a policy knob, so it is a constant, not config.
+ */
+const REOPEN_WAKE_SETTLE_MS = 5000;
+
+/**
  * How many unconsumed peer messages may wait for a spontaneous turn at once. A peer message only
  * becomes its own turn when the SDK serves the turn it started, so a burst from a chatty peer can
  * legitimately queue several; past this many the session is not keeping up and the OLDEST is
@@ -369,10 +387,18 @@ export interface Conductor {
      * host rebuilds the prompt (today, because the identity behind it changed) and calls this, and
      * the conductor closes the current handle and reopens it with `resume` and freshly built
      * options. The reopen runs at the next idle point — no turn running, and no turn-end
-     * compaction check still outstanding — and until it has run NO new turn is started, so the
-     * wait is bounded by the turn already in flight rather than by however long the queue stays
-     * busy. Queued envelopes are never dropped: they replay on the replacement session, as do
-     * appended envelopes the dying session never read.
+     * compaction check still outstanding — once the old session's background work is done (#97):
+     * no background task still running, no SDK-started wake or peer turn still pending adoption,
+     * and no task finished within the last few seconds (its result may still be on its way; see
+     * `REOPEN_WAKE_SETTLE_MS`). Closing the session would kill that work or lose its result. The
+     * wait for background work is bounded by `config.reopenTaskWaitMs` from the first request
+     * still pending (a later request does not extend it); when it runs out the reopen goes ahead
+     * anyway, and the reopen handshake names the tasks still running. The drain is best effort:
+     * it cannot promise that every result was delivered. Until the reopen has run NO new queued
+     * turn is started (the SDK's own wake turns still run), so the queue waits at most for the
+     * turn in flight plus that bound, never for however long it stays busy. Queued envelopes are
+     * never dropped: they replay on the replacement session, as do appended envelopes the dying
+     * session never read.
      *
      * Recorded rather than discarded when an open or another reopen is already in flight, so an
      * identity change landing in either window is applied afterwards instead of lost — unless
@@ -556,8 +582,22 @@ export function createConductor(params: CreateConductorParams): Conductor {
      */
     // Stryker disable next-line NumberLiteralValue: only differences from a captured generation are observed, so any fixed initial offset cancels from both sides.
     let openGeneration = 0;
-    /** A controlled reopen the host asked for that has not started yet — see {@link requestReopen}. */
-    let pendingReopen: { reason: string, atGeneration: number } | undefined;
+    /**
+     * A controlled reopen the host asked for that has not started yet — see {@link requestReopen}.
+     * `firstRequestedAt` is when the FIRST of an unbroken run of requests arrived; the
+     * `config.reopenTaskWaitMs` bound on waiting for background work runs from it, so a string of
+     * later requests cannot put the reopen off indefinitely. `deferralLogged` keeps the deferral
+     * log to one line per request.
+     */
+    let pendingReopen: { reason: string, atGeneration: number, firstRequestedAt: number, deferralLogged: boolean } | undefined;
+    /** The single timer that re-evaluates a held {@link pendingReopen} at its next boundary — see {@link maybeStartRequestedReopen}. */
+    let reopenRecheckTimer: TimerHandle | undefined;
+    /**
+     * The last time a background task's result was plausibly set on its way to the model — see
+     * {@link REOPEN_WAKE_SETTLE_MS}. `undefined` until the first such sign in the current session;
+     * cleared when a new session opens, which has nothing left to wake.
+     */
+    let wakeSettleFrom: number | undefined;
     /**
      * Accumulate-only envelopes appended while a reopen was in flight, flushed onto the
      * replacement session's queue once it opens. Buffered rather than dropped because the caller's
@@ -733,7 +773,35 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * All `pendingQueue`-external ledger bookkeeping this conductor derives from ledger changes:
      * task lifecycle journaling and releasing submits held for compaction.
      */
+    /**
+     * Feeds a held requested reopen (#97) from ledger changes; must run BEFORE
+     * {@link journalTaskLifecycle}, which moves `previousTasks` on. A background task leaving the
+     * running set other than by an explicit `task_lost` (a `background_tasks_changed` drop, or its
+     * `task_notification`) starts (or restarts) the {@link REOPEN_WAKE_SETTLE_MS} window; a lost
+     * task has no result to wait for. A `task_notification` frame restarts the window too, but
+     * {@link onFrame} sees to that directly, since a ledger subscriber never hears of a notification
+     * the ledger ignores. A `session_opened` reset also lands here, but {@link finishOpen} clears
+     * the window straight after it.
+     *
+     * Any background task leaving also re-arms the recheck timer to fire at once, so the hold is
+     * re-evaluated against the task set now rather than at the boundary the timer was armed for.
+     * Only arms while a request is still pending and shutdown has not begun. A notification that
+     * removes nothing needs no re-arm: it can only extend a hold, and the armed timer re-evaluates
+     * at the boundary it already holds.
+     */
+    function noteBackgroundWorkChange(ledger: Ledger, event: LedgerEvent): void {
+        const runningIds = new Set(ledger.tasks.map(task => task.id));
+        const backgroundLeft = [...previousTasks.values()].some(task => task.background && !runningIds.has(task.id));
+        if(backgroundLeft && event.type !== 'task_lost') {
+            wakeSettleFrom = clock.now();
+        }
+        if(backgroundLeft && pendingReopen !== undefined && !shuttingDown) {
+            armReopenRecheck(0);
+        }
+    }
+
     ledgerStore.subscribe((ledger, event) => {
+        noteBackgroundWorkChange(ledger, event);
         journalTaskLifecycle(ledger, event);
 
         if(previousCompaction === 'compacting' && ledger.compaction === 'none') {
@@ -825,8 +893,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
         // indefinitely. A no-op when nothing is owed.
         maybeStartRequestedReopen();
         if(pendingReopen !== undefined || reopening) {
-            // Either still owed (waiting for the turn-end compaction check, or for a handle to
-            // exist), already in flight when we got here, or just started by the call above.
+            // Either still owed (waiting for the turn-end compaction check, for a handle to exist,
+            // or — bounded by config.reopenTaskWaitMs — for the old session's background work to
+            // finish and reach the model, #97), already in flight when we got here, or just started
+            // by the call above. The SDK's own wake turns still run during that wait; they open
+            // through onFrame, not through this queue.
             // Queued items are left untouched and play on the replacement session. Deliberately
             // NOT an early return before that call -- a request an intervening open already
             // satisfied is dropped by it, and the queue that open just refilled (a crash reopen
@@ -999,6 +1070,12 @@ export function createConductor(params: CreateConductorParams): Conductor {
         currentTurn = null;
         if(turn?.escalationTimer !== undefined) {
             clock.clearTimer(turn.escalationTimer);
+        }
+        if(wakeSettleFrom !== undefined) {
+            // The SDK delivers a wake it deferred behind a running turn right after that turn
+            // ends, so a background finish seen earlier in this session makes every turn end a
+            // fresh reason for a held reopen (#97) to wait out REOPEN_WAKE_SETTLE_MS.
+            wakeSettleFrom = clock.now();
         }
         resolveTurnEndedWaiters();
         // Stryker disable llm: turn is ActiveTurn | null, an object type, so `turn !== null` and the truthy check select the same branch for every possible value
@@ -1219,6 +1296,14 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
         currentTurn?.tracker.update(frame);
         notifyTurnSubscribers(frame);
+        if(frame.type === 'system' && frame.subtype === 'task_notification') {
+            // Every task_notification (re)starts the REOPEN_WAKE_SETTLE_MS window (#97), including
+            // one for a task already finished, with an unchanged status, or whose finished record
+            // was evicted past the ledger's cap: the SDK's wake follows the frame, not the ledger's
+            // bookkeeping. Set here rather than in a ledger subscriber, which only hears of a
+            // notification that changes the ledger.
+            wakeSettleFrom = clock.now();
+        }
         ledgerStore.dispatch({ type: 'sdk_frame', frame, at: now() });
         // Stryker disable llm: `void` is a compile-time-only marker here; dropping it does not change the runtime call or its fire-and-forget behavior
         if(frame.type === 'result') {
@@ -1297,6 +1382,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
             type: 'session_opened', at, role, sessionId, outcome, cause,
         });
         ledgerStore.dispatch({ type: 'session_opened', sessionId, at });
+        // After the dispatch, which resets the task list and so would restart the window: the new
+        // session has no wake of the old one's left to wait for (#97).
+        wakeSettleFrom = undefined;
         await resumeStore.save(role, sessionId);
     }
 
@@ -1660,16 +1748,116 @@ export function createConductor(params: CreateConductorParams): Conductor {
         );
     }
 
+    /** (Re)arms the single {@link reopenRecheckTimer} to run {@link maybeStartRequestedReopen} after `delayMs`, replacing any timer already armed. */
+    function armReopenRecheck(delayMs: number): void {
+        clearReopenRecheck();
+        reopenRecheckTimer = clock.setTimer(maybeStartRequestedReopen, delayMs);
+    }
+
+    function clearReopenRecheck(): void {
+        // Stryker disable next-line ConditionalExpression: clearing with no timer armed is a no-op on every Clock (clearTimeout(undefined) and the fake's unknown-id lookup both do nothing), so an always-true guard is indistinguishable
+        if(reopenRecheckTimer !== undefined) {
+            clock.clearTimer(reopenRecheckTimer);
+        }
+    }
+
+    /** Pending adoptions not yet past {@link PENDING_WAKE_TTL_MS}, oldest first: each is a turn the SDK has already started. */
+    function freshPendingAdoptions(): PendingAdoption[] {
+        return pendingAdoptions.filter(entry => !isPendingAdoptionStale(entry.setAt));
+    }
+
+    /** When the {@link REOPEN_WAKE_SETTLE_MS} window opened by {@link wakeSettleFrom} ends; `-Infinity` (so never running) before any sign in this session. The window is running while `now < ` this. */
+    function wakeSettleEnd(): number {
+        return (wakeSettleFrom ?? Number.NEGATIVE_INFINITY) + REOPEN_WAKE_SETTLE_MS;
+    }
+
+    /**
+     * When a requested reopen should next be re-evaluated, or `undefined` if nothing holds it any
+     * more (#97). Until `config.reopenTaskWaitMs` after the first request, it is held while any of:
+     * - a background task is still running (released by the task leaving, which re-arms the recheck at once);
+     * - a pending wake or peer adoption is still fresh: the SDK has started that turn but its first
+     *   assistant frame has not arrived, and closing now would kill it (released when it goes stale,
+     *   at `setAt + PENDING_WAKE_TTL_MS + 1`, the first instant {@link isPendingAdoptionStale} is true);
+     * - the {@link REOPEN_WAKE_SETTLE_MS} window is running (released when it ends).
+     *
+     * Returns the EARLIEST of the active holds' boundaries, clamped to the deadline, so the one
+     * recheck timer never fires later than the deadline; each recheck recomputes from scratch.
+     */
+    function reopenHoldUntil(pending: NonNullable<typeof pendingReopen>): number | undefined {
+        const at = clock.now();
+        const deadline = pending.firstRequestedAt + config.reopenTaskWaitMs;
+        if(at >= deadline) {
+            return undefined;
+        }
+        const boundaries: number[] = [];
+        if(runningBackgroundTaskDescriptions().length > 0) {
+            boundaries.push(deadline);
+        }
+        const [oldestAdoption] = freshPendingAdoptions();
+        if(oldestAdoption !== undefined) {
+            boundaries.push(oldestAdoption.setAt + PENDING_WAKE_TTL_MS + 1);
+        }
+        const settleEnd = wakeSettleEnd();
+        if(at < settleEnd) {
+            boundaries.push(settleEnd);
+        }
+        if(boundaries.length === 0) {
+            return undefined;
+        }
+        return Math.min(deadline, ...boundaries);
+    }
+
+    /** One line per adoption for {@link warnIfReopenCutsWorkShort}'s log. */
+    function describeAdoption(entry: PendingAdoption): Record<string, string | number> {
+        if(entry.kind === 'wake') {
+            return { kind: 'wake', ...entry.wake, setAt: entry.setAt };
+        }
+        return { kind: 'peer', envelopeId: entry.envelope.id, setAt: entry.setAt };
+    }
+
+    /**
+     * Logs what a requested reopen starting now cuts short. Anything listed here only survives to
+     * this point because `config.reopenTaskWaitMs` ran out ({@link reopenHoldUntil} holds for all of
+     * it before then). Running background tasks are also named in the reopen handshake; a result
+     * still on its way (a fresh pending adoption, or a task that finished within
+     * {@link REOPEN_WAKE_SETTLE_MS}) is not, since the task itself is no longer running, so the log
+     * is the only record of it.
+     */
+    function warnIfReopenCutsWorkShort(pending: NonNullable<typeof pendingReopen>): void {
+        const at = clock.now();
+        const waitedMs = at - pending.firstRequestedAt;
+        const tasks = runningBackgroundTaskDescriptions();
+        if(tasks.length > 0) {
+            logger.warn({ reason: pending.reason, tasks, waitedMs }, 'Reopening the session with background tasks still running: the wait for them (reopenTaskWaitMs) ran out, so the reopen handshake lists them as cut off');
+        }
+        const adoptions = freshPendingAdoptions();
+        const settling = at < wakeSettleEnd();
+        if(adoptions.length > 0 || settling) {
+            logger.warn(
+                { reason: pending.reason, waitedMs, pendingAdoptions: adoptions.map(entry => describeAdoption(entry)), settling },
+                'Reopening the session although a result may not have reached the model yet: the wait (reopenTaskWaitMs) ran out while a background task\'s wake or a peer message was still pending adoption, or within REOPEN_WAKE_SETTLE_MS of a task finishing; the reopen handshake does not mention it'
+            );
+        }
+    }
+
     /**
      * Starts a pending controlled reopen if the session is idle and still needs one. Called from
-     * {@link requestReopen}, from the end of {@link open}, and from {@link processQueue} — which
-     * is where every turn end and every completed reopen lands.
+     * {@link requestReopen}, from the end of {@link open}, from {@link processQueue} — which is
+     * where every turn end and every completed reopen lands — and from the recheck timer.
+     *
+     * An idle session can still hold the reopen for its background work (#97; see
+     * {@link reopenHoldUntil}): the recheck timer is then armed for the next boundary, and no new
+     * turn starts meanwhile ({@link processQueue} keeps its gate), so this is a bounded
+     * best-effort drain, not a guarantee that every result was delivered. Every call that gets past
+     * the idle check clears the timer first, so none is left armed once the request is started,
+     * dropped or re-held.
      */
     function maybeStartRequestedReopen(): void {
         const pending = pendingReopen;
         if(pending === undefined || currentTurn !== null || awaitingTurnEnd || shuttingDown || reopening) {
             return;
         }
+        clearReopenRecheck();
         if(openGeneration > pending.atGeneration) {
             // A query has already been created from options built after the request — the initial
             // open, or a crash reopen that overtook it — so it already carries what was asked for.
@@ -1682,6 +1870,19 @@ export function createConductor(params: CreateConductorParams): Conductor {
             // Not open yet (or between handles); the end of open() calls back here.
             return;
         }
+        const holdUntil = reopenHoldUntil(pending);
+        if(holdUntil !== undefined) {
+            armReopenRecheck(holdUntil - clock.now());
+            if(!pending.deferralLogged) {
+                pending.deferralLogged = true;
+                logger.info(
+                    { reason: pending.reason, tasks: runningBackgroundTaskDescriptions(), waitAtMostMs: pending.firstRequestedAt + config.reopenTaskWaitMs - clock.now() },
+                    'Deferring a requested reopen until the old session\'s background work has finished and its result has had a chance to reach the model (bounded by reopenTaskWaitMs)'
+                );
+            }
+            return;
+        }
+        warnIfReopenCutsWorkShort(pending);
         pendingReopen = undefined;
         reopenInFlight = startRequestedReopen(pending.reason, handle);
         void reopenInFlight;
@@ -1692,8 +1893,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
             return;
         }
         // Overwrites any earlier pending request rather than branching on one: a later request is
-        // strictly newer, and its own generation is what decides redundancy.
-        pendingReopen = { reason, atGeneration: openGeneration };
+        // strictly newer, and its own generation is what decides redundancy. The wait bound keeps
+        // running from the first request still pending (#97).
+        pendingReopen = {
+            reason, atGeneration: openGeneration, firstRequestedAt: pendingReopen?.firstRequestedAt ?? clock.now(), deferralLogged: false,
+        };
         journal.append({ type: 'session_reopen_requested', at: now(), role, reason });
         maybeStartRequestedReopen();
     }
@@ -1888,6 +2092,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
             return;
         }
         shuttingDown = true;
+        // A requested reopen still waiting for background work (#97) never starts now; drop its
+        // recheck so no timer outlives the conductor. Nothing re-arms it once shuttingDown is set.
+        clearReopenRecheck();
         // Nothing still waiting in pendingQueue will ever be dequeued — processQueue() now
         // early-returns on shuttingDown forever — so settle those submit() promises now rather
         // than leaving them pending for the life of the process.

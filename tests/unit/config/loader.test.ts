@@ -792,8 +792,10 @@ describe('loadConfig - Session Config', () => {
     let originalCompactThresholdMinPercent: string | undefined;
     let originalCompactThresholdMaxPercent: string | undefined;
     let originalCompactTargetIntervalMs: string | undefined;
+    let originalReopenTaskWaitMs: string | undefined;
 
     beforeEach(() => {
+        originalReopenTaskWaitMs = process.env.SESSION_REOPEN_TASK_WAIT_MS;
         originalSessionMode = process.env.SESSION_MODE;
         originalCompactThresholdPercent = process.env.SESSION_COMPACT_THRESHOLD_PERCENT;
         originalShutdownDeadlineMs = process.env.SESSION_SHUTDOWN_DEADLINE_MS;
@@ -813,6 +815,7 @@ describe('loadConfig - Session Config', () => {
         restoreEnv('SESSION_COMPACT_THRESHOLD_MIN_PERCENT', originalCompactThresholdMinPercent);
         restoreEnv('SESSION_COMPACT_THRESHOLD_MAX_PERCENT', originalCompactThresholdMaxPercent);
         restoreEnv('SESSION_COMPACT_TARGET_INTERVAL_MS', originalCompactTargetIntervalMs);
+        restoreEnv('SESSION_REOPEN_TASK_WAIT_MS', originalReopenTaskWaitMs);
     });
 
     test('session config has no mode field regardless of SESSION_MODE', () => {
@@ -893,5 +896,20 @@ describe('loadConfig - Session Config', () => {
     test('leaves compactTargetIntervalMs undefined when SESSION_COMPACT_TARGET_INTERVAL_MS is unset', () => {
         delete process.env.SESSION_COMPACT_TARGET_INTERVAL_MS;
         expect(loadConfig(createMockResources()).session.compactTargetIntervalMs).toBeUndefined();
+    });
+
+    test('overrides reopenTaskWaitMs from SESSION_REOPEN_TASK_WAIT_MS', () => {
+        process.env.SESSION_REOPEN_TASK_WAIT_MS = '45000';
+        expect(loadConfig(createMockResources()).session.reopenTaskWaitMs).toBe(45_000);
+    });
+
+    test('defaults reopenTaskWaitMs to 120000 when SESSION_REOPEN_TASK_WAIT_MS is unset', () => {
+        delete process.env.SESSION_REOPEN_TASK_WAIT_MS;
+        expect(loadConfig(createMockResources()).session.reopenTaskWaitMs).toBe(120_000);
+    });
+
+    test('rejects a SESSION_REOPEN_TASK_WAIT_MS that is not a positive integer', () => {
+        process.env.SESSION_REOPEN_TASK_WAIT_MS = '0';
+        expect(() => loadConfig(createMockResources())).toThrow();
     });
 });

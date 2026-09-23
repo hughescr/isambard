@@ -772,6 +772,9 @@ describe('createConversationConductor', () => {
             h.identityGet.mockResolvedValue('I am Izzy, revised');
             h.fireIdentityChange();
             await flush();
+            // #97: the reopen first waits out reopenTaskWaitMs for the still-running task.
+            h.clock.advance(DEFAULT_CONFIG.reopenTaskWaitMs);
+            await flush();
             expect(h.instances).toHaveLength(2);
 
             const handshake = handshakeOf(h.instances[1]);
@@ -797,6 +800,8 @@ describe('createConversationConductor', () => {
             h.fireIdentityChange();
             await flush();
             await flush();
+            h.clock.advance(DEFAULT_CONFIG.reopenTaskWaitMs);
+            await flush();
             h.instances[1].emit(frames.init('sess-1'));
             await flush();
 
@@ -817,6 +822,8 @@ describe('createConversationConductor', () => {
             const { ledgerStore } = await openResumedWithTask(h);
             h.identityGet.mockResolvedValue('I am Izzy, revised');
             h.fireIdentityChange();
+            await flush();
+            h.clock.advance(DEFAULT_CONFIG.reopenTaskWaitMs);
             await flush();
             h.instances[1].fail(new Error('resume rejected by CLI'));
             await waitForHandshake(h.instances, 2);

@@ -66,7 +66,9 @@ const DEFAULT_INTERRUPT_GRACE_MINUTES = 2;
  * mid-slot. `onSlotEnd` runs while the conductor is still inside its own turn-end window, so a
  * `requestReopen` made from it is recorded and deferred, and the next slot's envelope — queued
  * synchronously by this driver's own pending-trigger path — waits behind the reopen rather than
- * racing it.
+ * racing it. That wait includes the reopen's own bounded wait for the old session's background
+ * work (#97, up to `session.reopenTaskWaitMs`), so a slot that left a background task running
+ * can delay the next slot by that much.
  */
 export interface PerchSlotHooks {
     /** Called synchronously as a slot turn starts. */

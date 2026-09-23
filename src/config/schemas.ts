@@ -319,6 +319,14 @@ export const sessionConfigSchema = z.object({
     bootEventsWindowMs:         z.number().int().positive().default(24 * 60 * 60 * 1000),
     shutdownTurnWaitMs:         z.number().int().positive().default(60_000),
     shutdownDeadlineMs:         z.number().int().positive().default(120_000),
+    /**
+     * Upper bound, in ms, on how long a requested reopen (`Conductor.requestReopen`, e.g. an
+     * identity change) waits for the old session's background tasks to finish and their results to
+     * reach the model before it closes the session anyway (#97). No new turn starts during the wait,
+     * so it is also the longest a queued message can be held by it. On expiry the reopen handshake
+     * lists the tasks still running as cut off.
+     */
+    reopenTaskWaitMs:           z.number().int().positive().default(120_000),
     debounceMs:                 z.number().int().positive().default(250),
     /** Daily USD spend ceiling that pauses perch (never Discord) once crossed (Q3 / plan amendment B4). Undefined disables the ceiling entirely. */
     dailyCostCeilingUsd:        z.number().positive().optional(),
