@@ -19,7 +19,7 @@ export interface BskyAuthor {
  * An AT Protocol AT-URI (`at://...`), branded to prevent mixing with plain strings.
  * Construct with {@link createAtUri}.
  */
-export const atUriSchema = z.string().min(1, 'AT URI cannot be empty').refine(v => v.startsWith('at://'), { message: 'AT URI must start with at://' }).brand<'AtUri'>();
+export const atUriSchema = z.string().nonempty('AT URI cannot be empty').refine(v => v.startsWith('at://'), { message: 'AT URI must start with at://' }).brand<'AtUri'>();
 export type AtUri = z.infer<typeof atUriSchema>;
 
 /**

@@ -12,6 +12,11 @@ describe.concurrent('atUriSchema', () => {
         expect(result.success).toBe(true);
     });
 
+    test('should require at:// at the start rather than anywhere in the URI', () => {
+        expect(atUriSchema.safeParse('at://x').success).toBe(true);
+        expect(atUriSchema.safeParse('https://example.com/at://x').success).toBe(false);
+    });
+
     test('should reject an empty string', () => {
         const result = atUriSchema.safeParse('');
         expect(result.success).toBe(false);
@@ -62,6 +67,10 @@ describe.concurrent('cidSchema', () => {
     test('should accept a non-empty CID string', () => {
         const result = cidSchema.safeParse('bafyreiabc123');
         expect(result.success).toBe(true);
+    });
+
+    test('should accept a one-character CID', () => {
+        expect(cidSchema.safeParse('x').success).toBe(true);
     });
 
     test('should reject an empty string', () => {

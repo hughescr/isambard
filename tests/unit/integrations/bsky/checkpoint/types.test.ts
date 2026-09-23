@@ -165,9 +165,14 @@ describe('bskyDmCheckpointSchema', () => {
         expect(result).toMatchObject({ success: true, data: { processedMessageIds: ['3juj3x2qmuf2z'] } });
     });
 
-    test('rejects dm checkpoint without either processed-message field', () => {
+    test('reports the canonical-field requirement when both processed-message fields are absent', () => {
         const { processedMessageIds: _, ...missing } = VALID_DM_CHECKPOINT;
-        expect(bskyDmCheckpointSchema.safeParse(missing).success).toBe(false);
+        const result = bskyDmCheckpointSchema.safeParse(missing);
+
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toBe('DM checkpoint requires processedMessageIds');
+        }
     });
 
     test('rejects wrong service literal', () => {

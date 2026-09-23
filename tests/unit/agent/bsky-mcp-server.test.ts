@@ -1697,12 +1697,21 @@ describe('createBskyMCPServer', () => {
             );
         });
 
-        test('root must be a full BskyStrongRef (uri+cid) — the tool schema rejects a partial root', () => {
+        test('reply schemas require URI and CID refs with precise field guidance', () => {
             const server = createBskyMCPServer({ client: mockClient });
             const tool   = (server.instance as unknown as RegisteredToolInstance)._registeredTools.replyToPost;
+            const parent = tool.inputSchema.shape.parent as z.ZodObject<{ uri: z.ZodString, cid: z.ZodString }>;
+            const root   = tool.inputSchema.shape.root as z.ZodOptional<z.ZodObject<{ uri: z.ZodString, cid: z.ZodString }>>;
 
-            expect(tool.inputSchema.shape.root.safeParse({ uri: 'at://did:plc:abc123/app.bsky.feed.post/root' }).success).toBe(false);
-            expect(tool.inputSchema.shape.root.safeParse({ uri: 'at://did:plc:abc123/app.bsky.feed.post/root', cid: 'bafyreiroot' }).success).toBe(true);
+            expect(parent.description).toBe('The post being replied to');
+            expect(parent.shape.uri.description).toBe('AT URI of the post to reply to');
+            expect(parent.shape.cid.description).toBe('CID of the post to reply to');
+            expect(parent.safeParse({ uri: 'at://did:plc:abc123/app.bsky.feed.post/parent' }).success).toBe(false);
+            expect(parent.safeParse({ uri: 'at://did:plc:abc123/app.bsky.feed.post/parent', cid: 'bafyreiparent' }).success).toBe(true);
+            expect(root.unwrap().shape.uri.description).toBe('AT URI of the thread root post');
+            expect(root.unwrap().shape.cid.description).toBe('CID of the thread root post');
+            expect(root.safeParse({ uri: 'at://did:plc:abc123/app.bsky.feed.post/root' }).success).toBe(false);
+            expect(root.safeParse({ uri: 'at://did:plc:abc123/app.bsky.feed.post/root', cid: 'bafyreiroot' }).success).toBe(true);
         });
 
         test('should pass resolved root to sendApprovalRequest for non-allowlisted nested replies', async () => {

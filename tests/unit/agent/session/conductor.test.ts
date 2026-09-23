@@ -1109,6 +1109,27 @@ describe('createConductor', () => {
             expect(entry.truncated).toBeUndefined();
         });
 
+        it('an interrupted turn whose result still arrives as a success journals turn_completed without that late reply', async () => {
+            const h = build();
+            await openWith(h);
+            const envelope = discordEnvelope();
+
+            const resultPromise = h.conductor.submit(envelope, { priority: 'urgent', requestingChannelId: createChannelId('chan-1') });
+            await flush();
+            const interruptPromise = h.conductor.interruptCurrent({ requestingChannelId: createChannelId('chan-1') });
+            await flush();
+            h.instances[0].resolveInterrupt();
+            await interruptPromise;
+            h.instances[0].emit(frames.resultSuccess({ result: 'late reply' }));
+            const result = await resultPromise;
+
+            expect(result.status).toBe('interrupted');
+            expect(result.response).toBeNull();
+            expect(h.journal.byKind('turn_completed')).toEqual([
+                { type: 'turn_completed', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord' },
+            ]);
+        });
+
         it('process_tick (readRss) is dispatched on every result', async () => {
             const h = build();
             await openWith(h);

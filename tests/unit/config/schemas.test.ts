@@ -18,10 +18,21 @@ import {
     idleSignalsConfigSchema,
     sessionConfigSchema,
     TaskBoardConfigSchema,
-    DEFAULT_TASK_BOARD_CONFIG
+    DEFAULT_TASK_BOARD_CONFIG,
+    guildIdSchema
 } from '@/config/schemas';
 import { createGuildId } from '@/integrations/discord/types';
 import { resolveTimezone } from '@/utils/time';
+
+describe('guildIdSchema', () => {
+    test('rejects a non-decimal string with the decimal-snowflake message', () => {
+        const result = guildIdSchema.safeParse('guild123');
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toBe('Guild ID must be a decimal snowflake');
+        }
+    });
+});
 
 describe('contactReconciliationConfigSchema', () => {
     test('applies the scheduler and scan defaults', () => {
@@ -395,6 +406,7 @@ describe('discordConfigSchema', () => {
         ['DM', false],
         ['guild', false],
         ['123guild', false],
+        ['guild123', false],
     ])('validates homeGuildId %s as %s', (homeGuildId, expected) => {
         expect(discordConfigSchema.safeParse({
             botToken:      'x',

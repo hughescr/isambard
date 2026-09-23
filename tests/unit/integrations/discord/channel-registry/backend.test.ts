@@ -265,6 +265,8 @@ describe('ChannelRegistryBackend', () => {
                 expect.objectContaining({ channelId: channel1.channelId }),
                 expect.objectContaining({ channelId: channel2.channelId }),
             ]));
+            // Results must preserve query order (channel1 then channel2), not be reversed
+            expect(result).toEqual([channel1, channel2]);
 
             const calls = ddbMock.commandCalls(QueryCommand);
             const call = calls[0];

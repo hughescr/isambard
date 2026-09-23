@@ -3328,6 +3328,32 @@ describe('createContextBuilder loading methods', () => {
             });
         });
 
+        test('should log warning and not crash when getMessage rejects after a successful UID search', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const emailService = {
+                wildDuckClient: {
+                    getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
+                    getMessage:       mock(() => Promise.reject(new Error('WildDuck getMessage failed'))),
+                    listMessages:     mock(async () => []),
+                    searchByKeyword:  mock(async (_folder: string, keyword: string) => {
+                        return keyword === 'SendRejectedByAdmin' ? [99] : [];
+                    }),
+                },
+            };
+
+            const contextBuilder = createContextBuilder({ backend, emailService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('Messages You Attempted to Send');
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                err: expect.objectContaining({ message: 'WildDuck getMessage failed' }),
+                msg: 'Failed to load rejected draft context',
+            });
+        });
+
         // -------------------------------------------------------------------
         // Bluesky DM section (bskyDMService DI)
         // -------------------------------------------------------------------

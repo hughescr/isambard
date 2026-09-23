@@ -297,6 +297,7 @@ describe('buildContactApprovalEmbed()', () => {
         const field = json.fields?.find((f: { name: string }) => f.name === 'Person ID');
         expect(field).toBeDefined();
         expect(field?.value).toBe('alice-wonderland');
+        expect(field?.inline).toBe(true);
     });
 
     test('includes Add Identifiers field when addIdentifiers present', () => {
@@ -338,8 +339,18 @@ describe('buildContactApprovalEmbed()', () => {
         const removeField = json.fields?.find((f: { name: string }) => f.name === 'Remove Identifiers');
         expect(addField).toBeDefined();
         expect(addField?.value).toContain('discord: dave#5678');
+        expect(addField?.inline).toBe(false);
         expect(removeField).toBeDefined();
         expect(removeField?.value).toContain('email: dave@old.com');
+        expect(removeField?.inline).toBe(false);
+    });
+
+    test('omits Add Identifiers field for an update request when addIdentifiers is a present but empty array', () => {
+        const request: ContactChangeRequest = { action: 'update', personId: createPersonId('henry-smith'), addIdentifiers: [] };
+        const { embed }                        = buildContactApprovalEmbed(request);
+        const json                             = embed.toJSON();
+        const fieldNames = (json.fields ?? []).map((f: { name: string }) => f.name);
+        expect(fieldNames).not.toContain('Add Identifiers');
     });
 
     test('includes notes field when present', () => {

@@ -152,6 +152,10 @@ describe('customIdSchema', () => {
         expect(customIdSchema.safeParse('prefix:id').success).toBe(true);
     });
 
+    test('accepts a 1-character string (the minimum length boundary)', () => {
+        expect(customIdSchema.safeParse('x').success).toBe(true);
+    });
+
     test('rejects an empty string', () => {
         const result = customIdSchema.safeParse('');
         expect(result.success).toBe(false);

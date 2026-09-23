@@ -36,6 +36,16 @@ describe('SessionResumeBackend', () => {
             await expect(backend.getSessionIdForRole('conversation')).resolves.toBeUndefined();
         });
 
+        test('getSessionIdForRole treats a missing record as no stored session without logging a validation warning', async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+            await expect(backend.getSessionIdForRole('perch')).resolves.toBeUndefined();
+            expect(warnSpy).not.toHaveBeenCalled();
+
+            warnSpy.mockRestore();
+        });
+
         test('getSessionIdForRole reads TASK_SESSION#<role> as PK and SK', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 

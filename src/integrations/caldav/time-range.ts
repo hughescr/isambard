@@ -37,17 +37,25 @@ export function resolveToInstant(range: Exclude<CalendarTimeRange, { kind: 'all_
     }
 }
 
-/** The `YYYY-MM-DD` day a range starts on for a viewer in `displayZone`; all-day dates never move. */
+/**
+ * The `YYYY-MM-DD` day a range starts on for a viewer in `displayZone`; all-day dates never move.
+ *
+ * The `timed` case is deliberately kept immediately after `all_day` (rather than beside the
+ * similar-looking `floating` slice): an `all_day` start is always exactly 10 chars, so a fallthrough
+ * into `floating`'s `slice(0, 10)` would be a byte-for-byte equivalent mutant. Falling into `timed`'s
+ * `DateTime.fromJSDate` instead feeds it a string where a `Date` is expected, which is observably
+ * `Invalid DateTime` — so a mutant collapsing the `all_day` case is caught by the existing assertion.
+ */
 export function displayDay(range: CalendarTimeRange, displayZone: string): string {
     switch(range.kind) {
         case 'all_day': {
             return range.start;
         }
-        case 'floating': {
-            return range.start.slice(0, 10);
-        }
         case 'timed': {
             return DateTime.fromJSDate(range.start, { zone: displayZone }).toFormat('yyyy-MM-dd');
+        }
+        case 'floating': {
+            return range.start.slice(0, 10);
         }
     }
 }

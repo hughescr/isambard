@@ -105,6 +105,14 @@ describe('createCompactionTelemetry', () => {
         expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60, finishedAt: T2 }]);
     });
 
+    it('a compaction_completed after the record already failed does not also mark it finished', () => {
+        telemetry.record(started(T1));
+        telemetry.record(failed(T2, 'no-boundary'));
+        telemetry.record(completed(T3));
+
+        expect(telemetry.getRecords()).toEqual([{ startedAt: T1, thresholdAtStart: 60, failedAt: T2, failureReason: 'no-boundary' }]);
+    });
+
     it('a raw compact_boundary sdk_frame does not close the open record', () => {
         telemetry.record(started(T1));
         telemetry.record(boundaryFrame(T2));

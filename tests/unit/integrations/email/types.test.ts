@@ -87,6 +87,10 @@ describe.concurrent('MailboxMessageRef', () => {
         expect(parseMailboxMessageRef('nested:folder:42')).toEqual({ folder: 'nested:folder', uid: 42 });
     });
 
+    test('accepts a single-character folder immediately before the delimiter', () => {
+        expect(parseMailboxMessageRef('a:5')).toEqual({ folder: 'a', uid: 5 });
+    });
+
     test('rejects malformed, non-positive, fractional, and unsafe references', () => {
         for(const raw of ['Drafts:', ':12', 'abc:', 'Drafts:0', 'Drafts:-1', 'Drafts:7.5', `Drafts:${Number.MAX_SAFE_INTEGER + 1}`]) {
             expect(parseMailboxMessageRef(raw)).toBeUndefined();

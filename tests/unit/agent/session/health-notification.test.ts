@@ -38,6 +38,11 @@ describe('shouldNotifyHealthChange', () => {
     test.each(truthTable)('$previousState -> $newState is $expected', ({ previousState, newState, expected }) => {
         expect(shouldNotifyHealthChange(change({ previousState, newState }))).toBe(expected);
     });
+
+    test('a transition between two non-offline states is never outage-worthy', () => {
+        expect(shouldNotifyHealthChange(change({ previousState: 'online', newState: 'recovering' }))).toBe(false);
+        expect(shouldNotifyHealthChange(change({ previousState: 'starting', newState: 'online' }))).toBe(false);
+    });
 });
 
 describe('createHealthOutageCoalescer', () => {

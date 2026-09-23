@@ -214,8 +214,9 @@ describe('BskyRejectionBackend', () => {
             expect(putItem).not.toHaveProperty('rootCid');
         });
 
-        test('skips a malformed reply row (invalid strong ref) without hiding the other valid rows', async () => {
+        test('skips an invalid strong ref and logs its UUID without hiding the valid reply', async () => {
             const malformedRow = { ...STORED_REPLY_ITEM, uuid: '55555555-1111-4222-8333-444444444444', parentUri: '', parentCid: '' };
+            const warnSpy      = jest.spyOn(loggerModule.logger, 'warn');
             ddbMock.on(QueryCommand).resolves({
                 Items: [
                     { PK: 'BSKY#REJECTED', SK: `REJECTION#${malformedRow.uuid}`, ...malformedRow },
@@ -225,8 +226,12 @@ describe('BskyRejectionBackend', () => {
 
             const results = await backend.listRejections();
 
-            expect(results).toHaveLength(1);
-            expect(results[0]).toEqual(REPLY_ITEM);
+            expect(results).toEqual([REPLY_ITEM]);
+            expect(warnSpy).toHaveBeenCalledWith({
+                err:  expect.anything(),
+                uuid: malformedRow.uuid,
+                msg:  'Skipping Bluesky rejection row with an invalid strong ref',
+            });
         });
 
         test('returns parsed DM items from query', async () => {
@@ -280,6 +285,20 @@ describe('BskyRejectionBackend', () => {
             expect(results).toHaveLength(2);
             expect(results[0]?.rejectedAt).toBe('2026-03-22T16:00:00.000Z');
             expect(results[1]?.rejectedAt).toBe('2026-03-21T10:00:00.000Z');
+        });
+
+        test('preserves query order when rejections share a rejectedAt timestamp', async () => {
+            const matchingTimestamp = '2026-03-22T16:00:00.000Z';
+            ddbMock.on(QueryCommand).resolves({
+                Items: [
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${REPLY_UUID}`, ...STORED_REPLY_ITEM, rejectedAt: matchingTimestamp },
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${DM_UUID}`, ...DM_ITEM, rejectedAt: matchingTimestamp },
+                ],
+            });
+
+            const results = await backend.listRejections();
+
+            expect(results.map(item => item.uuid)).toEqual([REPLY_UUID, DM_UUID]);
         });
 
         test('does not pass ScanIndexForward to query (client-side sort)', async () => {

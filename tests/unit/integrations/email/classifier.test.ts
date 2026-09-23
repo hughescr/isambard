@@ -96,6 +96,7 @@ describe('EmailClassifier', () => {
             if(result.verdict === 'spam') {
                 expect(result.category).toBe('newsletter');
             }
+            expect(mockLogger.warn).not.toHaveBeenCalled();
         });
 
         test('drops an out-of-scope spam category and logs it', async () => {
@@ -155,6 +156,7 @@ describe('EmailClassifier', () => {
             if(result.verdict === 'unsafe') {
                 expect(result.category).toBe('prompt_injection');
             }
+            expect(mockLogger.warn).not.toHaveBeenCalled();
         });
 
         test('returns uncertain verdict with no category', async () => {
@@ -183,6 +185,7 @@ describe('EmailClassifier', () => {
 
             expect(result.verdict).toBe('safe');
             expect(result).not.toHaveProperty('category');
+            expect(mockLogger.warn).not.toHaveBeenCalled();
         });
     });
 
@@ -210,6 +213,20 @@ describe('EmailClassifier', () => {
 
             expect(result.verdict).toBe('uncertain');
             expect(result.confidence).toBe(0);
+        });
+
+        test('does not log the dropped-category warning when the whole verdict fails schema validation', async () => {
+            mockGenerateText.mockResolvedValue(makeVerdictJson({
+                verdict:    'definitely-safe',
+                confidence: 0.9,
+                reason:     'Looks great',
+                category:   'newsletter',
+            }));
+
+            const result = await makeClassifier().classify(makeEmail());
+
+            expect(result).toMatchObject({ verdict: 'uncertain', confidence: 0 });
+            expect(mockLogger.warn).not.toHaveBeenCalled();
         });
 
         test('returns uncertain when confidence is missing', async () => {

@@ -1519,6 +1519,13 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
                 msg: 'Failed to persist Bluesky rejection to DynamoDB — Discord message left active for retry',
             }));
+            const loggedError = (mockLogger.error as ReturnType<typeof mock>).mock.calls[0]?.[0].err as {
+                context: { location: string, invariant: string }
+            };
+            expect(loggedError.context).toEqual({
+                location:  'extractRejectionItem',
+                invariant: 'parent URI or CID missing despite embed present — upstream embed builder bug',
+            });
             expect(editReply).toHaveBeenCalledTimes(1);
             const replyArg = (editReply.mock.calls[0] as unknown as [unknown])[0] as { embeds: { data: { title: string } }[] };
             const lastEmbed = replyArg.embeds[replyArg.embeds.length - 1];

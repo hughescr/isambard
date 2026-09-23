@@ -47,9 +47,13 @@ export function parseMailboxMessageRef(raw: string): MailboxMessageRef | undefin
         return undefined;
     }
 
+    // `delimiter` is a real, positive index in `raw` here (the `<= 0` guard above rejected both "no
+    // colon" and "colon at index 0"), so `folder` is always at least one character: an `!folder` check
+    // here would be dead code, and — worse — would silently stand in for the guard above if that
+    // boundary were ever weakened, masking the bug instead of catching it.
     const folder = raw.slice(0, delimiter);
     const uid    = Number(raw.slice(delimiter + 1));
-    if(!folder || /[\r\n]/.test(folder) || !Number.isSafeInteger(uid) || uid <= 0) {
+    if(/[\r\n]/.test(folder) || !Number.isSafeInteger(uid) || uid <= 0) {
         return undefined;
     }
 

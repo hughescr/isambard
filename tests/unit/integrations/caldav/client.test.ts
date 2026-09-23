@@ -1155,6 +1155,14 @@ describe('CalDAVClient event extraction', () => {
         );
     });
 
+    test('two malformed events land in failed[] in encounter order, not reversed', async () => {
+        const { failed } = await extractEvents([
+            makeVEvent({ uid: 'bad-1', start: Object.assign(new Date('invalid'), { tz: 'Etc/UTC' }) }),
+            makeVEvent({ uid: 'bad-2', start: Object.assign(new Date('invalid'), { tz: 'Etc/UTC' }) }),
+        ]);
+        expect(failed.map(failure => failure.uid)).toEqual(['bad-1', 'bad-2']);
+    });
+
     test('an invalid floating end Date reports a failed event instead of a sentinel wall time', async () => {
         const { events, failed } = await extractEvents([
             makeVEvent({ uid: 'nan-end', end: new Date(Number.NaN) }),
