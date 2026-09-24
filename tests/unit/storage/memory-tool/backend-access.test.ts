@@ -1,7 +1,8 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import { DynamoDBDocumentClient, UpdateCommand, GetCommand, PutCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../setup';
+import { DynamoTimeoutError } from '@/storage/dynamo-retry';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 
@@ -12,6 +13,14 @@ const failure = (metadata?: { M?: Record<string, unknown>, NULL?: boolean } | 'a
         name: 'ConditionalCheckFailedException',
         ...(present && { Item: { PK: { S: 'DIR#/state' }, SK: { S: 'FILE#a.md' }, ...(metadata !== 'absent' && { metadata }) } }),
     });
+
+/** Drains a bounded number of pending microtask ticks so a rejected mock command's error propagates up through the await chain before fake timers are advanced. */
+async function flushMicrotasks(remaining: number): Promise<void> {
+    if(remaining > 0) {
+        await Promise.resolve();
+        await flushMicrotasks(remaining - 1);
+    }
+}
 
 describe('recordMemoryAccess', () => {
     const ddb = mockClient(DynamoDBDocumentClient);
@@ -105,6 +114,12 @@ describe('recordMemoryAccess', () => {
         expect(ddb.commandCalls(UpdateCommand)).toHaveLength(7);
     });
 
+    test('makes the third repair attempt before rejecting', async () => {
+        ddb.on(UpdateCommand).rejects(failure({ NULL: true }));
+        await expect(backend.recordMemoryAccess([path], now)).rejects.toThrow(`Memory access repair conflicts exceeded for ${path}`);
+        expect(ddb.commandCalls(UpdateCommand)).toHaveLength(6);
+    });
+
     test('retries a stale failure item with an absent count instead of writing a phantom repair', async () => {
         ddb.on(UpdateCommand).rejectsOnce(failure({ M: {} })).resolves({});
         await backend.recordMemoryAccess([path], now);
@@ -133,5 +148,67 @@ describe('recordMemoryAccess', () => {
         await expect(backend.recordMemoryAccess([path, '/state/b.md' as MemoryPath], now)).rejects.toThrow('[object Object]');
         expect(ddb.commandCalls(UpdateCommand)).toHaveLength(2);
         expect(ddb.commandCalls(UpdateCommand)[1].args[0].input.Key).toEqual({ PK: 'DIR#/state', SK: 'FILE#b.md' });
+    });
+});
+
+describe('recordMemoryAccess operation labels, under a configured DynamoDB timeout', () => {
+    const ddb = mockClient(DynamoDBDocumentClient);
+    let timeoutBackend: MemoryToolBackend;
+
+    beforeEach(() => {
+        ddb.reset();
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        // The 6th constructor argument threads a timeout through to DynamoTableAccess, the same
+        // way every other repository is exercised in tests/unit/storage/repositories/base.test.ts.
+        timeoutBackend = new MemoryToolBackend(
+            ddb as unknown as DynamoDBDocumentClient,
+            'TestTable',
+            undefined,
+            undefined,
+            undefined,
+            5000
+        );
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('labels the atomic increment recordMemoryAccess when it times out', async () => {
+        // Never settles — only the configured timeout can end the operation.
+        ddb.on(UpdateCommand).callsFake(() => new Promise(() => {}) as never);
+
+        let caught: unknown = 'not-settled';
+        const observed = timeoutBackend.recordMemoryAccess([path], now).catch((err: unknown) => {
+            caught = err;
+        });
+
+        jest.advanceTimersByTime(5000);
+        await observed;
+
+        expect(caught).toBeInstanceOf(DynamoTimeoutError);
+        expect((caught as DynamoTimeoutError).context.operation).toBe('recordMemoryAccess');
+    });
+
+    test('labels the conditional repair recordMemoryAccessRepair when it times out', async () => {
+        // The first update fails its condition (forcing a repair); the repair update never settles.
+        ddb.on(UpdateCommand)
+            .rejectsOnce(failure({ NULL: true }))
+            .callsFake(() => new Promise(() => {}) as never);
+
+        let caught: unknown = 'not-settled';
+        const observed = timeoutBackend.recordMemoryAccess([path], now).catch((err: unknown) => {
+            caught = err;
+        });
+
+        // Let the first (rejected) update's error propagate up through the await chain and
+        // start the repair update — which registers its own timer — before advancing time.
+        await flushMicrotasks(20);
+        jest.advanceTimersByTime(5000);
+        await observed;
+
+        expect(caught).toBeInstanceOf(DynamoTimeoutError);
+        expect((caught as DynamoTimeoutError).context.operation).toBe('recordMemoryAccessRepair');
     });
 });

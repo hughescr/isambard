@@ -315,6 +315,14 @@ describe.concurrent('memoryToolItemSchema - content field bounds', () => {
         updatedAt:   '2024-01-01T00:00:00.000Z',
     };
 
+    test('defaults absent metadata to an empty object', () => {
+        const result = memoryToolItemSchema.safeParse({ ...baseItem, content: 'a' });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.metadata).toEqual({});
+        }
+    });
+
     test('accepts content at the 1-char minimum', () => {
         const result = memoryToolItemSchema.safeParse({ ...baseItem, content: 'a' });
         expect(result.success).toBe(true);

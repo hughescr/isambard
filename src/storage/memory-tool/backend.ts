@@ -72,9 +72,10 @@ export class MemoryToolBackend extends DynamoTableAccess {
         tableName:         string,
         indexer?:          MemoryIndexer,
         onDriftDetected?:  () => void,
-        onIdentityWrite?:  () => void
+        onIdentityWrite?:  () => void,
+        timeoutMs?:        number
     ) {
-        super(docClientOrHolder, tableName);
+        super(docClientOrHolder, tableName, timeoutMs);
 
         this.indexer         = indexer;
         this.onIdentityWrite = onIdentityWrite;

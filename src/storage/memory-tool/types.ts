@@ -95,12 +95,7 @@ export function isContentType(value: unknown): value is ContentType {
 }
 
 /** Managed metadata keys remain tolerant so legacy rows are decoded, not rejected. */
-const memoryMetadataSchema = z.object({
-    accessCount:           z.unknown().optional(),
-    lastAccessed:          z.unknown().optional(),
-    previouslyKnownAs:     z.unknown().optional(),
-    previouslyKnownAsTags: z.unknown().optional(),
-}).catchall(z.unknown());
+const memoryMetadataSchema = z.record(z.string(), z.unknown());
 
 /**
  * Memory tool item schema with Zod validation.
