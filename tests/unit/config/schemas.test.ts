@@ -25,11 +25,11 @@ import { createGuildId } from '@/integrations/discord/types';
 import { resolveTimezone } from '@/utils/time';
 
 describe('guildIdSchema', () => {
-    test('rejects a non-decimal string with the decimal-snowflake message', () => {
-        const result = guildIdSchema.safeParse('guild123');
+    test.each(['', 'guild123'])('rejects %p with the canonical decimal-snowflake message', (input) => {
+        const result = guildIdSchema.safeParse(input);
         expect(result.success).toBe(false);
         if(!result.success) {
-            expect(result.error.issues[0]?.message).toBe('Guild ID must be a decimal snowflake');
+            expect(result.error.issues[0]?.message).toBe('Discord ID must be a decimal snowflake');
         }
     });
 });

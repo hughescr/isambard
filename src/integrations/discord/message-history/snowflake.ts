@@ -1,5 +1,5 @@
 import { DiscordSnowflake } from '@sapphire/snowflake';
-import { z } from 'zod';
+import { discordSnowflakeSchema } from '@/config';
 import { InvalidSnowflakeError, InvariantViolationError } from '@/errors';
 
 // Re-export error class for backward compatibility
@@ -11,14 +11,8 @@ import { InvalidSnowflakeError, InvariantViolationError } from '@/errors';
  */
 export const DISCORD_EPOCH = DiscordSnowflake.epoch;
 
-/**
- * Zod schema for validating Discord snowflake strings.
- * A valid snowflake is a non-empty string containing only digits (non-negative integer).
- */
-export const snowflakeSchema = z
-    .string()
-    .min(1, 'Snowflake cannot be empty')
-    .regex(/^\d+$/, 'Snowflake must contain only digits');
+/** Compatibility name for the canonical Discord snowflake schema. */
+export const snowflakeSchema = discordSnowflakeSchema;
 
 /**
  * Converts a Discord snowflake ID to a Date timestamp.

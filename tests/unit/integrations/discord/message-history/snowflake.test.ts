@@ -1,4 +1,5 @@
 import { describe, test, expect } from 'bun:test';
+import { discordSnowflakeSchema } from '@/config/discord-ids';
 import { ErrorCode } from '@/errors/codes';
 import {
     DISCORD_EPOCH,
@@ -18,11 +19,15 @@ describe.concurrent('DISCORD_EPOCH', () => {
 });
 
 describe('snowflakeToTimestamp', () => {
-    test.each([['', 'Snowflake cannot be empty'], ['abc', 'Snowflake must contain only digits']])('preserves %s validation diagnostic', (input, message) => {
+    test('uses the canonical Discord snowflake schema', () => {
+        expect(snowflakeSchema).toBe(discordSnowflakeSchema);
+    });
+
+    test.each(['', 'abc'])('preserves the canonical validation diagnostic for %p', (input) => {
         const result = snowflakeSchema.safeParse(input);
         expect(result.success).toBe(false);
         if(!result.success) {
-            expect(result.error.issues[0]?.message).toBe(message);
+            expect(result.error.issues[0]?.message).toBe('Discord ID must be a decimal snowflake');
         }
     });
     test.each([

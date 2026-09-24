@@ -20,9 +20,9 @@ import {
 } from '@/integrations/discord/types';
 
 const idSchemas = [
-    ['GuildId', guildIdSchema, '123456789012345678', 12_345, createGuildId, isGuildId],
-    ['ChannelId', channelIdSchema, '987654321098765432', 98_765, createChannelId, isChannelId],
-    ['UserId', userIdSchema, '111222333444555666', 11_122, createUserId, isUserId],
+    ['GuildId', guildIdSchema, '123456789012345678', 12_345, createGuildId, isGuildId, 'Discord ID must be a decimal snowflake'],
+    ['ChannelId', channelIdSchema, '987654321098765432', 98_765, createChannelId, isChannelId, 'Channel ID cannot be empty'],
+    ['UserId', userIdSchema, '111222333444555666', 11_122, createUserId, isUserId, 'User ID cannot be empty'],
 ] as const;
 
 describe.concurrent('branded ID schemas', () => {
@@ -31,11 +31,11 @@ describe.concurrent('branded ID schemas', () => {
         expect(result.success).toBe(true);
     });
 
-    test.each(idSchemas)('%s schema should reject empty string', (_name, schema) => {
+    test.each(idSchemas)('%s schema should reject empty string with its documented diagnostic', (_name, schema, _validId, _invalidNumber, _create, _is, emptyDiagnostic) => {
         const result = schema.safeParse('');
         expect(result.success).toBe(false);
         if(!result.success) {
-            expect(result.error.issues[0]?.message).toContain('cannot be empty');
+            expect(result.error.issues[0]?.message).toBe(emptyDiagnostic);
         }
     });
 
