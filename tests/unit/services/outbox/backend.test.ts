@@ -38,6 +38,7 @@ describe('OutboxBackend', () => {
 
     beforeEach(() => {
         mockLogger.warn.mockClear();
+        mockLogger.error.mockClear();
         ddbMock = mockClient(DynamoDBDocumentClient);
         backend = new OutboxBackend(
             ddbMock as unknown as DynamoDBDocumentClient,
@@ -155,10 +156,11 @@ describe('OutboxBackend', () => {
             // PK/SK from DynamoDB should not blow up parse (extra keys are stripped by schema)
         });
 
-        test('skips an invalid destination, then pages to the next valid item', async () => {
+        test('deletes an invalid destination, then pages to the next valid item', async () => {
             const invalid = { ...makeItem(), destination: '', PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' };
             const valid = { ...makeItem(), PK: 'OUTBOX#discord', SK: 'ITEM#1#good' };
             const cursor = { PK: invalid.PK, SK: invalid.SK };
+            ddbMock.on(DeleteCommand).resolves({});
             ddbMock.on(QueryCommand)
                 .resolvesOnce({ Items: [invalid], LastEvaluatedKey: cursor })
                 .resolvesOnce({ Items: [valid] });
@@ -167,17 +169,55 @@ describe('OutboxBackend', () => {
 
             expect(result).toHaveLength(1);
             expect(result[0]?.destination).toBe(createChannelId('channel-123'));
-            const calls = ddbMock.commandCalls(QueryCommand);
-            expect(calls).toHaveLength(2);
-            expect(calls[1]?.args[0].input.ExclusiveStartKey).toEqual(cursor);
-            expect(calls[1]?.args[0].input.Limit).toBe(1);
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ service: 'discord', pk: 'OUTBOX#discord', sk: 'ITEM#0#bad', error: expect.anything() }), 'Skipping malformed outbox item');
-            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
+            const queryCalls = ddbMock.commandCalls(QueryCommand);
+            expect(queryCalls).toHaveLength(2);
+            expect(queryCalls[1]?.args[0].input.ExclusiveStartKey).toEqual(cursor);
+            expect(queryCalls[1]?.args[0].input.Limit).toBe(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ service: 'discord', pk: 'OUTBOX#discord', sk: 'ITEM#0#bad', error: expect.anything() }), 'Deleted malformed outbox item');
+            const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+            expect(deleteCalls).toHaveLength(1);
+            expect(deleteCalls[0]?.args[0].input).toEqual({
+                TableName: 'TestTable',
+                Key:       { PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' },
+            });
             expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
         });
 
+        test('does not reprocess a malformed item after deleting it', async () => {
+            const invalid = { ...makeItem(), destination: '', PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' };
+            ddbMock.on(DeleteCommand).resolves({});
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({ Items: [invalid] })
+                .resolves({ Items: [] });
+
+            await backend.dequeue('discord');
+            await backend.dequeue('discord');
+
+            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(1);
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ service: 'discord', pk: 'OUTBOX#discord', sk: 'ITEM#0#bad', error: expect.anything() }), 'Deleted malformed outbox item');
+        });
+
+        test('keeps valid items when malformed item deletion fails', async () => {
+            const cleanupError = new Error('delete failed');
+            const invalid = { ...makeItem(), destination: '', PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' };
+            const valid = { ...makeItem(), id: 'aaaaaaaa-0000-4000-8000-000000000001', PK: 'OUTBOX#discord', SK: 'ITEM#1#good' };
+            ddbMock.on(DeleteCommand).rejects(cleanupError);
+            ddbMock.on(QueryCommand).resolves({ Items: [invalid, valid] });
+
+            const result = await backend.dequeue('discord');
+
+            expect(result.map(item => item.id)).toEqual([valid.id]);
+            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(1);
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+            expect(mockLogger.error).toHaveBeenCalledWith(
+                { service: 'discord', pk: 'OUTBOX#discord', sk: 'ITEM#0#bad', error: cleanupError },
+                'Failed to delete malformed outbox item'
+            );
+        });
+
         test('requests only the remaining capacity after a page with both malformed and valid items', async () => {
-            const invalid = { ...makeItem(), destination: '' };
+            const invalid = { ...makeItem(), destination: '', PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' };
             const first = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001' });
             const second = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' });
             const cursor = { PK: 'OUTBOX#discord', SK: 'ITEM#1#first' };
@@ -224,7 +264,7 @@ describe('OutboxBackend', () => {
         });
 
         test('keeps valid priority order when a malformed row precedes them in one page', async () => {
-            const first = { ...makeItem(), id: 'bbbbbbbb-1111-4222-8333-444444444444', destination: '' };
+            const first = { ...makeItem(), id: 'bbbbbbbb-1111-4222-8333-444444444444', destination: '', PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' };
             const second = { ...makeItem(), id: 'cccccccc-1111-4222-8333-444444444444', destination: 'chan-2' };
             const third = { ...makeItem(), id: 'dddddddd-1111-4222-8333-444444444444', destination: 'chan-3' };
             ddbMock.on(QueryCommand).resolves({ Items: [first, second, third] });

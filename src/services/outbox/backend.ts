@@ -29,8 +29,8 @@ export class OutboxBackend extends DynamoTableAccess {
     }
 
     /**
-     * Returns the next `limit` items in delivery order (priority, then oldest first).
-     * Does not remove them from the outbox.
+     * Returns the next `limit` valid items in delivery order (priority, then oldest first).
+     * Valid items remain in the outbox; malformed rows are deleted after validation fails.
      */
     async dequeue(service: string, limit = 10): Promise<OutboxItem[]> {
         const valid: OutboxItem[] = [];
@@ -52,7 +52,13 @@ export class OutboxBackend extends DynamoTableAccess {
                 if(parsed.success) {
                     valid.push(parsed.data);
                 } else {
-                    logger.warn({ service, pk: raw.PK, sk: raw.SK, error: parsed.error }, 'Skipping malformed outbox item');
+                    try {
+                        // eslint-disable-next-line no-await-in-loop -- malformed rows are deleted before advancing the paginated read loop
+                        await this.deleteItem({ PK: raw.PK as string, SK: raw.SK as string });
+                        logger.warn({ service, pk: raw.PK, sk: raw.SK, error: parsed.error }, 'Deleted malformed outbox item');
+                    } catch (error: unknown) {
+                        logger.error({ service, pk: raw.PK, sk: raw.SK, error }, 'Failed to delete malformed outbox item');
+                    }
                 }
             }
             cursor = page.LastEvaluatedKey;
