@@ -2,7 +2,9 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { BatchWriteCommand, DeleteCommand, DynamoDBDocumentClient, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
-import type { MemoryPath } from '@/storage/memory-tool/types';
+import { createIndexLayer, type MemoryPath } from '@/storage/memory-tool/types';
+
+const IDENTITY = createIndexLayer('identity');
 
 function deferred<T>() {
     let finish!: (value: T) => void;
@@ -43,7 +45,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
             new Set(['suffix']),
             '2026-01-01T00:00:00.000Z',
             'preview',
-            'identity'
+            IDENTITY
         )).rejects.toThrow('without a TAG# key');
         expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
     });
@@ -120,7 +122,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
             new Set(['created']),
             '2026-01-01T00:00:00.000Z',
             'preview',
-            'identity'
+            IDENTITY
         ).then(() => {
             createCompleted = true;
             return undefined;
@@ -166,7 +168,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
         ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
         ddbMock.on(UpdateCommand).resolves({ Attributes: { count: 1 } });
 
-        await backend.createTagIndexItems(path, tags, '2026-01-01T00:00:00.000Z', 'preview', 'identity');
+        await backend.createTagIndexItems(path, tags, '2026-01-01T00:00:00.000Z', 'preview', IDENTITY);
         expect(batchSizes().every(size => size <= 25)).toBe(true);
         expect(batchSizes().reduce((total, size) => total + size, 0)).toBe(26);
 
@@ -179,7 +181,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
 
         ddbMock.reset();
         ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
-        await backend.refreshTagIndexItems(path, tags, '2026-01-01T00:00:00.000Z', 'preview', 'identity');
+        await backend.refreshTagIndexItems(path, tags, '2026-01-01T00:00:00.000Z', 'preview', IDENTITY);
         expect(batchSizes().every(size => size <= 25)).toBe(true);
         expect(batchSizes().reduce((total, size) => total + size, 0)).toBe(26);
     });
@@ -204,7 +206,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
             tags,
             '2026-01-01T00:00:00.000Z',
             'preview',
-            'identity'
+            IDENTITY
         );
 
         // Give pLimit a bounded number of macrotask turns to dispatch every batch it is
@@ -227,7 +229,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
     test('multi-tag queries preserve date filters while removing the per-page limit', async () => {
         ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-        await backend.queryByTags(['alpha', 'beta'], 'identity', {
+        await backend.queryByTags(['alpha', 'beta'], IDENTITY, {
             limit:     5,
             startDate: '2026-01-01T00:00:00.000Z',
             endDate:   '2026-01-31T23:59:59.999Z',

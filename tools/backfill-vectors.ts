@@ -1,20 +1,21 @@
 /**
  * Backfill CLI for the vector index.
  *
- * Scans all memory items from DynamoDB and indexes them into the SQLite
- * vector store. Items whose content hash already matches are skipped.
+ * Walks the GSI1 partitions of the indexed namespaces (identity, state, events
+ * and users — nested paths included) and indexes every memory into SQLite.
+ * Items whose content hash already matches are skipped unless --force.
  *
  * Usage:
  *   bun tools/backfill-vectors.ts [options]
  *
  * Options:
- *   --layer <identity|state|events>  Only backfill a specific layer
+ *   --layer <identity|state|events|users>  Only backfill one namespace (default: all four)
  *   --db-path <path>                 SQLite database path (default: <repo-root>/scratch/memory-vec.sqlite)
  *   --model-slug <0.6b|4b>           Embedder model size (default: 0.6b)
  *   --model-quant <Q8_0|Q4_K_M>      Embedder quantization (default: Q8_0)
  *   --dry-run                        Show what would be indexed without writing
  *   --force                          Re-embed every item even if content hash matches
- *   --rate-limit-rcu-per-sec <N>     RCU budget per second — controls sleep between pages (default: 10)
+ *   --rate-limit-rcu-per-sec <N>     GSI1 read budget in RCU/s, paced by consumed capacity (default: 2)
  *   --help                           Show this help message
  *
  * Requires SST shell for DynamoDB credentials:
@@ -26,7 +27,12 @@ import { logger } from '@hughescr/logger';
 import { createDefaultBackfillDependencies } from './backfill-vectors-runtime';
 import {
     MemoryToolKeyGenerator,
-    type LayerName,
+    classifyMemoryPath,
+    isMemoryPath,
+    SEARCHABLE_NAMESPACE_VALUES,
+    SEARCHABLE_NAMESPACES,
+    PACKED_EMBEDDING_BYTES,
+    type SearchableNamespace,
     type MemoryToolBackend,
     type ModelQuant,
     type ModelSlug,
@@ -45,21 +51,32 @@ const HELP_TEXT = `
 Usage: bun tools/backfill-vectors.ts [options]
 
 Options:
-  --layer <identity|state|events>  Only backfill a specific layer
+  --layer <identity|state|events|users>  Only backfill one namespace (default: all four)
   --db-path <path>                 SQLite database path (default: ${DEFAULT_DB_PATH})
   --model-slug <0.6b|4b>           Embedder model size (default: 0.6b)
   --model-quant <Q8_0|Q4_K_M>      Embedder quantization (default: Q8_0)
   --dry-run                        Show what would be indexed without writing
   --force                          Re-embed every item even if content hash matches
-  --rate-limit-rcu-per-sec <N>     RCU budget per second — controls sleep between pages (default: 10)
+  --rate-limit-rcu-per-sec <N>     GSI1 read budget in RCU/s, paced by consumed capacity (default: 2)
   --help                           Show this help message
+
+Without --layer, walks identity, state, events and users (nested paths included).
+Each GSI1 query reads at most 4 items and asks DynamoDB for its ConsumedCapacity;
+before the next query the tool pauses (consumed RCU / N) seconds less the time
+already spent, so large items and rows skipped as malformed are paid for in full
+and the average read rate stays at or below N. A single page can momentarily
+exceed N (up to 4 items' worth, absorbed by DynamoDB burst capacity) and is paid
+back before the next read. The run stops if DynamoDB omits ConsumedCapacity.
+GSI1 is provisioned at 2 RCU, so keep the rate at or below 2.
+Run once with --force --layer users after deploying #58 so /users vectors written
+before it (labelled 'unknown') are rewritten as 'users'.
 
 Requires SST shell for DynamoDB credentials:
   sst shell -- bun tools/backfill-vectors.ts
 `;
 
 interface BackfillOptions {
-    layer?:             string
+    layer?:             SearchableNamespace
     dbPath:             string
     modelSlug:          ModelSlug
     modelQuant:         ModelQuant
@@ -114,7 +131,7 @@ export function parseArgs(argv: string[]): BackfillOptions {
         dryRun:             false,
         force:              false,
         showHelp:           false,
-        rateLimitRcuPerSec: 10,
+        rateLimitRcuPerSec: 2,
     };
 
     const handlers: Partial<Record<string, (value: string | undefined) => void>> = {
@@ -122,7 +139,11 @@ export function parseArgs(argv: string[]): BackfillOptions {
             if(!value) {
                 throw new Error(`--layer requires a value (typically identity, state, events; or 'users' for /users/* memories).`);
             }
-            options.layer = value;
+            const layer = SEARCHABLE_NAMESPACES.find(namespace => namespace === value);
+            if(!layer) {
+                throw new Error(`Invalid --layer value: ${value}. Must be one of ${SEARCHABLE_NAMESPACE_VALUES.join(', ')}.`);
+            }
+            options.layer = layer;
         },
         '--db-path': (value) => {
             if(!value) {
@@ -201,7 +222,7 @@ async function writeEmbeddingBatch(
     try {
         const result = await embedder.encode(batch.map(entry => entry.text));
         data = result.data;
-        if(data.length !== batch.length * 128) {
+        if(data.length !== batch.length * PACKED_EMBEDDING_BYTES) {
             throw new Error(`Embedder returned ${data.length} bytes for ${batch.length} items`);
         }
     } catch (err) {
@@ -218,11 +239,11 @@ async function writeEmbeddingBatch(
 
     for(const [index, entry] of batch.entries()) {
         try {
-            const vector = data.subarray(index * 128, (index + 1) * 128);
+            const vector = data.subarray(index * PACKED_EMBEDDING_BYTES, (index + 1) * PACKED_EMBEDDING_BYTES);
             vectorIndex.upsert({
                 pk:          entry.keys.PK,
                 sk:          entry.keys.SK,
-                layer:       entry.item.path.split('/')[1] ?? 'unknown',
+                layer:       classifyMemoryPath(entry.item.path).namespace,
                 contentHash: entry.contentHash,
                 vector,
                 updatedAt:   Date.now(),
@@ -260,11 +281,18 @@ export async function processPage(
     hashText:    (text: string) => Promise<string> = sha256Hex
 ): Promise<BackfillPageStats> {
     const stats: BackfillPageStats = { scanned: items.length, skipped: 0, indexed: 0, errors: 0 };
-    const texts = items.map(item => `${item.path}\n${item.content}`);
-    const hashes = await Promise.allSettled(texts.map(text => hashText(text)));
+    const validItems = items.filter((item) => {
+        if(isMemoryPath(item.path)) {
+            return true;
+        }
+        logger.warn({ path: item.path, msg: 'Skipping malformed memory path' });
+        stats.skipped++;
+        return false;
+    });
+    const hashes = await Promise.allSettled(validItems.map(item => hashText(`${item.path}\n${item.content}`)));
     const pending: PendingEmbedding[] = [];
 
-    for(const [index, item] of items.entries()) {
+    for(const [index, item] of validItems.entries()) {
         const hashResult = hashes.at(index);
         if(hashResult?.status !== 'fulfilled') {
             logger.warn({ err: errorInfo(hashResult?.reason), path: item.path, msg: 'Failed to compute hash, skipping' });
@@ -293,7 +321,7 @@ export async function processPage(
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 interface BackfillStorage {
-    backend: Pick<MemoryToolBackend, 'list' | 'listByLayer'>
+    backend: Pick<MemoryToolBackend, 'listByIndexNamespace'>
     destroy: () => void
 }
 
@@ -307,6 +335,17 @@ export interface BackfillDependencies {
     info:            (details: Record<string, unknown>) => void
 }
 
+/**
+ * A GSI1 page's DynamoDB-reported read units. Without that figure the page's true cost (large
+ * rows, rows dropped as malformed) is unknown, so the backfill fails closed rather than read unpaced.
+ */
+function requireConsumedReadUnits(consumedReadUnits: number | undefined, namespace: SearchableNamespace): number {
+    if(consumedReadUnits === undefined) {
+        throw new Error(`GSI1 query for ${namespace} reported no ConsumedCapacity; refusing to continue without RCU pacing`);
+    }
+    return consumedReadUnits;
+}
+
 export async function main(argv: string[] = process.argv, deps: BackfillDependencies = createDefaultBackfillDependencies()): Promise<void> {
     const opts = parseArgs(argv);
 
@@ -315,9 +354,12 @@ export async function main(argv: string[] = process.argv, deps: BackfillDependen
         return;
     }
 
-    // Rate limiter state: track when the last page started to throttle Scan requests
-    const pageSize = 100;
-    const minPageIntervalMs = (pageSize / opts.rateLimitRcuPerSec) * 1000;
+    // GSI1 is provisioned at 2 RCU. Each query's Limit bounds how much one page can read before
+    // pacing applies; the page's DynamoDB-reported ConsumedCapacity (which counts every row read,
+    // including large rows and rows later dropped as malformed) then earns msPerRcu per read unit
+    // of pause before the next query, so the average read rate stays at or below the budget.
+    const pageSize = 4;
+    const msPerRcu = 1000 / opts.rateLimitRcuPerSec;
 
     deps.info({
         dbPath:             opts.dbPath,
@@ -327,11 +369,12 @@ export async function main(argv: string[] = process.argv, deps: BackfillDependen
         force:              opts.force,
         layer:              opts.layer ?? 'all',
         rateLimitRcuPerSec: opts.rateLimitRcuPerSec,
-        sleepIntervalMs:    minPageIntervalMs,
+        msPerRcu,
+        pageSize,
         msg:                'Vector backfill starting',
     });
     deps.write(`Opening vector index: ${opts.dbPath}\n`);
-    deps.write(`Rate limit: ${opts.rateLimitRcuPerSec} RCU/sec → ${minPageIntervalMs}ms between pages of ${pageSize} items\n`);
+    deps.write(`Rate limit: ${opts.rateLimitRcuPerSec} RCU/sec → ${msPerRcu}ms per consumed RCU (GSI1 pages of up to ${pageSize} items, paced by DynamoDB's reported ConsumedCapacity)\n`);
 
     // Initialize DynamoDB + memory backend
     const { backend, destroy } = deps.openStorage();
@@ -347,37 +390,40 @@ export async function main(argv: string[] = process.argv, deps: BackfillDependen
     try {
         vectorIndex = await deps.openVectorIndex(opts.dbPath);
         embedder = await deps.loadModel({ slug: opts.modelSlug, quant: opts.modelQuant });
-        let cursor: string | undefined;
-        do {
-            const pageStartMs = deps.now();
+        // A bare run walks every indexed namespace; `list('/')` would only read the root directory's direct children.
+        const namespaces: readonly SearchableNamespace[] = opts.layer ? [opts.layer] : SEARCHABLE_NAMESPACES;
+        for(const [namespaceIndex, namespace] of namespaces.entries()) {
+            let cursor: string | undefined;
+            do {
+                const pageStartMs = deps.now();
 
-            // eslint-disable-next-line no-await-in-loop -- sequential pagination is intentional: each page must complete before fetching the next
-            const page = await (opts.layer
-                ? backend.listByLayer(opts.layer as LayerName, { limit: pageSize, cursor })
-                : backend.list('/', { limit: pageSize, cursor }));
+                // eslint-disable-next-line no-await-in-loop -- each GSI1 page depends on the previous cursor
+                const page = await backend.listByIndexNamespace(namespace, { limit: pageSize, cursor });
+                const consumedReadUnits = requireConsumedReadUnits(page.consumedReadUnits, namespace);
 
-            cursor = page.nextCursor;
+                cursor = page.nextCursor;
 
-            // eslint-disable-next-line no-await-in-loop -- finish bounded embedding work before the next page and preserve page pacing
-            const pageStats = await processPage(page.items, opts, vectorIndex, embedder);
-            totalScanned += pageStats.scanned;
-            totalSkipped += pageStats.skipped;
-            totalIndexed += pageStats.indexed;
-            totalErrors += pageStats.errors;
+                // eslint-disable-next-line no-await-in-loop -- finish bounded embedding work before fetching the next GSI page
+                const pageStats = await processPage(page.items, opts, vectorIndex, embedder);
+                totalScanned += pageStats.scanned;
+                totalSkipped += pageStats.skipped;
+                totalIndexed += pageStats.indexed;
+                totalErrors += pageStats.errors;
 
-            // Rate limiting: sleep between pages to honor the RPS budget.
-            // Budget: each page of pageSize items represents pageSize DynamoDB reads.
-            // At --rate-limit-rcu-per-sec reads/sec, one page should take at least minPageIntervalMs.
-            if(cursor) {
-                const elapsed = deps.now() - pageStartMs;
-                // Stryker disable next-line NumberLiteralValue: any non-positive floor is skipped by the sleepMs > 0 guard below, so 0 and -1 are indistinguishable
-                const sleepMs = Math.max(0, minPageIntervalMs - elapsed);
-                if(sleepMs > 0) {
-                    // eslint-disable-next-line no-await-in-loop -- intentional sleep for rate limiting between pages
-                    await deps.sleep(sleepMs);
+                // Pace by the read units this page consumed, including across namespace transitions,
+                // so no two queries run back-to-back; nothing follows the very last page.
+                if(cursor || namespaceIndex < namespaces.length - 1) {
+                    const elapsed = deps.now() - pageStartMs;
+                    const pageBudgetMs = consumedReadUnits * msPerRcu;
+                    // Stryker disable next-line NumberLiteralValue: any non-positive floor is skipped by the sleepMs > 0 guard below, so 0 and -1 are indistinguishable
+                    const sleepMs = Math.max(0, pageBudgetMs - elapsed);
+                    if(sleepMs > 0) {
+                        // eslint-disable-next-line no-await-in-loop -- intentional sleep before the next GSI page
+                        await deps.sleep(sleepMs);
+                    }
                 }
-            }
-        } while(cursor);
+            } while(cursor);
+        }
     } finally {
         try {
             await embedder?.close();
@@ -393,7 +439,7 @@ export async function main(argv: string[] = process.argv, deps: BackfillDependen
     deps.write(`
 Backfill complete:
   Scanned: ${totalScanned}
-  Skipped (up-to-date): ${totalSkipped}
+  Skipped (unchanged or malformed): ${totalSkipped}
   Indexed: ${totalIndexed}
   Errors: ${totalErrors}
 `);

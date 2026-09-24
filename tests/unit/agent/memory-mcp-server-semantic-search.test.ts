@@ -15,7 +15,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
-import { createMemoryPath, type MemoryPath, type MemoryToolItemData } from '../../../src/storage/memory-tool/types';
+import { createMemoryPath, createIndexLayer, type MemoryPath, type MemoryToolItemData } from '../../../src/storage/memory-tool/types';
 import type { Embedder } from '../../../src/storage/memory-vec';
 import type { VectorIndex } from '../../../src/storage/memory-vec-store/backend';
 import type { VectorQueryResult } from '../../../src/storage/memory-vec-store/types';
@@ -58,7 +58,7 @@ function makeItem(overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemDa
 
 /** Make a mock VectorQueryResult */
 function makeQueryResult(path: string, distance: number, layer = 'identity'): VectorQueryResult {
-    return { path: createMemoryPath(path), layer, distance };
+    return { path: createMemoryPath(path), layer: createIndexLayer(layer), distance };
 }
 
 describe('semantic_search MCP tool', () => {
@@ -119,14 +119,15 @@ describe('semantic_search MCP tool', () => {
         });
     });
 
-    test('semantic layer schema accepts only the three supported layers', () => {
+    test('semantic layer schema includes users but excludes arbitrary namespaces', () => {
         const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
         const layer = (server.instance as unknown as RegisteredToolInstance)._registeredTools.semantic_search?.inputSchema.shape.layer.unwrap();
         expect(layer).toBeDefined();
-        for(const name of ['identity', 'state', 'events']) {
+        for(const name of ['identity', 'state', 'events', 'users']) {
             expect(layer!.safeParse(name).success).toBe(true);
         }
         expect(layer!.safeParse('').success).toBe(false);
+        expect(layer!.safeParse('unknown').success).toBe(false);
     });
 
     test('semantic_search through the SDK MCP validator accepts an omitted limit and queries 5 results', async () => {
@@ -196,6 +197,12 @@ describe('semantic_search MCP tool', () => {
 
             const callArgs = (mockVectorIndex.query as ReturnType<typeof mock>).mock.calls[0] as [Uint8Array, number, string | undefined];
             expect(callArgs[2]).toBe('identity');
+        });
+
+        test('passes users filter to vectorIndex.query for person memories', async () => {
+            const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
+            await getToolHandler(server, 'semantic_search')({ query: 'person', limit: 5, layer: 'users' });
+            expect(mockVectorIndex.query).toHaveBeenCalledWith(expect.any(Uint8Array), 5, 'users');
         });
 
         test('passes undefined layer to vectorIndex.query when not provided', async () => {
@@ -303,11 +310,11 @@ describe('semantic_search MCP tool', () => {
             expect(text.endsWith('y'.repeat(200))).toBe(true);
         });
 
-        test('shows an empty layer verbatim rather than falling back to "unknown"', async () => {
+        test('formats users namespace from a corrected legacy vector row', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('/identity/item1', 7, ''),
+                makeQueryResult('/users/alice/name', 7, 'users'),
             ]);
-            const item = makeItem({ path: '/identity/item1' as MemoryPath, content: 'some content' });
+            const item = makeItem({ path: '/users/alice/name' as MemoryPath, content: 'some content' });
             (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(item);
 
             const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
@@ -315,9 +322,7 @@ describe('semantic_search MCP tool', () => {
             const result = await handler({ query: 'test', limit: 5 });
 
             const text = textContent(result.content[0]);
-            // An empty layer must render as nothing between "layer: " and "]" — a fallback
-            // to 'unknown' would change this substring.
-            expect(text).toContain('layer: ]');
+            expect(text).toContain('/users/alice/name [distance: 7, layer: users]');
             expect(text).not.toContain('unknown');
         });
 

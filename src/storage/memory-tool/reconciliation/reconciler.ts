@@ -11,17 +11,21 @@ import { type DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, D
 import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../../client-holder';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
-import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexReadItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema, decodePendingRenameIndexCleanup, type PendingRenameIndexCleanup  } from '../types';
+import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexReadItem, createMemoryPath, classifyMemoryPath, type IndexLayer, SEARCHABLE_NAMESPACES, decodePendingRenameIndexCleanup, type PendingRenameIndexCleanup  } from '../types';
 import type { PhaseAProgress, PhaseBProgress, PhaseCProgress, ReconciliationResult } from './types';
 
 // ============================================================================
 // Dependencies & Options
 // ============================================================================
 
-/** Operations reconciliation needs, independent of the concrete tag-index backend. */
+/**
+ * Operations reconciliation needs, independent of the concrete tag-index backend.
+ * For create/refresh, `tags` picks which TAG# rows to write and `allTags` is the memory's full
+ * tag set stored on each of them (multi-tag AND search and the staleness check both read it).
+ */
 export interface TagIndexReconciliationOps {
-    createTagIndexItems:  (path: MemoryPath, tags: Set<string>, updatedAt: string, contentPreview: string, layer: string) => Promise<void>
-    refreshTagIndexItems: (path: MemoryPath, tags: Set<string>, updatedAt: string, contentPreview: string, layer: string) => Promise<void>
+    createTagIndexItems:  (path: MemoryPath, tags: Set<string>, updatedAt: string, contentPreview: string, layer: IndexLayer, allTags: Set<string>) => Promise<void>
+    refreshTagIndexItems: (path: MemoryPath, tags: Set<string>, updatedAt: string, contentPreview: string, layer: IndexLayer, allTags: Set<string>) => Promise<void>
     deleteTagIndexItems:  (path: MemoryPath, tags: Set<string>) => Promise<void>
     listTagCounts:        () => Promise<{ tag: string, count: number }[]>
 }
@@ -187,10 +191,13 @@ async function checkTagIndexExists(
  */
 function isTagIndexStale(
     memoryItem: MemoryToolItem,
-    indexItem: TagIndexReadItem
+    indexItem: TagIndexReadItem,
+    namespace: IndexLayer
 ): boolean {
     return (
         indexItem.contentPreview !== (memoryItem.contentPreview ?? '')
+        // A persisted layer is an untrusted string: legacy /users rows say 'unknown'.
+        || indexItem.layer !== namespace
         || indexItem.updatedAt !== memoryItem.updatedAt
         || !setsEqual(indexItem.tags, normalizeTags(memoryItem.tags))
     );
@@ -204,7 +211,7 @@ async function processMemoryItemTags(
     memoryItem: MemoryToolItem
 ): Promise<void> {
     const normalizedTags = normalizeTags(memoryItem.tags);
-    const layer = extractLayerFromPath(memoryItem.path) ?? 'unknown';
+    const layer = classifyMemoryPath(memoryItem.path).namespace;
 
     for(const tag of normalizedTags) {
         try {
@@ -212,25 +219,27 @@ async function processMemoryItemTags(
             const existingIndex = await checkTagIndexExists(ctx, memoryItem.path, tag);
 
             if(!existingIndex) {
-                // Create missing index item
+                // Create the missing row, carrying the memory's full tag set (not just this tag)
                 // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB write per tag
                 await ctx.deps.tagIndex.createTagIndexItems(
                     memoryItem.path,
                     new Set([tag]),
                     memoryItem.updatedAt,
                     memoryItem.contentPreview ?? '',
-                    layer
+                    layer,
+                    normalizedTags
                 );
                 ctx.progress.indexItemsCreated++;
-            } else if(isTagIndexStale(memoryItem, existingIndex)) {
-                // Refresh stale index item (count-neutral)
+            } else if(isTagIndexStale(memoryItem, existingIndex, layer)) {
+                // Refresh the stale row (count-neutral) with the memory's full tag set
                 // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB write per tag
                 await ctx.deps.tagIndex.refreshTagIndexItems(
                     memoryItem.path,
                     new Set([tag]),
                     memoryItem.updatedAt,
                     memoryItem.contentPreview ?? '',
-                    layer
+                    layer,
+                    normalizedTags
                 );
                 ctx.progress.indexItemsRefreshed++;
             }
@@ -453,7 +462,7 @@ async function processMemoryItem(
  */
 async function scanLayer(
     ctx: PhaseAContext,
-    layer: LayerName
+    layer: IndexLayer
 ): Promise<void> {
     let lastEvaluatedKey: Record<string, unknown> | undefined;
 
@@ -520,14 +529,8 @@ async function runPhaseA(
 
     const ctx: PhaseAContext = { deps, options, progress };
 
-    // Parse layer names as branded types
-    const layers: LayerName[] = [
-        layerNameSchema.parse('identity'),
-        layerNameSchema.parse('state'),
-        layerNameSchema.parse('events'),
-    ];
-
-    for(const layer of layers) {
+    // The three cognitive GSI1 partitions plus LAYER#users, so /users rows (whose legacy tag rows say 'unknown') are repaired too.
+    for(const layer of SEARCHABLE_NAMESPACES) {
         // Stryker disable next-line llm: AbortSignal.aborted is boolean, so strict comparison with true has the same branch behavior.
         if(options.signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');

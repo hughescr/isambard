@@ -24,11 +24,12 @@
  */
 import { Database } from 'bun:sqlite';
 import { existsSync } from 'node:fs';
+import { logger } from '@hughescr/logger';
 import * as sqliteVec from 'sqlite-vec';
 import { MemoryToolKeyGenerator } from '../memory-tool/key-generator.js';
-import { createMemoryPath, type LayerName } from '../memory-tool/types.js';
+import { createMemoryPath, classifyMemoryPath, type IndexLayer } from '../memory-tool/types.js';
 import { runSchemaMigration } from './schema.js';
-import type { VectorIndexEntry, VectorQueryResult } from './types.js';
+import { PACKED_EMBEDDING_BYTES, type VectorIndexEntry, type VectorQueryResult } from './types.js';
 import { VectorIndexClosedError, VectorIndexError, VectorIndexUnavailableError } from '@/errors';
 
 // ---------------------------------------------------------------------------
@@ -272,7 +273,7 @@ export class VectorIndex {
     }
 
     /** Expected byte length for 1024-bit packed binary embeddings (1024 bits / 8 = 128 bytes). */
-    static readonly EXPECTED_BYTES = 128;
+    static readonly EXPECTED_BYTES = PACKED_EMBEDDING_BYTES;
 
     /**
      * Upserts a vector entry in a single transaction.
@@ -374,7 +375,7 @@ export class VectorIndex {
      * @returns Results sorted by Hamming distance ascending (most similar first)
      * @throws {VectorIndexError} If the query vector is not exactly 128 bytes.
      */
-    query(queryVector: Uint8Array, limit: number, layer?: LayerName): VectorQueryResult[] {
+    query(queryVector: Uint8Array, limit: number, layer?: IndexLayer): VectorQueryResult[] {
         this.#assertOpen();
         if(queryVector.length !== VectorIndex.EXPECTED_BYTES) {
             throw new VectorIndexError(
@@ -404,11 +405,16 @@ export class VectorIndex {
                      ORDER BY v.distance`
                 )
                 .all(queryVector, limit, layer);
-        return rows.map(row => ({
-            path:     createMemoryPath(MemoryToolKeyGenerator.parsePath(row.pk, row.sk)),
-            layer:    row.layer,
-            distance: row.distance,
-        }));
+        const valid: VectorQueryResult[] = [];
+        for(const row of rows) {
+            try {
+                const path = createMemoryPath(MemoryToolKeyGenerator.parsePath(row.pk, row.sk));
+                valid.push({ path, layer: classifyMemoryPath(path).namespace, distance: row.distance });
+            } catch (error) {
+                logger.warn({ error, pk: row.pk, sk: row.sk, msg: 'Skipping malformed legacy vector-index row' });
+            }
+        }
+        return valid;
     }
 
     /**

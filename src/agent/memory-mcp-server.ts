@@ -3,7 +3,9 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpTextResult } from './mcp-helpers';
-import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType, type VectorIndex, type EmbedderLike } from '@/storage';
+import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createContentType, createSearchableNamespace, LAYER_NAMES, SELF_LAYER_NAME_VALUES, SEARCHABLE_NAMESPACE_VALUES, encodeOne, type VectorIndex, type EmbedderLike } from '@/storage';
+
+const SEARCH_LAYER_FILTER_DESCRIPTION = 'Optional filter: a memory layer (identity, state, events), or users for per-person memories';
 
 /**
  * Upserts a memory at the given path: updates if it exists, creates if it does not.
@@ -68,7 +70,7 @@ export function createMemoryMCPServer(
                 'Semantic search over memories by content similarity. Use the `search` tool for tag-based filtering instead. The query is embedded the same way memory content is, so phrase it in the form a matching memory would take — declarative statements rather than questions.',
                 {
                     query: z.string().describe('Natural language query to search for semantically similar memories'),
-                    layer: z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
+                    layer: z.enum(SEARCHABLE_NAMESPACE_VALUES).optional().describe(SEARCH_LAYER_FILTER_DESCRIPTION),
                     // The default lives in the handler: the Agent SDK's bundled-zod validator rejects an omitted zod `.default()` field.
                     limit: z.number().int().positive().optional().describe('Maximum number of results to return (default: 5)'),
                 },
@@ -79,12 +81,10 @@ export function createMemoryMCPServer(
                     const vectorIndex = options.vectorIndex!;
                     const embedder    = options.embedder!;
                     try {
-                        // Encode the query text into a 128-byte bit vector
-                        const encodeResult = await embedder.encode([args.query]);
-                        const queryVec = encodeResult.data.slice(0, 128);
+                        const queryVec = await encodeOne(embedder, args.query);
 
                         // Query the vector index for nearest neighbors
-                        const layerFilter = args.layer ? createLayerName(args.layer) : undefined;
+                        const layerFilter = args.layer ? createSearchableNamespace(args.layer) : undefined;
                         const queryResults = vectorIndex.query(queryVec, args.limit ?? 5, layerFilter);
 
                         // Fetch full items by their domain paths in parallel
@@ -196,7 +196,7 @@ export function createMemoryMCPServer(
                 'storeSelf',
                 'Store self-knowledge in identity or state layer. Saving with the same name will replace existing content.',
                 {
-                    layer:   z.enum(['identity', 'state']).describe('Layer: identity (core beliefs/values) or state (current context)'),
+                    layer:   z.enum(SELF_LAYER_NAME_VALUES).describe('Layer: identity (core beliefs/values) or state (current context)'),
                     name:    z.string().describe('Memory name (e.g., core-values, current-goals)'),
                     content: z.string().describe('Memory content to store'),
                     tags:    z.array(z.string()).optional().describe('Optional tags for categorization'),
@@ -282,7 +282,7 @@ export function createMemoryMCPServer(
                 'Search memories by tag with optional filters',
                 {
                     tags:      z.array(z.string()).min(1).describe('Tags to search for (AND semantics — items must have all tags)'),
-                    layer:     z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
+                    layer:     z.enum(SEARCHABLE_NAMESPACE_VALUES).optional().describe(SEARCH_LAYER_FILTER_DESCRIPTION),
                     limit:     z.number().int().positive().optional().describe('Optional result limit'),
                     cursor:    z.string().optional().describe('Pagination cursor from previous response'),
                     startDate: z.iso.datetime().optional().describe('Filter: items updated on or after this ISO8601 datetime'),
@@ -296,7 +296,7 @@ export function createMemoryMCPServer(
                             : undefined;
                         const results = await backend.searchByTags(
                             new Set(args.tags),
-                            args.layer ? createLayerName(args.layer) : undefined,
+                            args.layer ? createSearchableNamespace(args.layer) : undefined,
                             queryOptions
                         );
                         // Stryker disable next-line llm: array length is always nonnegative, so === 0 and <= 0 are identical here.
@@ -350,11 +350,7 @@ export function createMemoryMCPServer(
                             : undefined;
 
                         // Check if path is a layer root - use listByLayer for efficient GSI1 query
-                        const layerPaths: Record<string, LayerName> = {
-                            '/events':   createLayerName('events'),
-                            '/identity': createLayerName('identity'),
-                            '/state':    createLayerName('state'),
-                        };
+                        const layerPaths: Record<string, LayerName> = Object.fromEntries(LAYER_NAMES.map(layer => [`/${layer}`, layer]));
                         const layer = layerPaths[dirPath];
 
                         const results = layer

@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import { type MemoryPath, extractLayerFromPath  } from './types';
+import { type MemoryPath, classifyMemoryPath, CONTENT_PREVIEW_MAX_LENGTH } from './types';
 import { InvariantViolationError } from '@/errors';
 
 /**
@@ -24,7 +24,7 @@ interface MemoryToolKeys {
  */
 export function generateContentPreview(content: string): string {
     // Stryker disable next-line llm: substring(0, 100) and slice(0, 100) are identical for in-range non-negative bounds
-    return content.slice(0, 100);
+    return content.slice(0, CONTENT_PREVIEW_MAX_LENGTH);
 }
 
 /**
@@ -72,10 +72,7 @@ export const MemoryToolKeyGenerator = {
 
         const ts = timestamp ?? DateTime.utc().toISO();
 
-        // Extract layer from path (identity, state, events) or use first path segment as fallback
-        const layer = extractLayerFromPath(path);
-        // Stryker disable next-line llm: layer is the non-empty validated fallback value or null, so both proposed replacements preserve the result.
-        const layerStr = layer ?? path.split('/')[1];
+        const layerStr = classifyMemoryPath(path).namespace;
 
         return {
             PK:     `DIR#${parentPath}`,

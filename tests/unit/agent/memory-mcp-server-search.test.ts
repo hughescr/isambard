@@ -38,6 +38,14 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
     };
 
     describe('search tool', () => {
+        test('accepts and forwards users layer filter while rejecting arbitrary namespaces', async () => {
+            const server = createMemoryMCPServer(mockBackend);
+            const registered = (server.instance as unknown as { _registeredTools: Record<string, { inputSchema: { shape: { layer: { safeParse: (value: string) => { success: boolean } } } } }> })._registeredTools.search;
+            expect(registered.inputSchema.shape.layer.safeParse('users').success).toBe(true);
+            expect(registered.inputSchema.shape.layer.safeParse('unknown').success).toBe(false);
+            await getToolHandler(server, 'search')({ tags: ['person'], layer: 'users' });
+            expect(mockBackend.searchByTags).toHaveBeenCalledWith(new Set(['person']), 'users', undefined);
+        });
         test('should return search results when memories found', async () => {
             mockBackend.searchByTags = mock(async () => ({
                 items: [

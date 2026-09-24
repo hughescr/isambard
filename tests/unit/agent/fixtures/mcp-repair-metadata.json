@@ -395,7 +395,7 @@
             "element": {}
           },
           "layer": {
-            "description": "Optional layer filter"
+            "description": "Optional filter: a memory layer (identity, state, events), or users for per-person memories"
           },
           "limit": {
             "description": "Optional result limit"
@@ -498,7 +498,7 @@
         "description": "Natural language query to search for semantically similar memories"
       },
       "layer": {
-        "description": "Optional layer filter"
+        "description": "Optional filter: a memory layer (identity, state, events), or users for per-person memories"
       },
       "limit": {
         "description": "Maximum number of results to return (default: 5)"

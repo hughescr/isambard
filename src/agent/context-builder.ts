@@ -14,7 +14,7 @@ import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend,
 // eslint-disable-next-line boundaries/dependencies -- The perch context consumes public email display and draft-state contracts.
 import { formatAddressForDisplay, searchDraftsByReviewState } from '@/integrations/email';
 import type { ServiceHealthRegistry } from '@/services';
-import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
+import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName, CONTENT_PREVIEW_MAX_LENGTH } from '@/storage';
 import { formatShortRelativeTime, resolveTimezone } from '@/utils';
 
 /** Minimal interface for retrieving message metadata from WildDuck */
@@ -176,7 +176,6 @@ const DEFAULT_MAX_EVENT_FULL_ITEMS = 10;
 const DEFAULT_MAX_EVENT_ITEM_MAX_CHARS = 2000;
 const DEFAULT_MAX_EVENT_BATCH_SIZE = 10;
 const CHARS_PER_TOKEN = 4;
-const CONTENT_PREVIEW_MAX_LENGTH = 100;
 
 /**
  * Formats a memory item as a preview string with path, age, and truncated content.

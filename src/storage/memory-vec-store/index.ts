@@ -11,6 +11,8 @@ export { VectorIndex } from './backend.js';
 export { AsyncIndexer } from './indexer.js';
 
 // Types
+export { PACKED_EMBEDDING_BYTES, encodeOne } from './types.js';
+export type { PackedBinaryEmbedding1024 } from './types.js';
 export type {
     EmbedderLike,
     VectorIndexEntry,

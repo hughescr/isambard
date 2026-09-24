@@ -13,7 +13,7 @@
 
 import { MemoryToolKeyGenerator } from '../memory-tool/key-generator.js';
 import { sha256Hex } from './hash.js';
-import type { EmbedderLike, VectorIndexEntry, IndexerJob } from './types.js';
+import { encodeOne, type EmbedderLike, type VectorIndexEntry, type IndexerJob } from './types.js';
 
 /** Minimal logger interface (compatible with @hughescr/logger) */
 interface IndexerLogger {
@@ -140,12 +140,7 @@ export class AsyncIndexer {
                 // Hash-check: skip embed if content unchanged
                 const existingHash = this.#vectorIndex.getHash(keys.PK, keys.SK);
                 if(existingHash !== contentHash) {
-                    // Embed the text — returns EmbedResult with 128-byte packed binary in `data`
-                    // vectorBytes is always 128; slice defensively in case encode() returns a larger buffer
-                    const embedResult = await this.#embedder.encode([text]);
-                    // Take first 128 bytes only — the canonical vector size for this embedding model
-                    const vectorBytes = 128;
-                    const vector = embedResult.data.slice(0, vectorBytes);
+                    const vector = await encodeOne(this.#embedder, text);
 
                     this.#vectorIndex.upsert({
                         pk:        keys.PK,

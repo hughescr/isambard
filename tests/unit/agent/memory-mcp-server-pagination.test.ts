@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
-import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
+import type { MemoryPath, MemoryToolItemData, TagIndexReadItem } from '../../../src/storage/memory-tool/types';
 import { mockLogger, textContent } from '../../setup';
 
 // Helper to create mock memory item data
@@ -17,7 +17,7 @@ const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryTool
 });
 
 // Helper to create mock tag index item
-const createMockTagIndexItem = (overrides: Partial<TagIndexItem> = {}): TagIndexItem => ({
+const createMockTagIndexItem = (overrides: Partial<TagIndexReadItem> = {}): TagIndexReadItem => ({
     PK:             'TAG#mock',
     SK:             'PATH#/mock/path',
     memoryPath:     '/mock/path',

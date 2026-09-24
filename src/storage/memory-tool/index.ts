@@ -1,8 +1,23 @@
 // Types and Schemas
 export {
     createMemoryPath,
+    isMemoryPath,
     createLayerName,
     createContentType,
+    createIndexLayer,
+    createSearchableNamespace,
+    classifyMemoryPath,
+    layerNameSchema,
+    LAYER_NAME_VALUES,
+    LAYER_NAMES,
+    SELF_LAYER_NAME_VALUES,
+    SEARCHABLE_NAMESPACE_VALUES,
+    SEARCHABLE_NAMESPACES,
+    CONTENT_PREVIEW_MAX_LENGTH,
+    type IndexLayer,
+    type PathNamespace,
+    type SearchableNamespace,
+    type MemoryPathClass,
     type MemoryPath,
     type MemoryToolItemData,
     type LayerName

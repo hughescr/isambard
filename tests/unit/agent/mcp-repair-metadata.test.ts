@@ -108,7 +108,8 @@ test('MCP input schemas enforce the documented nonempty and bounded inputs', () 
     }));
     const layer = memory.semantic_search.inputSchema.shape.layer;
     expect(layer.safeParse('state').success).toBe(true);
-    expect(layer.safeParse('users').success).toBe(false);
+    expect(layer.safeParse('users').success).toBe(true);
+    expect(layer.safeParse('unknown').success).toBe(false);
 
     const frames = tools(createMediaMCPServer()).getVideoFrames.inputSchema.shape.count;
     expect(frames.safeParse(20).success).toBe(true);

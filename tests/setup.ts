@@ -832,8 +832,7 @@ void mock.module('../tools/backfill-vectors-runtime', () => ({
             mockBackfillRuntime.opens++;
             return {
                 backend: {
-                    list:        async () => ({ items: [], nextCursor: undefined }),
-                    listByLayer: async () => ({ items: [], nextCursor: undefined }),
+                    listByIndexNamespace: async () => ({ items: [], nextCursor: undefined, consumedReadUnits: 0.5 }),
                 },
                 destroy: () => { mockBackfillRuntime.closes++; },
             };

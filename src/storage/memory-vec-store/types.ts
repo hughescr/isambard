@@ -1,7 +1,25 @@
 /**
  * Types for the memory-vec-store SQLite vector index module.
  */
-import type { MemoryPath } from '../memory-tool/types.js';
+import type { MemoryPath, IndexLayer } from '../memory-tool/types.js';
+import type { EmbedResult } from '../memory-vec/types.js';
+import { VectorIndexError } from '@/errors';
+
+/** Fixed width of the packed 1024-bit model embedding. */
+export const PACKED_EMBEDDING_BYTES: EmbedResult['vectorBytes'] = 128;
+export type PackedBinaryEmbedding1024 = Uint8Array & { readonly __packedBinaryEmbedding1024: unique symbol };
+
+/**
+ * Encode one text and return its first packed vector.
+ * @throws {VectorIndexError} If the embedder returned fewer than {@link PACKED_EMBEDDING_BYTES} bytes.
+ */
+export async function encodeOne(embedder: Pick<EmbedderLike, 'encode'>, text: string): Promise<PackedBinaryEmbedding1024> {
+    const result = await embedder.encode([text]);
+    if(result.data.length < PACKED_EMBEDDING_BYTES) {
+        throw new VectorIndexError(`Embedding must be at least ${PACKED_EMBEDDING_BYTES} bytes; got ${result.data.length}`);
+    }
+    return result.data.slice(0, PACKED_EMBEDDING_BYTES) as PackedBinaryEmbedding1024;
+}
 
 /**
  * Represents a single row in the vector index.
@@ -12,7 +30,7 @@ export interface VectorIndexEntry {
     /** DynamoDB sort key */
     sk:          string
     /** Memory layer (identity, state, events, etc.) */
-    layer:       string
+    layer:       IndexLayer
     /** SHA-256 hash of the indexed text (`${path}\n${content}`) */
     contentHash: string
     /** Packed 1024-bit binary embedding (128 bytes) */
@@ -26,7 +44,7 @@ export interface VectorIndexEntry {
  */
 export interface IndexerUpsertJob {
     kind:    'upsert'
-    layer:   string
+    layer:   IndexLayer
     /** Sole identity, also used as part of the text fed to the embedder */
     path:    MemoryPath
     /** Memory content, combined with path as `${path}\n${content}` */
@@ -51,7 +69,7 @@ export type IndexerJob = IndexerUpsertJob | IndexerDeleteJob;
  */
 export interface VectorQueryResult {
     path:     MemoryPath
-    layer:    string
+    layer:    IndexLayer
     distance: number
 }
 

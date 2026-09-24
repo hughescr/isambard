@@ -6,7 +6,7 @@ import {
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import { sigmoidScore } from '@/storage/memory-tool/sigmoid';
-import type { MemoryToolItem, MemoryPath, LayerName } from '@/storage/memory-tool/types';
+import { createSearchableNamespace, type MemoryToolItem, type MemoryPath, type LayerName } from '@/storage/memory-tool/types';
 
 describe('MemoryToolBackend - Date Filtering', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -22,6 +22,56 @@ describe('MemoryToolBackend - Date Filtering', () => {
 
     afterEach(() => {
         ddbMock.reset();
+    });
+
+    describe('listByIndexNamespace', () => {
+        test('pages the users GSI1 partition, nested paths included, for the vector backfill', async () => {
+            const item: MemoryToolItem = {
+                PK:          'DIR#/users/alice',
+                SK:          'FILE#name',
+                GSI1PK:      'LAYER#users',
+                GSI1SK:      'UPDATED#2024-06-15T00:00:00.000Z',
+                path:        '/users/alice/name' as MemoryPath,
+                content:     'Alice',
+                contentType: 'text/plain',
+                metadata:    {},
+                createdAt:   '2024-06-15T00:00:00.000Z',
+                updatedAt:   '2024-06-15T00:00:00.000Z',
+            };
+            ddbMock.on(QueryCommand).resolves({ Items: [item] });
+
+            const result = await backend.listByIndexNamespace(createSearchableNamespace('users'), { limit: 4 });
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(1);
+            const input = calls[0].args[0].input;
+            expect(input.IndexName).toBe('GSI1');
+            expect(input.KeyConditionExpression).toBe('GSI1PK = :pk');
+            expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'LAYER#users' });
+            expect(input.Limit).toBe(4);
+            expect(result.items.map(listed => listed.path)).toEqual(['/users/alice/name' as MemoryPath]);
+            expect(result.nextCursor).toBeUndefined();
+        });
+
+        test('requests TOTAL consumed capacity and reports it even for rows dropped as malformed', async () => {
+            ddbMock.on(QueryCommand).resolves({
+                Items:            [{ PK: 'DIR#/users/bob', SK: 'FILE#huge', path: 42 }],
+                ConsumedCapacity: { TableName: 'TestTable', CapacityUnits: 37.5 },
+            });
+
+            const result = await backend.listByIndexNamespace(createSearchableNamespace('users'), { limit: 4 });
+
+            expect(ddbMock.commandCalls(QueryCommand)[0]?.args[0].input.ReturnConsumedCapacity).toBe('TOTAL');
+            expect(result).toEqual({ items: [], nextCursor: undefined, consumedReadUnits: 37.5 });
+        });
+
+        test('reports undefined consumed capacity when DynamoDB omits it', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const result = await backend.listByIndexNamespace(createSearchableNamespace('users'));
+
+            expect(result.consumedReadUnits).toBeUndefined();
+        });
     });
 
     describe('listByLayer with date filtering', () => {

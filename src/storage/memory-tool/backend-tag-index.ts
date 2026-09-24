@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
 import type { ListOptions, ListResult } from './backend-query';
 import { normalizeTags } from './key-generator';
-import { type TagIndexReadItem, type MemoryPath  } from './types';
+import { type IndexLayer, type TagIndexItem, type TagIndexReadItem, type MemoryPath  } from './types';
 import { InvariantViolationError } from '@/errors';
 
 /** Native SDK request and retry response shapes. */
@@ -92,14 +92,17 @@ export class MemoryToolBackendTagIndex {
     }
 
     /**
-     * Builds BatchWriteItem PutRequest entries for tag index items.
+     * Builds BatchWriteItem PutRequest entries for tag index items: one row per tag in
+     * `normalizedTags`, each carrying `normalizedRowTags` (the memory's full tag set) as its
+     * `tags` attribute, which multi-tag AND search and staleness checks both read.
      */
     private buildPutRequests(
         path: MemoryPath,
         normalizedTags: Set<string>,
+        normalizedRowTags: Set<string>,
         updatedAt: string,
         contentPreview: string,
-        layer: string
+        layer: IndexLayer
     ): BatchWriteRequest[] {
         return [...normalizedTags].map(tag => ({
             PutRequest: {
@@ -109,9 +112,9 @@ export class MemoryToolBackendTagIndex {
                     memoryPath: path,
                     layer,
                     updatedAt,
-                    tags:       normalizedTags,
+                    tags:       normalizedRowTags,
                     contentPreview,
-                },
+                } satisfies TagIndexItem,
             },
         }));
     }
@@ -328,19 +331,21 @@ export class MemoryToolBackendTagIndex {
 
     /**
      * Creates tag index items for a memory path.
-     * Each tag gets its own index entry with full preview data.
+     * Each tag in `tags` gets its own index entry with full preview data; `allTags` is the
+     * memory's full tag set stored on every row (defaults to `tags`, i.e. writing every row).
      */
     async createTagIndexItems(
         path: MemoryPath,
         tags: Set<string>,
         updatedAt: string,
         contentPreview: string,
-        layer: string
+        layer: IndexLayer,
+        allTags: Set<string> = tags
     ): Promise<void> {
         const normalizedTags = normalizeTags(tags);
 
         // Build write requests for tag index items
-        const writeRequests = this.buildPutRequests(path, normalizedTags, updatedAt, contentPreview, layer);
+        const writeRequests = this.buildPutRequests(path, normalizedTags, normalizeTags(allTags), updatedAt, contentPreview, layer);
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
         const batches = this.splitIntoBatches(writeRequests, 25);
@@ -382,19 +387,21 @@ export class MemoryToolBackendTagIndex {
 
     /**
      * Refreshes tag index items without changing counts.
-     * Used to update preview data for unchanged tags.
+     * Used to update preview data for unchanged tags. Only the rows for `tags` are rewritten;
+     * each carries `allTags`, the memory's full tag set (defaults to `tags`).
      */
     async refreshTagIndexItems(
         path: MemoryPath,
         tags: Set<string>,
         updatedAt: string,
         contentPreview: string,
-        layer: string
+        layer: IndexLayer,
+        allTags: Set<string> = tags
     ): Promise<void> {
         const normalizedTags = normalizeTags(tags);
 
         // Build write requests for tag index items
-        const writeRequests = this.buildPutRequests(path, normalizedTags, updatedAt, contentPreview, layer);
+        const writeRequests = this.buildPutRequests(path, normalizedTags, normalizeTags(allTags), updatedAt, contentPreview, layer);
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
         const batches = this.splitIntoBatches(writeRequests, 25);
@@ -413,7 +420,7 @@ export class MemoryToolBackendTagIndex {
         newTags: Set<string>,
         updatedAt: string,
         contentPreview: string,
-        layer: string
+        layer: IndexLayer
     ): Promise<void> {
         const normalizedOld = normalizeTags(oldTags);
         const normalizedNew = normalizeTags(newTags);
@@ -424,12 +431,12 @@ export class MemoryToolBackendTagIndex {
 
         // Execute all operations in parallel
         await Promise.all([
-            // Create items for added tags (increments counts)
-            this.createTagIndexItems(path, added, updatedAt, contentPreview, layer),
+            // Create items for added tags (increments counts); every row carries the full new tag set
+            this.createTagIndexItems(path, added, updatedAt, contentPreview, layer, normalizedNew),
             // Delete items for removed tags (decrements counts)
             this.deleteTagIndexItems(path, removed),
             // Refresh unchanged tags with current data (no count change)
-            this.refreshTagIndexItems(path, unchanged, updatedAt, contentPreview, layer),
+            this.refreshTagIndexItems(path, unchanged, updatedAt, contentPreview, layer, normalizedNew),
         ]);
     }
 
@@ -461,7 +468,7 @@ export class MemoryToolBackendTagIndex {
 
     async queryByTag(
         tag: string,
-        layer?: string,
+        layer?: IndexLayer,
         options?: ListOptions
     ): Promise<ListResult<TagIndexReadItem>> {
         const normalizedTag = [...normalizeTags(new Set([tag]))][0];
@@ -526,7 +533,7 @@ export class MemoryToolBackendTagIndex {
      */
     async queryByTags(
         tags: string[],
-        layer?: string,
+        layer?: IndexLayer,
         options?: ListOptions
     ): Promise<ListResult<TagIndexReadItem>> {
         if(tags.length === 0) {

@@ -6,9 +6,10 @@
  * ensuring sqlite-vec extension loading works on macOS.
  */
 import { Database } from 'bun:sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from 'bun:test';
+import { logger } from '@hughescr/logger';
 import { VectorIndexClosedError, VectorIndexError } from '@/errors';
-import { createLayerName, createMemoryPath } from '@/storage/memory-tool/types';
+import { createLayerName, createMemoryPath, createIndexLayer, createSearchableNamespace } from '@/storage/memory-tool/types';
 import { VectorIndex } from '@/storage/memory-vec-store/backend';
 
 /** Create a deterministic 128-byte test vector with all bits set to given pattern byte */
@@ -27,6 +28,7 @@ describe('VectorIndex', () => {
     });
 
     afterEach(() => {
+        jest.restoreAllMocks();
         if(!index.isClosed) {
             index.close();
         }
@@ -44,21 +46,21 @@ describe('VectorIndex', () => {
 
     describe('embedding byte-length validation', () => {
         it('upsert throws VectorIndexError for a vector shorter than 128 bytes', () => {
-            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1 })).toThrow(VectorIndexError);
+            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1 })).toThrow(VectorIndexError);
         });
 
         it('upsert throws VectorIndexError for a vector longer than 128 bytes', () => {
-            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h', vector: new Uint8Array(256), updatedAt: 1 })).toThrow(VectorIndexError);
+            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(256), updatedAt: 1 })).toThrow(VectorIndexError);
         });
 
         it('upsert succeeds for exactly 128 bytes', () => {
-            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h', vector: makeVector(0xAA), updatedAt: 1 })).not.toThrow();
+            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h', vector: makeVector(0xAA), updatedAt: 1 })).not.toThrow();
         });
 
         it('upsert error message includes the actual length', () => {
             let thrown: unknown;
             try {
-                index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1 });
+                index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1 });
             } catch (e) {
                 thrown = e;
             }
@@ -99,7 +101,7 @@ describe('VectorIndex', () => {
             index.upsert({
                 pk:          'pk1',
                 sk:          'sk1',
-                layer:       'identity',
+                layer:       createIndexLayer('identity'),
                 contentHash: 'abc123',
                 vector:      makeVector(0xFF),
                 updatedAt:   1000,
@@ -108,14 +110,14 @@ describe('VectorIndex', () => {
         });
 
         it('updates hash when same (pk, sk) is upserted again', () => {
-            index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'old', vector: makeVector(0xAA), updatedAt: 1000 });
-            index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'new', vector: makeVector(0xBB), updatedAt: 2000 });
+            index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'old', vector: makeVector(0xAA), updatedAt: 1000 });
+            index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'new', vector: makeVector(0xBB), updatedAt: 2000 });
             expect(index.getHash('pk1', 'sk1')).toBe('new');
         });
 
         it('stores entries with different (pk, sk) pairs independently', () => {
-            index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'hash1', vector: makeVector(0x11), updatedAt: 1000 });
-            index.upsert({ pk: 'pk2', sk: 'sk2', layer: 'state',    contentHash: 'hash2', vector: makeVector(0x22), updatedAt: 2000 });
+            index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'hash1', vector: makeVector(0x11), updatedAt: 1000 });
+            index.upsert({ pk: 'pk2', sk: 'sk2', layer: createIndexLayer('state'),    contentHash: 'hash2', vector: makeVector(0x22), updatedAt: 2000 });
             expect(index.getHash('pk1', 'sk1')).toBe('hash1');
             expect(index.getHash('pk2', 'sk2')).toBe('hash2');
         });
@@ -123,7 +125,7 @@ describe('VectorIndex', () => {
 
     describe('delete', () => {
         it('removes the entry so getHash returns undefined', () => {
-            index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
+            index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
             index.delete('pk1', 'sk1');
             expect(index.getHash('pk1', 'sk1')).toBeUndefined();
         });
@@ -133,16 +135,16 @@ describe('VectorIndex', () => {
         });
 
         it('removed entry no longer appears in query results', () => {
-            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#one', layer: 'identity', contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
-            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#two', layer: 'identity', contentHash: 'h2', vector: makeVector(0xFF), updatedAt: 2000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#one', layer: createIndexLayer('identity'), contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#two', layer: createIndexLayer('identity'), contentHash: 'h2', vector: makeVector(0xFF), updatedAt: 2000 });
             index.delete('DIR#/identity', 'FILE#one');
             expect(index.query(makeVector(0xFF), 10)).toEqual([
-                { path: createMemoryPath('/identity/two'), layer: 'identity', distance: 0 },
+                { path: createMemoryPath('/identity/two'), layer: createIndexLayer('identity'), distance: 0 },
             ]);
         });
 
         it('removes the row from vec_memory too (re-query returns empty)', () => {
-            index.upsert({ pk: 'only', sk: 'sk', layer: 'identity', contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
+            index.upsert({ pk: 'only', sk: 'sk', layer: createIndexLayer('identity'), contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
             index.delete('only', 'sk');
             const results = index.query(makeVector(0xFF), 10);
             expect(results).toHaveLength(0);
@@ -151,8 +153,8 @@ describe('VectorIndex', () => {
         it('removes the vec_memory row by the correct rowid (verifies DELETE binding)', () => {
             // Insert two entries so the rowids are distinct — deleting pk1 must only remove
             // its specific vec_memory row, not both (verifies [rowIdRow.rowid] is bound correctly).
-            index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
-            index.upsert({ pk: 'pk2', sk: 'sk2', layer: 'identity', contentHash: 'h2', vector: makeVector(0xFF), updatedAt: 2000 });
+            index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
+            index.upsert({ pk: 'pk2', sk: 'sk2', layer: createIndexLayer('identity'), contentHash: 'h2', vector: makeVector(0xFF), updatedAt: 2000 });
             index.delete('pk1', 'sk1');
             // Directly verify vec_memory row count — should be 1 (pk2 still present)
             const vecCount = db.query<{ cnt: number }, []>('SELECT COUNT(*) AS cnt FROM vec_memory').get();
@@ -170,9 +172,9 @@ describe('VectorIndex', () => {
             // 0xFF vector: all 1024 bits set → Hamming distance to query 0xFF = 0
             // 0x00 vector: all bits cleared → Hamming distance to query 0xFF = 1024
             // 0xAA vector: alternating bits (half set) → distance = 512
-            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#farthest', layer: 'identity', contentHash: 'h1', vector: makeVector(0x00), updatedAt: 1000 });
-            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#nearest', layer: 'identity', contentHash: 'h2', vector: makeVector(0xFF), updatedAt: 2000 });
-            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#midpoint', layer: 'identity', contentHash: 'h3', vector: makeVector(0xAA), updatedAt: 3000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#farthest', layer: createIndexLayer('identity'), contentHash: 'h1', vector: makeVector(0x00), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#nearest', layer: createIndexLayer('identity'), contentHash: 'h2', vector: makeVector(0xFF), updatedAt: 2000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#midpoint', layer: createIndexLayer('identity'), contentHash: 'h3', vector: makeVector(0xAA), updatedAt: 3000 });
 
             const results = index.query(makeVector(0xFF), 10);
             expect(results).toHaveLength(3);
@@ -187,48 +189,66 @@ describe('VectorIndex', () => {
             expect(results[2].distance).toBe(1024);
         });
 
+        it('skips malformed legacy keys and root vectors, deriving valid result layers from paths', () => {
+            const warn = spyOn(logger, 'warn');
+            index.upsert({ pk: 'bad', sk: 'FILE#bad', layer: createIndexLayer('unknown'), contentHash: 'a', vector: makeVector(0xFF), updatedAt: 1 });
+            index.upsert({ pk: 'DIR#/', sk: 'FILE#', layer: createIndexLayer('unknown'), contentHash: 'b', vector: makeVector(0xFF), updatedAt: 2 });
+            index.upsert({ pk: 'DIR#/users/alice', sk: 'FILE#name', layer: createIndexLayer('unknown'), contentHash: 'c', vector: makeVector(0xFF), updatedAt: 3 });
+            expect(index.query(makeVector(0xFF), 3)).toEqual([{ path: createMemoryPath('/users/alice/name'), layer: createIndexLayer('users'), distance: 0 }]);
+            expect(warn.mock.calls.filter(call => (call[0] as Record<string, unknown> | undefined)?.msg === 'Skipping malformed legacy vector-index row')).toHaveLength(2);
+        });
+
         it('returns at most limit results', () => {
             for(let i = 0; i < 10; i++) {
-                index.upsert({ pk: 'DIR#/identity', sk: `FILE#item${i}`, layer: 'identity', contentHash: `h${i}`, vector: makeVector(i), updatedAt: i });
+                index.upsert({ pk: 'DIR#/identity', sk: `FILE#item${i}`, layer: createIndexLayer('identity'), contentHash: `h${i}`, vector: makeVector(i), updatedAt: i });
             }
             const results = index.query(makeVector(0xFF), 3);
             expect(results).toHaveLength(3);
         });
 
         it('returns the memory path and layer from physical keys', () => {
-            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#core', layer: 'identity', contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#core', layer: createIndexLayer('identity'), contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
             expect(index.query(makeVector(0xFF), 10)).toEqual([
-                { path: createMemoryPath('/identity/core'), layer: 'identity', distance: 0 },
+                { path: createMemoryPath('/identity/core'), layer: createIndexLayer('identity'), distance: 0 },
             ]);
         });
 
         it('layer filter returns only matching layer', () => {
-            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#item', layer: 'identity', contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
-            index.upsert({ pk: 'DIR#/state',    sk: 'FILE#item', layer: 'state',    contentHash: 'h2', vector: makeVector(0xAA), updatedAt: 2000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#item', layer: createIndexLayer('identity'), contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/state',    sk: 'FILE#item', layer: createIndexLayer('state'),    contentHash: 'h2', vector: makeVector(0xAA), updatedAt: 2000 });
             const results = index.query(makeVector(0xAA), 10, createLayerName('identity'));
             expect(results).toHaveLength(1);
-            expect(results[0]).toEqual({ path: createMemoryPath('/identity/item'), layer: 'identity', distance: 0 });
+            expect(results[0]).toEqual({ path: createMemoryPath('/identity/item'), layer: createIndexLayer('identity'), distance: 0 });
+        });
+
+        it('users filter returns only /users rows; a legacy unknown-labelled row waits for the forced rebuild', () => {
+            index.upsert({ pk: 'DIR#/users/alice', sk: 'FILE#name', layer: createSearchableNamespace('users'), contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/users/bob', sk: 'FILE#name', layer: createIndexLayer('unknown'), contentHash: 'h2', vector: makeVector(0xAA), updatedAt: 2000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#item', layer: createLayerName('identity'), contentHash: 'h3', vector: makeVector(0xAA), updatedAt: 3000 });
+            expect(index.query(makeVector(0xAA), 10, createSearchableNamespace('users'))).toEqual([
+                { path: createMemoryPath('/users/alice/name'), layer: createIndexLayer('users'), distance: 0 },
+            ]);
         });
 
         it('returns all layers when no layer filter specified', () => {
-            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#item', layer: 'identity', contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
-            index.upsert({ pk: 'DIR#/state',    sk: 'FILE#item', layer: 'state',    contentHash: 'h2', vector: makeVector(0xAA), updatedAt: 2000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#item', layer: createIndexLayer('identity'), contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/state',    sk: 'FILE#item', layer: createIndexLayer('state'),    contentHash: 'h2', vector: makeVector(0xAA), updatedAt: 2000 });
             const results = index.query(makeVector(0xAA), 10);
             expect(results).toEqual(expect.arrayContaining([
-                { path: createMemoryPath('/identity/item'), layer: 'identity', distance: 0 },
-                { path: createMemoryPath('/state/item'), layer: 'state', distance: 0 },
+                { path: createMemoryPath('/identity/item'), layer: createIndexLayer('identity'), distance: 0 },
+                { path: createMemoryPath('/state/item'), layer: createIndexLayer('state'), distance: 0 },
             ]));
         });
 
         it('returns distance of 0 for identical vector', () => {
             const vec = makeVector(0xAB);
-            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#same', layer: 'identity', contentHash: 'h1', vector: vec, updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#same', layer: createIndexLayer('identity'), contentHash: 'h1', vector: vec, updatedAt: 1000 });
             const results = index.query(vec, 10);
             expect(results[0].distance).toBe(0);
         });
 
         it('returns distance 1024 for fully inverted vector (all bits differ)', () => {
-            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#inverted', layer: 'identity', contentHash: 'h1', vector: makeVector(0x00), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#inverted', layer: createIndexLayer('identity'), contentHash: 'h1', vector: makeVector(0x00), updatedAt: 1000 });
             const results = index.query(makeVector(0xFF), 10);
             expect(results[0].distance).toBe(1024);
         });
@@ -253,7 +273,7 @@ describe('VectorIndex', () => {
 
         it('upsert throws VectorIndexClosedError after close', () => {
             index.close();
-            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h1', vector: makeVector(0), updatedAt: 1 })).toThrow(VectorIndexClosedError);
+            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h1', vector: makeVector(0), updatedAt: 1 })).toThrow(VectorIndexClosedError);
         });
 
         it('delete throws VectorIndexClosedError after close', () => {
@@ -290,12 +310,12 @@ describe('VectorIndex', () => {
             try {
                 expect(vi.isClosed).toBe(false);
                 // Verify both tables exist via the public API (upsert + query)
-                vi.upsert({ pk: 'DIR#/identity', sk: 'FILE#reopened', layer: 'identity', contentHash: 'h', vector: makeVector(0xAA), updatedAt: 1 });
+                vi.upsert({ pk: 'DIR#/identity', sk: 'FILE#reopened', layer: createIndexLayer('identity'), contentHash: 'h', vector: makeVector(0xAA), updatedAt: 1 });
                 expect(vi.getHash('DIR#/identity', 'FILE#reopened')).toBe('h');
                 vi.close();
                 const reopened = await VectorIndex.open(tmpPath);
                 expect(reopened.query(makeVector(0xAA), 5)).toEqual([
-                    { path: createMemoryPath('/identity/reopened'), layer: 'identity', distance: 0 },
+                    { path: createMemoryPath('/identity/reopened'), layer: createIndexLayer('identity'), distance: 0 },
                 ]);
                 reopened.close();
             } finally {

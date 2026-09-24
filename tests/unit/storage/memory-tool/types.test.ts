@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, expectTypeOf } from 'bun:test';
 import {
     memoryPathSchema,
     contentTypeSchema,
@@ -9,15 +9,28 @@ import {
     isLayerName,
     createContentType,
     isContentType,
-    extractLayerFromPath,
     layerNameSchema,
     decodeMemoryAccessStats,
     decodePendingRenameIndexCleanup,
     memoryAccessStatsSchema,
     pendingRenameIndexCleanupSchema,
+    pathNamespaceSchema,
     type MemoryPath,
     type LayerName,
-    type ContentType
+    type IndexLayer,
+    type ContentType,
+    type MemoryPathClass,
+    type SearchableNamespace,
+    type TagIndexItem,
+    type TagIndexReadItem,
+    classifyMemoryPath,
+    createIndexLayer,
+    createSearchableNamespace,
+    LAYER_NAME_VALUES,
+    LAYER_NAMES,
+    SELF_LAYER_NAME_VALUES,
+    SEARCHABLE_NAMESPACE_VALUES,
+    SEARCHABLE_NAMESPACES
 } from '@/storage/memory-tool/types';
 
 describe.concurrent('host-owned memory metadata', () => {
@@ -65,12 +78,19 @@ describe.concurrent('host-owned memory metadata', () => {
 
 describe.concurrent('memoryPathSchema', () => {
     test.each([
-        { name: 'root path', path: '/' },
         { name: 'valid simple path', path: '/notes' },
         { name: 'valid nested path', path: '/projects/isambard/todo' },
     ])('should accept $name', ({ path }) => {
         const result = memoryPathSchema.safeParse(path);
         expect(result.success).toBe(true);
+    });
+
+    test('rejects root as a memory item, not only as a trailing slash', () => {
+        const result = memoryPathSchema.safeParse('/');
+        expect(result.error?.issues.map(issue => issue.message)).toEqual([
+            'Root path / is not a memory item',
+            'Path cannot end with /',
+        ]);
     });
 
     test.each([
@@ -93,15 +113,58 @@ describe.concurrent('memoryPathSchema', () => {
     });
 });
 
-describe.concurrent('extractLayerFromPath', () => {
-    test('accepts a layer exactly at the path start or before a slash', () => {
-        expect(extractLayerFromPath(createMemoryPath('/state'))).toBe(createLayerName('state'));
-        expect(extractLayerFromPath(createMemoryPath('/state/file.md'))).toBe(createLayerName('state'));
+describe.concurrent('memory path namespaces', () => {
+    test('a path namespace is one non-empty path segment', () => {
+        expect(pathNamespaceSchema.safeParse('').error?.issues.map(issue => issue.message)).toEqual(['Namespace cannot be empty']);
+        expect(pathNamespaceSchema.safeParse('users/other').error?.issues.map(issue => issue.message)).toEqual(['Namespace cannot contain /']);
+        expect(pathNamespaceSchema.parse('users') as string).toBe('users');
+        expect(createIndexLayer('legacy') as string).toBe('legacy');
+        expect(() => createIndexLayer('a/b')).toThrow('Namespace cannot contain /');
     });
 
-    test('does not find an embedded layer or a layer name without a boundary', () => {
-        expect(extractLayerFromPath(createMemoryPath('/prefix/state'))).toBeNull();
-        expect(extractLayerFromPath(createMemoryPath('/stateful'))).toBeNull();
+    test('derives cognitive layers and searchable namespaces from one tuple', () => {
+        const cognitiveAsIndex: IndexLayer = createLayerName('state');
+        expect(cognitiveAsIndex as string).toBe('state');
+        expect(LAYER_NAME_VALUES).toEqual(['identity', 'state', 'events']);
+        expect(SELF_LAYER_NAME_VALUES).toEqual(['identity', 'state']);
+        expect(LAYER_NAMES).toEqual(LAYER_NAME_VALUES.map(name => createLayerName(name)));
+        expect(SEARCHABLE_NAMESPACE_VALUES).toEqual(['identity', 'state', 'events', 'users']);
+        expect(SEARCHABLE_NAMESPACES).toEqual(SEARCHABLE_NAMESPACE_VALUES.map(name => createSearchableNamespace(name)));
+    });
+
+    test('searchable namespaces accept users but reject typos and other roots', () => {
+        expect(createSearchableNamespace('users') as string).toBe('users');
+        expect(createSearchableNamespace('identity') as string).toBe('identity');
+        expect(() => createSearchableNamespace('identiy')).toThrow();
+        expect(() => createSearchableNamespace('foo')).toThrow();
+        expect(() => createLayerName('users')).toThrow();
+    });
+
+    test.each([
+        ['/identity', { namespace: 'identity', cognitiveLayer: 'identity' }],
+        ['/identity/x', { namespace: 'identity', cognitiveLayer: 'identity' }],
+        ['/state/file.md', { namespace: 'state', cognitiveLayer: 'state' }],
+        ['/events/x', { namespace: 'events', cognitiveLayer: 'events' }],
+        ['/users', { namespace: 'users' }],
+        ['/users/person', { namespace: 'users', userId: 'person' }],
+        ['/users/person/name', { namespace: 'users', userId: 'person' }],
+        ['/foo/bar', { namespace: 'foo' }],
+        ['/foo/state', { namespace: 'foo' }],
+        ['/prefix/users/person', { namespace: 'prefix' }],
+        ['/stateful', { namespace: 'stateful' }],
+        ['/stateoftheart.md', { namespace: 'stateoftheart.md' }],
+    ] as const)('classifies %s by its first path segment', (path, expected) => {
+        expect(classifyMemoryPath(createMemoryPath(path)) as unknown).toStrictEqual(expected);
+    });
+
+    test('index layer fields carry a classified namespace; persisted tag reads stay untrusted strings', () => {
+        expectTypeOf<TagIndexItem['layer']>().toEqualTypeOf<IndexLayer>();
+        expectTypeOf<TagIndexReadItem['layer']>().toEqualTypeOf<string>();
+        expectTypeOf<MemoryPathClass['cognitiveLayer']>().toEqualTypeOf<LayerName | undefined>();
+        expectTypeOf<LayerName>().toExtend<IndexLayer>();
+        expectTypeOf<SearchableNamespace>().toExtend<IndexLayer>();
+        const legacyRead: TagIndexReadItem = { PK: 'TAG#person', SK: 'PATH#/users/a/n', memoryPath: '/users/a/n', layer: 'unknown', updatedAt: '2024-01-01T00:00:00.000Z', tags: new Set() };
+        expect(legacyRead.layer).not.toBe(classifyMemoryPath(createMemoryPath(legacyRead.memoryPath)).namespace);
     });
 });
 
@@ -111,9 +174,8 @@ describe.concurrent('createMemoryPath', () => {
         expect(path).toBe('/notes/todo' as MemoryPath);
     });
 
-    test('should accept root path', () => {
-        const path = createMemoryPath('/');
-        expect(path).toBe('/' as MemoryPath);
+    test('rejects root with a clear error', () => {
+        expect(() => createMemoryPath('/')).toThrow('Root path / is not a memory item');
     });
 
     test('should throw error for invalid path', () => {

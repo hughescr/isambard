@@ -7,10 +7,12 @@
  * - close drains then closes embedder
  */
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
+import { VectorIndexError } from '@/errors';
 import { MemoryToolKeyGenerator } from '@/storage/memory-tool/key-generator';
-import { createMemoryPath } from '@/storage/memory-tool/types';
+import { createMemoryPath, createIndexLayer } from '@/storage/memory-tool/types';
 import type { EmbedResult } from '@/storage/memory-vec';
 import { AsyncIndexer } from '@/storage/memory-vec-store/indexer';
+import { encodeOne, PACKED_EMBEDDING_BYTES } from '@/storage/memory-vec-store/types';
 
 /** Build a minimal fake EmbedResult */
 function makeEmbedResult(byte = 0xAA): EmbedResult {
@@ -22,6 +24,24 @@ function makeEmbedResult(byte = 0xAA): EmbedResult {
         vectorBits:  1024,
     };
 }
+
+describe('single packed embedding', () => {
+    it('accepts an exact buffer and copies only the first vector of an overlong buffer', async () => {
+        const embedder = { encode: mock(async (_texts: readonly string[]) => ({ data: new Uint8Array(256).fill(7) })) };
+        const result = await encodeOne(embedder, 'query');
+        expect(PACKED_EMBEDDING_BYTES).toBe(128);
+        expect(embedder.encode).toHaveBeenCalledWith(['query']);
+        expect(result).toHaveLength(128);
+        expect(result[0]).toBe(7);
+        expect(await encodeOne({ encode: async () => ({ data: new Uint8Array(128) }) }, 'exact')).toHaveLength(128);
+    });
+
+    it('rejects a short embedding with a typed error rather than submitting it to the vector index', async () => {
+        const short = encodeOne({ encode: async () => ({ data: new Uint8Array(127) }) }, 'short');
+        await expect(short).rejects.toBeInstanceOf(VectorIndexError);
+        await expect(short).rejects.toThrow('Embedding must be at least 128 bytes; got 127');
+    });
+});
 
 /** Build a no-op logger that captures calls */
 function makeLogger() {
@@ -80,13 +100,13 @@ describe('AsyncIndexer', () => {
 
     describe('enqueue + drain (upsert flow)', () => {
         it('calls embedder.encode with the correct text for an upsert job', async () => {
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/identity/foo'), content: 'hello world' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/identity/foo'), content: 'hello world' });
             await indexer.drain();
             expect(mockEmbedder.encode).toHaveBeenCalledWith(['/identity/foo\nhello world']);
         });
 
         it('calls vectorIndex.upsert with correct fields after embedding', async () => {
-            indexer.enqueue({ kind: 'upsert', layer: 'state', path: createMemoryPath('/state/bar'), content: 'some content' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('state'), path: createMemoryPath('/state/bar'), content: 'some content' });
             await indexer.drain();
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
             const arg = mockVectorIndex.upsert.mock.calls[0][0] as { pk: string, sk: string, layer: string, contentHash: string, vector: Uint8Array, updatedAt: number };
@@ -102,7 +122,7 @@ describe('AsyncIndexer', () => {
         });
 
         it('sets updatedAt to a positive integer (timestamp)', async () => {
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/identity/foo'), content: 'text' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/identity/foo'), content: 'text' });
             await indexer.drain();
             const arg = mockVectorIndex.upsert.mock.calls[0][0] as { updatedAt: number };
             expect(arg.updatedAt).toBeGreaterThan(0);
@@ -120,8 +140,8 @@ describe('AsyncIndexer', () => {
                 return makeEmbedResult();
             });
 
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/a'), content: 'a' });
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/b'), content: 'b' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/b'), content: 'b' });
             expect(encodeCallCount).toBe(0);
             await indexer.drain();
             expect(encodeCallCount).toBe(2);
@@ -142,9 +162,9 @@ describe('AsyncIndexer', () => {
                 return encodeCount++ === 0 ? firstResult : secondResult;
             });
 
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/a'), content: 'a' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a' });
             const firstDrain = indexer.drain();
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/b'), content: 'b' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/b'), content: 'b' });
 
             try {
                 resolveFirst(makeEmbedResult());
@@ -194,7 +214,7 @@ describe('AsyncIndexer', () => {
             const existingHash = [...new Uint8Array(hashBytes)].map(b => b.toString(16).padStart(2, '0')).join('');
 
             mockVectorIndex.getHash.mockReturnValue(existingHash);
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/identity/foo'), content: 'hello world' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/identity/foo'), content: 'hello world' });
             await indexer.drain();
             expect(mockEmbedder.encode).not.toHaveBeenCalled();
             expect(mockVectorIndex.upsert).not.toHaveBeenCalled();
@@ -202,7 +222,7 @@ describe('AsyncIndexer', () => {
 
         it('does embed when contentHash differs', async () => {
             mockVectorIndex.getHash.mockReturnValue('old-different-hash');
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/identity/foo'), content: 'hello world' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/identity/foo'), content: 'hello world' });
             await indexer.drain();
             expect(mockEmbedder.encode).toHaveBeenCalledTimes(1);
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
@@ -224,7 +244,7 @@ describe('AsyncIndexer', () => {
             mockEmbedder.encode.mockImplementation(async () => {
                 throw new Error('embed failed');
             });
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/a'), content: 'a' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a' });
             // Should not throw
             await indexer.drain();
             expect(logger.warn).toHaveBeenCalled();
@@ -239,8 +259,8 @@ describe('AsyncIndexer', () => {
                 }
                 return makeEmbedResult();
             });
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/a'), content: 'a' });
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/b'), content: 'b' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/b'), content: 'b' });
             await indexer.drain();
             // Second job should still be processed
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
@@ -251,7 +271,7 @@ describe('AsyncIndexer', () => {
                 throw new Error('delete failed');
             });
             indexer.enqueue({ kind: 'delete', path: createMemoryPath('/identity/foo') });
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/b'), content: 'b' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/b'), content: 'b' });
             await indexer.drain();
             expect(logger.warn).toHaveBeenCalled();
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
@@ -265,7 +285,7 @@ describe('AsyncIndexer', () => {
         });
 
         it('drains pending jobs before closing embedder', async () => {
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/a'), content: 'a' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a' });
             await indexer.close();
             expect(mockEmbedder.encode).toHaveBeenCalledTimes(1);
             expect(mockEmbedder.close).toHaveBeenCalledTimes(1);
@@ -293,7 +313,7 @@ describe('AsyncIndexer', () => {
                 vectorBytes: 128 as const,
                 vectorBits:  1024 as const,
             }));
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/a'), content: 'a' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a' });
             await indexer.drain();
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
             const upsertCalls = mockVectorIndex.upsert.mock.calls as unknown as [{ vector: Uint8Array }][];
@@ -307,7 +327,7 @@ describe('AsyncIndexer', () => {
             mockEmbedder.encode.mockImplementation(async () => {
                 throw new Error('embed error');
             });
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/a'), content: 'a' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a' });
             await indexer.drain();
             expect(logger.warn).toHaveBeenCalledTimes(1);
             const warnCalls = logger.warn.mock.calls as unknown as Record<string, unknown>[][];
@@ -321,7 +341,7 @@ describe('AsyncIndexer', () => {
             mockEmbedder.encode.mockImplementation(async () => {
                 throw new Error('embed error');
             });
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/a'), content: 'a' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a' });
             await indexer.drain();
             const warnCalls = logger.warn.mock.calls as unknown as Record<string, unknown>[][];
             const warnArg = warnCalls[0][0];
@@ -397,7 +417,7 @@ describe('AsyncIndexer', () => {
         });
 
         it('stamps updatedAt with the clock value at upsert time', async () => {
-            indexer.enqueue({ kind: 'upsert', layer: 'identity', path: createMemoryPath('/identity/foo'), content: 'text' });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/identity/foo'), content: 'text' });
             await indexer.drain();
             const arg = mockVectorIndex.upsert.mock.calls[0][0] as { updatedAt: number };
             expect(arg.updatedAt).toBe(FIXED_NOW);

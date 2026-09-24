@@ -5,6 +5,7 @@ import { configureCustomSQLite as configureFreshSQLite } from '../../../src/stor
 // @ts-expect-error Bun query specifiers create an isolated module instance for this process-global test.
 import { VectorIndex as DefaultConfigureVectorIndex } from '../../../src/storage/memory-vec-store/backend.ts?open-default-configure-test';
 import { VectorIndexError, VectorIndexUnavailableError } from '@/errors';
+import { createIndexLayer } from '@/storage/memory-tool';
 import {
     VectorIndex,
     configureCustomSQLite,
@@ -209,7 +210,7 @@ describe('VectorIndex validation without native SQLite calls', () => {
         try {
             let writeError: unknown;
             try {
-                index.upsert({ pk: 'pk', sk: 'sk', layer: 'identity', contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1 });
+                index.upsert({ pk: 'pk', sk: 'sk', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1 });
             } catch (error) {
                 writeError = error;
             }

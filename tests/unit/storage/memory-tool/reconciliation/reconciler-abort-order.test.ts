@@ -146,10 +146,11 @@ describe('runTagIndexReconciliation abort settlement order', () => {
         await expectAbortBeforeMarker('phase-a-pre-aborted', 2, []);
     });
 
-    test('Phase B enumeration abort rejects before the eighth boundary microtask', async () => {
+    test('Phase B enumeration abort rejects before the ninth boundary microtask', async () => {
         expect.hasAssertions();
-        // Prior Phase A/enumeration awaits shift the boundary to 8; async scanTagItems loses it.
-        await expectAbortBeforeMarker('phase-b-abort-during-tag-enumeration', 8, [
+        // Four Phase A partitions add one await before Phase B's enumeration boundary.
+        await expectAbortBeforeMarker('phase-b-abort-during-tag-enumeration', 9, [
+            'GSI1:GSI1PK = :gsi1pk',
             'GSI1:GSI1PK = :gsi1pk',
             'GSI1:GSI1PK = :gsi1pk',
             'GSI1:GSI1PK = :gsi1pk',

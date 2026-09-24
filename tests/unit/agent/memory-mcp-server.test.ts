@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
-import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem, TagIndexReadItem } from '../../../src/storage/memory-tool/types';
+import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexReadItem } from '../../../src/storage/memory-tool/types';
 import { mockLogger, textContent } from '../../setup';
 
 interface SafeParseResult { success: boolean }
@@ -30,7 +30,7 @@ const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryTool
 });
 
 // Helper to create mock tag index item
-const createMockTagIndexItem = (overrides: Partial<TagIndexItem> = {}): TagIndexItem => ({
+const createMockTagIndexItem = (overrides: Partial<TagIndexReadItem> = {}): TagIndexReadItem => ({
     PK:             'TAG#mock',
     SK:             'PATH#/mock/path',
     memoryPath:     '/mock/path',
@@ -157,6 +157,13 @@ describe.concurrent('createMemoryMCPServer', () => {
     });
 
     describe('view tool', () => {
+        test('rejects root directory with a clear memory-item error', async () => {
+            const server = createMemoryMCPServer(mockBackend);
+            const result = await getToolHandler(server, 'view')({ path: '/' });
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Root path / is not a memory item');
+            expect(mockBackend.get).not.toHaveBeenCalled();
+        });
         test('should return memory content when found', async () => {
             mockBackend.get = mock(async () => ({
                 path:        '/memories/test.md' as MemoryPath,

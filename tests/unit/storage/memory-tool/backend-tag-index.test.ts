@@ -4,7 +4,9 @@ import { logger } from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../setup';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
-import type { MemoryPath, TagIndexItem, TagIndexReadItem } from '@/storage/memory-tool/types';
+import { createIndexLayer, type MemoryPath, type TagIndexReadItem } from '@/storage/memory-tool/types';
+
+const IDENTITY = createIndexLayer('identity');
 
 /** Model the test table as optional even when the SDK's string index signature says otherwise. */
 const firstTestTableRequest = (input: BatchWriteCommandInput | undefined) => {
@@ -151,7 +153,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             // Return undefined UnprocessedItems (not empty object)
             ddbMock.on(BatchWriteCommand).resolves({});
@@ -172,7 +174,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             // Return UnprocessedItems with table key but empty array - still has keys
             // This should be treated as having unprocessed items and trigger retries
@@ -210,7 +212,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['tag1', 'tag2']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             const unprocessedItem = {
                 PutRequest: {
@@ -262,7 +264,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['tag1']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
             let batchCallCount = 0;
 
             const unprocessedItem = {
@@ -348,7 +350,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({});
@@ -366,7 +368,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({});
@@ -388,12 +390,33 @@ describe('MemoryToolBackendTagIndex', () => {
             });
         });
 
+        test('creates and counts only the rows for tags but stores the normalized full allTags set on each', async () => {
+            const path = '/users/alice/name' as MemoryPath;
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.createTagIndexItems(path, new Set(['Friend']), '2024-01-01T00:00:00.000Z', 'Alice', IDENTITY, new Set(['PERSON', 'friend']));
+
+            const requests = ddbMock.commandCalls(BatchWriteCommand).flatMap(call => call.args[0].input.RequestItems?.TestTable ?? []);
+            expect(requests).toHaveLength(1);
+            expect(requests[0]?.PutRequest?.Item).toEqual({
+                PK:             'TAG#friend',
+                SK:             'PATH#/users/alice/name',
+                memoryPath:     path,
+                layer:          IDENTITY,
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['person', 'friend']),
+                contentPreview: 'Alice',
+            });
+            expect(ddbMock.commandCalls(UpdateCommand).map(call => call.args[0].input.Key)).toEqual([{ PK: 'TAG#friend', SK: 'META_COUNT' }]);
+        });
+
         test('should split into batches of 25', async () => {
             const path = '/identity/values.md' as MemoryPath;
             const tags = new Set(Array.from({ length: 30 }, (_, i) => `tag${i}`));
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({});
@@ -412,7 +435,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             const unprocessedItem = {
                 PutRequest: {
@@ -450,7 +473,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({});
@@ -466,7 +489,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important', 'core', 'failed']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             // Simulate partial failure - 'failed' tag item remains unprocessed after retries
             const unprocessedItem = {
@@ -519,7 +542,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set<string>();
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             await backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
 
@@ -534,7 +557,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             // First call throws exception immediately
             ddbMock.on(BatchWriteCommand).rejects(new Error('DynamoDB service error'));
@@ -558,7 +581,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['tag1', 'tag2', 'tag3']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             const unprocessedItem2 = {
                 PutRequest: {
@@ -623,7 +646,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             // Response with empty UnprocessedItems object (not undefined)
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
@@ -643,7 +666,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['stuck-tag']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             const unprocessedItem = {
                 PutRequest: {
@@ -696,7 +719,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 new Set(['stuck-tag']),
                 '2024-01-01T00:00:00.000Z',
                 'My values',
-                'identity'
+                IDENTITY
             );
             await drainTimers();
             await expect(promise).rejects.toThrow('without a TAG# key');
@@ -712,7 +735,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 new Set(['stuck-tag']),
                 '2024-01-01T00:00:00.000Z',
                 'My values',
-                'identity'
+                IDENTITY
             );
             await drainTimers();
             await expect(promise).rejects.toMatchObject({
@@ -732,7 +755,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 new Set(['stuck-tag']),
                 '2024-01-01T00:00:00.000Z',
                 'My values',
-                'identity'
+                IDENTITY
             );
             await drainTimers();
 
@@ -760,7 +783,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 .resolvesOnce({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({});
 
-            const promise = backend.createTagIndexItems(path, tags, updatedAt, 'preview', 'identity');
+            const promise = backend.createTagIndexItems(path, tags, updatedAt, 'preview', IDENTITY);
             await drainTimers();
             await promise;
 
@@ -907,7 +930,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const newTags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({});
@@ -925,7 +948,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const newTags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({
@@ -951,7 +974,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const newTags = new Set(['important']);
             const updatedAt = '2024-01-02T00:00:00.000Z';
             const contentPreview = 'Updated values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
 
@@ -970,7 +993,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const newTags = new Set(['core', 'important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
 
@@ -989,7 +1012,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const newTags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({});
@@ -1008,7 +1031,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const newTags = new Set<string>();
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({
@@ -1023,13 +1046,29 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(requestItems).toHaveLength(2);
         });
 
+        test('stores the full new tag set on both created and refreshed rows', async () => {
+            const path = '/identity/values.md' as MemoryPath;
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+            ddbMock.on(UpdateCommand).resolves({});
+
+            await backend.updateTagIndexItems(path, new Set(['important', 'old']), new Set(['Important', 'core']), '2024-01-01T00:00:00.000Z', 'My core values', IDENTITY);
+
+            const putTags = new Map(ddbMock.commandCalls(BatchWriteCommand)
+                .flatMap(call => call.args[0].input.RequestItems?.TestTable ?? [])
+                .flatMap(request => (request.PutRequest?.Item ? [[request.PutRequest.Item.PK, request.PutRequest.Item.tags] as const] : [])));
+            expect(putTags).toEqual(new Map([
+                ['TAG#important', new Set(['important', 'core'])],
+                ['TAG#core', new Set(['important', 'core'])],
+            ]));
+        });
+
         test('should NOT increment counts for unchanged tags', async () => {
             const path = '/identity/values.md' as MemoryPath;
             const oldTags = new Set(['important', 'core']);
             const newTags = new Set(['important', 'core', 'new']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My core values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
             ddbMock.on(UpdateCommand).resolves({});
@@ -1058,7 +1097,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should return items from query', async () => {
-            const items: TagIndexItem[] = [
+            const items: TagIndexReadItem[] = [
                 {
                     PK:             'TAG#important',
                     SK:             'PATH#/identity/values.md',
@@ -1211,7 +1250,7 @@ describe('MemoryToolBackendTagIndex', () => {
         test('should apply layer filter as FilterExpression', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-            await backend.queryByTag('important', 'identity');
+            await backend.queryByTag('important', IDENTITY);
 
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls[0].args[0].input.FilterExpression).toContain('layer');
@@ -1261,7 +1300,7 @@ describe('MemoryToolBackendTagIndex', () => {
         test('should combine layer and date filters with AND', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-            await backend.queryByTag('important', 'identity', {
+            await backend.queryByTag('important', IDENTITY, {
                 startDate: '2024-01-01T00:00:00.000Z',
                 endDate:   '2024-01-31T23:59:59.999Z',
             });
@@ -1295,7 +1334,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
     describe('queryByTags', () => {
         test('requires every requested tag across pages and stops at the requested result count', async () => {
-            const item = (path: string, tags: string[]): TagIndexItem => ({
+            const item = (path: string, tags: string[]): TagIndexReadItem => ({
                 PK:             'TAG#alpha',
                 SK:             `PATH#${path}`,
                 memoryPath:     path,
@@ -1351,7 +1390,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should delegate to queryByTag for single tag', async () => {
-            const items: TagIndexItem[] = [
+            const items: TagIndexReadItem[] = [
                 {
                     PK:             'TAG#important',
                     SK:             'PATH#/identity/values.md',
@@ -1371,7 +1410,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should filter by remaining tags for multi-tag query', async () => {
-            const items: TagIndexItem[] = [
+            const items: TagIndexReadItem[] = [
                 {
                     PK:             'TAG#important',
                     SK:             'PATH#/identity/values.md',
@@ -1401,7 +1440,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should page until limit filled', async () => {
             // First page: 2 items, only 1 matches all tags
-            const page1: TagIndexItem[] = [
+            const page1: TagIndexReadItem[] = [
                 {
                     PK:             'TAG#important',
                     SK:             'PATH#/identity/file1.md',
@@ -1422,7 +1461,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 },
             ];
             // Second page: 1 item, matches all tags
-            const page2: TagIndexItem[] = [
+            const page2: TagIndexReadItem[] = [
                 {
                     PK:             'TAG#important',
                     SK:             'PATH#/identity/file3.md',
@@ -1449,7 +1488,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should stop when no more pages', async () => {
-            const items: TagIndexItem[] = [
+            const items: TagIndexReadItem[] = [
                 {
                     PK:             'TAG#important',
                     SK:             'PATH#/identity/file1.md',
@@ -1469,7 +1508,7 @@ describe('MemoryToolBackendTagIndex', () => {
         });
 
         test('should trim results to limit', async () => {
-            const items: TagIndexItem[] = [
+            const items: TagIndexReadItem[] = [
                 {
                     PK:             'TAG#important',
                     SK:             'PATH#/identity/file1.md',
@@ -1499,7 +1538,7 @@ describe('MemoryToolBackendTagIndex', () => {
         test('should normalize remaining tags in multi-tag queries', async () => {
             // Mock items returned from the driving tag query
             // Note: Stored tags are ALWAYS normalized (lowercase) in the database
-            const items: TagIndexItem[] = [
+            const items: TagIndexReadItem[] = [
                 {
                     PK:             'TAG#testtag',
                     SK:             'PATH#/identity/file1.md',
@@ -1531,7 +1570,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
         test('should handle duplicate tags after normalization', async () => {
             // Test that ['Important', 'IMPORTANT'] normalizes to ['important'] and works correctly
-            const items: TagIndexItem[] = [
+            const items: TagIndexReadItem[] = [
                 {
                     PK:             'TAG#important',
                     SK:             'PATH#/identity/file1.md',
@@ -1906,7 +1945,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
 
@@ -1921,7 +1960,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important', 'core']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
 
@@ -1937,7 +1976,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const tags = new Set(['important']);
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
 
@@ -1956,12 +1995,32 @@ describe('MemoryToolBackendTagIndex', () => {
             });
         });
 
+        test('rewrites only the rows for tags but stores the normalized full allTags set on each', async () => {
+            const path = '/users/alice/name' as MemoryPath;
+            ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+
+            await backend.refreshTagIndexItems(path, new Set(['Person']), '2024-01-01T00:00:00.000Z', 'Alice', IDENTITY, new Set(['Person', 'FRIEND']));
+
+            const requests = ddbMock.commandCalls(BatchWriteCommand).flatMap(call => call.args[0].input.RequestItems?.TestTable ?? []);
+            expect(requests).toHaveLength(1);
+            expect(requests[0]?.PutRequest?.Item).toEqual({
+                PK:             'TAG#person',
+                SK:             'PATH#/users/alice/name',
+                memoryPath:     path,
+                layer:          IDENTITY,
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['person', 'friend']),
+                contentPreview: 'Alice',
+            });
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+        });
+
         test('should split into batches of 25', async () => {
             const path = '/identity/values.md' as MemoryPath;
             const tags = new Set(Array.from({ length: 30 }, (_, i) => `tag${i}`));
             const updatedAt = '2024-01-01T00:00:00.000Z';
             const contentPreview = 'My values';
-            const layer = 'identity';
+            const layer = IDENTITY;
 
             ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
 
@@ -2090,7 +2149,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     UnprocessedItems: { TestTable: [{ PutRequest: { Item: { PK: 123 } } }] },
                 });
 
-                const promise = b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                const promise = b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', IDENTITY);
                 await drainTimers();
                 await expect(promise).rejects.toThrow('without a TAG# key');
                 expect(onDrift).toHaveBeenCalledTimes(1);
@@ -2110,7 +2169,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     .resolvesOnce({ UnprocessedItems: { TestTable: undefined } as never });
 
                 const promise = b.createTagIndexItems(
-                    path, new Set(['important']), '2024-01-01T00:00:00.000Z', 'preview', 'identity'
+                    path, new Set(['important']), '2024-01-01T00:00:00.000Z', 'preview', IDENTITY
                 );
                 await drainTimers();
 
@@ -2138,7 +2197,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 ddbMock.on(UpdateCommand).resolves({});
 
                 await drainTimers();
-                const promise = b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                const promise = b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', IDENTITY);
                 await drainTimers();
                 await promise;
 
@@ -2153,7 +2212,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 ddbMock.on(BatchWriteCommand).resolves({});
                 ddbMock.on(UpdateCommand).resolves({});
 
-                await b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                await b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', IDENTITY);
 
                 expect(onDrift).not.toHaveBeenCalled();
             });
@@ -2176,7 +2235,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 ddbMock.on(UpdateCommand).resolves({});
 
                 await drainTimers();
-                const promise = b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                const promise = b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', IDENTITY);
                 await drainTimers();
                 await promise;
 
@@ -2249,7 +2308,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     UnprocessedItems: { TestTable: [{ PutRequest: { Item: { PK: 'FILE#invalid' } } }] },
                 });
 
-                const promise = b.refreshTagIndexItems(path, new Set(['important']), '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                const promise = b.refreshTagIndexItems(path, new Set(['important']), '2024-01-01T00:00:00.000Z', 'preview', IDENTITY);
                 await drainTimers();
 
                 await expect(promise).rejects.toThrow('without a TAG# key');
@@ -2268,7 +2327,7 @@ describe('MemoryToolBackendTagIndex', () => {
                     UnprocessedItems: { TestTable: undefined } as never,
                 });
 
-                const promise = b.refreshTagIndexItems(path, new Set(['important']), '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                const promise = b.refreshTagIndexItems(path, new Set(['important']), '2024-01-01T00:00:00.000Z', 'preview', IDENTITY);
                 await drainTimers();
                 await expect(promise).rejects.toThrow('unprocessedItems[tableName] undefined');
                 expect(onDrift).toHaveBeenCalledTimes(1);
@@ -2293,7 +2352,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 });
 
                 await drainTimers();
-                const promise = b.refreshTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                const promise = b.refreshTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', IDENTITY);
                 await drainTimers();
                 await promise;
 
@@ -2307,7 +2366,7 @@ describe('MemoryToolBackendTagIndex', () => {
 
                 ddbMock.on(BatchWriteCommand).resolves({});
 
-                await b.refreshTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                await b.refreshTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', IDENTITY);
 
                 expect(onDrift).not.toHaveBeenCalled();
             });
@@ -2329,7 +2388,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 });
 
                 await drainTimers();
-                const promise = b.refreshTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                const promise = b.refreshTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', IDENTITY);
                 await drainTimers();
                 await promise;
 
@@ -2356,7 +2415,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 ddbMock.on(UpdateCommand).resolves({});
 
                 await drainTimers();
-                const promise = backend.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                const promise = backend.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', IDENTITY);
                 await drainTimers();
                 // Should not throw
                 await expect(promise).resolves.toBeUndefined();

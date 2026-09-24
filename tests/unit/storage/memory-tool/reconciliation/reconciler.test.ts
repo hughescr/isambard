@@ -4,7 +4,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../../setup';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import { runTagIndexReconciliation, delay, retryWithBackoff, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
-import type { MemoryPath, MemoryToolItemData, TagIndexItem, TagIndexReadItem } from '@/storage/memory-tool/types';
+import type { MemoryPath, MemoryToolItemData, TagIndexReadItem } from '@/storage/memory-tool/types';
 
 function namedError(name: string): Error {
     const error = new Error(name);
@@ -181,7 +181,7 @@ describe('runTagIndexReconciliation', () => {
     let options: ReconcilerOptions;
 
     // Helper to mock GSI1 queries for specific layers
-    const mockLayerQuery = (layer: 'identity' | 'state' | 'events', items: Record<string, unknown>[]) => {
+    const mockLayerQuery = (layer: 'identity' | 'state' | 'events' | 'users', items: Record<string, unknown>[]) => {
         ddbMock.on(QueryCommand, {
             IndexName:                 'GSI1',
             ExpressionAttributeValues: { ':gsi1pk': `LAYER#${layer}` },
@@ -193,6 +193,7 @@ describe('runTagIndexReconciliation', () => {
         mockLayerQuery('identity', []);
         mockLayerQuery('state', []);
         mockLayerQuery('events', []);
+        mockLayerQuery('users', []);
     };
 
     // Helper to mock Phase B to return no tags (empty GSI2 TAG_COUNTS)
@@ -205,9 +206,9 @@ describe('runTagIndexReconciliation', () => {
     };
 
     // Helper to mock Phase B with given tag index items (enumerated via GSI2 + per-tag queries)
-    const mockPhaseBWithItems = (items: TagIndexItem[]) => {
+    const mockPhaseBWithItems = (items: TagIndexReadItem[]) => {
         // Group items by tag
-        const byTag = new Map<string, TagIndexItem[]>();
+        const byTag = new Map<string, TagIndexReadItem[]>();
         for(const item of items) {
             const tag = item.PK.replace('TAG#', '');
             if(!byTag.has(tag)) {
@@ -241,6 +242,7 @@ describe('runTagIndexReconciliation', () => {
 
     beforeEach(() => {
         ddbMock.reset();
+        mockLayerQuery('users', []);
         ddbMock.on(UpdateCommand).resolves({});
         mockLogger.debug.mockReset();
         mockLogger.info.mockReset();
@@ -273,7 +275,7 @@ describe('runTagIndexReconciliation', () => {
     });
 
     describe('Phase A - Scan memory items', () => {
-        test('should scan all three layers (identity, state, events) via GSI1', async () => {
+        test('scans three cognitive layers and users namespace via GSI1', async () => {
             // Phase A should query GSI1 for each layer
             mockEmptyLayers();
             mockEmptyPhaseB();
@@ -283,9 +285,41 @@ describe('runTagIndexReconciliation', () => {
             const queryCalls = ddbMock.commandCalls(QueryCommand);
             const gsi1Calls = queryCalls.filter(call =>
                 call.args[0].input.IndexName === 'GSI1'
-                && new Set<string>(['LAYER#identity', 'LAYER#state', 'LAYER#events']).has(call.args[0].input.ExpressionAttributeValues?.[':gsi1pk'] as string));
+                && new Set<string>(['LAYER#identity', 'LAYER#state', 'LAYER#events', 'LAYER#users']).has(call.args[0].input.ExpressionAttributeValues?.[':gsi1pk'] as string));
 
-            expect(gsi1Calls).toHaveLength(3);
+            expect(gsi1Calls).toHaveLength(4);
+        });
+
+        test('repairs users tag metadata count-neutrally and cleans rename tombstones', async () => {
+            mockEmptyLayers();
+            mockLayerQuery('users', [{
+                PK:             'DIR#/users/alice',
+                SK:             'FILE#name',
+                GSI1PK:         'LAYER#users',
+                path:           '/users/alice/name',
+                updatedAt:      '2024-01-01T00:00:00Z',
+                contentPreview: 'Alice',
+                tags:           new Set(['person']),
+                metadata:       { previouslyKnownAs: '/users/alice/old', previouslyKnownAsTags: [] },
+            }]);
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#person', ':sk': 'PATH#/users/alice/name' },
+            }).resolvesOnce({ Items: [{ layer: 'unknown', updatedAt: '2024-01-01T00:00:00Z', contentPreview: 'Alice', tags: new Set(['person']) }] })
+                .resolves({ Items: [{ layer: 'users', updatedAt: '2024-01-01T00:00:00Z', contentPreview: 'Alice', tags: new Set(['person']) }] });
+            mockEmptyPhaseB();
+            const refresh = mock(async () => undefined);
+            deps.tagIndex = { ...tagIndex, refreshTagIndexItems: refresh } as unknown as ReconcilerDeps['tagIndex'];
+            const first = await runTagIndexReconciliation(deps, options);
+            expect(first.phaseA.itemsScanned).toBe(1);
+            expect(first.phaseA.indexItemsRefreshed).toBe(1);
+            expect(first.phaseA.indexItemsCreated).toBe(0);
+            expect(first.phaseA.metadataCleaned).toBe(1);
+            expect(ddbMock.commandCalls(UpdateCommand).map(call => call.args[0].input.Key)).toContainEqual({ PK: 'DIR#/users/alice', SK: 'FILE#name' });
+            expect(refresh).toHaveBeenCalledWith('/users/alice/name', new Set(['person']), '2024-01-01T00:00:00Z', 'Alice', 'users', new Set(['person']));
+            const second = await runTagIndexReconciliation(deps, options);
+            expect(second.phaseA.indexItemsRefreshed).toBe(0);
+            expect(refresh).toHaveBeenCalledTimes(1);
         });
 
         test('should handle memory item with undefined contentPreview', async () => {
@@ -331,7 +365,8 @@ describe('runTagIndexReconciliation', () => {
                 new Set(['test']),
                 '2024-01-01T00:00:00.000Z',
                 '', // Empty string fallback
-                'identity'
+                'identity',
+                new Set(['test'])
             );
         });
 
@@ -438,7 +473,8 @@ describe('runTagIndexReconciliation', () => {
                 new Set(['test']),
                 '2024-01-01T00:00:00.000Z',
                 'new content',
-                'identity'
+                'identity',
+                new Set(['test'])
             );
             expect(createSpy).not.toHaveBeenCalled();
         });
@@ -494,7 +530,7 @@ describe('runTagIndexReconciliation', () => {
             expect(result.phaseA.indexItemsRefreshed).toBe(1);
             expect(result.phaseA.indexItemsCreated).toBe(0);
             expect(refreshSpy).toHaveBeenCalledWith(
-                '/identity/core.md', new Set(['test']), '2024-01-01T00:00:00.000Z', writtenPreview, 'identity'
+                '/identity/core.md', new Set(['test']), '2024-01-01T00:00:00.000Z', writtenPreview, 'identity', new Set(['test'])
             );
             expect(createSpy).not.toHaveBeenCalled();
 
@@ -1806,7 +1842,7 @@ describe('runTagIndexReconciliation', () => {
         });
 
         test('should delete orphaned index items (memory does not exist)', async () => {
-            const orphanedIndexItem: TagIndexItem = {
+            const orphanedIndexItem: TagIndexReadItem = {
                 PK:             'TAG#orphan',
                 SK:             'PATH#/identity/deleted.md',
                 memoryPath:     '/identity/deleted.md',
@@ -1836,7 +1872,7 @@ describe('runTagIndexReconciliation', () => {
         });
 
         test('should delete stale index items (memory exists but no longer has the tag)', async () => {
-            const staleIndexItem: TagIndexItem = {
+            const staleIndexItem: TagIndexReadItem = {
                 PK:             'TAG#removed',
                 SK:             'PATH#/identity/updated.md',
                 memoryPath:     '/identity/updated.md',
@@ -1878,7 +1914,7 @@ describe('runTagIndexReconciliation', () => {
         });
 
         test('should keep valid index items', async () => {
-            const validIndexItem: TagIndexItem = {
+            const validIndexItem: TagIndexReadItem = {
                 PK:             'TAG#valid',
                 SK:             'PATH#/identity/file.md',
                 memoryPath:     '/identity/file.md',
@@ -1915,7 +1951,7 @@ describe('runTagIndexReconciliation', () => {
 
         test('should handle pagination within a single tag query', async () => {
             // Two items for the same tag across two pages
-            const page1Item: TagIndexItem = {
+            const page1Item: TagIndexReadItem = {
                 PK:             'TAG#test1',
                 SK:             'PATH#/identity/file1.md',
                 memoryPath:     '/identity/file1.md',
@@ -1925,7 +1961,7 @@ describe('runTagIndexReconciliation', () => {
                 contentPreview: 'content',
             };
 
-            const page2Item: TagIndexItem = {
+            const page2Item: TagIndexReadItem = {
                 PK:             'TAG#test1',
                 SK:             'PATH#/identity/file2.md',
                 memoryPath:     '/identity/file2.md',
@@ -2029,7 +2065,7 @@ describe('runTagIndexReconciliation', () => {
         });
 
         test('should count progress correctly (itemsScanned, indexItemsDeleted)', async () => {
-            const orphanedItem: TagIndexItem = {
+            const orphanedItem: TagIndexReadItem = {
                 PK:             'TAG#orphan',
                 SK:             'PATH#/identity/deleted.md',
                 memoryPath:     '/identity/deleted.md',
@@ -2039,7 +2075,7 @@ describe('runTagIndexReconciliation', () => {
                 contentPreview: 'content',
             };
 
-            const validItem: TagIndexItem = {
+            const validItem: TagIndexReadItem = {
                 PK:             'TAG#valid',
                 SK:             'PATH#/identity/file.md',
                 memoryPath:     '/identity/file.md',
@@ -2076,7 +2112,7 @@ describe('runTagIndexReconciliation', () => {
         });
 
         test('should handle errors gracefully and increment error counter', async () => {
-            const indexItem: TagIndexItem = {
+            const indexItem: TagIndexReadItem = {
                 PK:             'TAG#test',
                 SK:             'PATH#/identity/file.md',
                 memoryPath:     '/identity/file.md',
@@ -2103,7 +2139,7 @@ describe('runTagIndexReconciliation', () => {
         });
 
         test('should only process PATH# items (META_COUNT excluded by begins_with SK query)', async () => {
-            const tagIndexItem: TagIndexItem = {
+            const tagIndexItem: TagIndexReadItem = {
                 PK:             'TAG#test',
                 SK:             'PATH#/identity/file.md',
                 memoryPath:     '/identity/file.md',
@@ -2197,7 +2233,7 @@ describe('runTagIndexReconciliation', () => {
 
     describe('Phase C - Verify tag counts', () => {
         test('should verify tag counts when counts match', async () => {
-            const tagIndexItems: TagIndexItem[] = [
+            const tagIndexItems: TagIndexReadItem[] = [
                 {
                     PK:             'TAG#important',
                     SK:             'PATH#/identity/file1.md',
@@ -2541,7 +2577,7 @@ describe('runTagIndexReconciliation', () => {
             const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.indexItemsCreated).toBe(1);
             expect(createSpy).toHaveBeenCalledWith('/legacy/core.md', new Set(['legacy']),
-                '2024-01-01T00:00:00.000Z', 'legacy content', 'unknown');
+                '2024-01-01T00:00:00.000Z', 'legacy content', 'legacy', new Set(['legacy']));
         });
 
         test('does not dereference null metadata from a legacy row', async () => {
@@ -2896,7 +2932,7 @@ describe('runTagIndexReconciliation', () => {
             }).resolves({ Items: [] });
 
             // Phase B has error: GSI2 returns a tag, per-tag query returns an item, getMemory throws
-            const indexItem: TagIndexItem = {
+            const indexItem: TagIndexReadItem = {
                 PK:             'TAG#test',
                 SK:             'PATH#/identity/file.md',
                 memoryPath:     '/identity/file.md',

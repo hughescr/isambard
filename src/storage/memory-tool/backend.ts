@@ -4,7 +4,7 @@ import { type DynamoDBClientHolder } from '../client-holder';
 import type { IndexerJob } from '../memory-vec-store/types.js';
 import { DynamoTableAccess } from '../repositories/base';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
-import { MemoryToolBackendQuery, type ListOptions, type ListResult, type ScoredMemoryItem } from './backend-query';
+import { MemoryToolBackendQuery, type IndexNamespacePage, type ListOptions, type ListResult, type ScoredMemoryItem } from './backend-query';
 import { MemoryToolBackendTagIndex } from './backend-tag-index';
 import { normalizeTags, generateContentPreview, MemoryToolKeyGenerator } from './key-generator';
 import type { TagIndexReconciliationOps } from './reconciliation/reconciler';
@@ -12,8 +12,9 @@ import {
     type MemoryPath,
     type MemoryToolItemData,
     type LayerName,
+    type IndexLayer,
     type TagIndexReadItem,
-    extractLayerFromPath
+    classifyMemoryPath
 } from './types';
 
 type FailedMemoryItem = Record<string, { M?: Record<string, unknown> }>;
@@ -122,8 +123,7 @@ export class MemoryToolBackend extends DynamoTableAccess {
 
         // Create tag index items (best-effort) - counts handled internally by createTagIndexItems
         const normalizedTags = normalizeTags(input.tags);
-        const layer = extractLayerFromPath(input.path);
-        const layerStr = layer ?? 'unknown';
+        const layerStr = classifyMemoryPath(input.path).namespace;
         const contentPreview = generateContentPreview(result.content);
         try {
             await this.tagIndexOps.createTagIndexItems(
@@ -138,13 +138,9 @@ export class MemoryToolBackend extends DynamoTableAccess {
         }
 
         // Enqueue vector index upsert job (fire-and-forget)
-        const indexLayer = extractLayerFromPath(result.path);
-        const indexLayerStr = indexLayer ?? 'unknown';
-        // Stryker disable next-line llm: coreOps.create returns memoryToolItemSchema.parse(input), and memoryPathSchema only refines (no transform), so result.path === input.path and layerStr === indexLayerStr
-        this.enqueueIndex({ kind: 'upsert', layer: indexLayerStr, path: result.path, content: result.content });
+        this.enqueueIndex({ kind: 'upsert', layer: layerStr, path: result.path, content: result.content });
 
-        // Stryker disable next-line llm: coreOps.create returns memoryToolItemSchema.parse(input), and memoryPathSchema only refines (no transform), so result.path === input.path and layerStr === indexLayerStr
-        if(indexLayerStr === 'identity') {
+        if(layerStr === 'identity') {
             this.onIdentityWrite?.();
         }
 
@@ -250,8 +246,7 @@ export class MemoryToolBackend extends DynamoTableAccess {
         const result = await this.coreOps.update(path, input);
 
         if(contentOrTagsChanged) {
-            const layer = extractLayerFromPath(path);
-            const layerStr = layer ?? 'unknown';
+            const layerStr = classifyMemoryPath(path).namespace;
             const contentPreview = generateContentPreview(result.content);
             const normalizedNewTags = normalizeTags(result.tags);
 
@@ -303,8 +298,7 @@ export class MemoryToolBackend extends DynamoTableAccess {
         // Enqueue vector index delete job (fire-and-forget)
         this.enqueueIndex({ kind: 'delete', path });
 
-        // Stryker disable next-line llm: extractLayerFromPath returns a LayerName string or null; string.toString() is the same primitive and null?.toString() is undefined, so both compare identically to 'identity'
-        if(extractLayerFromPath(path)?.toString() === 'identity') {
+        if(classifyMemoryPath(path).namespace === 'identity') {
             this.onIdentityWrite?.();
         }
 
@@ -318,7 +312,7 @@ export class MemoryToolBackend extends DynamoTableAccess {
 
     async searchByTags(
         tags: Set<string>,
-        layer?: LayerName,
+        layer?: IndexLayer,
         options?: ListOptions
     ): Promise<ListResult<TagIndexReadItem>> {
         return this.queryOps.searchByTags(tags, layer, options);
@@ -329,6 +323,11 @@ export class MemoryToolBackend extends DynamoTableAccess {
         options?: ListOptions
     ): Promise<ListResult<MemoryToolItemData>> {
         return this.queryOps.listByLayer(layer, options);
+    }
+
+    /** Enumerate one indexed path namespace, including nested paths, with the page's consumed read units. */
+    async listByIndexNamespace(namespace: IndexLayer, options?: ListOptions): Promise<IndexNamespacePage> {
+        return this.queryOps.listByIndexNamespace(namespace, options);
     }
 
     async searchByTimeRange(

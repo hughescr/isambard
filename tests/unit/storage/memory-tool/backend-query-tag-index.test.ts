@@ -3,7 +3,7 @@ import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendQuery } from '@/storage/memory-tool/backend-query';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
-import type { LayerName, TagIndexItem } from '@/storage/memory-tool/types';
+import type { LayerName, TagIndexReadItem } from '@/storage/memory-tool/types';
 
 describe('MemoryToolBackendQuery - searchByTags', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -38,7 +38,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
     });
 
     test('should delegate to tagIndex.queryByTags with single tag', async () => {
-        const tagIndexItems: TagIndexItem[] = [
+        const tagIndexItems: TagIndexReadItem[] = [
             {
                 PK:             'TAG#important',
                 SK:             'PATH#/identity/values.md',
@@ -61,7 +61,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
     });
 
     test('should delegate to tagIndex.queryByTags with multiple tags (AND semantics)', async () => {
-        const tagIndexItems: TagIndexItem[] = [
+        const tagIndexItems: TagIndexReadItem[] = [
             {
                 PK:             'TAG#important',
                 SK:             'PATH#/identity/values.md',
@@ -138,7 +138,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
     });
 
     test('should return TagIndexItem preview data, not full MemoryToolItemData', async () => {
-        const tagIndexItems: TagIndexItem[] = [
+        const tagIndexItems: TagIndexReadItem[] = [
             {
                 PK:             'TAG#important',
                 SK:             'PATH#/identity/values.md',
@@ -249,7 +249,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
     });
 
     test('should handle multi-tag query with pagination', async () => {
-        const page1Items: TagIndexItem[] = [
+        const page1Items: TagIndexReadItem[] = [
             {
                 PK:             'TAG#important',
                 SK:             'PATH#/identity/values.md',

@@ -64,6 +64,8 @@ export {
 export {
     VectorIndex,
     AsyncIndexer,
+    PACKED_EMBEDDING_BYTES,
+    encodeOne,
     VectorIndexError,
     VectorIndexClosedError,
     VectorIndexUnavailableError,

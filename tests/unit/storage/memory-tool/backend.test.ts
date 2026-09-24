@@ -430,7 +430,7 @@ describe('MemoryToolBackend', () => {
         const testPath = '/state/test-file.md' as MemoryPath;
 
         describe('create with tags', () => {
-            test('uses the unknown layer for a valid path outside configured layers', async () => {
+            test('uses the first namespace for a valid path outside cognitive layers', async () => {
                 ddbMock.on(PutCommand).resolves({});
                 const path = '/other/note.md' as MemoryPath;
 
@@ -442,7 +442,23 @@ describe('MemoryToolBackend', () => {
                 });
 
                 const request = ddbMock.commandCalls(BatchWriteCommand)[0]?.args[0].input.RequestItems?.TestTable[0];
-                expect(request?.PutRequest?.Item?.layer).toBe('unknown');
+                expect(request?.PutRequest?.Item?.layer).toBe('other');
+            });
+
+            test('labels a /users memory users in both its GSI1 key and its tag rows', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                const path = '/users/alice/name' as MemoryPath;
+
+                await backend.create({
+                    path,
+                    content:     'Alice',
+                    contentType: 'text/plain',
+                    tags:        new Set(['person']),
+                });
+
+                expect(ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.GSI1PK).toBe('LAYER#users');
+                const request = ddbMock.commandCalls(BatchWriteCommand)[0]?.args[0].input.RequestItems?.TestTable[0];
+                expect(request?.PutRequest?.Item?.layer).toBe('users');
             });
 
             test('preserves the memory write and reports malformed tag-index retries', async () => {
@@ -586,7 +602,7 @@ describe('MemoryToolBackend', () => {
                 updatedAt: '2024-01-01T00:00:00.000Z',
             };
 
-            test('preserves the unknown layer when refreshing an unclassified memory', async () => {
+            test('preserves the first namespace when refreshing a non-cognitive memory', async () => {
                 const path = '/other/test-file.md' as MemoryPath;
                 ddbMock.on(GetCommand).resolves({ Item: {
                     ...existingItem,
@@ -599,7 +615,26 @@ describe('MemoryToolBackend', () => {
                 await backend.update(path, { content: 'Updated content' });
 
                 const requests = ddbMock.commandCalls(BatchWriteCommand).flatMap(call => call.args[0].input.RequestItems?.TestTable ?? []);
-                expect(requests.some(request => request.PutRequest?.Item?.layer === 'unknown')).toBe(true);
+                expect(requests.some(request => request.PutRequest?.Item?.layer === 'other')).toBe(true);
+            });
+
+            test('rewrites a /users memory tag row as users on update', async () => {
+                const path = '/users/alice/name' as MemoryPath;
+                ddbMock.on(GetCommand).resolves({ Item: {
+                    ...existingItem,
+                    PK:     'DIR#/users/alice',
+                    GSI1PK: 'LAYER#users',
+                    path,
+                } });
+                ddbMock.on(PutCommand).resolves({});
+
+                await backend.update(path, { content: 'Alice Smith' });
+
+                const layers = ddbMock.commandCalls(BatchWriteCommand)
+                    .flatMap(call => call.args[0].input.RequestItems?.TestTable ?? [])
+                    .flatMap(request => (request.PutRequest ? [request.PutRequest.Item?.layer] : []));
+                expect(layers.length).toBeGreaterThan(0);
+                expect(new Set(layers)).toEqual(new Set(['users']));
             });
 
             test('preserves an updated memory and reports malformed tag-index retries', async () => {
@@ -962,7 +997,7 @@ describe('MemoryToolBackend', () => {
         }
 
         describe('create', () => {
-            test('marks an unclassified path as unknown in the indexer job', async () => {
+            test('indexes a non-cognitive path under its first namespace', async () => {
                 ddbMock.on(PutCommand).resolves({});
                 const backendWithIndexer = makeBackendWithIndexer();
 
@@ -974,9 +1009,27 @@ describe('MemoryToolBackend', () => {
 
                 expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({
                     kind:  'upsert',
-                    layer: 'unknown',
+                    layer: 'other',
                     path:  '/other/note.md',
                 }));
+            });
+
+            test('indexes a /users memory as users, matching the backfill label', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithIndexer = makeBackendWithIndexer();
+
+                await backendWithIndexer.create({
+                    path:        '/users/alice/name' as MemoryPath,
+                    content:     'Alice',
+                    contentType: 'text/plain',
+                });
+
+                expect(enqueueMock).toHaveBeenCalledWith({
+                    kind:    'upsert',
+                    layer:   'users',
+                    path:    '/users/alice/name',
+                    content: 'Alice',
+                });
             });
 
             test('calls indexer.enqueue with upsert job after successful create', async () => {

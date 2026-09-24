@@ -9,7 +9,7 @@ import { createMemoryPath } from '@/storage/memory-tool';
 import { sha256Hex, type VectorIndexEntry } from '@/storage/memory-vec-store';
 
 const safeClient = { destroy: mock(() => undefined) };
-const safeList = mock(async () => ({ items: [], nextCursor: undefined }));
+const safeList = mock(async () => ({ items: [], nextCursor: undefined, consumedReadUnits: 0.5 }));
 const safeIndexClose = mock(() => undefined);
 const safeModelClose = mock(async () => undefined);
 const safeCreateClient = mock(() => ({ client: safeClient, docClient: {}, tableName: 'test-memory' }));
@@ -40,11 +40,22 @@ function makeIndex(existingHash?: string) {
     };
 }
 
-function makeRuntime(pages: { items: ReturnType<typeof makeItem>[], nextCursor?: string }[] = [{ items: [] }]) {
-    const queue = [...pages];
-    const nextPage = mock(async () => queue.shift() ?? { items: [], nextCursor: undefined });
-    const list = mock(async () => nextPage());
-    const listByLayer = mock(async () => nextPage());
+interface FakePage {
+    items:              ReturnType<typeof makeItem>[]
+    nextCursor?:        string
+    /** DynamoDB's reported ConsumedCapacity; a page that does not set it reports 1 RCU. */
+    consumedReadUnits?: number
+    /** Simulate DynamoDB omitting ConsumedCapacity from the response. */
+    omitCapacity?:      true
+}
+
+function makeRuntime(pages: FakePage[] = [{ items: [] }]) {
+    const queue = pages.map(({ consumedReadUnits = 1, omitCapacity, ...page }) => ({
+        ...page,
+        consumedReadUnits: omitCapacity ? undefined : consumedReadUnits,
+    }));
+    const nextPage = mock(async () => queue.shift() ?? { items: [], nextCursor: undefined, consumedReadUnits: 1 });
+    const listByIndexNamespace = mock(async () => nextPage());
     const destroy = mock(() => undefined);
     const index = { ...makeIndex(), close: mock(() => undefined) };
     const embedder = {
@@ -56,13 +67,13 @@ function makeRuntime(pages: { items: ReturnType<typeof makeItem>[], nextCursor?:
     const write = mock((_text: string) => undefined);
     const info = mock((_details: Record<string, unknown>) => undefined);
     const openStorage = mock(() => ({
-        backend: { list, listByLayer } as unknown as ReturnType<BackfillDependencies['openStorage']>['backend'],
+        backend: { listByIndexNamespace } as unknown as ReturnType<BackfillDependencies['openStorage']>['backend'],
         destroy,
     }));
     const openVectorIndex = mock(async () => index);
     const loadModel = mock(async () => embedder);
     const deps = { openStorage, openVectorIndex, loadModel, now, sleep, write, info } satisfies BackfillDependencies;
-    return { deps, list, listByLayer, destroy, index, embedder, now, sleep, write, info, openStorage, openVectorIndex, loadModel };
+    return { deps, listByIndexNamespace, destroy, index, embedder, now, sleep, write, info, openStorage, openVectorIndex, loadModel };
 }
 
 describe('vector backfill options', () => {
@@ -80,7 +91,17 @@ describe('vector backfill options', () => {
             force:      true,
             showHelp:   false,
         });
-        expect(DEFAULT_OPTIONS.rateLimitRcuPerSec).toBe(10);
+        // GSI1 is provisioned at 2 RCU, so the default must not exceed it.
+        expect(DEFAULT_OPTIONS.rateLimitRcuPerSec).toBe(2);
+        expect(DEFAULT_OPTIONS.layer).toBeUndefined();
+    });
+
+    test.each(['identity', 'state', 'events', 'users'])('accepts --layer %s', (layer) => {
+        expect(parseArgs(['bun', 'script', '--layer', layer]).layer as string | undefined).toBe(layer);
+    });
+
+    test.each(['identiy', 'user', 'unknown', 'foo', 'identity/core'])('rejects --layer typo or non-indexed namespace %s', (layer) => {
+        expect(() => parseArgs(['bun', 'script', `--layer=${layer}`])).toThrow(`Invalid --layer value: ${layer}. Must be one of identity, state, events, users.`);
     });
 
     test.each([
@@ -106,6 +127,8 @@ describe('vector backfill options', () => {
         expect(runtime.write).toHaveBeenCalledTimes(1);
         expect(runtime.write.mock.calls[0]?.[0]).toContain(`default: ${expectedPath}`);
         expect(runtime.write.mock.calls[0]?.[0]).toContain('Usage: bun tools/backfill-vectors.ts [options]');
+        expect(runtime.write.mock.calls[0]?.[0]).toContain('Without --layer, walks identity, state, events and users');
+        expect(runtime.write.mock.calls[0]?.[0]).toContain('Run once with --force --layer users after deploying #58');
         expect(runtime.openStorage).not.toHaveBeenCalled();
     });
 
@@ -212,7 +235,7 @@ describe('vector backfill page', () => {
         };
         const stats = await processPage([makeItem(0), makeItem(1), makeItem(2)], DEFAULT_OPTIONS, index, embedder);
         expect(stats).toEqual({ scanned: 3, skipped: 0, indexed: 2, errors: 1 });
-        expect(index.entries.map(entry => entry.layer)).toEqual(['identity', 'identity']);
+        expect(index.entries.map(entry => entry.layer as string)).toEqual(['identity', 'identity']);
         expect(index.entries.map(entry => entry.sk)).toEqual(['FILE#item-0', 'FILE#item-2']);
     });
 
@@ -422,13 +445,21 @@ describe('vector backfill page', () => {
         expect(write.mock.calls.map(call => call[0])).toEqual(['  Indexed 10 items in this page...\n']);
     });
 
-    test('preserves an unknown layer for malformed paths returned by storage', async () => {
+    test('logs and skips malformed legacy paths before hashing or indexing', async () => {
+        const warn = spyOn(logger, 'warn');
         const index = makeIndex();
         const embedder = { encode: mock(async () => ({ data: new Uint8Array(128) })) };
+        const hash = mock(async () => 'hash');
         const malformed = { path: 'noslash' as ReturnType<typeof createMemoryPath>, content: 'legacy row' };
-        const stats = await processPage([malformed], DEFAULT_OPTIONS, index, embedder);
-        expect(stats).toEqual({ scanned: 1, skipped: 0, indexed: 1, errors: 0 });
-        expect(index.entries[0]?.layer).toBe('unknown');
+        const root = { path: '/' as ReturnType<typeof createMemoryPath>, content: 'legacy root' };
+        const stats = await processPage([malformed, root, { path: createMemoryPath('/users/alice/name'), content: 'Alice' }], DEFAULT_OPTIONS, index, embedder, hash);
+        expect(stats).toEqual({ scanned: 3, skipped: 2, indexed: 1, errors: 0 });
+        expect(hash).toHaveBeenCalledTimes(1);
+        expect(index.entries.map(entry => entry.layer as string)).toEqual(['users']);
+        expect(warn.mock.calls.map(call => call[0]).filter(call => (call as Record<string, unknown>).msg === 'Skipping malformed memory path')).toEqual([
+            expect.objectContaining({ path: 'noslash', msg: 'Skipping malformed memory path' }),
+            expect.objectContaining({ path: '/', msg: 'Skipping malformed memory path' }),
+        ]);
     });
 });
 
@@ -452,8 +483,7 @@ describe('vector backfill runner with injected services', () => {
             }
         }
         class FakeBackend {
-            list = safeList;
-            listByLayer = safeList;
+            listByIndexNamespace = safeList;
             constructor(...args: unknown[]) { backendArgs.push(args); }
         }
         const open = mock(async () => ({ getHash: () => undefined, upsert: () => undefined, close: safeIndexClose }));
@@ -517,7 +547,7 @@ describe('vector backfill runner with injected services', () => {
         safeIndexClose.mockClear();
         safeModelClose.mockClear();
         const createHolder = mock(() => ({}));
-        const createBackend = mock(() => ({ list: safeList, listByLayer: safeList }));
+        const createBackend = mock(() => ({ listByIndexNamespace: safeList }));
         const platform = {
             createClient:    safeCreateClient,
             createHolder,
@@ -577,16 +607,15 @@ describe('vector backfill runner with injected services', () => {
         expect(runtime.openVectorIndex).toHaveBeenCalledWith(path.resolve('./vectors.sqlite'));
         expect(runtime.write.mock.calls.map(call => call[0])).toContain(`Opening vector index: ${path.resolve('./vectors.sqlite')}\n`);
         expect(runtime.loadModel).toHaveBeenCalledWith({ slug: '4b', quant: 'Q4_K_M' });
-        expect(runtime.list).not.toHaveBeenCalled();
-        expect(runtime.listByLayer).toHaveBeenNthCalledWith(1, 'identity', { limit: 100, cursor: undefined });
-        expect(runtime.listByLayer).toHaveBeenNthCalledWith(2, 'identity', { limit: 100, cursor: 'page-two' });
-        expect(runtime.sleep).toHaveBeenCalledTimes(1);
-        expect(runtime.sleep).toHaveBeenCalledWith(4250);
+        expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(2);
+        expect(runtime.listByIndexNamespace).toHaveBeenNthCalledWith(1, 'identity', { limit: 4, cursor: undefined });
+        expect(runtime.listByIndexNamespace).toHaveBeenNthCalledWith(2, 'identity', { limit: 4, cursor: 'page-two' });
+        expect(runtime.sleep).not.toHaveBeenCalled();
         expect(runtime.index.entries.map(entry => entry.sk)).toEqual(['FILE#item-0', 'FILE#item-1']);
         expect(runtime.info).toHaveBeenCalledWith(expect.objectContaining({
-            dbPath: path.resolve('./vectors.sqlite'), modelSlug: '4b', modelQuant: 'Q4_K_M', layer: 'identity', rateLimitRcuPerSec: 20, sleepIntervalMs: 5000, msg: 'Vector backfill starting',
+            dbPath: path.resolve('./vectors.sqlite'), modelSlug: '4b', modelQuant: 'Q4_K_M', layer: 'identity', rateLimitRcuPerSec: 20, msPerRcu: 50, pageSize: 4, msg: 'Vector backfill starting',
         }));
-        expect(runtime.write.mock.calls.map(call => call[0]).join('')).toContain('Scanned: 2\n  Skipped (up-to-date): 0\n  Indexed: 2\n  Errors: 0');
+        expect(runtime.write.mock.calls.map(call => call[0]).join('')).toContain('Scanned: 2\n  Skipped (unchanged or malformed): 0\n  Indexed: 2\n  Errors: 0');
         expect(runtime.embedder.close).toHaveBeenCalledTimes(1);
         expect(runtime.index.close).toHaveBeenCalledTimes(1);
         expect(runtime.destroy).toHaveBeenCalledTimes(1);
@@ -603,30 +632,121 @@ describe('vector backfill runner with injected services', () => {
             sleepStarted.resolve();
             return releaseSleep.promise;
         });
-        const pending = main(['bun', 'script'], runtime.deps);
+        const pending = main(['bun', 'script', '--layer=identity'], runtime.deps);
 
         try {
             await sleepStarted.promise;
-            expect(runtime.sleep).toHaveBeenCalledWith(10_000);
-            expect(runtime.list).toHaveBeenCalledTimes(1);
+            // The empty page reported 1 consumed RCU, paced at the default 2 RCU/s.
+            expect(runtime.sleep).toHaveBeenCalledWith(500);
+            expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(1);
         } finally {
             releaseSleep.resolve(undefined);
             await pending;
         }
 
-        expect(runtime.list).toHaveBeenCalledTimes(2);
-        expect(runtime.list).toHaveBeenNthCalledWith(2, '/', { limit: 100, cursor: 'page-two' });
+        expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(2);
+        expect(runtime.listByIndexNamespace).toHaveBeenNthCalledWith(2, 'identity', { limit: 4, cursor: 'page-two' });
     });
 
-    test('uses the full-memory listing and skips sleep when there is no next page', async () => {
-        const runtime = makeRuntime([{ items: [makeItem(0)] }]);
-        await main(['bun', 'script'], runtime.deps);
-        expect(runtime.list).toHaveBeenCalledTimes(1);
-        expect(runtime.list).toHaveBeenCalledWith('/', { limit: 100, cursor: undefined });
-        expect(runtime.listByLayer).not.toHaveBeenCalled();
+    test('unfiltered forced rebuild enumerates nested cognitive and users paths', async () => {
+        const person = { path: createMemoryPath('/users/alice/name'), content: 'Alice' };
+        const runtime = makeRuntime([
+            { items: [makeItem(0)] }, { items: [] }, { items: [] }, { items: [person] },
+        ]);
+        await main(['bun', 'script', '--force'], runtime.deps);
+        expect(runtime.listByIndexNamespace.mock.calls as unknown).toEqual([
+            ['identity', { limit: 4, cursor: undefined }],
+            ['state', { limit: 4, cursor: undefined }],
+            ['events', { limit: 4, cursor: undefined }],
+            ['users', { limit: 4, cursor: undefined }],
+        ]);
+        expect(runtime.index.entries.map(entry => entry.layer as string)).toEqual(['identity', 'users']);
+        expect(runtime.index.getHash).not.toHaveBeenCalled();
+        // Paced between namespaces too, but not after the very last page.
+        expect(runtime.sleep.mock.calls).toEqual([[500], [500], [500]]);
+        expect(runtime.info).toHaveBeenCalledWith(expect.objectContaining({ layer: 'all', rateLimitRcuPerSec: 2, msPerRcu: 500, pageSize: 4 }));
+        expect(runtime.write.mock.calls.map(call => call[0])).toContainEqual('Rate limit: 2 RCU/sec → 500ms per consumed RCU (GSI1 pages of up to 4 items, paced by DynamoDB\'s reported ConsumedCapacity)\n');
+    });
+
+    test('paces each page by the read units DynamoDB reports, so large items wait proportionally longer', async () => {
+        const runtime = makeRuntime([
+            // Three ~300 KB items: 112.5 RCU, far more than one unit per item.
+            { items: [makeItem(0), makeItem(1), makeItem(2)], nextCursor: 'next', consumedReadUnits: 112.5 },
+            { items: [makeItem(3)], nextCursor: 'last', consumedReadUnits: 0.5 },
+            { items: [] },
+        ]);
+        await main(['bun', 'script', '--layer=identity'], runtime.deps);
+        expect(runtime.sleep.mock.calls).toEqual([[56_250], [250]]);
+    });
+
+    test('still pays for rows the storage layer dropped as malformed', async () => {
+        // The query read (and was charged for) a large row that listByIndexNamespace then dropped.
+        const runtime = makeRuntime([
+            { items: [], nextCursor: 'next', consumedReadUnits: 37.5 },
+            { items: [] },
+        ]);
+        await main(['bun', 'script', '--layer=identity'], runtime.deps);
+        expect(runtime.sleep.mock.calls).toEqual([[18_750]]);
+        expect(runtime.write.mock.calls.map(call => call[0]).join('')).toContain('Scanned: 0');
+    });
+
+    test('bounds every page and paces each one before the next query, not in aggregate', async () => {
+        const runtime = makeRuntime([
+            { items: [makeItem(0)], nextCursor: 'a', consumedReadUnits: 3 },
+            { items: [makeItem(1)], nextCursor: 'b', consumedReadUnits: 40 },
+            { items: [makeItem(2)], consumedReadUnits: 1 },
+        ]);
+        runtime.now.mockReturnValueOnce(0).mockReturnValueOnce(1000).mockReturnValueOnce(2000).mockReturnValueOnce(3000);
+        await main(['bun', 'script', '--layer=identity'], runtime.deps);
+        expect(runtime.listByIndexNamespace.mock.calls as unknown).toEqual([
+            ['identity', { limit: 4, cursor: undefined }],
+            ['identity', { limit: 4, cursor: 'a' }],
+            ['identity', { limit: 4, cursor: 'b' }],
+        ]);
+        // Page one: 3 RCU = 1500 ms, 1000 ms already spent processing; page two: 40 RCU = 20 s, 1000 ms spent.
+        expect(runtime.sleep.mock.calls).toEqual([[500], [19_000]]);
+    });
+
+    test('with real timer pacing, the next query waits for the whole consumed-RCU budget', async () => {
+        jest.useFakeTimers();
+        const runtime = makeRuntime([
+            { items: [], nextCursor: 'next', consumedReadUnits: 37.5 },
+            { items: [] },
+        ]);
+        const sleeping = Promise.withResolvers<void>();
+        const deps = {
+            ...runtime.deps,
+            sleep: async (ms: number) => {
+                const timer = sleepForRateLimit(ms);
+                sleeping.resolve();
+                return timer;
+            },
+        };
+        const pending = main(['bun', 'script', '--layer=identity', '--rate-limit-rcu-per-sec=2'], deps);
+        await sleeping.promise;
+        expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(1);
+        jest.advanceTimersByTime(18_749);
+        // The pacing timer is still pending one millisecond short of 37.5 RCU at 2 RCU/s.
+        expect(jest.getTimerCount()).toBe(1);
+        expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(1);
+        jest.advanceTimersByTime(1);
+        expect(jest.getTimerCount()).toBe(0);
+        await pending;
+        expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(2);
+    });
+
+    test('refuses to continue unpaced when DynamoDB reports no consumed capacity, and still cleans up', async () => {
+        const runtime = makeRuntime([
+            { items: [makeItem(0)], nextCursor: 'next', omitCapacity: true },
+            { items: [] },
+        ]);
+        await expect(main(['bun', 'script', '--layer=identity'], runtime.deps)).rejects.toThrow(
+            'GSI1 query for identity reported no ConsumedCapacity; refusing to continue without RCU pacing'
+        );
+        expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(1);
+        expect(runtime.embedder.encode).not.toHaveBeenCalled();
         expect(runtime.sleep).not.toHaveBeenCalled();
-        expect(runtime.info).toHaveBeenCalledWith(expect.objectContaining({ layer: 'all', rateLimitRcuPerSec: 10, sleepIntervalMs: 10_000 }));
-        expect(runtime.write.mock.calls.map(call => call[0])).toContainEqual(expect.stringContaining('Rate limit: 10 RCU/sec → 10000ms between pages of 100 items'));
+        expect(runtime.destroy).toHaveBeenCalledTimes(1);
     });
 
     test('includes skipped matches in the final totals without embedding them', async () => {
@@ -636,14 +756,14 @@ describe('vector backfill runner with injected services', () => {
         await main(['bun', 'script'], runtime.deps);
         expect(runtime.embedder.encode).toHaveBeenCalledTimes(1);
         expect(runtime.index.entries.map(entry => entry.sk)).toEqual(['FILE#item-1']);
-        expect(runtime.write.mock.calls.map(call => call[0]).join('')).toContain('Scanned: 2\n  Skipped (up-to-date): 1\n  Indexed: 1\n  Errors: 0');
+        expect(runtime.write.mock.calls.map(call => call[0]).join('')).toContain('Scanned: 2\n  Skipped (unchanged or malformed): 1\n  Indexed: 1\n  Errors: 0');
     });
 
     test('sleeps for the final millisecond needed to meet the page budget', async () => {
         const runtime = makeRuntime([{ items: [], nextCursor: 'next' }, { items: [] }]);
-        runtime.now.mockReturnValueOnce(0).mockReturnValueOnce(9999).mockReturnValue(10_000);
+        runtime.now.mockReturnValueOnce(0).mockReturnValueOnce(499).mockReturnValue(500);
 
-        await main(['bun', 'script'], runtime.deps);
+        await main(['bun', 'script', '--layer=identity'], runtime.deps);
 
         expect(runtime.sleep).toHaveBeenCalledTimes(1);
         expect(runtime.sleep).toHaveBeenCalledWith(1);
@@ -651,9 +771,9 @@ describe('vector backfill runner with injected services', () => {
 
     test('continues pagination without sleeping when page processing already spent the budget', async () => {
         const runtime = makeRuntime([{ items: [], nextCursor: 'next' }, { items: [] }]);
-        runtime.now.mockReturnValueOnce(0).mockReturnValueOnce(12_000).mockReturnValue(12_000);
-        await main(['bun', 'script'], runtime.deps);
-        expect(runtime.list).toHaveBeenCalledTimes(2);
+        runtime.now.mockReturnValueOnce(0).mockReturnValueOnce(600).mockReturnValue(600);
+        await main(['bun', 'script', '--layer=identity'], runtime.deps);
+        expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(2);
         expect(runtime.sleep).not.toHaveBeenCalled();
         expect(runtime.write.mock.calls.map(call => call[0]).join('')).toContain('Scanned: 0');
     });
@@ -695,7 +815,7 @@ describe('vector backfill runner with injected services', () => {
             closing.resolve();
             return closeGate.promise;
         });
-        const pending = main(['bun', 'script'], runtime.deps);
+        const pending = main(['bun', 'script', '--layer=identity'], runtime.deps);
         await closing.promise;
         expect(runtime.index.close).not.toHaveBeenCalled();
         expect(runtime.destroy).not.toHaveBeenCalled();

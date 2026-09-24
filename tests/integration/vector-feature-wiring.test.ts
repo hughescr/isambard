@@ -37,7 +37,7 @@ import * as dynamoClientModule from '@/storage/client';
 import { DynamoDBClientHolder } from '@/storage/client-holder';
 import * as memoryToolModule from '@/storage/memory-tool';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
-import type { MemoryPath } from '@/storage/memory-tool/types';
+import { createIndexLayer, type MemoryPath } from '@/storage/memory-tool/types';
 import * as vecStoreModule from '@/storage/memory-vec-store';
 import type { IndexerJob } from '@/storage/memory-vec-store/types';
 import * as sessionResumeModule from '@/storage/session-resume';
@@ -562,7 +562,7 @@ describe('Vector feature wiring', () => {
             const afterCreate = [...enqueuedJobs];
             expect(afterCreate).toHaveLength(1);
             expect(afterCreate[0]).toEqual({
-                kind: 'upsert', path: '/state/test-item' as MemoryPath, layer: 'state', content: 'original content',
+                kind: 'upsert', path: '/state/test-item' as MemoryPath, layer: createIndexLayer('state'), content: 'original content',
             });
 
             // 2. update → should enqueue another 'upsert' job
@@ -570,7 +570,7 @@ describe('Vector feature wiring', () => {
             const afterUpdate = [...enqueuedJobs];
             expect(afterUpdate).toHaveLength(2);
             expect(afterUpdate[1]).toEqual({
-                kind: 'upsert', path: '/state/test-item' as MemoryPath, layer: 'state', content: 'updated content',
+                kind: 'upsert', path: '/state/test-item' as MemoryPath, layer: createIndexLayer('state'), content: 'updated content',
             });
 
             // 3. delete → should enqueue a 'delete' job

@@ -8,7 +8,9 @@ import { sigmoidScore } from './sigmoid';
 import {
     type MemoryToolItemData,
     type LayerName,
+    type IndexLayer,
     type TagIndexReadItem,
+    LAYER_NAMES,
     createLayerName,
     decodeMemoryAccessStats
 } from './types';
@@ -29,6 +31,15 @@ export interface ListOptions {
 export interface ListResult<T> {
     items:       T[]
     nextCursor?: string
+}
+
+/** A GSI1 namespace page plus the read capacity DynamoDB charged for it. */
+export interface IndexNamespacePage extends ListResult<MemoryToolItemData> {
+    /**
+     * `ConsumedCapacity.CapacityUnits` for the query — every row read, including rows dropped
+     * from `items` as malformed — or undefined when DynamoDB did not report it.
+     */
+    consumedReadUnits: number | undefined
 }
 
 export interface ScoredMemoryItem {
@@ -146,7 +157,7 @@ export class MemoryToolBackendQuery {
      */
     async searchByTags(
         tags: Set<string>,
-        layer?: LayerName,
+        layer?: IndexLayer,
         options?: ListOptions
     ): Promise<ListResult<TagIndexReadItem>> {
         // Stryker disable next-line llm: tagIndex is declared `?: MemoryToolBackendTagIndex`, so undefined is its only absent state and !this.tagIndex already covers it
@@ -158,10 +169,14 @@ export class MemoryToolBackendQuery {
         return this.tagIndex.queryByTags([...tags], layer, options);
     }
 
-    async listByLayer(
-        layer: LayerName,
+    async listByLayer(layer: LayerName, options?: ListOptions): Promise<ListResult<MemoryToolItemData>> {
+        return this.listByIndexNamespace(layer, options);
+    }
+
+    async listByIndexNamespace(
+        layer: IndexLayer,
         options?: ListOptions
-    ): Promise<ListResult<MemoryToolItemData>> {
+    ): Promise<IndexNamespacePage> {
         // Query GSI1 to get all items in the layer, including nested paths
         // GSI1PK = LAYER#{layer}, GSI1SK = UPDATED#{timestamp}
         const hasDateFilter = options?.startDate ?? options?.endDate;
@@ -170,7 +185,9 @@ export class MemoryToolBackendQuery {
             ExpressionAttributeValues: {
                 ':pk': `LAYER#${layer}`,
             },
-            ScanIndexForward: false, // Newest first (descending by GSI1SK)
+            ScanIndexForward:       false, // Newest first (descending by GSI1SK)
+            // Free to request; lets callers such as the vector backfill pace by true read units.
+            ReturnConsumedCapacity: 'TOTAL',
         };
 
         // Build KeyConditionExpression based on whether date filters are provided
@@ -195,7 +212,7 @@ export class MemoryToolBackendQuery {
         const items = (result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(isDefined);
         const nextCursor = this.encodeCursor(result.LastEvaluatedKey);
 
-        return { items, nextCursor };
+        return { items, nextCursor, consumedReadUnits: result.ConsumedCapacity?.CapacityUnits };
     }
 
     async searchByTimeRange(
@@ -206,7 +223,7 @@ export class MemoryToolBackendQuery {
     ): Promise<MemoryToolItemData[]> {
         // Query GSI1 by layer with time range
         // GSI1PK = LAYER#{layer} AND GSI1SK BETWEEN UPDATED#{start} AND UPDATED#{end}
-        const layers = layer ? [layer] : ['identity', 'state', 'events'] as const;
+        const layers = layer ? [layer] : LAYER_NAMES;
         const allItems: MemoryToolItemData[] = [];
 
         // Calculate per-layer limit to distribute evenly
@@ -257,7 +274,7 @@ export class MemoryToolBackendQuery {
     ): Promise<MemoryToolItemData[]> {
         // Query GSI1 by layer with open-ended time range (>= startTime, no upper bound)
         // GSI1PK = LAYER#{layer} AND GSI1SK >= UPDATED#{start}
-        const layers = layer ? [layer] : ['identity', 'state', 'events'] as const;
+        const layers = layer ? [layer] : LAYER_NAMES;
         const allItems: MemoryToolItemData[] = [];
 
         // Calculate per-layer limit to distribute evenly

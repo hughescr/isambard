@@ -328,7 +328,7 @@ describe('reconciler public progress and producer contracts', () => {
  * the GSI1 partition keys that Phase A scans.
  */
 describe('reconciler phase A layer coverage', () => {
-    test('scans identity, state and events exactly once each', async () => {
+    test('scans cognitive partitions and users exactly once each', async () => {
         const scannedPartitions: string[] = [];
         const deps = makeDeps(async (command) => {
             const values = commandInput(command).ExpressionAttributeValues as Record<string, string> | undefined;
@@ -341,6 +341,6 @@ describe('reconciler phase A layer coverage', () => {
 
         await runTagIndexReconciliation(deps, options);
 
-        expect(scannedPartitions).toEqual(['LAYER#identity', 'LAYER#state', 'LAYER#events']);
+        expect(scannedPartitions).toEqual(['LAYER#identity', 'LAYER#state', 'LAYER#events', 'LAYER#users']);
     });
 });
