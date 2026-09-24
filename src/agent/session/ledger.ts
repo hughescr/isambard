@@ -229,7 +229,7 @@ export type LedgerEvent
       | { type: 'turn_synopsis', turnId: string, text: string, at: Date }
       /**
        * A quota reading from the usage-endpoint poller
-       * ({@link import('./quota-poller').createQuotaPoller}), already normalised to
+       * (the app's quota poller), already normalised to
        * {@link QuotaWindow} units. Merged per window into {@link Ledger.quota} with
        * `source: 'poll'`; the SDK's own `rate_limit_event` frames fold in the same place with
        * `source: 'headers'`.
@@ -741,7 +741,7 @@ function toResetsAtMs(resetsAt: unknown): number | undefined {
 
 /**
  * Normalises one raw rate-limit window into a {@link QuotaWindow}. Shared by the
- * `rate_limit_event` fold below and the usage-endpoint poller (./quota-poller.ts) so the unit
+ * `rate_limit_event` fold below and the usage-endpoint poller (src/app/quota-poller.ts) so the unit
  * conversion lives in exactly one place: `utilization` is a 0-1 fraction scaled to 0-100, and
  * `resetsAt` is read by {@link toResetsAtMs}. Both arguments are `unknown` because both call sites
  * read them off a payload the SDK does not declare; a window with no usable utilization is no

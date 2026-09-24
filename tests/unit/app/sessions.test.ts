@@ -14,7 +14,7 @@ import { fakeQueryFn, type FakeQuery } from '../../helpers/fake-query';
 import { FakeResumeStore } from '../../helpers/fake-resume-store';
 import * as frames from '../../helpers/sdk-frames';
 import { mockGenerateTextWithSystemPrompt, mockLogger, originalGenerateTextWithSystemPrompt } from '../../setup';
-import { DEFAULT_STEP_PERCENT, createLedgerStore, formatTimeHeader, type AttachTurnSynopsisDeps, type ContextBuilder, type DiscordQueryEnvelope, type Envelope, type QueryEnvelope, type QuotaFetch, type QuotaFetchResponse, type TimeHeaderProvider } from '@/agent';
+import { DEFAULT_STEP_PERCENT, createLedgerStore, formatTimeHeader, type AttachTurnSynopsisDeps, type ContextBuilder, type DiscordQueryEnvelope, type Envelope, type QueryEnvelope, type TimeHeaderProvider } from '@/agent';
 import * as turnSynopsisModule from '@/agent/session/turn-synopsis';
 import type { JournalEntry } from '@/agent/session/types';
 import { createChannelId, createUserId, type UserId } from '@/agent/types';
@@ -22,6 +22,7 @@ import * as mcpServersModule from '@/app/mcp-servers';
 import type { McpSharedDeps } from '@/app/mcp-servers';
 import { createConversationConductor, createPerchConductor, createSessionAmbience, type CreateConversationConductorParams, type CreatePerchConductorParams, type SessionAmbience } from '@/app/sessions';
 import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
+import type { QuotaFetch, QuotaFetchResponse } from '@/utils';
 
 type MCPServers = ReturnType<typeof mcpServersModule.createMcpServerInstances>;
 

@@ -39,7 +39,7 @@ import type {
     VendorSnapshot,
     VendorStatus,
     VendorTokenMix
-} from './quota-poller';
+} from './provider-snapshot';
 import type { SessionRole } from './types';
 
 /**

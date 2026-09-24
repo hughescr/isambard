@@ -31,6 +31,7 @@
 import type { HookCallbackMatcher, HookEvent, McpServerConfig, Options, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Logger } from '@hughescr/logger';
 import { createMcpServerInstances, type McpSharedDeps } from './mcp-servers';
+import { createQuotaPoller, type CreateQuotaPollerParams, type QuotaPoller } from './quota-poller';
 // The same window drives this module's own recovery reads ({@link loadBootRecovery}: the
 // pre-open `bootLostTasks` snapshot, perch's task-launch seed and its compaction bundle) and the
 // session supervisor's boot-time recovery; perch's boot bundles take theirs from the conductor's
@@ -52,7 +53,6 @@ import {
     createContextPolicy,
     createLedgerStore,
     createPeerMessageHooks,
-    createQuotaPoller,
     createSessionLifecycleHooks,
     createSynopsisBudget,
     createSynopsisGenerator,
@@ -74,13 +74,11 @@ import {
     type Conductor,
     type ContextPolicy,
     type CreateBootBundleBuilderParams,
-    type CreateQuotaPollerParams,
     type DeliverableEnvelope,
     type Envelope,
     type LedgerStore,
     type QueryEnvelope,
     type TaskQueryEnvelope,
-    type QuotaPoller,
     type ResumeStore,
     type SessionOpenCause,
     type SessionRole,

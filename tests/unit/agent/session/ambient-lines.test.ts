@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'bun:test';
 import { QUOTA_LINE_PREFIX, composeAmbientLines, withAmbientLines, type ComposeAmbientLinesParams } from '@/agent/session/ambient-lines';
 import { initialLedger, type Ledger, type LedgerQuota, type LedgerTask, type LedgerTurn } from '@/agent/session/ledger';
-import type { VendorSnapshot } from '@/agent/session/quota-poller';
+import type { VendorSnapshot } from '@/agent/session/provider-snapshot';
 
 const TIMEZONE = 'America/Los_Angeles';
 // tests/setup.ts mocks Intl.DateTimeFormat with a fixed, DST-free -8 offset for this zone, so

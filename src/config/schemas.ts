@@ -20,7 +20,7 @@ export const appConfigSchema = z.object({
  * hand it the comma-separated env-var form verbatim.
  */
 export const quotaConfigSchema = z.object({
-    /** Gap between background polls of the usage endpoint (`quota-poller.ts`). */
+    /** Gap between background polls of the usage endpoint (`src/app/quota-poller.ts`). */
     pollIntervalMs:      z.number().int().positive().default(300_000),
     /** Five-hour utilization at which perch stops taking scheduled turns; the pause self-clears when the window resets. */
     perchPauseAtPercent: z.number().int().positive().max(100).default(90),

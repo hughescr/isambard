@@ -63,31 +63,24 @@ export {
 } from './ambient-lines';
 
 export {
-    DEFAULT_QUOTA_POLL_INTERVAL_MS,
-    DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
-    DEFAULT_QUOTA_REQUEST_TIMEOUT_MS,
-    DEFAULT_VENDOR_REPORT_URL,
-    DEFAULT_ANTHROPIC_USAGE_URL,
+    projectQuotaPolled,
+    unifiedAnthropicQuotaId,
     type AnthropicQuotaSource,
-    type CreateQuotaPollerParams,
-    type QuotaFetch,
-    type QuotaFetchResponse,
-    type QuotaPoller,
+    type VendorScopeLabel,
+    type VendorQuotaKind,
     type VendorSnapshot,
     type VendorStatus,
     type VendorObservation,
     type VendorQuota,
     type VendorBalance,
+    type VendorSpendLimit,
     type VendorHistory,
     type VendorHistoryBlock,
     type VendorHistoryModel,
     type VendorTokenMix,
     type VendorReferencePrice,
-    type VendorReferencePrices,
-    createQuotaPoller,
-    parseVendorSnapshot,
-    parseUsageWindows
-} from './quota-poller';
+    type VendorReferencePrices
+} from './provider-snapshot';
 
 export {
     buildSessionQueryOptions,

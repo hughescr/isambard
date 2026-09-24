@@ -1,4 +1,6 @@
 export { assertNever } from './assert-never';
+export type { QuotaFetch, QuotaFetchResponse } from './http-fetch';
+export { asRecord, stringValue, booleanValue, finiteNumber, dateValue, scopeLabel } from './quota-wire';
 
 export {
     getTimeOfDay,

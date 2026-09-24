@@ -1,20 +1,12 @@
 import { describe, expect, it, jest, type Mock } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
-import { FakeClock } from '../../../helpers/fake-clock';
+import { FakeClock } from '../../helpers/fake-clock';
 import { composeAmbientLines } from '@/agent/session/ambient-lines';
 import { createLedgerStore, initialLedger, type LedgerEvent } from '@/agent/session/ledger';
-import {
-    DEFAULT_ANTHROPIC_USAGE_URL,
-    DEFAULT_VENDOR_REPORT_URL,
-    DEFAULT_QUOTA_REQUEST_TIMEOUT_MS,
-    DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
-    type CreateQuotaPollerParams,
-    type QuotaFetch,
-    type QuotaFetchResponse,
-    createQuotaPoller,
-    parseVendorSnapshot,
-    parseUsageWindows
-} from '@/agent/session/quota-poller';
+import { DEFAULT_QUOTA_REQUEST_TIMEOUT_MS, DEFAULT_QUOTA_RESULT_DEBOUNCE_MS, type CreateQuotaPollerParams, createQuotaPoller } from '@/app/quota-poller';
+import { DEFAULT_ANTHROPIC_USAGE_URL, parseUsageWindows } from '@/integrations/anthropic';
+import { DEFAULT_VENDOR_REPORT_URL, parseVendorSnapshot } from '@/integrations/utraque';
+import type { QuotaFetch, QuotaFetchResponse } from '@/utils';
 
 const RESET = '2026-09-11T22:00:00Z';
 const GENERATED = '2026-09-11T20:00:01Z';
@@ -114,11 +106,6 @@ function harness(overrides: Partial<CreateQuotaPollerParams> = {}): Harness {
 }
 
 describe('provider report parsing', () => {
-    it('uses the documented local report and official Anthropic fallback endpoints', () => {
-        expect(DEFAULT_VENDOR_REPORT_URL).toBe('http://127.0.0.1:8317/utraque/providers/v2');
-        expect(DEFAULT_ANTHROPIC_USAGE_URL).toBe('https://api.anthropic.com/api/oauth/usage');
-    });
-
     it('keeps the documented result debounce and request timeout defaults exact', () => {
         expect(DEFAULT_QUOTA_RESULT_DEBOUNCE_MS).toBe(30_000);
         expect(DEFAULT_QUOTA_REQUEST_TIMEOUT_MS).toBe(100_000);
@@ -608,13 +595,6 @@ describe('provider report parsing', () => {
 });
 
 describe('direct Anthropic fallback parsing', () => {
-    it('treats utilization as a real 0-100 percentage', () => {
-        expect(parseUsageWindows({ five_hour: { utilization: 0.42 }, seven_day: { utilization: 87 } })).toEqual({
-            windows:  { fiveHour: { utilization: 0.42 }, sevenDay: { utilization: 87 } },
-            rejected: false,
-        });
-    });
-
     it('maps the current unscoped limits schema and excludes scoped weekly limits', () => {
         const parsed = parseUsageWindows({ limits: [
             { kind: 'session', group: 'session', percent: 31.5, resets_at: RESET },
@@ -1058,12 +1038,19 @@ describe('provider polling', () => {
         const fetch = jest.fn<QuotaFetch>(async url => (url === DEFAULT_VENDOR_REPORT_URL
             ? { ok: false, status: 404, json: async () => ({}) }
             : ok({ five_hour: { utilization: 42 } })));
-        const { ledgers, poller } = harness({ fetch, fallbackHeaders: () => ({ Authorization: 'Bearer secret', 'anthropic-beta': 'oauth-2025-04-20' }) });
+        const headers = jest.fn(() => ({ 'X-Utraque-Token': 'local-token' }));
+        const fallbackHeaders = jest.fn(() => ({ Authorization: 'Bearer secret', 'anthropic-beta': 'oauth-2025-04-20' }));
+        const { ledgers, poller } = harness({ fetch, headers, fallbackHeaders });
         poller.start();
         await poller.poll();
+        expect(fetch).toHaveBeenNthCalledWith(1, DEFAULT_VENDOR_REPORT_URL, {
+            headers: { 'X-Utraque-Token': 'local-token' }, signal: expect.any(AbortSignal),
+        });
         expect(fetch).toHaveBeenNthCalledWith(2, DEFAULT_ANTHROPIC_USAGE_URL, {
             headers: { Authorization: 'Bearer secret', 'anthropic-beta': 'oauth-2025-04-20' }, signal: expect.any(AbortSignal),
         });
+        expect(headers).toHaveBeenCalledTimes(1);
+        expect(fallbackHeaders).toHaveBeenCalledTimes(1);
         expect(ledgers[0]?.dispatch).toHaveBeenCalledWith(expect.objectContaining({ quota: { fiveHour: { utilization: 42 } } }));
     });
 

@@ -10,7 +10,7 @@ import type {
     VendorSnapshot,
     VendorStatus,
     VendorTokenMix
-} from '@/agent/session/quota-poller';
+} from '@/agent/session/provider-snapshot';
 
 const TIMEZONE = 'America/Los_Angeles';
 const NOW = new Date('2026-09-09T22:07:00Z');
