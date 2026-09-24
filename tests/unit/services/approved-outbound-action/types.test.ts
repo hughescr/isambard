@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { type ApprovedOutboundActionState, type ApprovedOutboundActionWriter } from '@/services';
-import { approvalCardRefSchema, approvedOutboundActionSchema, type ApprovedOutboundAction } from '@/services/approved-outbound-action/types';
+import { approvalCardRefSchema, approvedOutboundActionSchema, isClaimed, type ApprovedOutboundAction } from '@/services/approved-outbound-action/types';
 
 const CARD_CHANNEL_ID = '1283746501928374650';
 const CARD_MESSAGE_ID = '1419283746501928374';
@@ -38,8 +38,8 @@ describe('ApprovedOutboundActionWriter', () => {
 });
 
 describe('approvedOutboundActionSchema', () => {
-    test('accepts each of the three lifecycle states', () => {
-        for(const state of ['approved', 'executed', 'failed'] as const) {
+    test('accepts each of the four lifecycle states', () => {
+        for(const state of ['approved', 'sending', 'executed', 'failed'] as const) {
             expect(approvedOutboundActionSchema.parse({ ...ROW, state }).state).toBe(state);
         }
     });
@@ -127,6 +127,15 @@ describe('approvedOutboundActionSchema', () => {
         expect(approvedOutboundActionSchema.safeParse({ ...ROW, outcomeNotified: 'yes' }).success).toBe(false);
     });
 
+    test('accepts and keeps a claimId uuid on a sending row', () => {
+        const row = { ...ROW, state: 'sending' as const, claimId: '11111111-2222-4333-8444-555555555555' };
+        expect(approvedOutboundActionSchema.parse(row)).toEqual(row);
+    });
+
+    test('rejects a claimId that is not a uuid', () => {
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, state: 'sending', claimId: 'claim-1' }).success).toBe(false);
+    });
+
     test('strips the four retired review-only fields when parsing', () => {
         const parsed = approvedOutboundActionSchema.parse({
             ...ROW,
@@ -136,5 +145,21 @@ describe('approvedOutboundActionSchema', () => {
             rejectionReason:   'nope',
         });
         expect(parsed).toEqual(ROW);
+    });
+});
+
+describe('isClaimed', () => {
+    const CLAIM_ID = '11111111-2222-4333-8444-555555555555';
+
+    test('is true for a sending row that carries a claimId', () => {
+        expect(isClaimed({ ...ROW, state: 'sending', claimId: CLAIM_ID })).toBe(true);
+    });
+
+    test('is false for a sending row with no claimId', () => {
+        expect(isClaimed({ ...ROW, state: 'sending' })).toBe(false);
+    });
+
+    test('is false for an approved row even if it carries a claimId', () => {
+        expect(isClaimed({ ...ROW, state: 'approved', claimId: CLAIM_ID })).toBe(false);
     });
 });

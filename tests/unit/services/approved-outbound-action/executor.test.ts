@@ -1,29 +1,50 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
 import { z } from 'zod';
-import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, WildDuckError } from '@/errors';
-import type { ApprovedOutboundActionBackend } from '@/services/approved-outbound-action/backend';
+import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError, WildDuckError } from '@/errors';
+import type { ClaimOutcome } from '@/services/approved-outbound-action/backend';
 import {
+    DEFAULT_CLAIM_LEASE_MS,
+    DEFAULT_SEND_TIMEOUT_MS,
+    STALE_CLAIM_ERROR,
     classifyFailure,
     createApprovedOutboundActionExecutor,
     requiredServiceFor,
+    sendTimedOutError,
+    type ApprovedOutboundActionExecutor,
     type ApprovedOutboundActionExecutorLogger
 } from '@/services/approved-outbound-action/executor';
-import type { ApprovedOutboundAction, ApprovedOutboundActionType } from '@/services/approved-outbound-action/types';
+import type { ApprovedOutboundAction, ApprovedOutboundActionType, ClaimedApprovedOutboundAction } from '@/services/approved-outbound-action/types';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
 
-const SAGA_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
+type ExecutorDeps = Parameters<typeof createApprovedOutboundActionExecutor>[0];
+type ExecutorBackend = ExecutorDeps['backend'];
 
-/** Enough microtask turns for a settled run to reach the loop's trailing reschedule. */
+const BSKY_ID = 'aaaaaaaa-1111-4222-8333-444444444444';
+const BSKY_ID_2 = 'aaaaaaaa-1111-4222-8333-000000000002';
+const EMAIL_ID = 'bbbbbbbb-1111-4222-8333-444444444444';
+const STALE_ID = 'cccccccc-1111-4222-8333-444444444444';
+const CLAIM_ID = '11111111-2222-4333-8444-555555555555';
+const OTHER_CLAIM_ID = '99999999-2222-4333-8444-555555555555';
+/** The fake clock's time in every test: when the default claim mock stamps its claims. */
+const CLAIMED_AT = '2026-03-30T10:05:00.000Z';
+const STALE_CLAIMED_AT = '2026-03-30T09:00:00.000Z';
+
+/** A send that never settles: a hung Bluesky or WildDuck call. */
+async function hang(): Promise<void> {
+    return Promise.withResolvers<undefined>().promise;
+}
+
+/** Enough microtask turns for a lane pass to reach its trailing reschedule. */
 async function flush(): Promise<void> {
-    for(let turn = 0; turn < 10; turn++) {
-        // eslint-disable-next-line no-await-in-loop -- each turn drains one microtask hop of the run's promise chain.
+    for(let turn = 0; turn < 50; turn++) {
+        // eslint-disable-next-line no-await-in-loop -- each turn drains one microtask hop of the pass's promise chain.
         await Promise.resolve();
     }
 }
 
-function makeSaga(overrides: Partial<ApprovedOutboundAction> = {}): ApprovedOutboundAction {
+function makeAction(overrides: Partial<ApprovedOutboundAction> = {}): ApprovedOutboundAction {
     return {
-        id:        SAGA_UUID,
+        id:        BSKY_ID,
         state:     'approved',
         type:      'bsky_reply',
         params:    { text: 'hello' },
@@ -33,35 +54,63 @@ function makeSaga(overrides: Partial<ApprovedOutboundAction> = {}): ApprovedOutb
     };
 }
 
+function claimedOf(action: ApprovedOutboundAction): ClaimedApprovedOutboundAction {
+    return { ...action, state: 'sending', claimId: CLAIM_ID, updatedAt: CLAIMED_AT };
+}
+
+const BSKY = makeAction();
+const BSKY_2 = makeAction({ id: BSKY_ID_2, params: { text: 'second' } });
+const EMAIL = makeAction({ id: EMAIL_ID, type: 'email_send', params: { uid: 42 } });
+const STALE: ClaimedApprovedOutboundAction = {
+    ...makeAction({ id: STALE_ID, type: 'bsky_dm', params: { convoId: 'c1', text: 'hi' } }),
+    state:     'sending',
+    claimId:   OTHER_CLAIM_ID,
+    updatedAt: STALE_CLAIMED_AT,
+};
+const STALE_OUTCOME: ClaimOutcome = { state: 'failed', lastError: STALE_CLAIM_ERROR, failureKind: 'permanent' };
+
 describe('createApprovedOutboundActionExecutor', () => {
-    let backend: ApprovedOutboundActionBackend;
+    let listed: ApprovedOutboundAction[];
+    let listOpen: ReturnType<typeof mock<ExecutorBackend['listOpen']>>;
+    let claim: ReturnType<typeof mock<ExecutorBackend['claim']>>;
+    let settleClaim: ReturnType<typeof mock<ExecutorBackend['settleClaim']>>;
+    let backend: ExecutorBackend;
     let registry: ServiceHealthRegistry;
-    let executors: Record<ApprovedOutboundActionType, (params: Record<string, unknown>) => Promise<void>>;
+    let executors: Record<ApprovedOutboundActionType, ReturnType<typeof mock<(params: Record<string, unknown>) => Promise<void>>>>;
     let logger: ApprovedOutboundActionExecutorLogger;
     let onOutcomeRecorded: ReturnType<typeof mock<() => void>>;
 
+    function build(extra: Partial<ExecutorDeps> = {}): ApprovedOutboundActionExecutor {
+        return createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, ...extra });
+    }
+
     beforeEach(() => {
         jest.useFakeTimers();
+        jest.setSystemTime(new Date(CLAIMED_AT));
         onOutcomeRecorded = mock((): void => undefined);
 
-        backend = {
-            listByState: mock(async (): Promise<ApprovedOutboundAction[]> => []),
-            updateState: mock(async (): Promise<void> => undefined),
-            create:      mock(async (): Promise<void> => undefined),
-            get:         mock(async (): Promise<ApprovedOutboundAction | undefined> => undefined),
-        } as unknown as ApprovedOutboundActionBackend;
+        // A tiny store: a claim turns the listed row into `sending`, a settle removes it.
+        listed = [];
+        listOpen = mock(async (): Promise<ApprovedOutboundAction[]> => listed);
+        claim = mock(async (action: ApprovedOutboundAction): Promise<ClaimedApprovedOutboundAction | undefined> => {
+            const claimed = claimedOf(action);
+            listed = listed.map(row => (row.id === action.id ? claimed : row));
+            return claimed;
+        });
+        settleClaim = mock(async (claimed: ClaimedApprovedOutboundAction, _outcome: ClaimOutcome): Promise<boolean> => {
+            listed = listed.filter(row => row.id !== claimed.id);
+            return true;
+        });
+        backend = { listOpen, claim, settleClaim };
 
         registry = {
             isAvailable: mock((_service: string): boolean => true),
         } as unknown as ServiceHealthRegistry;
 
         executors = {
-
-            bsky_reply: mock(async (): Promise<void> => undefined),
-
-            bsky_dm: mock(async (): Promise<void> => undefined),
-
-            email_send: mock(async (): Promise<void> => undefined),
+            bsky_reply: mock(async (_params: Record<string, unknown>): Promise<void> => undefined),
+            bsky_dm:    mock(async (_params: Record<string, unknown>): Promise<void> => undefined),
+            email_send: mock(async (_params: Record<string, unknown>): Promise<void> => undefined),
         };
 
         logger = {
@@ -78,299 +127,561 @@ describe('createApprovedOutboundActionExecutor', () => {
     });
 
     describe('executeOnce', () => {
-        test('returns {executed: 0, failed: 0} when no approved sagas', async () => {
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => []
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-            const result = await executor.executeOnce();
-
-            expect(result).toEqual({ executed: 0, failed: 0 });
+        test('returns zero counts when nothing is open, after listing once per service lane', async () => {
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(listOpen).toHaveBeenCalledTimes(2);
         });
 
-        test('executes saga and marks it as executed when service is available', async () => {
-            const saga = makeSaga({ type: 'bsky_reply' });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
+        test('claims, sends and settles an approved row as executed, in that order', async () => {
+            listed = [BSKY];
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-            const result = await executor.executeOnce();
+            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0 });
 
-            expect(result).toEqual({ executed: 1, failed: 0 });
-            expect(executors.bsky_reply).toHaveBeenCalledWith(saga.params);
-            expect(backend.updateState).toHaveBeenCalledWith(SAGA_UUID, 'executed');
+            expect(claim.mock.calls).toEqual([[BSKY]]);
+            expect(executors.bsky_reply.mock.calls).toEqual([[BSKY.params]]);
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'executed' }]]);
+            expect(claim.mock.invocationCallOrder[0]).toBeLessThan(executors.bsky_reply.mock.invocationCallOrder[0]);
+            expect(executors.bsky_reply.mock.invocationCallOrder[0]).toBeLessThan(settleClaim.mock.invocationCallOrder[0]);
+            expect(logger.info).toHaveBeenCalledWith({ actionId: BSKY_ID, type: 'bsky_reply' }, 'Approved outbound action executed successfully');
         });
 
-        test('skips saga when required service is unavailable', async () => {
-            const saga = makeSaga({ type: 'bsky_reply' });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
-            (registry.isAvailable as ReturnType<typeof mock>).mockImplementation(
-                (_service: string): boolean => false
-            );
+        test('skips a row whose service is unavailable without claiming it', async () => {
+            listed = [BSKY];
+            (registry.isAvailable as ReturnType<typeof mock>).mockImplementation((): boolean => false);
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-            const result = await executor.executeOnce();
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0 });
 
-            expect(result).toEqual({ executed: 0, failed: 0 });
+            expect(claim).not.toHaveBeenCalled();
             expect(executors.bsky_reply).not.toHaveBeenCalled();
-            expect(backend.updateState).not.toHaveBeenCalled();
             expect(logger.info).toHaveBeenCalledWith(
-                { actionId: SAGA_UUID, type: 'bsky_reply', service: 'bsky' },
+                { actionId: BSKY_ID, type: 'bsky_reply', service: 'bsky' },
                 'Skipping approved outbound action — required service unavailable'
             );
         });
 
-        test('marks saga as failed with lastError when executor throws', async () => {
-            const saga = makeSaga({ type: 'bsky_reply' });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
-            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<void> => { throw new Error('network failure'); }
-            );
+        test('skips a row another process claimed first, without sending or settling it', async () => {
+            listed = [BSKY];
+            claim.mockImplementation(async () => undefined);
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-            const result = await executor.executeOnce();
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0 });
 
-            expect(result).toEqual({ executed: 0, failed: 1 });
-            expect(backend.updateState).toHaveBeenCalledWith(
-                SAGA_UUID,
-                'failed',
-                { lastError: 'network failure', failureKind: 'transient' }
-            );
-            expect(logger.error).toHaveBeenCalledWith(
-                { actionId: SAGA_UUID, type: 'bsky_reply', error: 'network failure', failureKind: 'transient' },
-                'Approved outbound action execution failed'
-            );
+            expect(executors.bsky_reply).not.toHaveBeenCalled();
+            expect(settleClaim).not.toHaveBeenCalled();
+            expect(onOutcomeRecorded).not.toHaveBeenCalled();
+            expect(logger.info).toHaveBeenCalledWith({ actionId: BSKY_ID, type: 'bsky_reply' }, 'Skipping approved outbound action — already claimed elsewhere');
         });
 
-        test('records a permanent failureKind when the executor throws a validation error', async () => {
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [makeSaga({ type: 'bsky_reply' })]);
-            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(async (): Promise<void> => {
-                throw new BskyValidationError('Post exceeds 300 graphemes (301)');
+        test('a claim write failure rejects the pass and sends nothing', async () => {
+            listed = [BSKY];
+            claim.mockImplementation(async () => {
+                throw new Error('claim write failed');
             });
 
-            await createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce();
-
-            expect(backend.updateState).toHaveBeenCalledWith(
-                SAGA_UUID,
-                'failed',
-                { lastError: 'Post exceeds 300 graphemes (301)', failureKind: 'permanent' }
-            );
-            expect(logger.error).toHaveBeenCalledWith(
-                { actionId: SAGA_UUID, type: 'bsky_reply', error: 'Post exceeds 300 graphemes (301)', failureKind: 'permanent' },
-                'Approved outbound action execution failed'
-            );
+            await expect(build().executeOnce()).rejects.toThrow('claim write failed');
+            expect(executors.bsky_reply).not.toHaveBeenCalled();
+            expect(settleClaim).not.toHaveBeenCalled();
         });
 
-        test('propagates rejection when persisting the failed state fails', async () => {
-            const saga = makeSaga({ type: 'bsky_reply' });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
-            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<void> => { throw new Error('network failure'); }
-            );
-            (backend.updateState as ReturnType<typeof mock>).mockImplementation(
-                async (_id: string, state: string): Promise<void> => {
-                    if(state === 'failed') {
-                        throw new Error('persist failed-state write failed');
-                    }
-                }
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-
-            await expect(executor.executeOnce()).rejects.toThrow('persist failed-state write failed');
-        });
-
-        test('uses String(err) for non-Error exceptions', async () => {
-            const saga = makeSaga({ type: 'bsky_reply' });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
-            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<void> => { throw 'string error'; }
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-            await executor.executeOnce();
-
-            expect(backend.updateState).toHaveBeenCalledWith(
-                SAGA_UUID,
-                'failed',
-                { lastError: 'string error', failureKind: 'transient' }
-            );
-        });
-
-        test('counts multiple sagas — some succeed, some fail', async () => {
-            const SAGA_UUID_2 = 'bbbbbbbb-1111-4222-8333-444444444444';
-            const SAGA_UUID_3 = 'cccccccc-1111-4222-8333-444444444444';
-            const saga1 = makeSaga({ id: SAGA_UUID,   type: 'bsky_reply' });
-            const saga2 = makeSaga({ id: SAGA_UUID_2, type: 'bsky_dm' });
-            const saga3 = makeSaga({ id: SAGA_UUID_3, type: 'email_send' });
-
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga1, saga2, saga3]
-            );
-            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<void> => undefined
-            );
-            (executors.bsky_dm as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<void> => { throw new Error('DM failed'); }
-            );
-            (executors.email_send as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<void> => undefined
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-            const result = await executor.executeOnce();
-
-            expect(result).toEqual({ executed: 2, failed: 1 });
-        });
-
-        test('persists each outcome before starting the next external action', async () => {
-            const first = makeSaga({ id: 'aaaaaaaa-1111-4222-8333-000000000001', params: { label: 'first' } });
-            const second = makeSaga({ id: 'aaaaaaaa-1111-4222-8333-000000000002', params: { label: 'second' } });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [first, second]);
-            const events: string[] = [];
-            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(async (params: Record<string, unknown>) => {
-                events.push(`execute:${String(params.label)}`);
-            });
-            (backend.updateState as ReturnType<typeof mock>).mockImplementation(async (id: string) => {
-                events.push(`persist:${id}`);
-            });
-
-            const result = await createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce();
-            expect(result).toEqual({ executed: 2, failed: 0 });
-            expect(events).toEqual([
-                'execute:first', `persist:${first.id}`,
-                'execute:second', `persist:${second.id}`,
-            ]);
-        });
-
-        test('never mislabels an action or starts a later action when the executed-state write fails', async () => {
-            const first = makeSaga({ id: 'aaaaaaaa-1111-4222-8333-000000000001', type: 'bsky_reply' });
-            const second = makeSaga({ id: 'aaaaaaaa-1111-4222-8333-000000000002', type: 'email_send' });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [first, second]);
-            (backend.updateState as ReturnType<typeof mock>).mockImplementation(async (id: string, state: string) => {
-                if(id === first.id && state === 'executed') {
-                    throw new Error('state write failed');
-                }
-            });
-            await expect(createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce()).rejects.toThrow('state write failed');
-            expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
-            expect(executors.email_send).not.toHaveBeenCalled();
-            expect(backend.updateState).toHaveBeenCalledTimes(1);
-            expect(backend.updateState).toHaveBeenCalledWith(first.id, 'executed');
-            expect(backend.updateState).not.toHaveBeenCalledWith(first.id, 'failed', expect.anything());
-        });
-
-        test('logs info on successful saga execution', async () => {
-            const saga = makeSaga({ type: 'bsky_reply' });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-            await executor.executeOnce();
-
-            expect(logger.info).toHaveBeenCalledWith(
-                { actionId: SAGA_UUID, type: 'bsky_reply' },
-                'Approved outbound action executed successfully'
-            );
-        });
-
-        test('calls listByState with "approved" state specifically', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-            await executor.executeOnce();
-
-            expect(backend.listByState).toHaveBeenCalledWith('approved');
-        });
-
-        test('signals a recorded outcome after the executed-state write', async () => {
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [makeSaga()]);
-
-            await createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce();
-
-            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
-            expect(onOutcomeRecorded.mock.calls[0]).toEqual([]);
-            const writeOrder = (backend.updateState as ReturnType<typeof mock>).mock.invocationCallOrder[0];
-            expect(onOutcomeRecorded.mock.invocationCallOrder[0]).toBeGreaterThan(writeOrder);
-        });
-
-        test('signals a recorded outcome after the failed-state write', async () => {
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [makeSaga()]);
-            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(async (): Promise<void> => {
+        test('records a transient failure when the send rejects', async () => {
+            listed = [BSKY];
+            executors.bsky_reply.mockImplementation(async (): Promise<void> => {
                 throw new Error('network failure');
             });
 
-            await createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce();
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 1 });
 
-            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
-            const writeOrder = (backend.updateState as ReturnType<typeof mock>).mock.invocationCallOrder[0];
-            expect(onOutcomeRecorded.mock.invocationCallOrder[0]).toBeGreaterThan(writeOrder);
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: 'network failure', failureKind: 'transient' }]]);
+            expect(logger.error).toHaveBeenCalledWith(
+                { actionId: BSKY_ID, type: 'bsky_reply', error: 'network failure', failureKind: 'transient' },
+                'Approved outbound action execution failed'
+            );
         });
 
-        test('signals no outcome when the executed-state write rejects', async () => {
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [makeSaga()]);
-            (backend.updateState as ReturnType<typeof mock>).mockImplementation(async () => {
+        test('records a permanent failure when the send throws a validation error', async () => {
+            listed = [BSKY];
+            executors.bsky_reply.mockImplementation(async (): Promise<void> => {
+                throw new BskyValidationError('Post exceeds 300 graphemes (301)');
+            });
+
+            await build().executeOnce();
+
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: 'Post exceeds 300 graphemes (301)', failureKind: 'permanent' }]]);
+        });
+
+        test('records String(err) for a non-Error rejection', async () => {
+            listed = [BSKY];
+            executors.bsky_reply.mockImplementation(async (): Promise<void> => {
+                throw 'string error';
+            });
+
+            await build().executeOnce();
+
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: 'string error', failureKind: 'transient' }]]);
+        });
+
+        test('records an executor that throws synchronously as a failure', async () => {
+            listed = [BSKY];
+            executors.bsky_reply.mockImplementation((): Promise<void> => {
+                throw new Error('sync boom');
+            });
+
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 1 });
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: 'sync boom', failureKind: 'transient' }]]);
+        });
+
+        test('sums outcomes across both service lanes', async () => {
+            const dm = makeAction({ id: BSKY_ID_2, type: 'bsky_dm' });
+            listed = [BSKY, dm, EMAIL];
+            executors.bsky_dm.mockImplementation(async (): Promise<void> => {
+                throw new Error('DM failed');
+            });
+
+            expect(await build().executeOnce()).toEqual({ executed: 2, failed: 1 });
+        });
+
+        test('persists each outcome before starting the next send in the same service', async () => {
+            listed = [BSKY, BSKY_2];
+            const events: string[] = [];
+            executors.bsky_reply.mockImplementation(async (params: Record<string, unknown>) => {
+                events.push(`send:${String(params.text)}`);
+            });
+            settleClaim.mockImplementation(async (claimed: ClaimedApprovedOutboundAction) => {
+                events.push(`settle:${claimed.id}`);
+                return true;
+            });
+
+            expect(await build().executeOnce()).toEqual({ executed: 2, failed: 0 });
+            expect(events).toEqual(['send:hello', `settle:${BSKY_ID}`, 'send:second', `settle:${BSKY_ID_2}`]);
+        });
+
+        test('a failed outcome write stops its lane before the next row is claimed, and is logged', async () => {
+            listed = [BSKY, BSKY_2];
+            settleClaim.mockImplementation(async () => {
                 throw new Error('state write failed');
             });
 
-            await expect(createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce()).rejects.toThrow('state write failed');
+            await expect(build().executeOnce()).rejects.toThrow('state write failed');
+
+            expect(claim.mock.calls).toEqual([[BSKY]]);
+            expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
             expect(onOutcomeRecorded).not.toHaveBeenCalled();
+            expect(logger.error).toHaveBeenCalledWith(
+                { actionId: BSKY_ID, outcome: { state: 'executed' }, error: 'state write failed' },
+                'Approved outbound action outcome write failed; will retry the write, never the send'
+            );
         });
 
-        test('signals no outcome for an action skipped because its service is unavailable', async () => {
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [makeSaga()]);
+        test('a failed outcome write in the Bluesky lane still lets the email lane finish', async () => {
+            listed = [BSKY, EMAIL];
+            settleClaim.mockImplementation(async (claimed: ClaimedApprovedOutboundAction) => {
+                if(claimed.id === BSKY_ID) {
+                    throw new Error('bsky write failed');
+                }
+                return true;
+            });
+
+            await expect(build().executeOnce()).rejects.toThrow('bsky write failed');
+
+            expect(executors.email_send.mock.calls).toEqual([[{ uid: 42 }]]);
+            expect(settleClaim).toHaveBeenCalledWith(claimedOf(EMAIL), { state: 'executed' });
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+        });
+
+        test('rejects with the first lane failure when both lanes fail', async () => {
+            listed = [BSKY, EMAIL];
+            settleClaim.mockImplementation(async (claimed: ClaimedApprovedOutboundAction) => {
+                throw new Error(`write failed for ${claimed.type}`);
+            });
+
+            await expect(build().executeOnce()).rejects.toThrow('write failed for bsky_reply');
+        });
+
+        test('a settle that finds its claim already resolved is logged and not counted', async () => {
+            listed = [BSKY];
+            settleClaim.mockImplementation(async () => false);
+
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0 });
+
+            expect(onOutcomeRecorded).not.toHaveBeenCalled();
+            expect(logger.warn).toHaveBeenCalledWith(
+                { actionId: BSKY_ID, outcome: { state: 'executed' } },
+                'Approved outbound action outcome not recorded: its claim was already resolved elsewhere'
+            );
+        });
+
+        test('a listing failure rejects the pass', async () => {
+            listOpen.mockImplementation(async () => {
+                throw new Error('DynamoDB unavailable');
+            });
+
+            await expect(build().executeOnce()).rejects.toThrow('DynamoDB unavailable');
+        });
+
+        test('signals a recorded outcome after the executed write', async () => {
+            listed = [BSKY];
+
+            await build().executeOnce();
+
+            expect(onOutcomeRecorded.mock.calls).toEqual([[]]);
+            expect(onOutcomeRecorded.mock.invocationCallOrder[0]).toBeGreaterThan(settleClaim.mock.invocationCallOrder[0]);
+        });
+
+        test('signals a recorded outcome after the failed write', async () => {
+            listed = [BSKY];
+            executors.bsky_reply.mockImplementation(async (): Promise<void> => {
+                throw new Error('network failure');
+            });
+
+            await build().executeOnce();
+
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+            expect(onOutcomeRecorded.mock.invocationCallOrder[0]).toBeGreaterThan(settleClaim.mock.invocationCallOrder[0]);
+        });
+
+        test('signals no outcome for a row skipped because its service is unavailable', async () => {
+            listed = [BSKY];
             (registry.isAvailable as ReturnType<typeof mock>).mockImplementation((): boolean => false);
 
-            await createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce();
+            await build().executeOnce();
 
             expect(onOutcomeRecorded).not.toHaveBeenCalled();
         });
     });
 
+    describe('outcome write retry', () => {
+        test('retries a failed outcome write before listing on the next pass, and never re-sends', async () => {
+            listed = [BSKY];
+            settleClaim.mockImplementationOnce(async () => {
+                throw new Error('state write failed');
+            });
+            const executor = build();
+            await expect(executor.executeOnce()).rejects.toThrow('state write failed');
+
+            expect(await executor.executeOnce()).toEqual({ executed: 1, failed: 0 });
+
+            expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
+            expect(claim).toHaveBeenCalledTimes(1);
+            expect(settleClaim.mock.calls).toEqual([
+                [claimedOf(BSKY), { state: 'executed' }],
+                [claimedOf(BSKY), { state: 'executed' }],
+            ]);
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+            expect(settleClaim.mock.invocationCallOrder[1]).toBeLessThan(Math.min(listOpen.mock.invocationCallOrder[2], listOpen.mock.invocationCallOrder[3]));
+        });
+
+        test('keeps retrying the write while it keeps failing, and lists nothing in that lane meanwhile', async () => {
+            listed = [BSKY];
+            settleClaim.mockImplementationOnce(async () => {
+                throw new Error('first write failed');
+            }).mockImplementationOnce(async () => {
+                throw new Error('second write failed');
+            });
+            const executor = build();
+            await expect(executor.executeOnce()).rejects.toThrow('first write failed');
+
+            await expect(executor.executeOnce()).rejects.toThrow('second write failed');
+            expect(listOpen).toHaveBeenCalledTimes(3);
+
+            expect(await executor.executeOnce()).toEqual({ executed: 1, failed: 0 });
+            expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
+        });
+
+        test('drops a retried write whose claim was resolved elsewhere, and does not retry it again', async () => {
+            listed = [BSKY];
+            settleClaim.mockImplementationOnce(async () => {
+                throw new Error('state write failed');
+            }).mockImplementationOnce(async () => false);
+            const executor = build();
+            await expect(executor.executeOnce()).rejects.toThrow('state write failed');
+
+            expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(logger.warn).toHaveBeenCalledWith(
+                { actionId: BSKY_ID, outcome: { state: 'executed' } },
+                'Approved outbound action outcome not recorded: its claim was already resolved elsewhere'
+            );
+
+            await executor.executeOnce();
+            expect(settleClaim).toHaveBeenCalledTimes(2);
+        });
+
+        test('a retried failure outcome is counted as failed', async () => {
+            listed = [BSKY];
+            executors.bsky_reply.mockImplementation(async (): Promise<void> => {
+                throw new Error('network failure');
+            });
+            settleClaim.mockImplementationOnce(async () => {
+                throw new Error('state write failed');
+            });
+            const executor = build();
+            await expect(executor.executeOnce()).rejects.toThrow('state write failed');
+
+            expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 1 });
+            expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('abandoned claims', () => {
+        const staleAge = (ms: number): (() => number) => () => Date.parse(STALE_CLAIMED_AT) + ms;
+
+        test('settles a sending row whose claim is exactly the lease old as failed with its outcome unknown', async () => {
+            listed = [STALE];
+
+            expect(await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce()).toEqual({ executed: 0, failed: 1 });
+
+            expect(settleClaim.mock.calls).toEqual([[STALE, STALE_OUTCOME]]);
+            expect(claim).not.toHaveBeenCalled();
+            expect(executors.bsky_dm).not.toHaveBeenCalled();
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+            expect(logger.error).toHaveBeenCalledWith(
+                { actionId: STALE_ID, type: 'bsky_dm', error: STALE_CLAIM_ERROR, failureKind: 'permanent' },
+                'Approved outbound action execution failed'
+            );
+        });
+
+        test('leaves a sending row one millisecond short of the lease alone', async () => {
+            listed = [STALE];
+
+            expect(await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS - 1) }).executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(settleClaim).not.toHaveBeenCalled();
+        });
+
+        test('never sweeps a sending row that carries no claimId', async () => {
+            const { claimId: _claimId, ...unclaimed } = STALE;
+            listed = [unclaimed];
+
+            await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce();
+            expect(settleClaim).not.toHaveBeenCalled();
+        });
+
+        test('honours a custom claim lease', async () => {
+            listed = [STALE];
+
+            await build({ claimLeaseMs: 200_000, sendTimeoutMs: 1000, now: staleAge(200_000) }).executeOnce();
+            expect(settleClaim.mock.calls).toEqual([[STALE, STALE_OUTCOME]]);
+        });
+
+        test('uses the system clock and the 15-minute lease by default: swept at exactly 900000 ms', async () => {
+            listed = [STALE];
+            jest.setSystemTime(new Date(Date.parse(STALE_CLAIMED_AT) + 900_000));
+
+            await build().executeOnce();
+            expect(settleClaim.mock.calls).toEqual([[STALE, STALE_OUTCOME]]);
+        });
+
+        test('uses the system clock and the 15-minute lease by default: not swept at 899999 ms', async () => {
+            listed = [STALE];
+            jest.setSystemTime(new Date(Date.parse(STALE_CLAIMED_AT) + 899_999));
+
+            await build().executeOnce();
+            expect(settleClaim).not.toHaveBeenCalled();
+        });
+
+        test('an abandoned email claim is swept once, by the email lane', async () => {
+            const staleEmail: ClaimedApprovedOutboundAction = { ...STALE, type: 'email_send', params: { uid: 7 } };
+            listed = [staleEmail];
+
+            await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce();
+            expect(settleClaim.mock.calls).toEqual([[staleEmail, STALE_OUTCOME]]);
+        });
+
+        test('sweeps abandoned claims before claiming new rows', async () => {
+            listed = [BSKY, STALE];
+
+            await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce();
+            expect(settleClaim.mock.calls[0]).toEqual([STALE, STALE_OUTCOME]);
+            expect(settleClaim.mock.invocationCallOrder[0]).toBeLessThan(claim.mock.invocationCallOrder[0]);
+        });
+
+        test('a swept claim already resolved elsewhere is logged and not counted', async () => {
+            listed = [STALE];
+            settleClaim.mockImplementation(async () => false);
+
+            expect(await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(logger.warn).toHaveBeenCalledWith(
+                { actionId: STALE_ID, outcome: STALE_OUTCOME },
+                'Approved outbound action outcome not recorded: its claim was already resolved elsewhere'
+            );
+        });
+    });
+
+    describe('send timeout', () => {
+        test('the outcome-unknown messages are exact', () => {
+            expect(sendTimedOutError(120_000)).toBe('No response within 120s, so it may or may not have been delivered. Not retried automatically, to avoid sending it twice; check before resending.');
+            expect(STALE_CLAIM_ERROR).toBe('The send was interrupted before its outcome was recorded, so it may or may not have been delivered. Not retried automatically, to avoid sending it twice; check before resending.');
+        });
+
+        test('a send still pending at the default 120000 ms timeout is settled failed, outcome unknown, never before', async () => {
+            listed = [BSKY];
+            executors.bsky_reply.mockImplementation(hang);
+            const pass = build().executeOnce();
+            await flush();
+
+            jest.advanceTimersByTime(119_999);
+            await flush();
+            expect(settleClaim).not.toHaveBeenCalled();
+
+            jest.advanceTimersByTime(1);
+            await flush();
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: sendTimedOutError(120_000), failureKind: 'permanent' }]]);
+            expect(await pass).toEqual({ executed: 0, failed: 1 });
+            expect(DEFAULT_SEND_TIMEOUT_MS).toBe(120_000);
+        });
+
+        test('honours a custom send timeout', async () => {
+            listed = [BSKY];
+            executors.bsky_reply.mockImplementation(hang);
+            const pass = build({ sendTimeoutMs: 5000 }).executeOnce();
+            await flush();
+
+            jest.advanceTimersByTime(5000);
+            await flush();
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: sendTimedOutError(5000), failureKind: 'permanent' }]]);
+            expect(await pass).toEqual({ executed: 0, failed: 1 });
+        });
+
+        test('a send that succeeds after its timeout is only logged', async () => {
+            listed = [BSKY];
+            const send = Promise.withResolvers<undefined>();
+            executors.bsky_reply.mockImplementation(async () => send.promise);
+            const pass = build({ sendTimeoutMs: 1000 }).executeOnce();
+            await flush();
+            jest.advanceTimersByTime(1000);
+            await pass;
+
+            send.resolve(undefined);
+            await flush();
+
+            expect(logger.warn).toHaveBeenCalledWith(
+                { actionId: BSKY_ID, type: 'bsky_reply', lateOutcome: 'sent' },
+                'Approved outbound action send finished after its timeout; its row already records the outcome as unknown'
+            );
+            expect(settleClaim).toHaveBeenCalledTimes(1);
+            expect(claim).toHaveBeenCalledTimes(1);
+        });
+
+        test('a send that fails after its timeout is only logged', async () => {
+            listed = [BSKY];
+            const send = Promise.withResolvers<undefined>();
+            executors.bsky_reply.mockImplementation(async () => send.promise);
+            const pass = build({ sendTimeoutMs: 1000 }).executeOnce();
+            await flush();
+            jest.advanceTimersByTime(1000);
+            await pass;
+
+            send.reject(new Error('late failure'));
+            await flush();
+
+            expect(logger.warn).toHaveBeenCalledWith(
+                { actionId: BSKY_ID, type: 'bsky_reply', lateOutcome: 'failed', error: 'late failure' },
+                'Approved outbound action send finished after its timeout; its row already records the outcome as unknown'
+            );
+            expect(settleClaim).toHaveBeenCalledTimes(1);
+        });
+
+        test('a hung send holds later rows of the same service until it times out', async () => {
+            listed = [BSKY, BSKY_2];
+            executors.bsky_reply.mockImplementationOnce(hang);
+            const pass = build({ sendTimeoutMs: 1000 }).executeOnce();
+            await flush();
+            expect(claim.mock.calls).toEqual([[BSKY]]);
+
+            jest.advanceTimersByTime(1000);
+            await flush();
+            expect(claim.mock.calls).toEqual([[BSKY], [BSKY_2]]);
+            expect(executors.bsky_reply).toHaveBeenLastCalledWith({ text: 'second' });
+            expect(await pass).toEqual({ executed: 1, failed: 1 });
+        });
+
+        test('rejects a claim lease equal to the send timeout', () => {
+            let thrown: unknown;
+            try {
+                build({ sendTimeoutMs: 1000, claimLeaseMs: 1000 });
+            } catch (err) {
+                thrown = err;
+            }
+            expect(thrown).toBeInstanceOf(InvariantViolationError);
+            expect((thrown as InvariantViolationError).context).toEqual({
+                location:  'createApprovedOutboundActionExecutor',
+                invariant: 'claim lease must exceed the send timeout',
+            });
+        });
+
+        test('accepts a claim lease one millisecond above the send timeout', () => {
+            expect(() => build({ sendTimeoutMs: 1000, claimLeaseMs: 1001 })).not.toThrow();
+        });
+
+        test('rejects a send timeout at the default lease', () => {
+            expect(() => build({ sendTimeoutMs: 900_000 })).toThrow(InvariantViolationError);
+        });
+    });
+
+    describe('service lanes', () => {
+        test('an email approved while two Bluesky sends hang is sent on its wake', async () => {
+            listed = [BSKY, BSKY_2];
+            executors.bsky_reply.mockImplementation(hang);
+            const executor = build();
+            executor.start();
+            jest.advanceTimersByTime(30_000);
+            await flush();
+            expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
+
+            listed = [...listed, EMAIL];
+            executor.wake();
+            jest.advanceTimersByTime(0);
+            await flush();
+
+            expect(executors.email_send.mock.calls).toEqual([[{ uid: 42 }]]);
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(EMAIL), { state: 'executed' }]]);
+            expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
+            executor.stop();
+        });
+
+        test('a hung Bluesky send does not hold an email listed in the same poll', async () => {
+            listed = [BSKY, EMAIL];
+            executors.bsky_reply.mockImplementation(hang);
+            const executor = build();
+            executor.start();
+
+            jest.advanceTimersByTime(30_000);
+            await flush();
+
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(EMAIL), { state: 'executed' }]]);
+            jest.advanceTimersByTime(DEFAULT_SEND_TIMEOUT_MS);
+            await flush();
+            expect(settleClaim).toHaveBeenLastCalledWith(claimedOf(BSKY), { state: 'failed', lastError: sendTimedOutError(DEFAULT_SEND_TIMEOUT_MS), failureKind: 'permanent' });
+            executor.stop();
+        });
+    });
+
     describe('wake', () => {
         test('wake() before start() arms no timer and lists nothing', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 30_000 });
+            const executor = build({ pollIntervalMs: 30_000 });
 
             executor.wake();
             jest.advanceTimersByTime(30_000);
             await flush();
 
             expect(jest.getTimerCount()).toBe(0);
-            expect(backend.listByState).not.toHaveBeenCalled();
+            expect(listOpen).not.toHaveBeenCalled();
         });
 
-        test('wake() while idle runs the executor on a zero-delay timer', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 30_000 });
+        test('wake() while idle runs both lanes on a zero-delay timer', async () => {
+            const executor = build({ pollIntervalMs: 30_000 });
             executor.start();
 
             executor.wake();
             jest.advanceTimersByTime(0);
             await flush();
 
-            expect(backend.listByState).toHaveBeenCalledTimes(1);
+            expect(listOpen).toHaveBeenCalledTimes(2);
             executor.stop();
         });
 
         test('an approved email is submitted exactly once when wake() lands mid-send, through the coalesced rerun', async () => {
-            const email = makeSaga({ type: 'email_send', params: { uid: 42 } });
-            // The strongly consistent listing sees the row as approved until its executed write lands.
-            let executedWritten = false;
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => (executedWritten ? [] : [email]));
-            (backend.updateState as ReturnType<typeof mock>).mockImplementation(async () => {
-                executedWritten = true;
-            });
+            listed = [EMAIL];
             const send = Promise.withResolvers<undefined>();
-            (executors.email_send as ReturnType<typeof mock>).mockImplementation(() => send.promise);
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+            executors.email_send.mockImplementation(async () => send.promise);
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
             jest.advanceTimersByTime(1000);
@@ -379,18 +690,17 @@ describe('createApprovedOutboundActionExecutor', () => {
             jest.advanceTimersByTime(0);
             await flush();
             expect(executors.email_send).toHaveBeenCalledTimes(1);
-            expect(backend.listByState).toHaveBeenCalledTimes(1);
+            // The idle Bluesky lane ran on the wake; the email lane only asked for a rerun.
+            expect(listOpen).toHaveBeenCalledTimes(3);
 
             send.resolve(undefined);
             await flush();
-            expect(backend.updateState).toHaveBeenCalledTimes(1);
-            expect(backend.updateState).toHaveBeenCalledWith(SAGA_UUID, 'executed');
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(EMAIL), { state: 'executed' }]]);
 
             jest.advanceTimersByTime(0);
             await flush();
-            expect(backend.listByState).toHaveBeenCalledTimes(2);
-            expect(executors.email_send).toHaveBeenCalledTimes(1);
-            expect(executors.email_send).toHaveBeenCalledWith({ uid: 42 });
+            expect(listOpen).toHaveBeenCalledTimes(4);
+            expect(executors.email_send.mock.calls).toEqual([[{ uid: 42 }]]);
             executor.stop();
         });
     });
@@ -408,212 +718,153 @@ describe('createApprovedOutboundActionExecutor', () => {
             ['bsky_reply', 'bsky'],
             ['bsky_dm',    'bsky'],
             ['email_send', 'email'],
-        ] as const)('executeOnce checks %s against service %s', async (sagaType, expectedService) => {
-            const saga = makeSaga({ type: sagaType });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
-            // Track what service was queried
-            const serviceChecked: string[] = [];
-            (registry.isAvailable as ReturnType<typeof mock>).mockImplementation(
-                (service: string): boolean => {
-                    serviceChecked.push(service);
-                    return true;
-                }
-            );
+        ] as const)('executeOnce checks %s against service %s', async (actionType, expectedService) => {
+            listed = [makeAction({ type: actionType })];
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-            await executor.executeOnce();
+            await build().executeOnce();
 
-            expect(serviceChecked).toContain(expectedService);
+            expect((registry.isAvailable as ReturnType<typeof mock>).mock.calls).toEqual([[expectedService]]);
         });
     });
 
     describe('start and stop', () => {
-        test('start creates a timer that calls executeOnce', async () => {
-            const saga = makeSaga();
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('start creates a timer that runs the lanes', async () => {
+            listed = [BSKY];
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
+            await flush();
 
-            expect(backend.listByState).toHaveBeenCalled();
-
+            expect(listOpen).toHaveBeenCalledTimes(2);
             executor.stop();
         });
 
-        test('double-start guard: second start does not create a second timer', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('double-start guard: second start does not create a second timer per lane', async () => {
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
             executor.start();
 
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
+            await flush();
 
-            // Only one poll tick despite two start() calls
-            expect(backend.listByState).toHaveBeenCalledTimes(1);
-
+            expect(listOpen).toHaveBeenCalledTimes(2);
             executor.stop();
         });
 
         test('redundant start() while mid-flight tick does not kill the poll loop', async () => {
-            // A redundant start() while a run is in flight must not disturb that run's trailing
-            // reschedule. A deferred listByState holds run T1 in flight while we inject the
-            // redundant start(); after resolving, T1 must still arm T2, proving the loop is alive.
-            let resolveListByState!: (value: ApprovedOutboundAction[]) => void;
-            const deferredListByState = new Promise<ApprovedOutboundAction[]>((resolve) => {
-                resolveListByState = resolve;
-            });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                (): Promise<ApprovedOutboundAction[]> => deferredListByState
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+            const listing = Promise.withResolvers<ApprovedOutboundAction[]>();
+            listOpen.mockImplementation(async () => listing.promise);
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
-            // Fire T1 — the run starts and suspends at listByState.
             jest.advanceTimersByTime(1000);
-            expect(backend.listByState).toHaveBeenCalledTimes(1);
-            // No new timer while suspended (T1 fired, nothing rescheduled yet)
+            expect(listOpen).toHaveBeenCalledTimes(2);
             expect(jest.getTimerCount()).toBe(0);
 
-            // Inject a redundant start() while T1 is mid-flight: the loop is already started, so
-            // it must be a no-op.
             executor.start();
-
-            // Resolve the deferred — let T1 complete and arm T2.
-            resolveListByState([]);
+            listing.resolve([]);
             await flush();
 
-            expect(jest.getTimerCount()).toBe(1);
-
+            expect(jest.getTimerCount()).toBe(2);
             executor.stop();
         });
 
-        test('redundant start() while running leaves exactly one pending timer', async () => {
-            // After a no-op start(), timer count must remain 1 (the already-scheduled next tick).
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('redundant start() while running leaves exactly one pending timer per lane', () => {
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
-            expect(jest.getTimerCount()).toBe(1);
+            expect(jest.getTimerCount()).toBe(2);
 
-            // Redundant start() — must not create a second timer
             executor.start();
-            expect(jest.getTimerCount()).toBe(1);
-
+            expect(jest.getTimerCount()).toBe(2);
             executor.stop();
         });
 
-        test('stop clears timer so executeOnce is no longer called', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('stop clears the timers so no lane runs', async () => {
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
 
             jest.advanceTimersByTime(5000);
-            await Promise.resolve();
+            await flush();
 
-            expect(backend.listByState).not.toHaveBeenCalled();
+            expect(listOpen).not.toHaveBeenCalled();
+            expect(jest.getTimerCount()).toBe(0);
         });
 
-        test('restart after stop works: stopped flag is reset', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('restart after stop works', async () => {
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
 
-            // Should be able to restart
             executor.start();
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
+            await flush();
 
-            expect(backend.listByState).toHaveBeenCalled();
-
+            expect(listOpen).toHaveBeenCalledTimes(2);
             executor.stop();
         });
 
         test('stop is idempotent when not started', () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
-            // Should not throw
+            const executor = build();
             expect(() => {
                 executor.stop();
             }).not.toThrow();
         });
 
-        test('stop then start during mid-flight tick leaves exactly one pending timer (no leak)', async () => {
-            // Regression test for stop/start race: Bun's advanceTimersByTime drains microtasks
-            // synchronously, so the race window must be opened by using a deferred (manually
-            // resolved) promise for listByState — this keeps run T1 suspended while we call
-            // stop()+start(), then we resolve to let T1 complete.
-            //
-            // start() already armed T2, so T1's trailing reschedule must not add a second timer.
-            let resolveListByState!: (value: ApprovedOutboundAction[]) => void;
-            const deferredListByState = new Promise<ApprovedOutboundAction[]>((resolve) => {
-                resolveListByState = resolve;
-            });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                (): Promise<ApprovedOutboundAction[]> => deferredListByState
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('stop then start during a mid-flight tick leaves exactly one pending timer per lane', async () => {
+            const listing = Promise.withResolvers<ApprovedOutboundAction[]>();
+            listOpen.mockImplementation(async () => listing.promise);
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
-            // Fire T1 — the run begins and suspends at await backend.listByState()
             jest.advanceTimersByTime(1000);
-            // T1 fired; the run is suspended (timerCount=0 — no new timer scheduled yet)
             expect(jest.getTimerCount()).toBe(0);
 
-            // Race: stop+start while T1 is mid-flight
-            executor.stop();   // stopped, clears the timer (T1 already fired, no-op)
-            executor.start();  // started again, arms T2 → timerCount=1
-            expect(jest.getTimerCount()).toBe(1);
+            executor.stop();
+            executor.start();
+            expect(jest.getTimerCount()).toBe(2);
 
-            // Now resolve listByState → T1 can complete
-            resolveListByState([]);
+            listing.resolve([]);
             await flush();
 
-            // Only T2 (from start()) is pending: T1 found a timer already armed
-            expect(jest.getTimerCount()).toBe(1);
-
+            expect(jest.getTimerCount()).toBe(2);
             executor.stop();
         });
 
-        test('timer firing during a run left over from stop/start defers to a rerun instead of overlapping', async () => {
-            // A second concurrent listByState here would be the double-send bug: both runs would
-            // list and send the same approved row. The stale run's timer successor must only ask
-            // for a rerun, and exactly one timer may be pending throughout.
+        test('a timer firing during a run left over from stop/start defers to a rerun instead of overlapping', async () => {
+            // A second concurrent listing in one lane would be an in-process double claim attempt;
+            // the stale run's timer successor must only ask for a rerun.
             const first = Promise.withResolvers<ApprovedOutboundAction[]>();
             let callCount = 0;
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(() => {
+            listOpen.mockImplementation(async () => {
                 callCount++;
-                return callCount === 1 ? first.promise : Promise.resolve([]);
+                return callCount <= 2 ? first.promise : [];
             });
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+            const executor = build({ pollIntervalMs: 1000 });
 
             try {
                 executor.start();
-                jest.advanceTimersByTime(1000); // first run remains in flight
+                jest.advanceTimersByTime(1000);
                 executor.stop();
                 executor.start();
-                expect(jest.getTimerCount()).toBe(1);
-                jest.advanceTimersByTime(1000); // timer fires while the first run is still in flight
-                expect(backend.listByState).toHaveBeenCalledTimes(1);
+                expect(jest.getTimerCount()).toBe(2);
+                jest.advanceTimersByTime(1000);
+                expect(listOpen).toHaveBeenCalledTimes(2);
                 expect(jest.getTimerCount()).toBe(0);
                 executor.stop();
                 executor.start();
-                expect(jest.getTimerCount()).toBe(1);
+                expect(jest.getTimerCount()).toBe(2);
 
                 first.resolve([]);
                 await flush();
-                expect(backend.listByState).toHaveBeenCalledTimes(1);
-                expect(jest.getTimerCount()).toBe(1);
+                expect(listOpen).toHaveBeenCalledTimes(2);
+                expect(jest.getTimerCount()).toBe(2);
 
-                jest.advanceTimersByTime(0); // the coalesced rerun
+                jest.advanceTimersByTime(0);
                 await flush();
-                expect(backend.listByState).toHaveBeenCalledTimes(2);
-                expect(jest.getTimerCount()).toBe(1);
+                expect(listOpen).toHaveBeenCalledTimes(4);
+                expect(jest.getTimerCount()).toBe(2);
             } finally {
                 first.resolve([]);
                 await Promise.resolve();
@@ -621,442 +872,278 @@ describe('createApprovedOutboundActionExecutor', () => {
             }
         });
 
-        test('stop alone (no restart) leaves zero pending timers after mid-flight tick', async () => {
-            // Verify that stop() without a subsequent start() leaves 0 timers, even when stop()
-            // races with a mid-flight tick (deferred listByState keeps the run suspended).
-            let resolveListByState!: (value: ApprovedOutboundAction[]) => void;
-            const deferredListByState = new Promise<ApprovedOutboundAction[]>((resolve) => {
-                resolveListByState = resolve;
-            });
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                (): Promise<ApprovedOutboundAction[]> => deferredListByState
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('stop alone after a mid-flight tick leaves zero pending timers', async () => {
+            const listing = Promise.withResolvers<ApprovedOutboundAction[]>();
+            listOpen.mockImplementation(async () => listing.promise);
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
-            // Fire T1 — the run starts and suspends at listByState
             jest.advanceTimersByTime(1000);
-            expect(jest.getTimerCount()).toBe(0); // T1 fired, run suspended, no new timer yet
-
-            // Stop only — no subsequent start()
             executor.stop();
-
-            // Resolve the deferred so the run can complete
-            resolveListByState([]);
+            listing.resolve([]);
             await flush();
 
-            // Stopped → the finishing run must arm nothing → 0 timers
             expect(jest.getTimerCount()).toBe(0);
-        });
-
-        test('the first poll after start() runs the executor', async () => {
-            const saga = makeSaga();
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
-            executor.start();
-
-            jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-
-            expect(backend.listByState).toHaveBeenCalledTimes(1);
-
-            executor.stop();
         });
 
         test('clearTimeout is called when stop() is called after start()', async () => {
             const clearTimeoutSpy = jest.spyOn(globalThis, 'clearTimeout');
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
 
-            // clearTimeout must have been called (not skipped by inverted guard)
             expect(clearTimeoutSpy).toHaveBeenCalled();
-
-            // After stop, advancing time should not trigger listByState
             jest.advanceTimersByTime(3000);
-            await Promise.resolve();
-            expect(backend.listByState).not.toHaveBeenCalled();
-
+            await flush();
+            expect(listOpen).not.toHaveBeenCalled();
             clearTimeoutSpy.mockRestore();
         });
 
         test('start() after stop() resumes at base interval', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
-
-            // Start, let it run two empty ticks (interval should have doubled to 2000)
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            await Promise.resolve();
+            await flush();
             jest.advanceTimersByTime(2000);
-            await Promise.resolve();
-            await Promise.resolve();
-
+            await flush();
             executor.stop();
 
-            // Restart — interval should snap back to base (1000)
             executor.start();
-
-            // Should NOT fire before 1000ms
             jest.advanceTimersByTime(999);
-            await Promise.resolve();
-            const callsBefore = (backend.listByState as ReturnType<typeof mock>).mock.calls.length;
+            await flush();
+            const callsBefore = listOpen.mock.calls.length;
 
             jest.advanceTimersByTime(1);
-            await Promise.resolve();
-            const callsAfter = (backend.listByState as ReturnType<typeof mock>).mock.calls.length;
-
-            expect(callsAfter).toBe(callsBefore + 1);
-
+            await flush();
+            expect(listOpen.mock.calls).toHaveLength(callsBefore + 2);
             executor.stop();
         });
     });
 
     describe('pollIntervalMs', () => {
         test('uses DEFAULT_POLL_INTERVAL_MS (30000) when not provided', async () => {
-            const saga = makeSaga();
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
+            const executor = build();
             executor.start();
 
-            // Should not trigger at 29 seconds
             jest.advanceTimersByTime(29_999);
-            await Promise.resolve();
-            expect(backend.listByState).not.toHaveBeenCalled();
+            await flush();
+            expect(listOpen).not.toHaveBeenCalled();
 
-            // Should trigger at 30 seconds
             jest.advanceTimersByTime(1);
-            await Promise.resolve();
-            expect(backend.listByState).toHaveBeenCalled();
-
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(2);
             executor.stop();
         });
 
         test('uses custom pollIntervalMs when provided', async () => {
-            const saga = makeSaga();
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => [saga]
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 5000 });
+            const executor = build({ pollIntervalMs: 5000 });
             executor.start();
 
-            // Should not trigger at 4999 ms
             jest.advanceTimersByTime(4999);
-            await Promise.resolve();
-            expect(backend.listByState).not.toHaveBeenCalled();
+            await flush();
+            expect(listOpen).not.toHaveBeenCalled();
 
-            // Should trigger at 5000 ms
             jest.advanceTimersByTime(1);
-            await Promise.resolve();
-            expect(backend.listByState).toHaveBeenCalled();
-
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(2);
             executor.stop();
         });
     });
 
     describe('poll backoff', () => {
-        test('empty result doubles the next tick interval', async () => {
-            // baseInterval = 1000, empty result → next tick at 2000
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('an empty pass doubles each lane\'s next interval', async () => {
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
-            // First tick fires at 1000ms, returns empty
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            await Promise.resolve();
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(2);
 
-            const callsAfterFirstTick = (backend.listByState as ReturnType<typeof mock>).mock.calls.length;
-            expect(callsAfterFirstTick).toBe(1);
-
-            // Next tick should NOT fire at base interval (1000ms more = 2000ms total)
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(2);
 
-            // Next tick SHOULD fire at doubled interval (2000ms more = 3000ms total)
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
-
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(4);
             executor.stop();
         });
 
-        test('two consecutive empty results produce interval of 4x base on third tick', async () => {
-            // tick 1 at 1000ms → empty → next at 2000ms
-            // tick 2 at 3000ms → empty → next at 4000ms
-            // tick 3 at 7000ms
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('two consecutive empty passes produce an interval of 4x base on the third tick', async () => {
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
-            // First tick at 1000ms
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
-
-            // Second tick at 3000ms (1000 + 2000)
+            await flush();
             jest.advanceTimersByTime(2000);
-            await Promise.resolve();
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(4);
 
-            // Third tick should NOT fire at 6999ms (3000 + 3999 < 3000 + 4000)
             jest.advanceTimersByTime(3999);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(4);
 
-            // Third tick fires at 7000ms (3000 + 4000)
             jest.advanceTimersByTime(1);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(6);
             executor.stop();
         });
 
-        test('interval is capped at MAX_POLL_INTERVAL_MS (5 minutes)', async () => {
-            // Use a large base so we reach the cap quickly without many doublings
-            // base = 200_000ms → doubled = 400_000ms > MAX (300_000ms) → capped at 300_000ms
+        test('the interval is capped at MAX_POLL_INTERVAL_MS (5 minutes), logged once per lane', async () => {
             const base = 200_000;
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: base });
+            const executor = build({ pollIntervalMs: base });
             executor.start();
 
-            // First tick at 200_000ms — empty result
             jest.advanceTimersByTime(base);
-            await Promise.resolve();
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(2);
 
-            // Doubled would be 400_000ms but cap is 300_000ms (5 min)
-            // Should NOT fire at 299_999ms more
             jest.advanceTimersByTime(299_999);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
-
-            // Should fire at 300_000ms more (the cap)
-            jest.advanceTimersByTime(1);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
-
-            // Another empty — should still use cap (300_000ms), not double further
-            jest.advanceTimersByTime(299_999);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(2);
 
             jest.advanceTimersByTime(1);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
-            expect(logger.debug).toHaveBeenCalledWith(
-                { intervalMs: 300_000 },
-                'Approved outbound action poll interval extended'
-            );
-            expect(logger.debug).toHaveBeenCalledTimes(1);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(4);
 
+            jest.advanceTimersByTime(299_999);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(4);
+
+            jest.advanceTimersByTime(1);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(6);
+            expect((logger.debug as ReturnType<typeof mock>).mock.calls).toEqual([
+                [{ intervalMs: 300_000 }, 'Approved outbound action bsky lane poll interval extended'],
+                [{ intervalMs: 300_000 }, 'Approved outbound action email lane poll interval extended'],
+            ]);
             executor.stop();
         });
 
-        test('non-empty result resets interval to base', async () => {
-            // Start with an empty tick to build up backoff, then a non-empty tick
-            const saga = makeSaga();
-            let callCount = 0;
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => {
-                    callCount += 1;
-                    // First call: empty; second call: has a saga
-                    return callCount === 1 ? [] : [saga];
-                }
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('a pass that sent something resets its lane to the base interval', async () => {
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
-            // First tick at 1000ms — empty → interval doubles to 2000
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
+            await flush();
 
-            // Second tick at 3000ms — non-empty → resets interval to 1000
+            listed = [BSKY, EMAIL];
             jest.advanceTimersByTime(2000);
-            await Promise.resolve();
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
-            expect(logger.debug).toHaveBeenCalledWith(
-                { intervalMs: 1000 },
-                'Approved outbound action poll interval reset to base'
-            );
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(4);
+            expect(logger.debug).toHaveBeenCalledWith({ intervalMs: 1000 }, 'Approved outbound action bsky lane poll interval reset to base');
 
-            // Third tick should fire at 1000ms after (not 2000ms), i.e. 4000ms total
             jest.advanceTimersByTime(999);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(4);
 
             jest.advanceTimersByTime(1);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
-
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(6);
             executor.stop();
         });
 
-        test('non-empty first tick does not emit a redundant base-reset log', async () => {
-            (backend.listByState as ReturnType<typeof mock>).mockResolvedValue([makeSaga()]);
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('a productive first tick does not emit a redundant base-reset log', async () => {
+            listed = [BSKY, EMAIL];
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            await Promise.resolve();
+            await flush();
 
             expect(logger.debug).not.toHaveBeenCalled();
             executor.stop();
         });
 
-        test('empty after non-empty restarts backoff from base', async () => {
-            // Tick 1 at 1000ms: empty → interval 2000
-            // Tick 2 at 3000ms: non-empty → reset to 1000
-            // Tick 3 at 4000ms: empty → interval 2000
-            // Tick 4 should fire at 6000ms (4000 + 2000), not 5000ms (4000 + 1000)
-            const saga = makeSaga();
-            let callCount = 0;
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => {
-                    callCount += 1;
-                    return callCount === 2 ? [saga] : [];
-                }
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('an empty pass after a productive one restarts backoff from base', async () => {
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
-            // Tick 1 at 1000ms
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            await Promise.resolve();
-            // Tick 2 at 3000ms
+            await flush();
+            listed = [BSKY, EMAIL];
             jest.advanceTimersByTime(2000);
-            await Promise.resolve();
-            await Promise.resolve();
-            // Tick 3 at 4000ms
+            await flush();
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(6);
 
-            // Tick 4 should NOT fire at 1000ms after tick 3 (5000ms total)
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(6);
 
-            // Tick 4 SHOULD fire at 2000ms after tick 3 (6000ms total)
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(4);
-
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(8);
             executor.stop();
         });
 
-        test('stop() mid-backoff cancels the scheduled timer', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('stop() mid-backoff cancels the scheduled timers', async () => {
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
-            // First tick at 1000ms — empty → next scheduled at 2000ms
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
-
-            // Stop mid-backoff
+            await flush();
             executor.stop();
 
-            // Advance past where the next backoff tick would have fired
             jest.advanceTimersByTime(3000);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(2);
         });
 
-        test('non-empty result (failed sagas) also resets interval to base', async () => {
-            const saga = makeSaga();
-            let callCount = 0;
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => {
-                    callCount += 1;
-                    return callCount === 1 ? [] : [saga];
-                }
-            );
-            // Make executor throw so result.failed > 0
-            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<void> => { throw new Error('oops'); }
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+        test('a pass that recorded only failures also resets to base', async () => {
+            for(const type of ['bsky_reply', 'email_send'] as const) {
+                executors[type].mockImplementation(async (): Promise<void> => {
+                    throw new Error('oops');
+                });
+            }
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
-            // First tick at 1000ms — empty → interval doubles to 2000
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
-
-            // Second tick at 3000ms — failed saga → reset to base (1000)
+            await flush();
+            listed = [BSKY, EMAIL];
             jest.advanceTimersByTime(2000);
-            await Promise.resolve();
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(4);
 
-            // Third tick should fire at 1000ms (base) not 2000ms
             jest.advanceTimersByTime(999);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(4);
 
             jest.advanceTimersByTime(1);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
-
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(6);
             executor.stop();
         });
 
-        test('executeOnce rejection (backend throws) does not stop rescheduling', async () => {
-            // If listByState throws, executeOnce rejects and the .catch() handler reschedules
+        test('a rejected pass does not stop rescheduling', async () => {
             let callCount = 0;
-            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovedOutboundAction[]> => {
-                    callCount += 1;
-                    if(callCount === 1) {
-                        throw new Error('DynamoDB unavailable');
-                    }
-                    return [];
+            listOpen.mockImplementation(async () => {
+                callCount += 1;
+                if(callCount <= 2) {
+                    throw new Error('DynamoDB unavailable');
                 }
-            );
-
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+                return [];
+            });
+            const executor = build({ pollIntervalMs: 1000 });
             executor.start();
 
-            // First tick at 1000ms — throws, catch block logs at debug level, reschedules at base interval
             jest.advanceTimersByTime(1000);
-            await Promise.resolve();
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(2);
             expect(logger.debug).toHaveBeenCalledWith(
-                expect.objectContaining({ error: 'DynamoDB unavailable' }),
-                expect.stringContaining('Approved outbound action poll tick threw')
+                { error: 'DynamoDB unavailable' },
+                'Approved outbound action bsky lane poll tick threw unexpectedly; rescheduling'
             );
 
-            // Next tick should still fire at base interval (not doubled — rejection doesn't backoff)
             jest.advanceTimersByTime(999);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(2);
 
             jest.advanceTimersByTime(1);
-            await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
-
+            await flush();
+            expect(listOpen).toHaveBeenCalledTimes(4);
             executor.stop();
         });
     });

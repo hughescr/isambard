@@ -88,11 +88,11 @@ function label(action: ApprovedOutboundAction, copy: TypeCopy): string {
 /**
  * Describe the outcome of an executed or failed approved action, for the approval card and for
  * Izzy. A failure with no `failureKind` (written before #40) is never retried, so it reads as
- * permanent. Throws for an `approved` row, which has no outcome yet.
+ * permanent. Throws for an `approved` or `sending` row, which has no outcome yet.
  */
 export function describeApprovedActionOutcome(action: ApprovedOutboundAction): ApprovedActionOutcomeReport {
-    if(action.state === 'approved') {
-        throw new InvariantViolationError('describeApprovedActionOutcome', 'an approved action has no outcome yet');
+    if(action.state === 'approved' || action.state === 'sending') {
+        throw new InvariantViolationError('describeApprovedActionOutcome', 'an action that is approved or still sending has no outcome yet');
     }
     const copy = COPY[action.type];
     const subject = label(action, copy);

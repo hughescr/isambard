@@ -3,6 +3,7 @@ import { discordSnowflakeSchema } from '@/config';
 
 export const approvedOutboundActionStateSchema = z.enum([
     'approved',
+    'sending',
     'executed',
     'failed',
 ]);
@@ -42,10 +43,20 @@ export type ApprovalCardRef = z.infer<typeof approvalCardRefSchema>;
  * WildDuck draft's metadata, Bluesky rejections in BskyRejectionBackend).
  *
  * The whole lifecycle, enforced by `assertTransition` in the backend:
- * - the executor takes `approved → executed`, or `approved → failed` with a `failureKind`;
+ * - before any external call, the executor claims the row: `approved → sending`, a conditional
+ *   put that also stores a fresh random `claimId`, so of two processes that listed the same row
+ *   exactly one wins the claim and sends;
+ * - once the send's outcome is known, the claim's holder settles it: `sending → executed`, or
+ *   `sending → failed` with a `failureKind`, conditioned on its own `claimId` (never on a
+ *   wall-clock revision, which two claims could share);
  * - when the action's service comes back online, `failed(transient) → approved` retries it.
  *
+ * A send whose outcome is unknown — it timed out, or the process died between claim and settle
+ * (the row is still `sending` after the executor's claim lease) — is settled `failed(permanent)`
+ * with a lastError saying so, and is never retried automatically: that could send it twice.
  * A `failed` row with no `failureKind` was written before #40 and is never retried.
+ *
+ * `claimId` is present only on a `sending` row; every other transition drops it.
  *
  * `approvalCard` points at the Discord approval card the admin clicked, so the card can show
  * the real outcome. Rows written before it existed lack it; their outcome is still reported to
@@ -76,10 +87,22 @@ export const approvedOutboundActionSchema = z.object({
     approvalCard:         approvalCardRefSchema.optional(),
     outcomeReportPending: z.boolean().optional(),
     outcomeNotified:      z.boolean().optional(),
+    claimId:              z.uuid().optional(),
     createdAt:            z.iso.datetime(),
     updatedAt:            z.iso.datetime(),
 });
 export type ApprovedOutboundAction = z.infer<typeof approvedOutboundActionSchema>;
+
+/** A row held by one executor's claim: `sending`, with the `claimId` that claim wrote. */
+export type ClaimedApprovedOutboundAction = ApprovedOutboundAction & { state: 'sending', claimId: string };
+
+/**
+ * Whether `action` is a claimed `sending` row. Every `sending` row this code writes carries a
+ * `claimId`; one without it cannot be settled by claim, so it is never treated as claimed.
+ */
+export function isClaimed(action: ApprovedOutboundAction): action is ClaimedApprovedOutboundAction {
+    return action.state === 'sending' && action.claimId !== undefined;
+}
 
 /**
  * Minimal interface for recording a newly approved outbound action.

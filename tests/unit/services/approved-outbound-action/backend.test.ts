@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest, spyOn } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     PutCommand,
@@ -10,7 +10,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../setup';
 import { InvariantViolationError } from '@/errors';
 import { ApprovedOutboundActionBackend, assertTransition } from '@/services/approved-outbound-action/backend';
-import type { ApprovedOutboundAction, ApprovedOutboundActionState } from '@/services/approved-outbound-action/types';
+import type { ApprovedOutboundAction, ApprovedOutboundActionState, ClaimedApprovedOutboundAction } from '@/services/approved-outbound-action/types';
 
 const ACTION_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const KEY = { PK: 'APPROVAL#SAGA', SK: `SAGA#${ACTION_UUID}` };
@@ -32,13 +32,25 @@ const FAILED_TRANSIENT: ApprovedOutboundAction = {
     updatedAt:   '2026-03-30T11:00:00.000Z',
 };
 
+const CLAIM_ID = '11111111-2222-4333-8444-555555555555';
+
+const SENDING: ClaimedApprovedOutboundAction = {
+    ...BASE_ACTION,
+    state:     'sending',
+    claimId:   CLAIM_ID,
+    updatedAt: '2026-03-30T11:45:00.000Z',
+};
+
+const CONDITIONAL_CHECK_FAILED = Object.assign(new Error('The conditional request failed'), { name: 'ConditionalCheckFailedException' });
+
 /** TTL recomputed from BASE_ACTION.createdAt + 30 days, in epoch seconds. */
 const EXPECTED_TTL = (Date.parse('2026-03-30T10:00:00.000Z') / 1000) + (30 * 86_400);
 
 describe('assertTransition', () => {
     const legal: [string, ApprovedOutboundAction, ApprovedOutboundActionState][] = [
-        ['approved -> executed', BASE_ACTION, 'executed'],
-        ['approved -> failed', BASE_ACTION, 'failed'],
+        ['approved -> sending', BASE_ACTION, 'sending'],
+        ['sending -> executed', SENDING, 'executed'],
+        ['sending -> failed', SENDING, 'failed'],
         ['failed(transient) -> approved', FAILED_TRANSIENT, 'approved'],
     ];
     for(const [name, prior, to] of legal) {
@@ -51,11 +63,17 @@ describe('assertTransition', () => {
         ['executed -> approved', { ...BASE_ACTION, state: 'executed' }, 'approved', 'illegal transition executed -> approved'],
         ['executed -> failed', { ...BASE_ACTION, state: 'executed' }, 'failed', 'illegal transition executed -> failed'],
         ['executed -> executed', { ...BASE_ACTION, state: 'executed' }, 'executed', 'illegal transition executed -> executed'],
+        ['executed -> sending', { ...BASE_ACTION, state: 'executed' }, 'sending', 'illegal transition executed -> sending'],
         ['approved -> approved', BASE_ACTION, 'approved', 'illegal transition approved -> approved'],
+        ['approved -> executed (a send without a claim)', BASE_ACTION, 'executed', 'illegal transition approved -> executed'],
+        ['approved -> failed (a send without a claim)', BASE_ACTION, 'failed', 'illegal transition approved -> failed'],
+        ['sending -> approved', SENDING, 'approved', 'illegal transition sending -> approved'],
+        ['sending -> sending', SENDING, 'sending', 'illegal transition sending -> sending'],
         ['failed(permanent) -> approved', { ...FAILED_TRANSIENT, failureKind: 'permanent' }, 'approved', 'illegal transition failed(permanent) -> approved'],
         ['failed(no failureKind) -> approved', { ...BASE_ACTION, state: 'failed', lastError: 'old' }, 'approved', 'illegal transition failed(unclassified) -> approved'],
         ['failed(transient) -> executed', FAILED_TRANSIENT, 'executed', 'illegal transition failed(transient) -> executed'],
         ['failed(transient) -> failed', FAILED_TRANSIENT, 'failed', 'illegal transition failed(transient) -> failed'],
+        ['failed(transient) -> sending', FAILED_TRANSIENT, 'sending', 'illegal transition failed(transient) -> sending'],
     ];
     for(const [name, prior, to, invariant] of illegal) {
         test(`rejects ${name} with an InvariantViolationError`, () => {
@@ -67,7 +85,7 @@ describe('assertTransition', () => {
             }
             expect(thrown).toBeInstanceOf(InvariantViolationError);
             expect((thrown as InvariantViolationError).context).toEqual({
-                location: 'ApprovedOutboundActionBackend.updateState',
+                location: 'ApprovedOutboundActionBackend.assertTransition',
                 invariant,
             });
         });
@@ -154,50 +172,6 @@ describe('ApprovedOutboundActionBackend', () => {
             jest.useRealTimers();
         });
 
-        test('approved -> executed writes a conditional put with the recomputed TTL', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...BASE_ACTION } });
-            ddbMock.on(PutCommand).resolves({});
-
-            await backend.updateState(ACTION_UUID, 'executed');
-
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            expect(putCalls).toHaveLength(1);
-            expect(putCalls[0].args[0].input).toEqual({
-                TableName: 'TestTable',
-                Item:      {
-                    ...KEY,
-                    ...BASE_ACTION,
-                    state:                'executed',
-                    outcomeReportPending: true,
-                    updatedAt:            '2026-03-30T12:00:00.000Z',
-                    TTL:                  EXPECTED_TTL,
-                },
-                ConditionExpression:       '#state = :from AND #updatedAt = :revision',
-                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt' },
-                ExpressionAttributeValues: { ':from': 'approved', ':revision': '2026-03-30T10:00:00.000Z' },
-            });
-        });
-
-        test('approved -> failed records lastError and failureKind', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...BASE_ACTION } });
-            ddbMock.on(PutCommand).resolves({});
-
-            await backend.updateState(ACTION_UUID, 'failed', { lastError: 'Post not found', failureKind: 'permanent' });
-
-            const input = ddbMock.commandCalls(PutCommand)[0].args[0].input;
-            expect(input.Item).toEqual({
-                ...KEY,
-                ...BASE_ACTION,
-                state:                'failed',
-                lastError:            'Post not found',
-                failureKind:          'permanent',
-                outcomeReportPending: true,
-                updatedAt:            '2026-03-30T12:00:00.000Z',
-                TTL:                  EXPECTED_TTL,
-            });
-            expect(input.ConditionExpression).toBe('#state = :from AND #updatedAt = :revision');
-        });
-
         test('failed(transient) -> approved drops failureKind and also conditions on the stored failureKind', async () => {
             ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...FAILED_TRANSIENT } });
             ddbMock.on(PutCommand).resolves({});
@@ -245,81 +219,39 @@ describe('ApprovedOutboundActionBackend', () => {
         });
 
         test('reads the prior row with a strongly consistent read before writing', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...BASE_ACTION } });
+            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...FAILED_TRANSIENT } });
             ddbMock.on(PutCommand).resolves({});
 
-            await backend.updateState(ACTION_UUID, 'executed');
+            await backend.updateState(ACTION_UUID, 'approved');
 
             expect(ddbMock.commandCalls(GetCommand)[0].args[0].input.ConsistentRead).toBe(true);
         });
 
-        test('completion right after a retry reset sees the reset, not the stale failed row', async () => {
-            // A reset moved the row failed -> approved; the executor ran it and now records
-            // success. The strongly consistent read returns the approved row, so approved ->
-            // executed is legal and conditioned on the reset's revision.
-            const reset: ApprovedOutboundAction = { ...BASE_ACTION, lastError: 'socket hang up', updatedAt: '2026-03-30T11:30:00.000Z' };
-            // An eventually consistent read could still return the stale failed row.
-            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...FAILED_TRANSIENT } });
-            ddbMock.on(GetCommand, { TableName: 'TestTable', Key: KEY, ConsistentRead: true }).resolves({ Item: { ...KEY, ...reset } });
-            ddbMock.on(PutCommand).resolves({});
+        test('a sending row cannot be reset to approved, so a claimed send is never re-queued', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...SENDING } });
 
-            await backend.updateState(ACTION_UUID, 'executed');
-
-            const input = ddbMock.commandCalls(PutCommand)[0].args[0].input;
-            expect(input.Item).toMatchObject({ state: 'executed' });
-            expect(input.ExpressionAttributeValues).toEqual({ ':from': 'approved', ':revision': '2026-03-30T11:30:00.000Z' });
+            await expect(backend.updateState(ACTION_UUID, 'approved')).rejects.toThrow('illegal transition sending -> approved');
+            expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
         });
 
         test('logs a warning and returns without writing when the action is not found', async () => {
             ddbMock.on(GetCommand).resolves({ Item: undefined });
 
-            await backend.updateState('nonexistent-id', 'executed');
+            await backend.updateState('nonexistent-id', 'approved');
 
             expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
             expect(mockLogger.warn).toHaveBeenCalledTimes(1);
             expect(mockLogger.warn).toHaveBeenCalledWith(
-                { id: 'nonexistent-id', to: 'executed' },
+                { id: 'nonexistent-id', to: 'approved' },
                 'ApprovedOutboundActionBackend.updateState: action not found'
             );
         });
 
         test('propagates rejection from the underlying put', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...BASE_ACTION } });
+            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...FAILED_TRANSIENT } });
             ddbMock.on(PutCommand).rejects(new Error('put failed'));
 
-            await expect(backend.updateState(ACTION_UUID, 'executed')).rejects.toThrow('put failed');
-        });
-
-        test('updateState preserves approvalCard across approved to executed', async () => {
-            const card = { channelId: '1283746501928374650', messageId: '1419283746501928374' };
-            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...BASE_ACTION, approvalCard: card } });
-            ddbMock.on(PutCommand).resolves({});
-
-            await backend.updateState(ACTION_UUID, 'executed');
-
-            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toEqual({
-                ...KEY,
-                ...BASE_ACTION,
-                approvalCard:         card,
-                state:                'executed',
-                outcomeReportPending: true,
-                updatedAt:            '2026-03-30T12:00:00.000Z',
-                TTL:                  EXPECTED_TTL,
-            });
-        });
-
-        test('a terminal write drops an earlier notification marker for the new revision', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...BASE_ACTION, outcomeNotified: true } });
-            ddbMock.on(PutCommand).resolves({});
-            await backend.updateState(ACTION_UUID, 'executed');
-            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toEqual({
-                ...KEY,
-                ...BASE_ACTION,
-                state:                'executed',
-                outcomeReportPending: true,
-                updatedAt:            '2026-03-30T12:00:00.000Z',
-                TTL:                  EXPECTED_TTL,
-            });
+            await expect(backend.updateState(ACTION_UUID, 'approved')).rejects.toThrow('put failed');
         });
 
         test('a retry reset drops an unreported failure outcome so only the new attempt is reported', async () => {
@@ -338,6 +270,242 @@ describe('ApprovedOutboundActionBackend', () => {
             });
             expect('outcomeReportPending' in item).toBe(false);
             expect('outcomeNotified' in item).toBe(false);
+        });
+    });
+
+    describe('claim', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2026-03-30T12:00:00.000Z'));
+            spyOn(crypto, 'randomUUID').mockReturnValue(CLAIM_ID);
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('claims an approved row with a put conditioned on its listed state and revision, and no read', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const claimed = await backend.claim(BASE_ACTION);
+
+            expect(claimed).toEqual({ ...BASE_ACTION, state: 'sending', claimId: CLAIM_ID, updatedAt: '2026-03-30T12:00:00.000Z' });
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+            const puts = ddbMock.commandCalls(PutCommand);
+            expect(puts).toHaveLength(1);
+            expect(puts[0].args[0].input).toEqual({
+                TableName: 'TestTable',
+                Item:      {
+                    ...KEY,
+                    ...BASE_ACTION,
+                    state:     'sending',
+                    claimId:   CLAIM_ID,
+                    updatedAt: '2026-03-30T12:00:00.000Z',
+                    TTL:       EXPECTED_TTL,
+                },
+                ConditionExpression:       '#state = :from AND #updatedAt = :revision',
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt' },
+                ExpressionAttributeValues: { ':from': 'approved', ':revision': '2026-03-30T10:00:00.000Z' },
+            });
+        });
+
+        test('each claim writes a fresh random claimId', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.claim(BASE_ACTION);
+
+            expect(crypto.randomUUID).toHaveBeenCalledTimes(1);
+        });
+
+        test('a claim keeps lastError and approvalCard but drops stray outcome markers, failureKind and claimId', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            const card = { channelId: '1283746501928374650', messageId: '1419283746501928374' };
+            const prior: ApprovedOutboundAction = {
+                ...BASE_ACTION,
+                lastError:            'socket hang up',
+                approvalCard:         card,
+                failureKind:          'transient',
+                outcomeReportPending: true,
+                outcomeNotified:      true,
+                claimId:              '99999999-2222-4333-8444-555555555555',
+            };
+
+            await backend.claim(prior);
+
+            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toEqual({
+                ...KEY,
+                ...BASE_ACTION,
+                lastError:    'socket hang up',
+                approvalCard: card,
+                state:        'sending',
+                claimId:      CLAIM_ID,
+                updatedAt:    '2026-03-30T12:00:00.000Z',
+                TTL:          EXPECTED_TTL,
+            });
+        });
+
+        test('returns undefined when another writer claimed or moved the row first', async () => {
+            ddbMock.on(PutCommand).rejects(CONDITIONAL_CHECK_FAILED);
+
+            expect(await backend.claim(BASE_ACTION)).toBeUndefined();
+        });
+
+        test('propagates any other claim write failure', async () => {
+            ddbMock.on(PutCommand).rejects(new Error('throughput exceeded'));
+
+            await expect(backend.claim(BASE_ACTION)).rejects.toThrow('throughput exceeded');
+        });
+
+        test('propagates a claim rejection that is not an Error unchanged', async () => {
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a non-Error rejection must not be read as a conditional-check failure.
+            ddbMock.on(PutCommand).callsFake(() => Promise.reject(null));
+
+            await expect(backend.claim(BASE_ACTION)).rejects.toBeNull();
+        });
+
+        test('refuses to claim a row that is already sending, and writes nothing', async () => {
+            await expect(backend.claim(SENDING)).rejects.toThrow('illegal transition sending -> sending');
+            expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+        });
+    });
+
+    describe('settleClaim', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2026-03-30T12:00:00.000Z'));
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('settles a claim as executed, conditioned on its claimId, with the outcome marker and no read', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            expect(await backend.settleClaim(SENDING, { state: 'executed' })).toBe(true);
+
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+            const puts = ddbMock.commandCalls(PutCommand);
+            expect(puts).toHaveLength(1);
+            expect(puts[0].args[0].input).toEqual({
+                TableName: 'TestTable',
+                Item:      {
+                    ...KEY,
+                    ...BASE_ACTION,
+                    state:                'executed',
+                    outcomeReportPending: true,
+                    updatedAt:            '2026-03-30T12:00:00.000Z',
+                    TTL:                  EXPECTED_TTL,
+                },
+                ConditionExpression:       '#state = :from AND #claimId = :claimId',
+                ExpressionAttributeNames:  { '#state': 'state', '#claimId': 'claimId' },
+                ExpressionAttributeValues: { ':from': 'sending', ':claimId': CLAIM_ID },
+            });
+        });
+
+        test('settles a claim as failed with its lastError and failureKind', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            expect(await backend.settleClaim(SENDING, { state: 'failed', lastError: 'Post not found', failureKind: 'permanent' })).toBe(true);
+
+            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toEqual({
+                ...KEY,
+                ...BASE_ACTION,
+                state:                'failed',
+                lastError:            'Post not found',
+                failureKind:          'permanent',
+                outcomeReportPending: true,
+                updatedAt:            '2026-03-30T12:00:00.000Z',
+                TTL:                  EXPECTED_TTL,
+            });
+        });
+
+        test('a settle drops an earlier notification marker so the new outcome revision notifies Izzy afresh', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.settleClaim({ ...SENDING, outcomeNotified: true }, { state: 'executed' });
+
+            const item = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item as Record<string, unknown>;
+            expect(item).toEqual({
+                ...KEY,
+                ...BASE_ACTION,
+                state:                'executed',
+                outcomeReportPending: true,
+                updatedAt:            '2026-03-30T12:00:00.000Z',
+                TTL:                  EXPECTED_TTL,
+            });
+            expect('outcomeNotified' in item).toBe(false);
+        });
+
+        test('settling preserves approvalCard', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            const card = { channelId: '1283746501928374650', messageId: '1419283746501928374' };
+
+            await backend.settleClaim({ ...SENDING, approvalCard: card }, { state: 'executed' });
+
+            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toMatchObject({ approvalCard: card, state: 'executed' });
+        });
+
+        test('returns false when the claim was already resolved or replaced by another claim', async () => {
+            ddbMock.on(PutCommand).rejects(CONDITIONAL_CHECK_FAILED);
+
+            expect(await backend.settleClaim(SENDING, { state: 'executed' })).toBe(false);
+        });
+
+        test('propagates any other settle write failure', async () => {
+            ddbMock.on(PutCommand).rejects(new Error('throughput exceeded'));
+
+            await expect(backend.settleClaim(SENDING, { state: 'executed' })).rejects.toThrow('throughput exceeded');
+        });
+
+        test('propagates a settle rejection that is not an Error unchanged', async () => {
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a non-Error rejection must not be read as a conditional-check failure.
+            ddbMock.on(PutCommand).callsFake(() => Promise.reject(null));
+
+            await expect(backend.settleClaim(SENDING, { state: 'executed' })).rejects.toBeNull();
+        });
+
+        test('refuses to settle a row that is not sending, and writes nothing', async () => {
+            const notSending = { ...SENDING, state: 'executed' } as unknown as ClaimedApprovedOutboundAction;
+
+            await expect(backend.settleClaim(notSending, { state: 'executed' })).rejects.toThrow('illegal transition executed -> executed');
+            expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+        });
+    });
+
+    describe('listOpen', () => {
+        test('queries the partition for approved and sending rows with a strongly consistent read', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.listOpen();
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input).toEqual({
+                TableName:                 'TestTable',
+                KeyConditionExpression:    '#pk = :pk',
+                FilterExpression:          '#state IN (:approved, :sending)',
+                ExpressionAttributeNames:  { '#pk': 'PK', '#state': 'state' },
+                ExpressionAttributeValues: { ':pk': 'APPROVAL#SAGA', ':approved': 'approved', ':sending': 'sending' },
+                ConsistentRead:            true,
+            });
+        });
+
+        test('returns the parsed rows in listed order and skips unparseable ones with a warning', async () => {
+            ddbMock.on(QueryCommand).resolves({
+                Items: [
+                    { ...KEY, ...SENDING },
+                    { PK: 'APPROVAL#SAGA', SK: 'SAGA#bad-item', id: 'not-a-uuid', state: 'sending' },
+                    { ...KEY, ...BASE_ACTION },
+                ],
+            });
+
+            expect(await backend.listOpen()).toEqual([SENDING, BASE_ACTION]);
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({ item: expect.objectContaining({ SK: 'SAGA#bad-item' }), error: expect.any(String) }),
+                'ApprovedOutboundActionBackend.listOpen: failed to parse action'
+            );
         });
     });
 

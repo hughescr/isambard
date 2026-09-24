@@ -4,6 +4,7 @@ import {
     approvedOutboundActionSchema,
     type ApprovedOutboundAction,
     type ApprovedOutboundActionState,
+    type ClaimedApprovedOutboundAction,
     type FailureKind
 } from './types';
 import { InvariantViolationError } from '@/errors';
@@ -26,6 +27,15 @@ export interface ActionFailure {
     failureKind: FailureKind
 }
 
+/** What the holder of a claim records once its send's outcome is known. */
+export type ClaimOutcome = { state: 'executed' } | ({ state: 'failed' } & ActionFailure);
+
+interface WriteCondition {
+    ConditionExpression:       string
+    ExpressionAttributeNames:  Record<string, string>
+    ExpressionAttributeValues: Record<string, string>
+}
+
 function describeState(action: ApprovedOutboundAction): string {
     return action.state === 'failed' ? `failed(${action.failureKind ?? 'unclassified'})` : action.state;
 }
@@ -33,7 +43,10 @@ function describeState(action: ApprovedOutboundAction): string {
 function isLegalTransition(prior: ApprovedOutboundAction, to: ApprovedOutboundActionState): boolean {
     switch(prior.state) {
         case 'approved': {
-            return to !== 'approved';
+            return to === 'sending';
+        }
+        case 'sending': {
+            return to === 'executed' || to === 'failed';
         }
         case 'failed': {
             return to === 'approved' && prior.failureKind === 'transient';
@@ -44,15 +57,33 @@ function isLegalTransition(prior: ApprovedOutboundAction, to: ApprovedOutboundAc
     }
 }
 
+function isConditionalCheckFailure(err: unknown): boolean {
+    return err instanceof Error && err.name === 'ConditionalCheckFailedException';
+}
+
 /**
- * Enforce the ApprovedOutboundAction lifecycle: `approved → executed`, `approved → failed`,
- * and `failed(transient) → approved` (retry on reconnect). Anything else — including
- * `executed → approved` and resetting a permanent or unclassified failure — throws.
+ * The fields of `prior` that carry over into its next state. `failureKind` describes only the
+ * current failure, `outcomeReportPending` and `outcomeNotified` only the current outcome (a retry
+ * reset drops an unreported failure, because the new attempt's own outcome supersedes it, and a
+ * new terminal revision must notify Izzy afresh), and `claimId` only the current claim, so every
+ * transition drops all four and re-adds what it needs.
+ */
+function carriedFields(prior: ApprovedOutboundAction): Omit<ApprovedOutboundAction, 'failureKind' | 'outcomeReportPending' | 'outcomeNotified' | 'claimId'> {
+    const { failureKind: _failureKind, outcomeReportPending: _reportPending, outcomeNotified: _notified, claimId: _claimId, ...rest } = prior;
+    return rest;
+}
+
+/**
+ * Enforce the ApprovedOutboundAction lifecycle: `approved → sending` (the executor's claim),
+ * `sending → executed` and `sending → failed` (settling that claim), and
+ * `failed(transient) → approved` (retry on reconnect). Anything else — including sending
+ * without a claim, `executed → approved` and resetting a permanent or unclassified failure —
+ * throws.
  */
 export function assertTransition(prior: ApprovedOutboundAction, to: ApprovedOutboundActionState): void {
     if(!isLegalTransition(prior, to)) {
         throw new InvariantViolationError(
-            'ApprovedOutboundActionBackend.updateState',
+            'ApprovedOutboundActionBackend.assertTransition',
             `illegal transition ${describeState(prior)} -> ${to}`
         );
     }
@@ -92,16 +123,14 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
     }
 
     /**
-     * Move an action to a new state. The prior row is read consistently, the move is checked by
-     * {@link assertTransition}, and the whole row is rewritten with a put conditioned on the
-     * state and `updatedAt` revision that was read — plus, for a retry reset, on the stored
-     * failure still being transient — so a move that raced another writer fails instead of
-     * overwriting it. The TTL is recomputed from `createdAt`, so a state change never removes
-     * the row's expiry. If the action is not found, logs a warning and returns.
+     * Reset a transiently failed action to `approved` so the executor retries it — the one
+     * transition that is not the executor's claim or settle. The prior row is read consistently,
+     * the move is checked by {@link assertTransition}, and the whole row is rewritten with a put
+     * conditioned on the state and `updatedAt` revision that was read and on the stored failure
+     * still being transient, so a reset that raced another writer fails instead of overwriting
+     * it. If the action is not found, logs a warning and returns.
      */
-    async updateState(id: string, to: 'approved' | 'executed'): Promise<void>;
-    async updateState(id: string, to: 'failed', failure: ActionFailure): Promise<void>;
-    async updateState(id: string, to: ApprovedOutboundActionState, failure?: ActionFailure): Promise<void> {
+    async updateState(id: string, to: 'approved'): Promise<void> {
         const prior = await this.get(id);
         if(prior === undefined) {
             logger.warn({ id, to }, 'ApprovedOutboundActionBackend.updateState: action not found');
@@ -110,42 +139,98 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
 
         assertTransition(prior, to);
 
-        // failureKind describes only the current failure; a reset or completion drops it.
-        // outcomeReportPending is the outcome-report outbox: every terminal write records an
-        // outcome still to be reported, in the same put as the state; a retry reset drops an
-        // unreported failure, because the new attempt's own outcome supersedes it.
-        const { failureKind: _priorFailureKind, outcomeReportPending: _priorReportPending, outcomeNotified: _priorNotified, ...rest } = prior;
-        const next: ApprovedOutboundAction = {
-            ...rest,
-            ...failure,
-            ...(to === 'approved' ? {} : { outcomeReportPending: true }),
-            state:     to,
-            updatedAt: new Date().toISOString(),
-        };
-
-        await this.docClient.send(new PutCommand({
-            TableName: this.tableName,
-            Item:      {
-                PK:  ACTION_PK,
-                SK:  actionSK(id),
-                ...next,
-                TTL: ApprovedOutboundActionBackend.expiresAt(new Date(prior.createdAt), { days: TTL_DAYS }),
-            },
-            ...transitionCondition(prior, to),
-        }));
+        await this.putTransition(prior, { ...carriedFields(prior), state: to, updatedAt: new Date().toISOString() }, {
+            ConditionExpression:       '#state = :from AND #updatedAt = :revision AND #failureKind = :transient',
+            ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#failureKind': 'failureKind' },
+            ExpressionAttributeValues: { ':from': prior.state, ':revision': prior.updatedAt, ':transient': 'transient' },
+        });
     }
 
     /**
-     * List all actions that are in the given state, with a strongly consistent query: the
-     * executor sends whatever this returns, so it must never see a row as `approved` after its
-     * `executed` write succeeded (that would send it twice), and a wake right after a create
-     * must see the new row.
+     * Claim a listed `approved` row for sending, before any external call: `approved → sending`
+     * with a fresh random `claimId`, in a put conditioned on the state and `updatedAt` revision
+     * that was listed. No read — the listing was strongly consistent, and the condition catches
+     * anything newer. Returns the claimed row, or undefined (writing nothing) when the condition
+     * fails because another process claimed the row first or it moved on. Any other failure
+     * propagates, and the caller must then not send.
+     */
+    async claim(action: ApprovedOutboundAction): Promise<ClaimedApprovedOutboundAction | undefined> {
+        assertTransition(action, 'sending');
+        const claimed: ClaimedApprovedOutboundAction = {
+            ...carriedFields(action),
+            state:     'sending',
+            claimId:   crypto.randomUUID(),
+            updatedAt: new Date().toISOString(),
+        };
+        try {
+            await this.putTransition(action, claimed, {
+                ConditionExpression:       '#state = :from AND #updatedAt = :revision',
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt' },
+                ExpressionAttributeValues: { ':from': 'approved', ':revision': action.updatedAt },
+            });
+        } catch (err: unknown) {
+            if(isConditionalCheckFailure(err)) {
+                return undefined;
+            }
+            throw err;
+        }
+        return claimed;
+    }
+
+    /**
+     * Record the outcome of a claimed send: `sending → executed`, or `sending → failed` with its
+     * failure, in the same put as the outcome-report marker (`outcomeReportPending`). The put is
+     * conditioned on the row still holding this claim's `claimId` — a random id, never a
+     * wall-clock revision two claims could share — so a late settle can never overwrite a later
+     * claim of the same row. No read. Returns false (writing nothing) when the claim was already
+     * resolved: by an earlier attempt of this settle that landed though its response was lost,
+     * or by another process's stale-claim sweep. Any other failure propagates.
+     */
+    async settleClaim(claimed: ClaimedApprovedOutboundAction, outcome: ClaimOutcome): Promise<boolean> {
+        const { state, ...failure } = outcome;
+        assertTransition(claimed, state);
+        try {
+            await this.putTransition(claimed, {
+                ...carriedFields(claimed),
+                ...failure,
+                outcomeReportPending: true,
+                state,
+                updatedAt:            new Date().toISOString(),
+            }, {
+                ConditionExpression:       '#state = :from AND #claimId = :claimId',
+                ExpressionAttributeNames:  { '#state': 'state', '#claimId': 'claimId' },
+                ExpressionAttributeValues: { ':from': 'sending', ':claimId': claimed.claimId },
+            });
+        } catch (err: unknown) {
+            if(isConditionalCheckFailure(err)) {
+                return false;
+            }
+            throw err;
+        }
+        return true;
+    }
+
+    /**
+     * List all actions that are in the given state, with a strongly consistent query.
      */
     async listByState(state: ApprovedOutboundActionState): Promise<ApprovedOutboundAction[]> {
         return this.listWhere('listByState', {
             FilterExpression:          '#state = :state',
             ExpressionAttributeNames:  { '#pk': 'PK', '#state': 'state' },
             ExpressionAttributeValues: { ':pk': ACTION_PK, ':state': state },
+        });
+    }
+
+    /**
+     * List the executor's open work — `approved` rows to claim and `sending` rows whose claim may
+     * have been abandoned — with one strongly consistent query, so a pass never sees a row as
+     * `approved` after its claim succeeded, and a wake right after a create sees the new row.
+     */
+    async listOpen(): Promise<ApprovedOutboundAction[]> {
+        return this.listWhere('listOpen', {
+            FilterExpression:          '#state IN (:approved, :sending)',
+            ExpressionAttributeNames:  { '#pk': 'PK', '#state': 'state' },
+            ExpressionAttributeValues: { ':pk': ACTION_PK, ':approved': 'approved', ':sending': 'sending' },
         });
     }
 
@@ -178,7 +263,7 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
                 ExpressionAttributeValues: { ':state': action.state, ':revision': action.updatedAt, ':pending': true, ':notified': true },
             }));
         } catch (err: unknown) {
-            if(err instanceof Error && err.name === 'ConditionalCheckFailedException') {
+            if(isConditionalCheckFailure(err)) {
                 return false;
             }
             throw err;
@@ -204,12 +289,29 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
                 ExpressionAttributeValues: { ':state': action.state, ':revision': action.updatedAt, ':pending': true },
             }));
         } catch (err: unknown) {
-            if(err instanceof Error && err.name === 'ConditionalCheckFailedException') {
+            if(isConditionalCheckFailure(err)) {
                 return false;
             }
             throw err;
         }
         return true;
+    }
+
+    /**
+     * Rewrite the whole row as `next`, conditioned by `condition`. The TTL is recomputed from
+     * `createdAt`, so a state change never removes the row's expiry.
+     */
+    private async putTransition(prior: ApprovedOutboundAction, next: ApprovedOutboundAction, condition: WriteCondition): Promise<void> {
+        await this.docClient.send(new PutCommand({
+            TableName: this.tableName,
+            Item:      {
+                PK:  ACTION_PK,
+                SK:  actionSK(prior.id),
+                ...next,
+                TTL: ApprovedOutboundActionBackend.expiresAt(new Date(prior.createdAt), { days: TTL_DAYS }),
+            },
+            ...condition,
+        }));
     }
 
     private async listWhere(operation: string, filter: {
@@ -235,25 +337,4 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
         }
         return results;
     }
-}
-
-function transitionCondition(prior: ApprovedOutboundAction, to: ApprovedOutboundActionState): {
-    ConditionExpression:       string
-    ExpressionAttributeNames:  Record<string, string>
-    ExpressionAttributeValues: Record<string, string>
-} {
-    const revision = {
-        ConditionExpression:       '#state = :from AND #updatedAt = :revision',
-        ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt' },
-        ExpressionAttributeValues: { ':from': prior.state, ':revision': prior.updatedAt },
-    };
-    if(to !== 'approved') {
-        return revision;
-    }
-    // A retry reset must never overwrite a failure that became permanent after the read.
-    return {
-        ConditionExpression:       `${revision.ConditionExpression} AND #failureKind = :transient`,
-        ExpressionAttributeNames:  { ...revision.ExpressionAttributeNames, '#failureKind': 'failureKind' },
-        ExpressionAttributeValues: { ...revision.ExpressionAttributeValues, ':transient': 'transient' },
-    };
 }

@@ -155,18 +155,20 @@ describe('describeApprovedActionOutcome', () => {
         expect(describeApprovedActionOutcome(row({ type: 'bsky_reply', params: { text: 7 } })).text).toBe('Bluesky reply was posted.');
     });
 
-    test('an approved row has no outcome to describe', () => {
-        let thrown: unknown;
-        try {
-            describeApprovedActionOutcome(row({ state: 'approved' }));
-        } catch (err) {
-            thrown = err;
-        }
+    for(const state of ['approved', 'sending'] as const) {
+        test(`a ${state} row has no outcome to describe`, () => {
+            let thrown: unknown;
+            try {
+                describeApprovedActionOutcome(row({ state }));
+            } catch (err) {
+                thrown = err;
+            }
 
-        expect(thrown).toBeInstanceOf(InvariantViolationError);
-        expect((thrown as InvariantViolationError).context).toEqual({
-            location:  'describeApprovedActionOutcome',
-            invariant: 'an approved action has no outcome yet',
+            expect(thrown).toBeInstanceOf(InvariantViolationError);
+            expect((thrown as InvariantViolationError).context).toEqual({
+                location:  'describeApprovedActionOutcome',
+                invariant: 'an action that is approved or still sending has no outcome yet',
+            });
         });
-    });
+    }
 });
