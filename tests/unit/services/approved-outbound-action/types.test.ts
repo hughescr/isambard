@@ -118,6 +118,15 @@ describe('approvedOutboundActionSchema', () => {
         expect(approvedOutboundActionSchema.safeParse({ ...ROW, outcomeReportPending: 'yes' }).success).toBe(false);
     });
 
+    test('accepts a durable notified marker and preserves legacy rows without it', () => {
+        expect(approvedOutboundActionSchema.parse({ ...ROW, outcomeNotified: true })).toEqual({ ...ROW, outcomeNotified: true });
+        expect(approvedOutboundActionSchema.parse(ROW)).toEqual(ROW);
+    });
+
+    test('rejects a non-boolean notified marker', () => {
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, outcomeNotified: 'yes' }).success).toBe(false);
+    });
+
     test('strips the four retired review-only fields when parsing', () => {
         const parsed = approvedOutboundActionSchema.parse({
             ...ROW,

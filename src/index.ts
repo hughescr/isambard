@@ -705,6 +705,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             fetchChannel:   channelId => discordInfra.discordClient.channels.fetch(channelId),
             isDiscordReady: () => discordCapability.isReady(),
             notify:         notificationBridge.notify,
+            backend:        approvedOutboundActionBackend,
         }),
         logger,
     });

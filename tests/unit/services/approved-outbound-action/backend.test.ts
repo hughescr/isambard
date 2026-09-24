@@ -308,8 +308,22 @@ describe('ApprovedOutboundActionBackend', () => {
             });
         });
 
+        test('a terminal write drops an earlier notification marker for the new revision', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...BASE_ACTION, outcomeNotified: true } });
+            ddbMock.on(PutCommand).resolves({});
+            await backend.updateState(ACTION_UUID, 'executed');
+            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toEqual({
+                ...KEY,
+                ...BASE_ACTION,
+                state:                'executed',
+                outcomeReportPending: true,
+                updatedAt:            '2026-03-30T12:00:00.000Z',
+                TTL:                  EXPECTED_TTL,
+            });
+        });
+
         test('a retry reset drops an unreported failure outcome so only the new attempt is reported', async () => {
-            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...FAILED_TRANSIENT, outcomeReportPending: true } });
+            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...FAILED_TRANSIENT, outcomeReportPending: true, outcomeNotified: true } });
             ddbMock.on(PutCommand).resolves({});
 
             await backend.updateState(ACTION_UUID, 'approved');
@@ -323,6 +337,7 @@ describe('ApprovedOutboundActionBackend', () => {
                 TTL:       EXPECTED_TTL,
             });
             expect('outcomeReportPending' in item).toBe(false);
+            expect('outcomeNotified' in item).toBe(false);
         });
     });
 
@@ -382,6 +397,40 @@ describe('ApprovedOutboundActionBackend', () => {
         });
     });
 
+    describe('markOutcomeNotified', () => {
+        const EXECUTED: ApprovedOutboundAction = { ...BASE_ACTION, state: 'executed', outcomeReportPending: true, updatedAt: '2026-03-30T12:00:00.000Z' };
+
+        test('records acceptance for the current pending state and revision without changing updatedAt', async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+
+            expect(await backend.markOutcomeNotified(EXECUTED)).toBe(true);
+            expect(ddbMock.commandCalls(UpdateCommand)[0].args[0].input).toEqual({
+                TableName:                 'TestTable',
+                Key:                       KEY,
+                UpdateExpression:          'SET #notified = :notified',
+                ConditionExpression:       '#state = :state AND #updatedAt = :revision AND #pending = :pending',
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending', '#notified': 'outcomeNotified' },
+                ExpressionAttributeValues: { ':state': 'executed', ':revision': '2026-03-30T12:00:00.000Z', ':pending': true, ':notified': true },
+            });
+        });
+
+        test('returns false when the outcome revision moved on', async () => {
+            ddbMock.on(UpdateCommand).rejects(Object.assign(new Error('stale'), { name: 'ConditionalCheckFailedException' }));
+            expect(await backend.markOutcomeNotified(EXECUTED)).toBe(false);
+        });
+
+        test('propagates a real write failure', async () => {
+            ddbMock.on(UpdateCommand).rejects(new Error('throughput exceeded'));
+            await expect(backend.markOutcomeNotified(EXECUTED)).rejects.toThrow('throughput exceeded');
+        });
+
+        test('propagates a non-Error rejection unchanged', async () => {
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- verifies non-Error rejection is not treated as a conditional failure.
+            ddbMock.on(UpdateCommand).callsFake(() => Promise.reject(null));
+            await expect(backend.markOutcomeNotified(EXECUTED)).rejects.toBeNull();
+        });
+    });
+
     describe('markOutcomeReported', () => {
         const EXECUTED: ApprovedOutboundAction = { ...BASE_ACTION, state: 'executed', outcomeReportPending: true, updatedAt: '2026-03-30T12:00:00.000Z' };
 
@@ -395,9 +444,9 @@ describe('ApprovedOutboundActionBackend', () => {
             expect(calls[0].args[0].input).toEqual({
                 TableName:                 'TestTable',
                 Key:                       KEY,
-                UpdateExpression:          'REMOVE #pending',
+                UpdateExpression:          'REMOVE #pending, #notified',
                 ConditionExpression:       '#state = :state AND #updatedAt = :revision AND #pending = :pending',
-                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending' },
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending', '#notified': 'outcomeNotified' },
                 ExpressionAttributeValues: { ':state': 'executed', ':revision': '2026-03-30T12:00:00.000Z', ':pending': true },
             });
         });

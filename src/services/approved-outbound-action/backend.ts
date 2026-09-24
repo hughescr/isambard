@@ -114,7 +114,7 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
         // outcomeReportPending is the outcome-report outbox: every terminal write records an
         // outcome still to be reported, in the same put as the state; a retry reset drops an
         // unreported failure, because the new attempt's own outcome supersedes it.
-        const { failureKind: _priorFailureKind, outcomeReportPending: _priorReportPending, ...rest } = prior;
+        const { failureKind: _priorFailureKind, outcomeReportPending: _priorReportPending, outcomeNotified: _priorNotified, ...rest } = prior;
         const next: ApprovedOutboundAction = {
             ...rest,
             ...failure,
@@ -163,6 +163,30 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
     }
 
     /**
+     * Record accepted notification for exactly the pending outcome revision. A conditional
+     * failure means the row moved on; a real database failure propagates so delivery retries.
+     * Leave updatedAt unchanged so concurrent state transitions retain their revision guard.
+     */
+    async markOutcomeNotified(action: ApprovedOutboundAction): Promise<boolean> {
+        try {
+            await this.docClient.send(new UpdateCommand({
+                TableName:                 this.tableName,
+                Key:                       { PK: ACTION_PK, SK: actionSK(action.id) },
+                UpdateExpression:          'SET #notified = :notified',
+                ConditionExpression:       '#state = :state AND #updatedAt = :revision AND #pending = :pending',
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending', '#notified': 'outcomeNotified' },
+                ExpressionAttributeValues: { ':state': action.state, ':revision': action.updatedAt, ':pending': true, ':notified': true },
+            }));
+        } catch (err: unknown) {
+            if(err instanceof Error && err.name === 'ConditionalCheckFailedException') {
+                return false;
+            }
+            throw err;
+        }
+        return true;
+    }
+
+    /**
      * Clear the outcome-report marker for exactly the outcome that was reported: the update is
      * conditioned on the state and `updatedAt` revision that was read. Returns false (and
      * changes nothing) when the row has moved on since — a retry reset or a newer outcome, whose
@@ -174,9 +198,9 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
             await this.docClient.send(new UpdateCommand({
                 TableName:                 this.tableName,
                 Key:                       { PK: ACTION_PK, SK: actionSK(action.id) },
-                UpdateExpression:          'REMOVE #pending',
+                UpdateExpression:          'REMOVE #pending, #notified',
                 ConditionExpression:       '#state = :state AND #updatedAt = :revision AND #pending = :pending',
-                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending' },
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending', '#notified': 'outcomeNotified' },
                 ExpressionAttributeValues: { ':state': action.state, ':revision': action.updatedAt, ':pending': true },
             }));
         } catch (err: unknown) {

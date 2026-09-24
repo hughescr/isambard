@@ -7,7 +7,9 @@ import type { ApprovedOutboundAction } from './types';
  * Tell the admin (on the approval card) and Izzy about one executed or failed action. Resolves
  * true once both have been told — or the card can never be updated and Izzy has been told —
  * and false when either must be retried later (Discord unavailable, conductor not accepting
- * work). Must be safe to repeat: an undelivered outcome is delivered again on a later pass.
+ * work). Must be safe to repeat: delivery durably records accepted notification before
+ * editing the card, so a later pass retries only that card; refused notifications are retried.
+ * The pending marker is cleared only after both halves have completed.
  */
 export type ApprovedActionOutcomeDelivery = (action: ApprovedOutboundAction) => Promise<boolean>;
 

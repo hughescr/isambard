@@ -12,7 +12,8 @@ import {
     type ApprovedActionOutcomeDelivery,
     type ApprovedActionOutcomeReport,
     type ApprovedActionOutcomeTone,
-    type ApprovedOutboundAction
+    type ApprovedOutboundAction,
+    type ApprovedOutboundActionBackend
 } from '@/services';
 
 export interface ApprovedActionOutcomeDeliveryDeps {
@@ -25,6 +26,8 @@ export interface ApprovedActionOutcomeDeliveryDeps {
     /** Whether Discord is connected; while it is not, the card edit is left for a later pass. */
     isDiscordReady: () => boolean
     notify:         NotifyFn
+    /** Persist accepted notification before the card edit; keep the method bound to its backend. */
+    backend:        Pick<ApprovedOutboundActionBackend, 'markOutcomeNotified'>
     /** Orders the approve click's pending-card edit before this outcome edit; the process-wide gate when omitted. */
     cardEdits?:     ApprovalCardEditGate
 }
@@ -51,7 +54,10 @@ function outcomeEmbed(card: ApprovedActionOutcomeReport['card']): EmbedBuilder {
  * transiently). A card that can never be edited (its channel gone or not a text channel, the
  * message deleted, missing permissions) is logged and given up on, so it cannot hold Izzy's
  * report hostage. Rows written before cards were recorded have no card: Izzy is told, and no
- * edit is attempted.
+ * edit is attempted. Accepted notification is conditionally persisted on the outcome row
+ * before the card edit; a later pass (including after restart) retries only the card. If that
+ * conditional write finds a newer revision, the stale card edit is skipped. A crash precisely
+ * between the external notification and its database write may still duplicate it on restart.
  */
 export function createApprovedActionOutcomeDelivery(deps: ApprovedActionOutcomeDeliveryDeps): ApprovedActionOutcomeDelivery {
     const cardEdits = deps.cardEdits ?? approvalCardEditGate;
@@ -80,7 +86,11 @@ export function createApprovedActionOutcomeDelivery(deps: ApprovedActionOutcomeD
 
     return async (action: ApprovedOutboundAction) => {
         const report = describeApprovedActionOutcome(action);
-        const notified = deps.notify({ source: report.source, key: report.key, text: report.text, wake: report.wake });
+        const notified = action.outcomeNotified === true || deps.notify({ source: report.source, key: report.key, text: report.text, wake: report.wake });
+        if(notified && action.outcomeNotified !== true && !await deps.backend.markOutcomeNotified(action)) {
+            // A newer revision replaced this row while the notification was being accepted.
+            return false;
+        }
         const cardDone = action.approvalCard === undefined || await updateCard(action.id, action.approvalCard, report);
         return notified && cardDone;
     };

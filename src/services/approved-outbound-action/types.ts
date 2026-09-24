@@ -54,6 +54,11 @@ export type ApprovalCardRef = z.infer<typeof approvalCardRefSchema>;
  * `outcomeReportPending` is the durable outbox for outcome reporting: the backend sets it on
  * every terminal write (`executed` or `failed`) in the same put as the state, drops it on a retry
  * reset, and the outcome reporter clears it only once the card and Izzy have both been told.
+ * `outcomeNotified` records accepted handoff to Izzy separately from the card edit, so a
+ * restart with a pending card does not notify her again. It is cleared with the pending marker
+ * after both halves finish and on every new state revision. There is still a best-effort crash
+ * window between notification acceptance and persisting this flag (external effects cannot be
+ * atomic); persisting first instead would silently lose a notification.
  * A restart or an unavailable Discord/conductor therefore retries the report, never the send.
  *
  * No `ttl` field: the persisted DynamoDB `TTL` attribute is written directly by the backend via
@@ -70,6 +75,7 @@ export const approvedOutboundActionSchema = z.object({
     failureKind:          failureKindSchema.optional(),
     approvalCard:         approvalCardRefSchema.optional(),
     outcomeReportPending: z.boolean().optional(),
+    outcomeNotified:      z.boolean().optional(),
     createdAt:            z.iso.datetime(),
     updatedAt:            z.iso.datetime(),
 });

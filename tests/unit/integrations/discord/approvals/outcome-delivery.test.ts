@@ -5,7 +5,9 @@ import type { NotifyParams } from '@/agent';
 import type { ChannelId } from '@/config';
 import { ApprovalCardEditGate } from '@/integrations/discord/approvals/card-edit-gate';
 import { createApprovedActionOutcomeDelivery } from '@/integrations/discord/approvals/outcome-delivery';
-import type { ApprovedOutboundAction } from '@/services';
+import type { ApprovedOutboundAction, ApprovedOutboundActionBackend } from '@/services';
+import { createApprovedActionOutcomeReporter } from '@/services/approved-outbound-action/outcome-reporter';
+import type { ServiceLogger } from '@/services/types';
 
 const ID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const REVISION = '2026-09-24T12:00:00.000Z';
@@ -26,12 +28,13 @@ function row(overrides: Partial<ApprovedOutboundAction> = {}): ApprovedOutboundA
 }
 
 interface Harness {
-    deliver:      (action: ApprovedOutboundAction) => Promise<boolean>
-    notify:       ReturnType<typeof mock<(params: NotifyParams) => boolean>>
-    fetchChannel: ReturnType<typeof mock<(channelId: ChannelId) => Promise<Channel | null>>>
-    edit:         ReturnType<typeof mock<(messageId: string, options: unknown) => Promise<unknown>>>
-    ready:        { value: boolean }
-    cardEdits:    ApprovalCardEditGate
+    deliver:             (action: ApprovedOutboundAction) => Promise<boolean>
+    notify:              ReturnType<typeof mock<(params: NotifyParams) => boolean>>
+    fetchChannel:        ReturnType<typeof mock<(channelId: ChannelId) => Promise<Channel | null>>>
+    edit:                ReturnType<typeof mock<(messageId: string, options: unknown) => Promise<unknown>>>
+    ready:               { value: boolean }
+    cardEdits:           ApprovalCardEditGate
+    markOutcomeNotified: ReturnType<typeof mock<(action: ApprovedOutboundAction) => Promise<boolean>>>
 }
 
 function makeHarness(): Harness {
@@ -41,13 +44,15 @@ function makeHarness(): Harness {
     const notify = mock((_params: NotifyParams): boolean => true);
     const ready = { value: true };
     const cardEdits = new ApprovalCardEditGate();
+    const markOutcomeNotified = mock(async (_action: ApprovedOutboundAction): Promise<boolean> => true);
     const deliver = createApprovedActionOutcomeDelivery({
         fetchChannel,
         isDiscordReady: () => ready.value,
         notify,
+        backend:        { markOutcomeNotified },
         cardEdits,
     });
-    return { deliver, notify, fetchChannel, edit, ready, cardEdits };
+    return { deliver, notify, fetchChannel, edit, ready, cardEdits, markOutcomeNotified };
 }
 
 function editedEmbeds(h: Harness): unknown[] {
@@ -136,9 +141,10 @@ describe('createApprovedActionOutcomeDelivery', () => {
         expect(await h.deliver(row())).toBe(false);
 
         h.ready.value = true;
-        expect(await h.deliver(row())).toBe(true);
+        expect(await h.deliver(row({ outcomeNotified: true }))).toBe(true);
         expect(h.edit).toHaveBeenCalledTimes(1);
-        expect(h.notify.mock.calls.map(([params]) => params.key)).toEqual([`${ID}:executed:${REVISION}`, `${ID}:executed:${REVISION}`]);
+        expect(h.notify.mock.calls.map(([params]) => params.key)).toEqual([`${ID}:executed:${REVISION}`]);
+        expect(h.markOutcomeNotified.mock.calls).toEqual([[row()]]);
     });
 
     test('a notification refused by the conductor is delivered on a later attempt with the same key', async () => {
@@ -148,6 +154,98 @@ describe('createApprovedActionOutcomeDelivery', () => {
 
         expect(await h.deliver(row())).toBe(true);
         expect(h.notify.mock.calls.map(([params]) => params.key)).toEqual([`${ID}:executed:${REVISION}`, `${ID}:executed:${REVISION}`]);
+    });
+
+    test('persists notification acceptance before editing the card', async () => {
+        const h = makeHarness();
+        const events: string[] = [];
+        h.markOutcomeNotified.mockImplementation(async () => {
+            events.push('persist');
+            return true;
+        });
+        h.edit.mockImplementation(async () => {
+            events.push('edit');
+            return {};
+        });
+        expect(await h.deliver(row())).toBe(true);
+        expect(events).toEqual(['persist', 'edit']);
+    });
+
+    test('does not persist a refused notification and retries it later', async () => {
+        const h = makeHarness();
+        h.notify.mockImplementationOnce(() => false);
+        expect(await h.deliver(row())).toBe(false);
+        expect(h.markOutcomeNotified).not.toHaveBeenCalled();
+        expect(await h.deliver(row())).toBe(true);
+        expect(h.notify).toHaveBeenCalledTimes(2);
+        expect(h.markOutcomeNotified.mock.calls).toEqual([[row()]]);
+    });
+
+    test('a stale marker write skips the stale card edit and leaves the report pending', async () => {
+        const h = makeHarness();
+        h.markOutcomeNotified.mockImplementation(async () => false);
+        expect(await h.deliver(row())).toBe(false);
+        expect(h.edit).not.toHaveBeenCalled();
+        expect(h.notify).toHaveBeenCalledTimes(1);
+    });
+
+    test('a failed marker write leaves the report retryable without editing the card', async () => {
+        const h = makeHarness();
+        h.markOutcomeNotified.mockImplementation(async () => {
+            throw new Error('ddb unavailable');
+        });
+        await expect(h.deliver(row())).rejects.toThrow('ddb unavailable');
+        expect(h.edit).not.toHaveBeenCalled();
+        expect(h.notify).toHaveBeenCalledTimes(1);
+    });
+
+    test('a restarted reporter and fresh bridge retry only the card then clear both markers', async () => {
+        let persisted = row();
+        const first = makeHarness();
+        first.markOutcomeNotified.mockImplementation(async () => {
+            persisted = { ...persisted, outcomeNotified: true };
+            return true;
+        });
+        first.ready.value = false;
+        const second = makeHarness();
+        second.markOutcomeNotified.mockImplementation(async () => {
+            throw new Error('must not mark twice');
+        });
+        const markOutcomeReported = mock(async () => {
+            persisted = { ...persisted, outcomeReportPending: undefined, outcomeNotified: undefined };
+            return true;
+        });
+        const backend: Pick<ApprovedOutboundActionBackend, 'listPendingOutcomeReports' | 'markOutcomeReported'> = {
+            listPendingOutcomeReports: mock(async () => (persisted.outcomeReportPending ? [persisted] : [])),
+            markOutcomeReported,
+        };
+        const logger = { warn: mock(() => undefined), info: mock(() => undefined), debug: mock(() => undefined), error: mock(() => undefined) } satisfies ServiceLogger;
+        expect(await createApprovedActionOutcomeReporter({ backend, deliver: first.deliver, logger }).reportOnce()).toEqual({ delivered: 0, pending: 1 });
+        expect(persisted).toEqual(row({ outcomeNotified: true }));
+        expect(await createApprovedActionOutcomeReporter({ backend, deliver: second.deliver, logger }).reportOnce()).toEqual({ delivered: 1, pending: 0 });
+        expect(first.notify).toHaveBeenCalledTimes(1);
+        expect(second.notify).not.toHaveBeenCalled();
+        expect(first.edit).not.toHaveBeenCalled();
+        expect(second.edit).toHaveBeenCalledTimes(1);
+        expect(backend.markOutcomeReported).toHaveBeenCalledWith(row({ outcomeNotified: true }));
+        expect(persisted.outcomeReportPending).toBeUndefined();
+        expect(persisted.outcomeNotified).toBeUndefined();
+    });
+
+    test('a persisted notification skips fresh bridge notification but edits the card', async () => {
+        const fresh = makeHarness();
+        expect(await fresh.deliver(row({ outcomeNotified: true }))).toBe(true);
+        expect(fresh.notify).not.toHaveBeenCalled();
+        expect(fresh.markOutcomeNotified).not.toHaveBeenCalled();
+        expect(fresh.edit).toHaveBeenCalledTimes(1);
+    });
+
+    test('a later revision notifies again despite the earlier revision having been recorded', async () => {
+        const h = makeHarness();
+        expect(await h.deliver(row({ outcomeNotified: true }))).toBe(true);
+        expect(await h.deliver(row({ state: 'failed', failureKind: 'permanent', updatedAt: '2026-09-24T12:01:00.000Z' }))).toBe(true);
+        expect(h.notify.mock.calls.map(([params]) => params.key)).toEqual([`${ID}:failed:2026-09-24T12:01:00.000Z`]);
+        expect(h.markOutcomeNotified.mock.calls).toEqual([[row({ state: 'failed', failureKind: 'permanent', updatedAt: '2026-09-24T12:01:00.000Z' })]]);
     });
 
     test('logs a warning and gives up on the card when its channel is unavailable', async () => {
