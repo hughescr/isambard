@@ -952,6 +952,23 @@ describe('TaskBoardManager', () => {
             await settle();
             expect(editMessage).toHaveBeenCalledTimes(1);
         });
+
+        test('a failed send for a dropped board arms no retry', async () => {
+            sendPayloadToChannel = mock(async () => {
+                throw new Error('discord is sad');
+            });
+            const manager = makeManager();
+
+            manager.applyViews([distinct('first')]);
+            manager.applyViews([]);
+            await settle();
+
+            expect(discards()).toHaveLength(1);
+            expect(discards()[0][0].stage).toBe('send');
+            expect(discards()[0][0].boardKey).toBe('chan-1:turn-1');
+            expect((logger.warn.mock.calls as [Record<string, unknown>][]).filter(call => call[0].msg === 'Task board send failed; will retry on the next update')).toHaveLength(0);
+            expect((logger.warn.mock.calls as [Record<string, unknown>][]).filter(call => call[0].msg === 'Task board send failed twice; abandoning this board')).toHaveLength(0);
+        });
     });
 
     describe('edit failures', () => {

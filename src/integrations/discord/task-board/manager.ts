@@ -304,6 +304,10 @@ export class TaskBoardManager {
 
     /** Records a failed post: one retry is allowed, then the key is abandoned. */
     private onSendFailed(entry: BoardEntry, view: TaskBoardView, error: unknown, attempt: SendingPhase['attempt']): void {
+        if(!this.isLive(entry)) {
+            this.discardStale(entry, 'send');
+            return;
+        }
         if(attempt === 2) {
             entry.phase = { kind: 'abandoned' };
             this.deps.logger.warn({
