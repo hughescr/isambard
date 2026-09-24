@@ -899,6 +899,32 @@ describe('createApp', () => {
             expect(startSessionsSpy).toHaveBeenCalledTimes(1);
             await app.stop();
         });
+
+        test('#113: an app.start() after an intervening app.stop() rebuilds the lifecycle and launches a fresh startSessions chain', async () => {
+            wireHappyPath(spies);
+            const startSessionsSpy = spyOn(staticRuntimeModule, 'startSessions');
+            spies.push(
+                spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                    client:    { destroy: mock(() => {}) } as unknown as DynamoDBClient,
+                    docClient: { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient,
+                    tableName: 'IsambardMemory',
+                }),
+                spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                    conductor: { open: mock(async () => ({ sessionId: 'conv', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })), shutdown: mock(async () => undefined) } as unknown as Conductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+                }),
+                startSessionsSpy
+            );
+
+            const { createApp } = staticIndexModule;
+            const app = await createApp();
+
+            await app.start();
+            await app.stop();
+            await app.start();
+
+            expect(startSessionsSpy).toHaveBeenCalledTimes(2);
+            await app.stop();
+        });
     });
 
     describe('Conversation conductor build (P9, P13b: the only path)', () => {

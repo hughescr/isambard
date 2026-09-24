@@ -7,7 +7,7 @@ import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
 import { loadPlugins, QuestionRegistry, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createQuotaNotes, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, createSessionSupervisor, startSessions, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, type ConversationConductorResult, type PerchConductorResult } from '@/app';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, createSessionSupervisor, startSessions, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, createStartupChain, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider, atUriSchema, cidSchema, type BskyReplyInput } from '@/integrations/bsky';
@@ -1234,8 +1234,10 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     // per lifecycle. createApp lets app.start() re-enter this lifecycle's start() without a stop;
     // the supervisor's own single-flight covers only the open, and a second chain would attach a
     // second set of Discord wiring and rerun boot recovery. A stop-then-start builds a new
-    // lifecycle, and with it a fresh chain.
-    let sessionStartup: Promise<void> | undefined;
+    // lifecycle, and with it a fresh chain. #113: the guard itself is createStartupChain
+    // (src/app/startup-chain.ts), tested there directly since src/index.ts stays out of the
+    // mutate glob.
+    const sessionStartup = createStartupChain(() => startSessions({ host: bot, supervisor: sessionSupervisor, logger }));
 
     let isStopped = false;
     let stopPromise: Promise<void> | null = null;
@@ -1251,8 +1253,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             // #41: the startup chain waits on bot.ready, which resolves on the first clientReady —
             // from this login or, if Discord is down now, from the reconnection loop's later one.
             // It never rejects (failures are logged inside startSessions), and a repeated start()
-            // reuses it (see sessionStartup above).
-            sessionStartup ??= startSessions({ host: bot, supervisor: sessionSupervisor, logger });
+            // reuses it (see the createStartupChain guard above).
+            void sessionStartup();
 
             logger.info('Connecting to Discord...');
             try {

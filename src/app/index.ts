@@ -35,3 +35,4 @@ export {
     type HotReloadInstance,
     type HotReloadLogger
 } from './hot-reload-guard';
+export { createStartupChain, type StartupChain } from './startup-chain';
