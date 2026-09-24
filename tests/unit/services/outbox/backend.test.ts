@@ -26,7 +26,7 @@ function makeItem(overrides?: Partial<OutboxItem>): OutboxItem {
         payload:     { text: 'Hello world' },
         priority:    'medium',
         dedupeKey:   'dedup-abc',
-        progress:    {},
+        progress:    { attemptCount: 0 },
         epoch:       1,
         ...overrides,
     };
@@ -346,12 +346,39 @@ describe('OutboxBackend', () => {
         });
     });
 
-    describe('markSent()', () => {
+    test('parses legacy row without attemptCount as zero without deleting it', async () => {
+        const item = makeItem({ progress: { attemptCount: 0 } });
+        ddbMock.on(QueryCommand).resolves({ Items: [{ ...item, progress: {} }] });
+        const result = await backend.dequeue('discord');
+        expect(result[0]?.progress.attemptCount).toBe(0);
+        expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
+    });
+
+    describe('discard()', () => {
+        test('deletes by key and logs a named reason and count', async () => {
+            ddbMock.on(DeleteCommand).resolves({});
+            const item = makeItem({ progress: { attemptCount: 10 } });
+            await backend.discard(item, 'permanent_error');
+            expect(ddbMock.commandCalls(DeleteCommand)[0]?.args[0].input.Key).toEqual({ PK: 'OUTBOX#discord', SK: `ITEM#1#${DEDUPE_KEY}` });
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({ itemId: item.id, reason: 'permanent_error', attemptCount: 10 }),
+                'Discarded outbox item'
+            );
+        });
+
+        test('propagates a failed discard delete without logging success', async () => {
+            ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
+            await expect(backend.discard(makeItem(), 'stale_epoch')).rejects.toThrow('delete failed');
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('acknowledgeDelivered()', () => {
         test('deletes item with correct PK and SK', async () => {
             ddbMock.on(DeleteCommand).resolves({});
             const item = makeItem();
 
-            await backend.markSent(item);
+            await backend.acknowledgeDelivered(item);
 
             const calls = ddbMock.commandCalls(DeleteCommand);
             expect(calls).toHaveLength(1);
@@ -367,17 +394,42 @@ describe('OutboxBackend', () => {
         test('propagates a failed delete', async () => {
             ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
 
-            await expect(backend.markSent(makeItem())).rejects.toThrow('delete failed');
+            await expect(backend.acknowledgeDelivered(makeItem())).rejects.toThrow('delete failed');
         });
     });
 
     describe('markFailed()', () => {
+        test('increments an existing retry count without deleting', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            await backend.markFailed(makeItem({ progress: { attemptCount: 1 } }), 'still offline', { retryable: true });
+            expect((ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.progress as { attemptCount: number }).attemptCount).toBe(2);
+            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
+        });
+
+        test('terminal failure deletes without a retry write', async () => {
+            ddbMock.on(DeleteCommand).resolves({});
+            await backend.markFailed(makeItem({ progress: { attemptCount: 9 } }), 'offline', { retryable: false });
+            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(1);
+            expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({ reason: 'permanent_error', attemptCount: 10 }),
+                'Discarded outbox item'
+            );
+        });
+
+        test('failed terminal delete persists exhausted marker before rethrowing', async () => {
+            ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
+            ddbMock.on(PutCommand).resolves({});
+            await expect(backend.markFailed(makeItem({ progress: { attemptCount: 9 } }), 'offline', { retryable: false })).rejects.toThrow('delete failed');
+            expect((ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.progress as { attemptCount: number }).attemptCount).toBe(10);
+        });
+
         test('puts item back with error message and lastAttemptAt timestamp', async () => {
             ddbMock.on(PutCommand).resolves({});
             const item = makeItem();
 
             const before = new Date().toISOString();
-            await backend.markFailed(item, 'Connection refused');
+            await backend.markFailed(item, 'Connection refused', { retryable: true });
             const after = new Date().toISOString();
 
             const calls = ddbMock.commandCalls(PutCommand);
@@ -385,6 +437,7 @@ describe('OutboxBackend', () => {
             const stored = calls[0].args[0].input.Item!;
             expect(stored.PK).toBe('OUTBOX#discord');
             expect(stored.SK).toBe(`ITEM#1#${DEDUPE_KEY}`);
+            expect((stored.progress as { attemptCount: number }).attemptCount).toBe(1);
             expect((stored.progress as { lastError: string }).lastError).toBe('Connection refused');
             const lastAttemptAt = (stored.progress as { lastAttemptAt: string }).lastAttemptAt;
             expect(lastAttemptAt >= before).toBe(true);
@@ -396,7 +449,7 @@ describe('OutboxBackend', () => {
             const item = makeItem({ ttl: undefined });
 
             const before = Math.floor(Date.now() / 1000);
-            await backend.markFailed(item, 'err');
+            await backend.markFailed(item, 'err', { retryable: true });
             const after = Math.floor(Date.now() / 1000);
 
             const calls = ddbMock.commandCalls(PutCommand);
@@ -410,7 +463,7 @@ describe('OutboxBackend', () => {
             ddbMock.on(PutCommand).resolves({});
             const item = makeItem({ ttl: createEpochSeconds(1_234_567) });
 
-            await backend.markFailed(item, 'err');
+            await backend.markFailed(item, 'err', { retryable: true });
 
             const calls = ddbMock.commandCalls(PutCommand);
             expect(calls[0].args[0].input.Item!.TTL).toBe(1_234_567);
@@ -419,7 +472,7 @@ describe('OutboxBackend', () => {
         test('propagates a failed retry write', async () => {
             ddbMock.on(PutCommand).rejects(new Error('retry write failed'));
 
-            await expect(backend.markFailed(makeItem(), 'err')).rejects.toThrow('retry write failed');
+            await expect(backend.markFailed(makeItem(), 'err', { retryable: true })).rejects.toThrow('retry write failed');
         });
     });
 });

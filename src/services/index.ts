@@ -13,10 +13,10 @@ export type { ReconnectionLoop } from './reconnection-loop';
 export { createReconnectionLoop } from './reconnection-loop';
 
 // Outbox
-export type { OutboxItem, OutboxItemType, OutboxPriority } from './outbox';
-export { serializedDiscordPayloadSchema, OutboxBackend } from './outbox';
-export type { OutboxDrainer } from './outbox';
-export { createOutboxDrainer } from './outbox';
+export type { OutboxItem, OutboxItemType, OutboxPriority, OutboxService, OutboxDiscardReason } from './outbox';
+export { serializedDiscordPayloadSchema, outboxServiceSchema, OutboxBackend } from './outbox';
+export type { OutboxDrainer, DrainResult } from './outbox';
+export { createOutboxDrainer, createOutboxDrainListener } from './outbox';
 
 // Approved outbound actions
 export type {

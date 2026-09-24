@@ -70,19 +70,12 @@ describe('OutboxKeyGenerator', () => {
             expect(medKeys.SK < lowKeys.SK).toBe(true);
         });
 
-        test('uses service name in PK for different services', () => {
-            const discordKeys = OutboxKeyGenerator.createKeys({
-                service:   'discord',
-                priority:  'high',
-                dedupeKey: DEDUPE_KEY,
-            });
-            const emailKeys = OutboxKeyGenerator.createKeys({
-                service:   'email',
-                priority:  'high',
-                dedupeKey: DEDUPE_KEY,
-            });
+        test('only Discord service has a typed outbox partition', () => {
+            const discordKeys = OutboxKeyGenerator.createKeys({ service: 'discord', priority: 'high', dedupeKey: DEDUPE_KEY });
             expect(discordKeys.PK).toBe('OUTBOX#discord');
-            expect(emailKeys.PK).toBe('OUTBOX#email');
+            // @ts-expect-error email is a notification purpose, not an outbox service
+            const invalid = OutboxKeyGenerator.createServicePK('email');
+            expect(invalid).toBe('OUTBOX#email');
         });
 
         test('same dedupeKey produces same SK enabling PutItem deduplication', () => {
@@ -134,7 +127,7 @@ describe('OutboxKeyGenerator', () => {
 
         test('round-trips through createKeys and parseSK', () => {
             const original = {
-                service:   'discord',
+                service:   'discord' as const,
                 priority:  'low' as const,
                 dedupeKey: DEDUPE_KEY,
             };
@@ -182,10 +175,6 @@ describe('OutboxKeyGenerator', () => {
     describe('createServicePK()', () => {
         test('returns OUTBOX# prefixed service name', () => {
             expect(OutboxKeyGenerator.createServicePK('discord')).toBe('OUTBOX#discord');
-        });
-
-        test('returns OUTBOX# prefixed for other service names', () => {
-            expect(OutboxKeyGenerator.createServicePK('email')).toBe('OUTBOX#email');
         });
 
         test('matches PK produced by createKeys for same service', () => {

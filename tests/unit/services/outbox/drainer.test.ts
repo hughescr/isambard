@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
 import { createChannelId } from '@/agent/types';
+import { ChannelNotFoundByIdError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
 import type { OutboxBackend } from '@/services/outbox/backend';
 import { createOutboxDrainer, type OutboxDrainerDeps, type OutboxDrainer } from '@/services/outbox/drainer';
@@ -20,7 +21,7 @@ function makeItem(overrides?: Partial<OutboxItem>): OutboxItem {
         payload:     { text: 'Hello' },
         priority:    'medium',
         dedupeKey:   'dedup-abc',
-        progress:    {},
+        progress:    { attemptCount: 0 },
         epoch:       1,
         ...overrides,
     };
@@ -37,9 +38,10 @@ function makeEntry(epoch: number) {
 describe('createOutboxDrainer', () => {
     let deps: OutboxDrainerDeps;
     let outboxBackend: {
-        dequeue:    ReturnType<typeof mock>
-        markSent:   ReturnType<typeof mock>
-        markFailed: ReturnType<typeof mock>
+        dequeue:              ReturnType<typeof mock>
+        acknowledgeDelivered: ReturnType<typeof mock>
+        discard:              ReturnType<typeof mock>
+        markFailed:           ReturnType<typeof mock>
     };
     let registry: {
         isAvailable: ReturnType<typeof mock>
@@ -57,9 +59,10 @@ describe('createOutboxDrainer', () => {
     beforeEach(() => {
         jest.useFakeTimers();
         outboxBackend = {
-            dequeue:    mock(async (): Promise<OutboxItem[]> => []),
-            markSent:   mock(async (): Promise<void> => undefined),
-            markFailed: mock(async (): Promise<void> => undefined),
+            dequeue:              mock(async (): Promise<OutboxItem[]> => []),
+            acknowledgeDelivered: mock(async (): Promise<void> => undefined),
+            discard:              mock(async (): Promise<void> => undefined),
+            markFailed:           mock(async (): Promise<void> => undefined),
         };
         registry = {
             isAvailable: mock((): boolean => true),
@@ -88,13 +91,35 @@ describe('createOutboxDrainer', () => {
         jest.useRealTimers();
     });
 
+    test('does not schedule repeated sends after a full failed batch', async () => {
+        outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [makeItem(), makeItem(), makeItem()]);
+        deliverFn.mockImplementation(async (): Promise<void> => {
+            throw new Error('transient');
+        });
+        const result = await drainer.drain(SERVICE);
+        expect(result.failed).toBe(3);
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('reports delivered-but-unacknowledged separately and does not reschedule', async () => {
+        outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [makeItem(), makeItem(), makeItem()]);
+        outboxBackend.acknowledgeDelivered.mockImplementationOnce(async (): Promise<void> => {
+            throw new Error('delete unavailable');
+        });
+        const result = await drainer.drain(SERVICE);
+        expect(result.unacknowledged).toBe(1);
+        expect(result.failed).toBe(0);
+        expect(outboxBackend.markFailed).not.toHaveBeenCalled();
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
     describe('drain() — stopped guard', () => {
         test('returns zero result immediately when stop() was called before drain()', async () => {
             drainer.stop();
 
             const result = await drainer.drain(SERVICE);
 
-            expect(result).toEqual({ delivered: 0, failed: 0, skipped: 0 });
+            expect(result).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 });
             expect(outboxBackend.dequeue).not.toHaveBeenCalled();
         });
     });
@@ -105,7 +130,7 @@ describe('createOutboxDrainer', () => {
 
             const result = await drainer.drain(SERVICE);
 
-            expect(result).toEqual({ delivered: 0, failed: 0, skipped: 0 });
+            expect(result).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 });
             expect(outboxBackend.dequeue).not.toHaveBeenCalled();
         });
     });
@@ -122,7 +147,7 @@ describe('createOutboxDrainer', () => {
             await Promise.resolve();
             const second = drainer.drain(SERVICE);
             gate.resolve();
-            expect(await second).toEqual({ delivered: 0, failed: 0, skipped: 0 });
+            expect(await second).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 });
             expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
             const result = await first;
             expect(result.delivered).toBe(1);
@@ -137,7 +162,7 @@ describe('createOutboxDrainer', () => {
             expect(result.delivered).toBe(1);
             expect(result.failed).toBe(0);
             expect(deliverFn).toHaveBeenCalledWith(item);
-            expect(outboxBackend.markSent).toHaveBeenCalledWith(item);
+            expect(outboxBackend.acknowledgeDelivered).toHaveBeenCalledWith(item);
         });
 
         test('delivers multiple items and counts each', async () => {
@@ -151,35 +176,45 @@ describe('createOutboxDrainer', () => {
 
             expect(result.delivered).toBe(2);
             expect(result.failed).toBe(0);
-            expect(outboxBackend.markSent).toHaveBeenCalledTimes(2);
+            expect(outboxBackend.acknowledgeDelivered).toHaveBeenCalledTimes(2);
         });
     });
 
     describe('drain() — delivery failure', () => {
-        test('waits for markSent failure before reporting the delivery as failed', async () => {
+        test('reports acknowledgement failure without misclassifying delivery', async () => {
             const item = makeItem();
             outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
-            outboxBackend.markSent.mockImplementationOnce(async (): Promise<void> => {
-                throw new Error('Mark sent unavailable');
+            outboxBackend.acknowledgeDelivered.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Delete unavailable');
             });
 
             const result = await drainer.drain(SERVICE);
 
-            expect(result).toEqual({ delivered: 0, failed: 1, skipped: 0 });
-            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Mark sent unavailable');
+            expect(result).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 1 });
+            expect(outboxBackend.markFailed).not.toHaveBeenCalled();
+            expect(logger.error).toHaveBeenCalledWith(
+                expect.objectContaining({ itemId: item.id, attemptCount: 0 }),
+                'Outbox item delivered but unacknowledged'
+            );
         });
 
-        test('propagates a markFailed failure after a delivery error', async () => {
+        test('logs retry persistence failure and continues to later items', async () => {
             const item = makeItem();
-            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            const next = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item, next]);
             deliverFn.mockImplementationOnce(async (): Promise<void> => {
                 throw new Error('Delivery unavailable');
             });
             outboxBackend.markFailed.mockImplementationOnce(async (): Promise<void> => {
-                throw new Error('Mark failed unavailable');
+                throw new Error('Write unavailable');
             });
 
-            await expect(drainer.drain(SERVICE)).rejects.toThrow('Mark failed unavailable');
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 1, failed: 1, discarded: 0, unacknowledged: 0 });
+            expect(outboxBackend.acknowledgeDelivered).toHaveBeenCalledWith(next);
+            expect(logger.error).toHaveBeenCalledWith(
+                expect.objectContaining({ itemId: item.id, reason: 'retry', attemptCount: 1 }),
+                'Failed to record outbox delivery failure'
+            );
         });
 
         test('marks item failed and continues to next item when deliverFn throws Error', async () => {
@@ -194,8 +229,8 @@ describe('createOutboxDrainer', () => {
 
             expect(result.failed).toBe(1);
             expect(result.delivered).toBe(1);
-            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item1, 'Network error');
-            expect(outboxBackend.markSent).toHaveBeenCalledWith(item2);
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item1, 'Network error', { retryable: true });
+            expect(outboxBackend.acknowledgeDelivered).toHaveBeenCalledWith(item2);
         });
 
         test('marks item failed when deliverFn throws a non-Error value', async () => {
@@ -208,7 +243,7 @@ describe('createOutboxDrainer', () => {
             const result = await drainer.drain(SERVICE);
 
             expect(result.failed).toBe(1);
-            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'plain string error');
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'plain string error', { retryable: true });
         });
 
         test('records a null delivery failure as the string null', async () => {
@@ -220,7 +255,7 @@ describe('createOutboxDrainer', () => {
 
             await drainer.drain(SERVICE);
 
-            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'null');
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'null', { retryable: true });
         });
 
         test('logs error when delivery fails', async () => {
@@ -239,16 +274,111 @@ describe('createOutboxDrainer', () => {
         });
     });
 
-    describe('drain() — epoch skipping', () => {
-        test('propagates failure to delete a future-epoch item', async () => {
-            registry.getEntry.mockImplementation(() => makeEntry(1));
-            const futureItem = makeItem({ epoch: 2 });
-            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [futureItem]);
-            outboxBackend.markSent.mockImplementationOnce(async (): Promise<void> => {
+    test('treats an unready channel after registry check as a retryable delivery error', async () => {
+        const item = makeItem();
+        outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw new ChannelNotFoundByIdError(item.destination);
+        });
+        const result = await drainer.drain(SERVICE);
+        expect(result.failed).toBe(1);
+        expect(result.discarded).toBe(0);
+        expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, expect.any(String), { retryable: true });
+    });
+
+    describe('drain() — bounded attempts', () => {
+        test('custom maximum terminates at its configured boundary', async () => {
+            const custom = createOutboxDrainer({ ...deps, maxAttempts: 2 });
+            const item = makeItem({ progress: { attemptCount: 1 } });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('offline');
+            });
+            expect(await custom.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 1, unacknowledged: 0 });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'offline', { retryable: false });
+            custom.stop();
+        });
+
+        test('ninth prior failure is terminal on the tenth failed delivery', async () => {
+            const item = makeItem({ progress: { attemptCount: 9 } });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Channel unavailable');
+            });
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 1, unacknowledged: 0 });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Channel unavailable', { retryable: false });
+        });
+
+        test('already exhausted row is discarded without another send', async () => {
+            const item = makeItem({ progress: { attemptCount: 10 } });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 1, unacknowledged: 0 });
+            expect(deliverFn).not.toHaveBeenCalled();
+            expect(outboxBackend.discard).toHaveBeenCalledWith(item, 'permanent_error');
+        });
+
+        test('does not schedule a follow-up after a discard error in a full otherwise successful batch', async () => {
+            const exhausted = makeItem({ progress: { attemptCount: 10 } });
+            const next = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' });
+            const last = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000003' });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [exhausted, next, last]);
+            outboxBackend.discard.mockImplementationOnce(async (): Promise<void> => {
                 throw new Error('Delete unavailable');
             });
 
-            await expect(drainer.drain(SERVICE)).rejects.toThrow('Delete unavailable');
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 2, failed: 0, discarded: 0, unacknowledged: 0 });
+            expect(outboxBackend.discard).toHaveBeenCalledWith(exhausted, 'permanent_error');
+            expect(deliverFn).toHaveBeenCalledTimes(2);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('continues after exhausted-row discard failure and logs count', async () => {
+            const item = makeItem({ progress: { attemptCount: 11 } });
+            const next = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item, next]);
+            outboxBackend.discard.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Delete unavailable');
+            });
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 1, failed: 0, discarded: 0, unacknowledged: 0 });
+            expect(logger.error).toHaveBeenCalledWith(
+                expect.objectContaining({ itemId: item.id, reason: 'permanent_error', attemptCount: 11 }),
+                'Failed to discard outbox item'
+            );
+        });
+
+        test('logs failed terminal persistence without rejecting or skipping later work', async () => {
+            const item = makeItem({ progress: { attemptCount: 9 } });
+            const next = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item, next]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Channel unavailable');
+            });
+            outboxBackend.markFailed.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Delete unavailable');
+            });
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 1, failed: 1, discarded: 0, unacknowledged: 0 });
+            expect(logger.error).toHaveBeenCalledWith(
+                expect.objectContaining({ itemId: item.id, reason: 'permanent_error', attemptCount: 10 }),
+                'Failed to record outbox delivery failure'
+            );
+        });
+    });
+
+    describe('drain() — epoch skipping', () => {
+        test('logs future-epoch discard failure and continues to later items', async () => {
+            const futureItem = makeItem({ epoch: 2 });
+            const next = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [futureItem, next]);
+            outboxBackend.discard.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Delete unavailable');
+            });
+
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 1, failed: 0, discarded: 0, unacknowledged: 0 });
+            expect(outboxBackend.acknowledgeDelivered).toHaveBeenCalledWith(next);
+            expect(logger.error).toHaveBeenCalledWith(
+                expect.objectContaining({ itemId: futureItem.id, reason: 'stale_epoch', attemptCount: 0 }),
+                'Failed to discard outbox item'
+            );
         });
 
         test('skips and deletes item with epoch greater than current epoch', async () => {
@@ -258,11 +388,10 @@ describe('createOutboxDrainer', () => {
 
             const result = await drainer.drain(SERVICE);
 
-            expect(result.skipped).toBe(1);
+            expect(result.discarded).toBe(1);
             expect(result.delivered).toBe(0);
             expect(deliverFn).not.toHaveBeenCalled();
-            // Future-epoch items are deleted (markSent) so they don't accumulate
-            expect(outboxBackend.markSent).toHaveBeenCalledWith(futureItem);
+            expect(outboxBackend.discard).toHaveBeenCalledWith(futureItem, 'stale_epoch');
         });
 
         test('does not skip item with epoch equal to current epoch', async () => {
@@ -272,21 +401,15 @@ describe('createOutboxDrainer', () => {
 
             const result = await drainer.drain(SERVICE);
 
-            expect(result.skipped).toBe(0);
+            expect(result.discarded).toBe(0);
             expect(result.delivered).toBe(1);
         });
 
-        test('logs warning when skipping future-epoch item', async () => {
-            registry.getEntry.mockImplementation(() => makeEntry(1));
-            const futureItem = makeItem({ epoch: 5 });
+        test('discards future-epoch item regardless of its attempt count', async () => {
+            const futureItem = makeItem({ epoch: 5, progress: { attemptCount: 11 } });
             outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [futureItem]);
-
             await drainer.drain(SERVICE);
-
-            expect(logger.warn).toHaveBeenCalledWith(
-                expect.objectContaining({ service: SERVICE, itemId: futureItem.id }),
-                'Deleting outbox item from future epoch'
-            );
+            expect(outboxBackend.discard).toHaveBeenCalledWith(futureItem, 'stale_epoch');
         });
     });
 
@@ -307,7 +430,7 @@ describe('createOutboxDrainer', () => {
 
             // item1 skipped because the per-item check fires before delivery
             expect(result.delivered).toBe(0);
-            expect(outboxBackend.markSent).not.toHaveBeenCalled();
+            expect(outboxBackend.acknowledgeDelivered).not.toHaveBeenCalled();
             expect(logger.info).toHaveBeenCalledWith(
                 expect.objectContaining({ service: SERVICE }),
                 'Service went offline mid-drain, stopping'
@@ -405,7 +528,7 @@ describe('createOutboxDrainer', () => {
 
             const result = await drainer.drain(SERVICE);
 
-            expect(result).toEqual({ delivered: 0, failed: 0, skipped: 0 });
+            expect(result).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 });
             expect(outboxBackend.dequeue).not.toHaveBeenCalled();
         });
 

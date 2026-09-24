@@ -1,7 +1,7 @@
 import type { ServiceHealthRegistry } from '../health-registry';
-import type { ServiceLogger, ServiceName } from '../types';
+import type { ServiceLogger } from '../types';
 import type { OutboxBackend } from './backend';
-import type { OutboxItem } from './types';
+import type { OutboxItem, OutboxService, OutboxDiscardReason } from './types';
 
 export interface OutboxDrainerDeps {
     outboxBackend:    OutboxBackend
@@ -10,106 +10,117 @@ export interface OutboxDrainerDeps {
     logger:           ServiceLogger
     batchSize?:       number
     drainIntervalMs?: number
+    maxAttempts?:     number
 }
 
-interface DrainResult {
-    delivered: number
-    failed:    number
-    skipped:   number
+export interface DrainResult {
+    delivered:      number
+    failed:         number
+    discarded:      number
+    unacknowledged: number
 }
 
 export interface OutboxDrainer {
-    drain(service: ServiceName): Promise<DrainResult>
+    drain(service: OutboxService): Promise<DrainResult>
     stop(): void
 }
 
-const DEFAULT_BATCH_SIZE      = 10;
-const DEFAULT_DRAIN_INTERVAL  = 1000;
+const DEFAULT_BATCH_SIZE = 10;
+const DEFAULT_DRAIN_INTERVAL = 1000;
+const DEFAULT_MAX_ATTEMPTS = 10;
 
 export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
-    const {
-        outboxBackend,
-        registry,
-        deliverFn,
-        logger,
-    } = deps;
-
-    const batchSize      = deps.batchSize      ?? DEFAULT_BATCH_SIZE;
+    const { outboxBackend, registry, deliverFn, logger } = deps;
+    const batchSize = deps.batchSize ?? DEFAULT_BATCH_SIZE;
     const drainIntervalMs = deps.drainIntervalMs ?? DEFAULT_DRAIN_INTERVAL;
-
-    let stopped       = false;
-    let draining      = false;
+    const maxAttempts = deps.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    let stopped = false;
+    let draining = false;
     let pendingTimer: ReturnType<typeof setTimeout> | undefined;
 
-    async function drain(service: ServiceName): Promise<DrainResult> {
-        const result: DrainResult = { delivered: 0, failed: 0, skipped: 0 };
-
+    // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- sequential send, retry, discard and acknowledgement have distinct failure contracts
+    async function drain(service: OutboxService): Promise<DrainResult> {
+        const result: DrainResult = { delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 };
         if(draining || stopped) {
             return result;
         }
         draining = true;
-
         try {
             if(!registry.isAvailable(service)) {
                 return result;
             }
-
             const currentEpoch = registry.getEntry(service).epoch;
             const items = await outboxBackend.dequeue(service, batchSize);
-
+            let dispositionError = false;
             for(const item of items) {
-                // Re-check availability after each item
                 if(!registry.isAvailable(service)) {
                     logger.info({ service }, 'Service went offline mid-drain, stopping');
                     break;
                 }
-
-                // Defensive check: items from a future epoch shouldn't exist; delete and skip them
+                let reason: OutboxDiscardReason | undefined;
                 if(item.epoch > currentEpoch) {
-                    result.skipped += 1;
-                    logger.warn({ service, itemId: item.id, itemEpoch: item.epoch, currentEpoch }, 'Deleting outbox item from future epoch');
-                    // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
-                    await outboxBackend.markSent(item);
+                    reason = 'stale_epoch';
+                } else if(item.progress.attemptCount >= maxAttempts) {
+                    reason = 'permanent_error';
+                }
+                if(reason !== undefined) {
+                    try {
+                        // eslint-disable-next-line no-await-in-loop -- sequential outbox processing preserves order
+                        await outboxBackend.discard(item, reason);
+                        result.discarded += 1;
+                    } catch (error: unknown) {
+                        dispositionError = true;
+                        logger.error({ service, itemId: item.id, reason, attemptCount: item.progress.attemptCount, error }, 'Failed to discard outbox item');
+                    }
                     continue;
                 }
-
                 try {
-                    // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
+                    // eslint-disable-next-line no-await-in-loop -- sequential outbox processing preserves order
                     await deliverFn(item);
-                    // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
-                    await outboxBackend.markSent(item);
-                    result.delivered += 1;
                 } catch (err: unknown) {
                     const message = err instanceof Error ? err.message : String(err);
+                    const retryable = item.progress.attemptCount + 1 < maxAttempts;
                     logger.error({ service, itemId: item.id, error: message }, 'Failed to deliver outbox item');
-                    // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
-                    await outboxBackend.markFailed(item, message);
+                    try {
+                        // eslint-disable-next-line no-await-in-loop -- sequential outbox processing preserves order
+                        await outboxBackend.markFailed(item, message, { retryable });
+                        if(!retryable) {
+                            result.discarded += 1;
+                        }
+                    } catch (error: unknown) {
+                        logger.error({ service, itemId: item.id, reason: retryable ? 'retry' : 'permanent_error', attemptCount: item.progress.attemptCount + 1, error }, 'Failed to record outbox delivery failure');
+                    }
                     result.failed += 1;
+                    continue;
+                }
+                try {
+                    // eslint-disable-next-line no-await-in-loop -- sequential outbox processing preserves order
+                    await outboxBackend.acknowledgeDelivered(item);
+                    result.delivered += 1;
+                } catch (error: unknown) {
+                    logger.error({ service, itemId: item.id, attemptCount: item.progress.attemptCount, error }, 'Outbox item delivered but unacknowledged');
+                    result.unacknowledged += 1;
                 }
             }
-
-            // If the batch was full and the service is still up, schedule another drain
-            // Stryker disable next-line llm: dequeue caps returned valid items at batchSize even when malformed rows require multiple pages, so items.length cannot exceed batchSize and === and >= coincide.
-            const batchFull = items.length === batchSize;
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stopped can be set true by stop() between awaits
-            if(batchFull && registry.isAvailable(service) && !stopped) {
+            // No immediate retry of a failure or uncertain acknowledgement: a full batch of
+            // failures otherwise exhausts attempts (or duplicates sends) in seconds.
+            // Dequeue caps the batch at batchSize; a full batch may have more work queued.
+            const batchFull = items.length >= batchSize;
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stop() can run between awaits
+            if(batchFull && result.failed === 0 && result.unacknowledged === 0 && !dispositionError && registry.isAvailable(service) && !stopped) {
                 pendingTimer = setTimeout(() => {
-                    // Stryker disable next-line llm: pendingTimer is only read by stop()'s clearTimeout, which is a no-op on a fired timer, and the next schedule overwrites it, so a retained handle is unobservable.
-                    pendingTimer = undefined;
                     void drain(service);
                 }, drainIntervalMs);
             }
-
             return result;
         } finally {
-            // eslint-disable-next-line require-atomic-updates -- single-threaded: draining is only set here and at guard; no true race condition possible
+            // eslint-disable-next-line require-atomic-updates -- single-threaded guard
             draining = false;
         }
     }
 
     return {
         drain,
-
         stop(): void {
             stopped = true;
             clearTimeout(pendingTimer);

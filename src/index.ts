@@ -14,7 +14,7 @@ import { BlueskyClient, BskyHistoryProvider, atUriSchema, cidSchema, type BskyRe
 import { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, createApprovedActionOutcomeDelivery, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
-import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionOutcomeReporter, createApprovedActionRetryListener, createWakingActionWriter, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedActionOutcomeReporter, type ApprovedOutboundActionExecutor } from '@/services';
+import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, createOutboxDrainListener, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionOutcomeReporter, createApprovedActionRetryListener, createWakingActionWriter, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedActionOutcomeReporter, type ApprovedOutboundActionExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type ContactChangeRequest, type EmbedderLike } from '@/storage';
 import { resolveTimezone } from '@/utils';
 
@@ -1182,13 +1182,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     // but the facade checks isReady() before sending, so this is safe to set eagerly).
     discordCapability.setClient(discordInfra.discordClient);
 
-    // Subscribe to health changes: drain outbox when any service comes online.
-    // Each lifecycle owns and releases its own subscription.
-    const unsubscribeOutboxDrain = healthRegistry.subscribe((change) => {
-        if(change.newState === 'online') {
-            void outboxDrainer.drain(change.service);
-        }
-    });
+    // Only Discord posts are persisted in this outbox; each lifecycle releases its subscription.
+    const unsubscribeOutboxDrain = healthRegistry.subscribe(createOutboxDrainListener(outboxDrainer));
     registerCleanup({ name: 'outbox subscription', run: unsubscribeOutboxDrain });
 
     // Subscribe to health changes: retry transiently failed approved outbound actions when

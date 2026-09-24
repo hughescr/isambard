@@ -3,6 +3,7 @@ import { serializedDiscordPayloadSchema } from './discord-payload';
 import { channelIdSchema } from '@/config';
 import { epochSecondsSchema } from '@/storage';
 
+// email_*, bsky_approval and contact_approval describe purposes of Discord posts, not services.
 const outboxItemTypeSchema = z.enum([
     'agent_response',
     'perch_output',
@@ -19,7 +20,12 @@ export type OutboxPriority = z.infer<typeof outboxPrioritySchema>;
 
 const outboxPayloadSchema = serializedDiscordPayloadSchema;
 
+export const outboxServiceSchema = z.enum(['discord']);
+export type OutboxService = z.infer<typeof outboxServiceSchema>;
+export type OutboxDiscardReason = 'stale_epoch' | 'permanent_error';
+
 const outboxProgressSchema = z.object({
+    attemptCount:  z.number().int().min(0).default(0),
     lastAttemptAt: z.iso.datetime().optional(),
     lastError:     z.string().optional(),
 });
@@ -28,7 +34,7 @@ export const outboxItemSchema = z.object({
     id:          z.uuid(),
     createdAt:   z.iso.datetime(),
     type:        outboxItemTypeSchema,
-    service:     z.enum(['discord']),
+    service:     outboxServiceSchema,
     destination: channelIdSchema,
     payload:     outboxPayloadSchema,
     priority:    outboxPrioritySchema,

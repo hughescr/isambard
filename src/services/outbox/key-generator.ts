@@ -1,4 +1,4 @@
-import type { OutboxPriority } from './types';
+import type { OutboxPriority, OutboxService } from './types';
 
 const OUTBOX_PK_PREFIX = 'OUTBOX#';
 const ITEM_SK_PREFIX   = 'ITEM#';
@@ -25,7 +25,7 @@ export const OutboxKeyGenerator = {
     /**
      * Creates PK and SK for an outbox item.
      */
-    createKeys(item: { service: string, priority: OutboxPriority, dedupeKey: string }): { PK: string, SK: string } {
+    createKeys(item: { service: OutboxService, priority: OutboxPriority, dedupeKey: string }): { PK: string, SK: string } {
         return {
             PK: `${OUTBOX_PK_PREFIX}${item.service}`,
             SK: `${ITEM_SK_PREFIX}${PRIORITY_SORT[item.priority]}#${item.dedupeKey}`,
@@ -65,7 +65,7 @@ export const OutboxKeyGenerator = {
     /**
      * Creates the PK for querying all items for a service.
      */
-    createServicePK(service: string): string {
+    createServicePK(service: OutboxService): string {
         return `${OUTBOX_PK_PREFIX}${service}`;
     },
 };

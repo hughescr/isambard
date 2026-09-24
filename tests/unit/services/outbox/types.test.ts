@@ -27,6 +27,14 @@ describe('outboxItemSchema', () => {
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: -1 }).success).toBe(false);
     });
 
+    test('legacy progress defaults attemptCount to zero and rejects invalid counts and services', () => {
+        expect(outboxItemSchema.parse({ ...validItem, epoch: 0 }).progress.attemptCount).toBe(0);
+        expect(outboxItemSchema.parse({ ...validItem, epoch: 0, progress: { attemptCount: 9 } }).progress.attemptCount).toBe(9);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { attemptCount: -1 } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { attemptCount: 1.5 } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, service: 'email' }).success).toBe(false);
+    });
+
     test('ttl accepts a valid epoch-seconds integer and rejects a negative one', () => {
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, ttl: 1_700_000_000 }).success).toBe(true);
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, ttl: -1 }).success).toBe(false);

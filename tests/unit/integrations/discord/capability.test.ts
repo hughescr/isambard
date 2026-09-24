@@ -56,7 +56,7 @@ function makeOutboxItem(overrides: Partial<OutboxItem>): OutboxItem {
         payload:     {},
         priority:    'medium',
         dedupeKey:   'dedupe',
-        progress:    {},
+        progress:    { attemptCount: 0 },
         epoch:       0,
         ...overrides,
     };
@@ -372,6 +372,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const result = await cap.sendToChannel(createChannelId('ch-1'), 'Hello');
         const item   = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(result.status).toBe('queued');
+        expect(item.progress.attemptCount).toBe(0);
         if(result.status === 'queued') {
             expect(result.outboxId).toBe(item.id);
         }

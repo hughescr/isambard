@@ -693,7 +693,7 @@ describe('Bot Lifecycle Integration', () => {
             const sagaOwners: { stop: ReturnType<typeof mock> }[] = [];
             const createOutbox = spyOn(servicesModule, 'createOutboxDrainer').mockImplementation(() => {
                 const owner = {
-                    drain: mock(async () => ({ delivered: 0, failed: 0, skipped: 0 })),
+                    drain: mock(async () => ({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 })),
                     stop:  mock(() => undefined),
                 };
                 outboxOwners.push(owner);

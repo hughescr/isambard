@@ -103,7 +103,7 @@ function buildOutboxItem(channelId: ChannelId, content: ChannelContent, options:
             }),
         priority:  options?.priority ?? 'medium',
         dedupeKey: options?.dedupeKey ?? crypto.randomUUID(),
-        progress:  {},
+        progress:  { attemptCount: 0 },
         epoch:     options?.epoch ?? 0,
     };
 }

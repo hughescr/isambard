@@ -1,17 +1,18 @@
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { OutboxKeyGenerator } from './key-generator';
-import { outboxItemSchema, type OutboxItem } from './types';
+import { outboxItemSchema, type OutboxItem, type OutboxService, type OutboxDiscardReason } from './types';
 import { DynamoTableAccess } from '@/storage';
 
+// DynamoDB removes expired rows asynchronously; expiry is not an application discard disposition.
 const TTL_HOURS = 24;
 
 /**
  * DynamoDB backend for the persistent outbox.
  *
- * Items are stored under PK=OUTBOX#{service}, with SK sorted by priority then
- * insertion time so that dequeue always returns the highest-priority oldest item
- * first (ScanIndexForward=true).
+ * Items are stored under PK=OUTBOX#discord, with SK sorted by priority then
+ * dedupe key. ScanIndexForward=true processes high priority first; within each
+ * tier the dedupe key, not insertion time, determines order.
  */
 export class OutboxBackend extends DynamoTableAccess {
     /**
@@ -29,10 +30,10 @@ export class OutboxBackend extends DynamoTableAccess {
     }
 
     /**
-     * Returns the next `limit` valid items in delivery order (priority, then oldest first).
+     * Returns the next `limit` valid items in key order (priority, then dedupe key).
      * Valid items remain in the outbox; malformed rows are deleted after validation fails.
      */
-    async dequeue(service: string, limit = 10): Promise<OutboxItem[]> {
+    async dequeue(service: OutboxService, limit = 10): Promise<OutboxItem[]> {
         const valid: OutboxItem[] = [];
         let cursor: Record<string, unknown> | undefined;
         do {
@@ -66,29 +67,47 @@ export class OutboxBackend extends DynamoTableAccess {
         return valid.slice(0, limit);
     }
 
-    /**
-     * Remove a successfully delivered item from the outbox.
-     */
-    async markSent(item: OutboxItem): Promise<void> {
-        const keys = OutboxKeyGenerator.createKeys(item);
-        await this.deleteItem(keys);
+    private async remove(item: OutboxItem): Promise<void> {
+        await this.deleteItem(OutboxKeyGenerator.createKeys(item));
     }
 
-    /**
-     * Record a delivery failure on an item (updates progress metadata in-place).
-     */
-    async markFailed(item: OutboxItem, error: string): Promise<void> {
+    /** Delete an item only after an external send succeeds; a failed delete leaves its outcome uncertain. */
+    async acknowledgeDelivered(item: OutboxItem): Promise<void> {
+        await this.remove(item);
+    }
+
+    /** Delete without sending and log the application-observed reason (not DynamoDB TTL expiry). */
+    async discard(item: OutboxItem, reason: OutboxDiscardReason): Promise<void> {
+        await this.remove(item);
+        logger.warn({ itemId: item.id, service: item.service, reason, attemptCount: item.progress.attemptCount }, 'Discarded outbox item');
+    }
+
+    /** Persist retry metadata; a missing item.ttl refreshes the default TTL on a retry. */
+    private async persistFailure(item: OutboxItem): Promise<void> {
+        const keys = OutboxKeyGenerator.createKeys(item);
+        const ttl = item.ttl ?? OutboxBackend.expiresAt(Date.now(), { hours: TTL_HOURS });
+        await this.putItem({ ...keys, ...item, TTL: ttl });
+    }
+
+    async markFailed(item: OutboxItem, error: string, options: { retryable: boolean }): Promise<void> {
         const updated: OutboxItem = {
             ...item,
-            // Stryker disable next-line SpreadOperandDrop: progress schema contains only lastError and lastAttemptAt, both overwritten below.
             progress: {
-                ...item.progress,
+                attemptCount:  item.progress.attemptCount + 1,
                 lastError:     error,
                 lastAttemptAt: new Date().toISOString(),
             },
         };
-        const keys = OutboxKeyGenerator.createKeys(updated);
-        const ttl = updated.ttl ?? OutboxBackend.expiresAt(Date.now(), { hours: TTL_HOURS });
-        await this.putItem({ ...keys, ...updated, TTL: ttl });
+        if(options.retryable) {
+            await this.persistFailure(updated);
+            return;
+        }
+        try {
+            await this.discard(updated, 'permanent_error');
+        } catch (deleteError: unknown) {
+            // A failed terminal delete must leave an exhausted marker, not an item eligible to resend.
+            await this.persistFailure(updated);
+            throw deleteError;
+        }
     }
 }
