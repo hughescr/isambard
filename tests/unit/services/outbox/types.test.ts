@@ -65,11 +65,6 @@ describe('serializedDiscordPayloadSchema', () => {
         });
     }
 
-    // Legacy pre-#49 outbox rows: can be safely deleted after 2026-09-25.
-    test('rejects legacy action rows without a components array without throwing', () => {
-        expect(serializedDiscordPayloadSchema.safeParse({ components: [{ data: { type: 1 } }] }).success).toBe(false);
-    });
-
     test.each([undefined, null, 'x'])('rejects non-object payload %p without throwing', (payload) => {
         expect(serializedDiscordPayloadSchema.safeParse(payload).success).toBe(false);
     });

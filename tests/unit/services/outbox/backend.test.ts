@@ -343,32 +343,6 @@ describe('OutboxBackend', () => {
             expect(result).toEqual([]);
         });
 
-        // Legacy pre-#49 outbox rows: can be safely deleted after 2026-09-25.
-        test('unwraps legacy marshalled Discord builders into API payload data', async () => {
-            const item = {
-                ...makeItem(),
-                payload: {
-                    embeds:     [{ data: { title: 'Approval needed' } }],
-                    components: [{
-                        data:       { type: 1 },
-                        components: [{ data: { type: 2, custom_id: 'approve', label: 'Approve', style: 3 } }],
-                    }],
-                },
-            };
-            ddbMock.on(QueryCommand).resolves({ Items: [item] });
-
-            const results = await backend.dequeue('discord');
-            const result = results[0];
-
-            expect(result.payload).toEqual({
-                embeds:     [{ title: 'Approval needed' }],
-                components: [{
-                    type:       1,
-                    components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }],
-                }],
-            });
-        });
-
         test('preserves new Discord API payload data on dequeue', async () => {
             const item = makeItem({
                 payload: {
