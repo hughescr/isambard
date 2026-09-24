@@ -941,41 +941,6 @@ describe('MemoryToolBackend', () => {
             expect(typeof tagIndexBackend.createTagIndexItems).toBe('function');
         });
 
-        test('legacy tag-index accessor returns the reconciliation tag index', () => {
-            expect(backend[reconciliationAccess]().tagIndex).toBe(backend.getTagIndexBackend());
-        });
-
-        test('legacy metadata updater writes metadata without refreshing updatedAt', async () => {
-            const testPath = '/state/legacy-reconcile-test' as MemoryPath;
-            const existingItem: MemoryToolItem = {
-                PK:          'DIR#/state',
-                SK:          'FILE#legacy-reconcile-test',
-                GSI1PK:      'LAYER#state',
-                GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
-                path:        testPath,
-                content:     'Original content',
-                contentType: 'text/plain',
-                metadata:    { previouslyKnownAs: ['old-path'] },
-                createdAt:   '2024-01-01T00:00:00.000Z',
-                updatedAt:   '2024-01-01T00:00:00.000Z',
-            };
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            ddbMock.on(PutCommand).resolves({});
-
-            const result = await backend.updateMetadataOnly(testPath, {
-                content:  'Reconciled content',
-                metadata: { reconciled: true },
-            });
-
-            const putItem = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item as MemoryToolItem;
-            expect(putItem.content).toBe('Reconciled content');
-            expect(putItem.metadata).toEqual({ reconciled: true });
-            expect(putItem.updatedAt).toBe('2024-01-01T00:00:00.000Z');
-            expect(result.content).toBe('Reconciled content');
-            expect(result.metadata).toEqual({ reconciled: true });
-            expect(result.updatedAt).toBe('2024-01-01T00:00:00.000Z');
-        });
-
         test('reconciliation metadata updater preserves updatedAt', async () => {
             const testPath = '/state/reconcile-test' as MemoryPath;
             const existingData: MemoryToolItemData = {

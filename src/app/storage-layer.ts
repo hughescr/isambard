@@ -5,7 +5,7 @@ import {
 } from '@/agent';
 import type { DynamoDBConfig, ReconciliationConfig, ContactReconciliationConfig, VectorIndexConfig } from '@/config';
 import {
-    DynamoDBClientHolder, type TagIndexReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, SessionResumeBackend, createTagIndexReconciliationScheduler, runTagIndexReconciliation, ContactBackend, createContactReconciliationScheduler, runContactReconciliation, type ContactReconciliationScheduler, VectorIndex, AsyncIndexer, type EmbedderLike,
+    DynamoDBClientHolder, type TagIndexReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, SessionResumeBackend, createMemoryTagIndexReconciliationScheduler, ContactBackend, createContactReconciliationScheduler, runContactReconciliation, type ContactReconciliationScheduler, VectorIndex, AsyncIndexer, type EmbedderLike,
     SessionJournalBackend, OperationalStateBackend, createOperationalStateStore, type OperationalStateStore
 } from '@/storage';
 
@@ -171,18 +171,11 @@ export async function createStorageLayer(
 
         // Create reconciliation scheduler if enabled
         if(reconciliationConfig?.enabled) {
-            tagIndexReconciliationScheduler = createTagIndexReconciliationScheduler({
-                config:            reconciliationConfig,
-                runReconciliation: runTagIndexReconciliation,
-                reconcilerDeps:    {
-                    docClient:            holder,
-                    tableName,
-                    tagIndex:             memoryBackend.getTagIndexBackend(),
-                    getMemory:            path => memoryBackend.get(path),
-                    updateMemoryMetadata: (path, input) =>
-                        memoryBackend.updateMetadataOnly(path, input),
-                },
-            });
+            tagIndexReconciliationScheduler = createMemoryTagIndexReconciliationScheduler(
+                memoryBackend,
+                reconciliationConfig,
+                { docClient: holder, tableName }
+            );
             logger.info('Tag index reconciliation scheduler configured');
         }
 

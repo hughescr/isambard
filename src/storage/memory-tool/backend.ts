@@ -259,27 +259,6 @@ export class MemoryToolBackend extends DynamoTableAccess {
     }
 
     /**
-     * Gets the tag index backend for reconciliation operations.
-     * @internal
-     */
-    getTagIndexBackend(): MemoryToolBackendTagIndex {
-        return this.tagIndexOps;
-    }
-
-    /**
-     * Updates memory metadata directly without refreshing updatedAt.
-     * Used by reconciliation to clean up previouslyKnownAs metadata.
-     * Preserves updatedAt to avoid affecting sigmoid recency scoring.
-     * @internal
-     */
-    async updateMetadataOnly(
-        path: MemoryPath,
-        input: { content?: string, metadata?: Record<string, unknown> }
-    ): Promise<MemoryToolItemData> {
-        return this.coreOps.update(path, { ...input, preserveUpdatedAt: true });
-    }
-
-    /**
      * Lists all tag counts by querying META_COUNT items.
      * Returns tags sorted by name.
      */

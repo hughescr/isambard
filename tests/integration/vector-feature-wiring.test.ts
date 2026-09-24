@@ -252,9 +252,7 @@ describe('Vector feature wiring', () => {
                 }),
                 // @ts-expect-error -- mocking constructor
                 spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                    getTagIndexBackend: mock(() => ({})),
-                    get:                mock(async () => undefined),
-                    updateMetadataOnly: mock(async () => ({})),
+                    get: mock(async () => undefined),
                 })),
                 // @ts-expect-error -- mocking constructor
                 spyOn(sessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({})),
@@ -296,18 +294,17 @@ describe('Vector feature wiring', () => {
 
             // Build a minimal fake backend
             const fakeBackend = {
-                get:                mock(async () => undefined),
-                create:             mock(async () => undefined),
-                update:             mock(async () => undefined),
-                list:               mock(async () => ({ items: [], nextCursor: undefined })),
-                search:             mock(async () => ({ items: [] })),
-                listByLayer:        mock(async () => ({ items: [], nextCursor: undefined })),
-                searchByTimeRange:  mock(async () => ({ items: [] })),
-                consolidate:        mock(async () => undefined),
-                rename:             mock(async () => undefined),
-                'delete':           mock(async () => undefined),
-                recordAccess:       mock(async () => undefined),
-                getTagIndexBackend: mock(() => ({})),
+                get:               mock(async () => undefined),
+                create:            mock(async () => undefined),
+                update:            mock(async () => undefined),
+                list:              mock(async () => ({ items: [], nextCursor: undefined })),
+                search:            mock(async () => ({ items: [] })),
+                listByLayer:       mock(async () => ({ items: [], nextCursor: undefined })),
+                searchByTimeRange: mock(async () => ({ items: [] })),
+                consolidate:       mock(async () => undefined),
+                rename:            mock(async () => undefined),
+                'delete':          mock(async () => undefined),
+                recordAccess:      mock(async () => undefined),
             };
 
             const fakeVectorIndex = {

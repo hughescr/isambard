@@ -73,9 +73,7 @@ describe('createStorageLayer', () => {
 
         // Mock MemoryToolBackend
         const mockMemoryBackend = {
-            getTagIndexBackend: mock(() => ({})),
-            get:                mock(async () => undefined),
-            updateMetadataOnly: mock(async () => ({})),
+            get: mock(async () => undefined),
         };
         // @ts-expect-error - Mocking constructor
         const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => mockMemoryBackend);
@@ -89,8 +87,8 @@ describe('createStorageLayer', () => {
             triggerNow:  mock(async () => undefined),
             notifyDrift: mock(() => {}),
         };
-        const createTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue(mockTagIndexReconciliationScheduler);
-        spies.push(createTagIndexReconciliationSchedulerSpy);
+        const createMemoryTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue(mockTagIndexReconciliationScheduler);
+        spies.push(createMemoryTagIndexReconciliationSchedulerSpy);
 
         // Mock task persistence components
         const mockSessionResumeBackend = {};
@@ -141,9 +139,7 @@ describe('createStorageLayer', () => {
             spies.push(createClientSpy);
 
             const mockMemoryBackend = {
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             };
             // @ts-expect-error - Mocking constructor
             const memoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => mockMemoryBackend);
@@ -232,9 +228,7 @@ describe('createStorageLayer', () => {
             createClientSpy,
             // @ts-expect-error - Mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             })),
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
@@ -260,9 +254,7 @@ describe('createStorageLayer', () => {
         // Mock MemoryToolBackend
         // @ts-expect-error - Mocking constructor
         const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-            getTagIndexBackend: mock(() => ({})),
-            get:                mock(async () => undefined),
-            updateMetadataOnly: mock(async () => ({})),
+            get: mock(async () => undefined),
         }));
         // Mock task persistence components
         spies.push(
@@ -299,16 +291,14 @@ describe('createStorageLayer', () => {
         }));
 
         const mockMemoryBackend = {
-            getTagIndexBackend: mock(() => ({})),
-            get:                mock(async () => undefined),
-            updateMetadataOnly: mock(async () => ({})),
+            get: mock(async () => undefined),
         };
         // @ts-expect-error - Mocking constructor
         spies.push(spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => mockMemoryBackend));
 
-        const createTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
+        const createMemoryTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
         spies.push(
-            createTagIndexReconciliationSchedulerSpy,
+            createMemoryTagIndexReconciliationSchedulerSpy,
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
@@ -318,12 +308,12 @@ describe('createStorageLayer', () => {
         const result = await createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig);
 
         // Verify reconciliation scheduler was created
-        expect(createTagIndexReconciliationSchedulerSpy).toHaveBeenCalled();
+        expect(createMemoryTagIndexReconciliationSchedulerSpy).toHaveBeenCalled();
         expect(result.tagIndexReconciliationScheduler).toBeDefined();
-        // The scheduler factory's generic `runReconciliation` deps slot must be bound to the
-        // tag-index reconciler's own function by reference, not merely "some function".
-        expect(createTagIndexReconciliationSchedulerSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ runReconciliation: staticReconciliationModule.runTagIndexReconciliation })
+        expect(createMemoryTagIndexReconciliationSchedulerSpy).toHaveBeenCalledWith(
+            mockMemoryBackend,
+            mockReconciliationConfig,
+            { docClient: result.holder, tableName: 'TestTable' }
         );
     });
 
@@ -337,15 +327,13 @@ describe('createStorageLayer', () => {
             }),
             // @ts-expect-error - Mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             }))
         );
 
-        const createTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
+        const createMemoryTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
         spies.push(
-            createTagIndexReconciliationSchedulerSpy,
+            createMemoryTagIndexReconciliationSchedulerSpy,
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
@@ -355,7 +343,7 @@ describe('createStorageLayer', () => {
         const result = await createStorageLayer(mockDynamoDBConfig);
 
         // Verify reconciliation scheduler was NOT created
-        expect(createTagIndexReconciliationSchedulerSpy).not.toHaveBeenCalled();
+        expect(createMemoryTagIndexReconciliationSchedulerSpy).not.toHaveBeenCalled();
         expect(result.tagIndexReconciliationScheduler).toBeUndefined();
     });
 
@@ -369,15 +357,13 @@ describe('createStorageLayer', () => {
             }),
             // @ts-expect-error - Mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             }))
         );
 
-        const createTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
+        const createMemoryTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
         spies.push(
-            createTagIndexReconciliationSchedulerSpy,
+            createMemoryTagIndexReconciliationSchedulerSpy,
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
@@ -391,7 +377,7 @@ describe('createStorageLayer', () => {
         const result = await createStorageLayer(mockDynamoDBConfig, configWithDisabledReconciliation);
 
         // Verify reconciliation scheduler was NOT created
-        expect(createTagIndexReconciliationSchedulerSpy).not.toHaveBeenCalled();
+        expect(createMemoryTagIndexReconciliationSchedulerSpy).not.toHaveBeenCalled();
         expect(result.tagIndexReconciliationScheduler).toBeUndefined();
     });
 
@@ -504,8 +490,8 @@ describe('createStorageLayer', () => {
                 tableName: 'TestTable',
             }),
             // @ts-expect-error -- mocking constructor
-            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({ getTagIndexBackend: mock(() => ({})) })),
-            spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue(scheduler as unknown as TagIndexReconciliationScheduler),
+            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({})),
+            spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue(scheduler as unknown as TagIndexReconciliationScheduler),
             spyOn(staticContactReconciliationModule, 'createContactReconciliationScheduler').mockReturnValue(contactScheduler as unknown as ContactReconciliationScheduler),
             // @ts-expect-error -- deliberate constructor failure
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => { throw failure; })
@@ -526,9 +512,7 @@ describe('createStorageLayer', () => {
             }),
             // @ts-expect-error - Mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             })),
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
@@ -551,9 +535,7 @@ describe('createStorageLayer', () => {
             }),
             // @ts-expect-error - Mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             })),
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
@@ -581,9 +563,7 @@ describe('createStorageLayer', () => {
             }),
             // @ts-expect-error - Mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             })),
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
@@ -611,9 +591,7 @@ describe('createStorageLayer', () => {
             }),
             // @ts-expect-error - Mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             })),
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
@@ -673,9 +651,7 @@ describe('createStorageLayer', () => {
         ) => {
             capturedDriftCallback = driftCallback;
             return {
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             };
         }));
 
@@ -689,7 +665,7 @@ describe('createStorageLayer', () => {
             notifyDrift: mockNotifyDrift,
         };
         spies.push(
-            spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue(mockTagIndexReconciliationScheduler),
+            spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue(mockTagIndexReconciliationScheduler),
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
@@ -715,9 +691,7 @@ describe('createStorageLayer', () => {
             }),
             // @ts-expect-error - Mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             })),
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
@@ -768,9 +742,7 @@ describe('createStorageLayer', () => {
                 }),
                 // @ts-expect-error -- mocking constructor
                 spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                    getTagIndexBackend: mock(() => ({})),
-                    get:                mock(async () => undefined),
-                    updateMetadataOnly: mock(async () => ({})),
+                    get: mock(async () => undefined),
                 })),
                 // @ts-expect-error -- mocking constructor
                 spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
@@ -926,9 +898,7 @@ describe('createStorageLayer', () => {
             }),
             // @ts-expect-error - Mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             })),
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
@@ -957,9 +927,7 @@ describe('createStorageLayer', () => {
             }),
             // @ts-expect-error - Mocking constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             })),
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({})),
@@ -1001,9 +969,7 @@ describe('createStorageLayer', () => {
         ) => {
             capturedDriftCallback = driftCallback;
             return {
-                getTagIndexBackend: mock(() => ({})),
-                get:                mock(async () => undefined),
-                updateMetadataOnly: mock(async () => ({})),
+                get: mock(async () => undefined),
             };
         }));
 
@@ -1014,7 +980,7 @@ describe('createStorageLayer', () => {
             triggerNow: mock(async () => undefined),
         } as unknown as TagIndexReconciliationScheduler;
         spies.push(
-            spyOn(staticReconciliationModule, 'createTagIndexReconciliationScheduler').mockReturnValue(brokenScheduler),
+            spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue(brokenScheduler),
             // @ts-expect-error - Mocking constructor
             spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
         );
