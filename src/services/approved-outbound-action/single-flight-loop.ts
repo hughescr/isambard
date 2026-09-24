@@ -24,7 +24,7 @@ export interface SingleFlightLoop<T> {
     /** Cancel the poll timer. A pass already in flight finishes but schedules nothing. */
     stop:    () => void
     /**
-     * Run a pass as soon as possible: on a zero-delay timer when idle, or straight after the
+     * Run a pass as soon as possible: on an immediate timer when idle, or straight after the
      * pass in flight. Also resets the poll interval to base. A no-op while stopped. Any number
      * of wakes during one pass coalesce into a single follow-up pass.
      */
@@ -42,7 +42,7 @@ export interface SingleFlightLoop<T> {
  * which records the new pass in the same synchronous step, so no timer, wake, start/stop or
  * caller can slip a second pass in between. The in-flight marker is cleared only when that pass
  * has settled. Every other trigger that finds a pass in flight only asks for a rerun, and every
- * pass — whoever started it — ends in `settle()`, which turns that request into a zero-delay
+ * pass — whoever started it — ends in `settle()`, which turns that request into an immediate
  * timer or, failing that, keeps the poll timer armed. `arm()` clears the previous timer before
  * setting a new one, so at most one timer is ever pending.
  */
@@ -55,7 +55,13 @@ export function createSingleFlightLoop<T>(deps: SingleFlightLoopDeps<T>): Single
     let currentIntervalMs = baseIntervalMs;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    function arm(delayMs: number): void {
+    /**
+     * Replace the pending timer with one that fires after `delayMs`, or as soon as the runtime
+     * allows when `delayMs` is omitted. Omitting the delay is the same as passing `0`: Bun and
+     * Node both clamp any delay below 1ms (including `undefined`) to 1ms, so there is no literal
+     * zero here to pretend otherwise.
+     */
+    function arm(delayMs?: number): void {
         clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
             timeoutId = undefined;
@@ -85,7 +91,7 @@ export function createSingleFlightLoop<T>(deps: SingleFlightLoopDeps<T>): Single
         }
         if(rerunRequested) {
             rerunRequested = false;
-            arm(0);
+            arm();
             return;
         }
         if(timeoutId === undefined) {
@@ -143,7 +149,7 @@ export function createSingleFlightLoop<T>(deps: SingleFlightLoopDeps<T>): Single
                 rerunRequested = true;
                 return;
             }
-            arm(0);
+            arm();
         },
 
         runOnce: () => {

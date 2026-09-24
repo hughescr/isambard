@@ -86,7 +86,34 @@ describe('createSingleFlightLoop', () => {
         expect(jest.getTimerCount()).toBe(1);
     });
 
-    test('wake() while idle runs the pass on a zero-delay timer', async () => {
+    test('start() while started keeps the first poll deadline instead of re-arming it', async () => {
+        loop.start();
+        jest.advanceTimersByTime(BASE / 2);
+        loop.start();
+        jest.advanceTimersByTime(BASE / 2);
+        await flush();
+
+        expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    test('wake() during a manual runOnce() keeps the pending poll timer and arms no immediate one', async () => {
+        loop.start();
+        void loop.runOnce();
+        await flush();
+
+        loop.wake();
+        jest.advanceTimersByTime(1);
+        await flush();
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(jest.getTimerCount()).toBe(1);
+
+        await finish(0);
+        jest.advanceTimersByTime(1);
+        await flush();
+        expect(run).toHaveBeenCalledTimes(2);
+    });
+
+    test('wake() while idle runs the pass on an immediate timer', async () => {
         loop.start();
         loop.wake();
         jest.advanceTimersByTime(0);
@@ -123,7 +150,7 @@ describe('createSingleFlightLoop', () => {
         expect(jest.getTimerCount()).toBe(0);
     });
 
-    test('coalesced rerun is followed by the backoff interval, not another zero-delay pass', async () => {
+    test('coalesced rerun is followed by the backoff interval, not another immediate pass', async () => {
         loop.start();
         jest.advanceTimersByTime(BASE);
         await flush();
@@ -138,7 +165,7 @@ describe('createSingleFlightLoop', () => {
         await flush();
         expect(run).toHaveBeenCalledTimes(2);
         // wake() reset the interval to base; each of the two empty passes doubled it. (The
-        // zero-delay timer is clamped to 1ms, so the boundaries are checked a step either side.)
+        // immediate timer is clamped to 1ms, so the boundaries are checked a step either side.)
         jest.advanceTimersByTime(BASE * 3);
         await flush();
         expect(run).toHaveBeenCalledTimes(2);

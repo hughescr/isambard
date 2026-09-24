@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { type ApprovedOutboundActionState, type ApprovedOutboundActionWriter } from '@/services';
-import { approvedOutboundActionSchema, type ApprovedOutboundAction } from '@/services/approved-outbound-action/types';
+import { approvalCardRefSchema, approvedOutboundActionSchema, type ApprovedOutboundAction } from '@/services/approved-outbound-action/types';
+
+const CARD_CHANNEL_ID = '1283746501928374650';
+const CARD_MESSAGE_ID = '1419283746501928374';
 
 const ROW: ApprovedOutboundAction = {
     id:        '550e8400-e29b-41d4-a716-446655440000',
@@ -78,17 +81,32 @@ describe('approvedOutboundActionSchema', () => {
         expect(approvedOutboundActionSchema.parse(ROW)).toEqual(ROW);
     });
 
-    test('accepts and keeps an approvalCard reference', () => {
-        const row = { ...ROW, approvalCard: { channelId: 'ch-1', messageId: 'msg-1' } };
+    test('accepts and keeps an approvalCard reference of two Discord snowflakes', () => {
+        const row = { ...ROW, approvalCard: { channelId: CARD_CHANNEL_ID, messageId: CARD_MESSAGE_ID } };
         expect(approvedOutboundActionSchema.parse(row)).toEqual(row);
     });
 
+    test('accepts an approvalCard whose ids are single-digit snowflakes', () => {
+        const card = { channelId: '7', messageId: '8' };
+        expect(approvalCardRefSchema.parse(card)).toEqual(card);
+    });
+
     test('rejects an approvalCard with an empty channelId', () => {
-        expect(approvedOutboundActionSchema.safeParse({ ...ROW, approvalCard: { channelId: '', messageId: 'msg-1' } }).success).toBe(false);
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, approvalCard: { channelId: '', messageId: CARD_MESSAGE_ID } }).success).toBe(false);
     });
 
     test('rejects an approvalCard with an empty messageId', () => {
-        expect(approvedOutboundActionSchema.safeParse({ ...ROW, approvalCard: { channelId: 'ch-1', messageId: '' } }).success).toBe(false);
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, approvalCard: { channelId: CARD_CHANNEL_ID, messageId: '' } }).success).toBe(false);
+    });
+
+    test('rejects an approvalCard whose channelId is not a decimal snowflake', () => {
+        const result = approvalCardRefSchema.safeParse({ channelId: 'ch-1', messageId: CARD_MESSAGE_ID });
+        expect(result.error?.issues.map(issue => [issue.path, issue.message])).toEqual([[['channelId'], 'Discord ID must be a decimal snowflake']]);
+    });
+
+    test('rejects an approvalCard whose messageId is not a decimal snowflake', () => {
+        const result = approvalCardRefSchema.safeParse({ channelId: CARD_CHANNEL_ID, messageId: 'msg-1' });
+        expect(result.error?.issues.map(issue => [issue.path, issue.message])).toEqual([[['messageId'], 'Discord ID must be a decimal snowflake']]);
     });
 
     test('accepts and keeps an outcomeReportPending marker', () => {

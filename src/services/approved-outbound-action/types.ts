@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { discordSnowflakeSchema } from '@/config';
 
 export const approvedOutboundActionStateSchema = z.enum([
     'approved',
@@ -25,11 +26,12 @@ export type FailureKind = z.infer<typeof failureKindSchema>;
 /**
  * Where the Discord approval card for an action lives, so the card can be edited with the real
  * send outcome long after the click (interaction tokens expire after 15 minutes, so the edit
- * goes through the channel, not the interaction).
+ * goes through the channel, not the interaction). Both ids are read straight off the clicked
+ * Discord message, so both are decimal snowflakes.
  */
 export const approvalCardRefSchema = z.object({
-    channelId: z.string().min(1),
-    messageId: z.string().min(1),
+    channelId: discordSnowflakeSchema,
+    messageId: discordSnowflakeSchema,
 });
 export type ApprovalCardRef = z.infer<typeof approvalCardRefSchema>;
 

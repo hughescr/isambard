@@ -291,7 +291,7 @@ describe('ApprovedOutboundActionBackend', () => {
         });
 
         test('updateState preserves approvalCard across approved to executed', async () => {
-            const card = { channelId: 'ch-1', messageId: 'msg-1' };
+            const card = { channelId: '1283746501928374650', messageId: '1419283746501928374' };
             ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...BASE_ACTION, approvalCard: card } });
             ddbMock.on(PutCommand).resolves({});
 
@@ -331,7 +331,7 @@ describe('ApprovedOutboundActionBackend', () => {
             ddbMock.on(PutCommand).resolves({});
             jest.useFakeTimers();
             jest.setSystemTime(new Date('2026-03-30T10:00:00.000Z'));
-            const withCard: ApprovedOutboundAction = { ...BASE_ACTION, approvalCard: { channelId: 'ch-1', messageId: 'msg-1' } };
+            const withCard: ApprovedOutboundAction = { ...BASE_ACTION, approvalCard: { channelId: '1283746501928374650', messageId: '1419283746501928374' } };
 
             await backend.create(withCard);
 
