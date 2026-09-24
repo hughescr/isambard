@@ -18,11 +18,25 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  *                 allowlist saga; never discord.js (fenced in eslint.config.mjs, #40)
  * 5. agent      - Agent core plus per-platform MCP adapters; never imports src/integrations/discord
  *                 Discord-specific MCP ports live in src/agent/discord-ports.ts
- * 6. discord    - Discord integration, depends on agent
- *    email      - Email integration, depends on agent
- *    bsky       - Bluesky integration, depends on agent
- *    caldav     - CalDAV calendar integration, independent of agent
- * 7. app        - Composition root (src/index.ts + src/app/**), wires everything together
+ * 6. discord    - Discord integration; may import utils/errors/config/storage/services/agent/
+ *                 email/bsky/caldav (the broadest of the platform integrations), depends on agent
+ *    email      - Email integration; agent<->email is type-only in BOTH directions (neither
+ *                 side depends on the other's runtime values, only on shared types)
+ *    bsky       - Bluesky integration; agent<->bsky is a full value-level relationship in BOTH
+ *                 directions (agent may import bsky's values, bsky may import agent's values)
+ *    caldav     - CalDAV calendar integration; one-way only - agent may import caldav, but
+ *                 caldav may not import agent (caldav stays independent of agent)
+ *    utraque    - Vendor quota/capacity wire adapter; utraque->agent is type-only (agent's
+ *                 quota types flow in), utraque never imports agent's runtime values, never
+ *                 app, never the anthropic integration
+ *    anthropic  - Direct Anthropic usage/quota wire adapter; imports agent's runtime values
+ *                 (fileQuotaWindow, hasQuotaWindow, unifiedAnthropicQuotaId), never app, never
+ *                 the utraque integration
+ * 7. app        - Composition root (src/index.ts + src/app/**), wires everything together;
+ *                 imports utraque and anthropic directly (src/app/quota-poller.ts)
+ *
+ * The discord.js package fence (services and non-discord integrations may not import
+ * discord.js directly) is enforced separately in eslint.config.mjs, not here.
  *
  * Written against eslint-plugin-boundaries v7. Three things differ from the v6 shape:
  * `rules` is now `policies`; a bare `{ type }` is an ELEMENT selector and must be wrapped
@@ -48,6 +62,8 @@ export const boundaryElements = [
     { type: 'email',   pattern: 'src/integrations/email/**' },
     { type: 'bsky',    pattern: 'src/integrations/bsky/**' },
     { type: 'caldav',  pattern: 'src/integrations/caldav/**' },
+    { type: 'utraque',   pattern: 'src/integrations/utraque/**' },
+    { type: 'anthropic', pattern: 'src/integrations/anthropic/**' },
     { type: 'app',     pattern: ['src/index.ts', 'src/app/**'] },
 ];
 
@@ -67,7 +83,7 @@ const elementDescriptors = boundaryElements.map(element => (
 const ENTRY_POINT_CATEGORY = 'entrypoint';
 
 // What the composition root may reach: everything except itself.
-const APP_MAY_IMPORT = ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav'];
+const APP_MAY_IMPORT = ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav', 'utraque', 'anthropic'];
 
 export const boundariesConfig = {
     files:   ['src/**/*.ts', 'src/**/*.tsx'],
@@ -108,6 +124,9 @@ export const boundariesConfig = {
                 { from: { element: { type: 'bsky' } },    allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent'] } } } },
                 { from: { element: { type: 'caldav' } },  allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services'] } } } },
                 { from: { element: { type: 'discord' } }, allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'email', 'bsky', 'caldav'] } } } },
+                { from: { element: { type: 'utraque' } }, dependency: { kind: 'type' }, allow: { to: { element: { type: ['agent'] } } } },
+                { from: { element: { type: 'utraque' } },   allow: { to: { element: { type: ['utils', 'errors', 'config'] } } } },
+                { from: { element: { type: 'anthropic' } }, allow: { to: { element: { type: ['utils', 'errors', 'config', 'agent'] } } } },
                 { from: { element: { type: 'app' } },     allow: { to: { element: { type: APP_MAY_IMPORT } } } },
                 // src/index.ts is the other half of the composition root. It is classified as a
                 // file category rather than an element (see elementDescriptors above), so it needs
@@ -122,7 +141,7 @@ export const boundariesConfig = {
                     disallow: {
                         to: {
                             element: {
-                                type:             ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav', 'app'],
+                                type:             ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav', 'utraque', 'anthropic', 'app'],
                                 fileInternalPath: '!index.ts'
                             }
                         }
