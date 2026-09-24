@@ -93,5 +93,5 @@ export { type ContinuationContext, buildContinuationNote } from './continuation-
 export { createActivityLogger, type ActivityLogger, type AppActivityLogger, type ActivityType } from './activity-types';
 
 // History Providers
-export type { HistoryEntry, HistoryFetchParams, KnownPlatform, PlatformHistoryProvider } from './history-providers';
+export type { BskyHistoryQuery, DiscordHistoryScope, HistoryEntry, HistoryFailureCategory, HistoryFetchFailure, HistoryFetchParams, HistoryFetchResult, HistoryScope, KnownPlatform, PersonHistoryCoverage, PersonHistoryResult, PlatformHistoryProvider } from './history-providers';
 export { PersonHistoryCoordinator } from './history-providers';

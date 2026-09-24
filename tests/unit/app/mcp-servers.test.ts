@@ -8,9 +8,11 @@ import * as contactsMcpModule from '@/agent/contacts-mcp-server';
 import * as discordInboxMcpModule from '@/agent/discord-inbox-mcp-server';
 import * as discordMcpModule from '@/agent/discord-mcp-server';
 import * as healthMcpModule from '@/agent/health-mcp-server';
+import type { PersonHistoryCoordinator } from '@/agent/history-providers';
 import * as mediaMcpModule from '@/agent/media-mcp-server';
 import * as memoryMcpModule from '@/agent/memory-mcp-server';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
+import * as personContextMcpModule from '@/agent/person-context-mcp-server';
 import type { QuestionRegistry } from '@/agent/question-registry/registry';
 import * as wikipediaMcpModule from '@/agent/wikipedia-mcp-server';
 import * as mcpServersModule from '@/app/mcp-servers';
@@ -692,6 +694,23 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
 
         expect(result.healthMcpServer).toBe(mockHealthMcpServer);
         expect(createHealthMcpServerSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('builds the person context server with the history coordinator and the same health registry', () => {
+        const historyCoordinator = {} as unknown as PersonHistoryCoordinator;
+        const healthRegistry = {} as unknown as ServiceHealthRegistry;
+        const shared = mcpServersModule.createMcpSharedDeps({ ...mockOptions, historyCoordinator, healthRegistry });
+        const mockPersonContextServer = freshServerConfig('user-context');
+        const createPersonContextSpy = spyOn(personContextMcpModule, 'createPersonContextMCPServer').mockReturnValue(mockPersonContextServer);
+        spies.push(createPersonContextSpy, spyOn(healthMcpModule, 'createHealthMCPServer').mockReturnValue(freshServerConfig('health')));
+
+        const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+        expect(result.personContextMcpServer).toBe(mockPersonContextServer);
+        expect(createPersonContextSpy).toHaveBeenCalledTimes(1);
+        const [personContextOptions] = createPersonContextSpy.mock.calls[0];
+        expect(personContextOptions.coordinator).toBe(historyCoordinator);
+        expect(personContextOptions.healthRegistry).toBe(healthRegistry);
     });
 
     test('healthMcpServer is undefined when healthRegistry is omitted', () => {

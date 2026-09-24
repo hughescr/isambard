@@ -1,11 +1,14 @@
 import { logger } from '@hughescr/logger';
 import { formatAddressForDisplay, parseMailboxMessageRef } from './types';
 import type { WildDuckClient, WildDuckSearchParams, WildDuckSearchResult } from './wildduck-client';
-import type { PlatformHistoryProvider, HistoryFetchParams, HistoryEntry } from '@/agent';
+import type { PlatformHistoryProvider, HistoryFetchParams, HistoryFetchResult, HistoryEntry } from '@/agent';
 import { EmailFolder } from '@/config';
 
 /** Maximum characters for subject truncation in summary */
 const MAX_SUBJECT_CHARS = 100;
+
+/** Failure source label for the WildDuck correspondent search. */
+const SEARCH_SOURCE = 'wildduck-search';
 
 /** Default maximum messages to return */
 const DEFAULT_MAX_MESSAGES = 10;
@@ -73,9 +76,10 @@ export class EmailHistoryProvider implements PlatformHistoryProvider {
 
     /**
      * Fetch email history for a person identified by their email address.
-     * Returns an empty array on search failure.
+     * A failed search is reported as `unavailable` with one transient failure,
+     * never as an empty (complete) result.
      */
-    async fetchHistory(params: HistoryFetchParams): Promise<HistoryEntry[]> {
+    async fetchHistory(params: HistoryFetchParams): Promise<HistoryFetchResult> {
         const maxMessages = params.maxMessages ?? DEFAULT_MAX_MESSAGES;
 
         const searchParams: WildDuckSearchParams = {
@@ -88,7 +92,13 @@ export class EmailHistoryProvider implements PlatformHistoryProvider {
             results = await this.wildDuckClient.search(searchParams);
         } catch (err) {
             logger.warn({ err, identifier: params.identifier }, 'EmailHistoryProvider: search failed');
-            return [];
+            return {
+                platform:  'email',
+                entries:   [],
+                coverage:  'unavailable',
+                truncated: false,
+                failures:  [{ source: SEARCH_SOURCE, category: 'transient', error: err }],
+            };
         }
 
         const filtered = results.filter((result) => {
@@ -105,6 +115,12 @@ export class EmailHistoryProvider implements PlatformHistoryProvider {
         // Cap at maxMessages
         const capped = filtered.slice(0, maxMessages);
 
-        return capped.map(result => toHistoryEntry(result, this.botAddress));
+        return {
+            platform:  'email',
+            entries:   capped.map(result => toHistoryEntry(result, this.botAddress)),
+            coverage:  'complete',
+            truncated: capped.length < filtered.length,
+            failures:  [],
+        };
     }
 }

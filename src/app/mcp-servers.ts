@@ -418,7 +418,7 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
         : undefined;
 
     const personContextMcpServer = options.historyCoordinator
-        ? createPersonContextMCPServer({ coordinator: options.historyCoordinator })
+        ? createPersonContextMCPServer({ coordinator: options.historyCoordinator, healthRegistry: options.healthRegistry })
         : undefined;
 
     const mediaMcpServer = createMediaMCPServer();

@@ -58,12 +58,12 @@ describe('EmailHistoryProvider', () => {
         expect(params.mailbox).toBeUndefined();
     });
 
-    test('returns empty array when search returns no results', async () => {
+    test('reports an empty search as complete coverage with no entries', async () => {
         mockSearch.mockResolvedValueOnce([]);
 
         const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
-        expect(result).toEqual([]);
+        expect(result).toEqual({ platform: 'email', entries: [], coverage: 'complete', truncated: false, failures: [] });
     });
 
     test('converts inbound email to HistoryEntry', async () => {
@@ -76,7 +76,7 @@ describe('EmailHistoryProvider', () => {
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result).toHaveLength(1);
         expect(result[0]).toMatchObject({
@@ -97,7 +97,7 @@ describe('EmailHistoryProvider', () => {
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].direction).toBe('outbound');
     });
@@ -117,7 +117,7 @@ describe('EmailHistoryProvider', () => {
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].direction).toBe('outbound');
     });
@@ -138,7 +138,7 @@ describe('EmailHistoryProvider', () => {
             }),
         ]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].direction).toBe('inbound');
         expect(result[1].direction).toBe('outbound');
@@ -154,7 +154,7 @@ describe('EmailHistoryProvider', () => {
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].direction).toBe('outbound');
     });
@@ -165,7 +165,7 @@ describe('EmailHistoryProvider', () => {
             from:    { name: 'Relay via bot@isambard.ai', address: 'relay@example.com' },
         })]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].direction).toBe('inbound');
     });
@@ -177,7 +177,7 @@ describe('EmailHistoryProvider', () => {
             makeSearchResult({ message: 'CleanInbox:103', from: null }),
         ]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result.map(entry => entry.direction)).toEqual(['inbound', 'inbound', 'inbound']);
     });
@@ -191,7 +191,7 @@ describe('EmailHistoryProvider', () => {
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].direction).toBe('inbound');
     });
@@ -202,15 +202,25 @@ describe('EmailHistoryProvider', () => {
         );
         mockSearch.mockResolvedValueOnce(results);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com', maxMessages: 3 });
+        const { entries: result, truncated } = await provider.fetchHistory({ identifier: 'alice@example.com', maxMessages: 3 });
 
         expect(result).toHaveLength(3);
+        expect(truncated).toBe(true);
+    });
+
+    test('is not truncated when the in-window results exactly fill maxMessages', async () => {
+        mockSearch.mockResolvedValueOnce([makeSearchResult(), makeSearchResult({ message: 'CleanInbox:43' })]);
+
+        const { entries, truncated } = await provider.fetchHistory({ identifier: 'alice@example.com', maxMessages: 2 });
+
+        expect(entries).toHaveLength(2);
+        expect(truncated).toBe(false);
     });
 
     test('honors a zero maxMessages cap', async () => {
         mockSearch.mockResolvedValueOnce([makeSearchResult()]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com', maxMessages: 0 });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com', maxMessages: 0 });
 
         expect(result).toEqual([]);
     });
@@ -219,17 +229,24 @@ describe('EmailHistoryProvider', () => {
         const results = [makeSearchResult(), makeSearchResult({ message: 'CleanInbox:43', subject: 'Second email' })];
         mockSearch.mockResolvedValueOnce(results);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com', maxMessages: 10 });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com', maxMessages: 10 });
 
         expect(result).toHaveLength(2);
     });
 
-    test('handles search errors gracefully by returning empty array', async () => {
-        mockSearch.mockRejectedValueOnce(new Error('WildDuck connection refused'));
+    test('reports a failed search as unavailable with one transient failure, not as an empty result', async () => {
+        const error = new Error('WildDuck connection refused');
+        mockSearch.mockRejectedValueOnce(error);
 
         const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
-        expect(result).toEqual([]);
+        expect(result).toEqual({
+            platform:  'email',
+            entries:   [],
+            coverage:  'unavailable',
+            truncated: false,
+            failures:  [{ source: 'wildduck-search', category: 'transient', error }],
+        });
         expect(mockLogger.warn).toHaveBeenCalledWith(
             { err: expect.any(Error), identifier: 'alice@example.com' },
             'EmailHistoryProvider: search failed'
@@ -241,7 +258,7 @@ describe('EmailHistoryProvider', () => {
         const searchResult = makeSearchResult({ subject: longSubject });
         mockSearch.mockResolvedValueOnce([searchResult]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].summary).toContain('A'.repeat(97));
         expect(result[0].summary).toContain('...');
@@ -253,7 +270,7 @@ describe('EmailHistoryProvider', () => {
         const longSubject = `Z${'A'.repeat(149)}`;
         mockSearch.mockResolvedValueOnce([makeSearchResult({ subject: longSubject })]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].summary).toContain(`Z${'A'.repeat(99)}...`);
     });
@@ -262,7 +279,7 @@ describe('EmailHistoryProvider', () => {
         const longSubject = `${'A'.repeat(99)} Z`;
         mockSearch.mockResolvedValueOnce([makeSearchResult({ subject: longSubject })]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].summary).toBe(`Alice <alice@example.com> — "${'A'.repeat(99)} ..."`);
     });
@@ -274,7 +291,7 @@ describe('EmailHistoryProvider', () => {
         const searchResult = makeSearchResult({ subject: exactSubject });
         mockSearch.mockResolvedValueOnce([searchResult]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         // Subject at exactly max length should not have '...' appended
         expect(result[0].summary).toContain('B'.repeat(100));
@@ -286,7 +303,7 @@ describe('EmailHistoryProvider', () => {
         const searchResult = makeSearchResult({ subject: shortSubject });
         mockSearch.mockResolvedValueOnce([searchResult]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].summary).toContain('C'.repeat(50));
         expect(result[0].summary).not.toContain('...');
@@ -297,7 +314,7 @@ describe('EmailHistoryProvider', () => {
         const newResult  = makeSearchResult({ message: 'CleanInbox:2', subject: 'New email', date: '2026-03-28T10:00:00.000Z' });
         mockSearch.mockResolvedValueOnce([oldResult, newResult]);
 
-        const result = await provider.fetchHistory({
+        const { entries: result } = await provider.fetchHistory({
             identifier: 'alice@example.com',
             startTime:  new Date('2026-02-01T00:00:00.000Z'),
         });
@@ -311,7 +328,7 @@ describe('EmailHistoryProvider', () => {
         const atBoundary = makeSearchResult({ message: 'CleanInbox:1', subject: 'At boundary', date: '2026-02-01T00:00:00.000Z' });
         mockSearch.mockResolvedValueOnce([atBoundary]);
 
-        const result = await provider.fetchHistory({
+        const { entries: result } = await provider.fetchHistory({
             identifier: 'alice@example.com',
             startTime:  new Date('2026-02-01T00:00:00.000Z'),
         });
@@ -325,7 +342,7 @@ describe('EmailHistoryProvider', () => {
         const futureResult = makeSearchResult({ message: 'CleanInbox:2', subject: 'Future email', date: '2026-12-31T00:00:00.000Z' });
         mockSearch.mockResolvedValueOnce([oldResult, futureResult]);
 
-        const result = await provider.fetchHistory({
+        const { entries: result } = await provider.fetchHistory({
             identifier: 'alice@example.com',
             endTime:    new Date('2026-06-01T00:00:00.000Z'),
         });
@@ -339,7 +356,7 @@ describe('EmailHistoryProvider', () => {
         const atBoundary = makeSearchResult({ message: 'CleanInbox:1', subject: 'At end boundary', date: '2026-06-01T00:00:00.000Z' });
         mockSearch.mockResolvedValueOnce([atBoundary]);
 
-        const result = await provider.fetchHistory({
+        const { entries: result } = await provider.fetchHistory({
             identifier: 'alice@example.com',
             endTime:    new Date('2026-06-01T00:00:00.000Z'),
         });
@@ -354,7 +371,7 @@ describe('EmailHistoryProvider', () => {
         const tooNew  = makeSearchResult({ message: 'CleanInbox:3', subject: 'Too new',   date: '2026-06-01T00:00:00.000Z' });
         mockSearch.mockResolvedValueOnce([tooOld, inRange, tooNew]);
 
-        const result = await provider.fetchHistory({
+        const { entries: result } = await provider.fetchHistory({
             identifier: 'alice@example.com',
             startTime:  new Date('2026-02-01T00:00:00.000Z'),
             endTime:    new Date('2026-04-01T00:00:00.000Z'),
@@ -370,7 +387,7 @@ describe('EmailHistoryProvider', () => {
         );
         mockSearch.mockResolvedValueOnce(results);
 
-        const result = await provider.fetchHistory({
+        const { entries: result } = await provider.fetchHistory({
             identifier:  'alice@example.com',
             maxMessages: 2,
             startTime:   new Date('2026-03-01T00:00:00.000Z'),
@@ -385,7 +402,7 @@ describe('EmailHistoryProvider', () => {
         );
         mockSearch.mockResolvedValueOnce(results);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result).toHaveLength(10);
     });
@@ -397,7 +414,7 @@ describe('EmailHistoryProvider', () => {
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result[0].summary).toBe('Bob Smith <bob@example.com> — "Meeting tomorrow"');
     });
@@ -409,7 +426,7 @@ describe('EmailHistoryProvider', () => {
         ];
         mockSearch.mockResolvedValueOnce(results);
 
-        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+        const { entries: result } = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(result).toHaveLength(2);
         expect(result.find(e => e.direction === 'inbound')).toBeDefined();

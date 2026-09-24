@@ -1,9 +1,25 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { PersonHistoryCoordinator } from '../../../src/agent/history-providers';
+import { PersonHistoryCoordinator, type PersonHistoryCoverage, type PersonHistoryResult } from '../../../src/agent/history-providers';
 import { createPersonContextMCPServer } from '../../../src/agent/person-context-mcp-server';
-import type { Contact, PersonId } from '../../../src/storage/contacts';
+import type { HealthState, ServiceName } from '../../../src/services/types';
+import type { Contact, ContactBackend, PersonId } from '../../../src/storage/contacts';
 import { mockLogger, textContent } from '../../setup';
+
+const COVERAGE: PersonHistoryCoverage = {
+    queried:       ['email', 'bsky'],
+    unavailable:   ['bsky'],
+    partial:       [],
+    notConfigured: [],
+    notApplicable: ['discord'],
+    truncated:     true,
+    failures:      [{ platform: 'bsky', source: 'author-feed', category: 'transient' }],
+};
+
+/** A health registry stub reporting the given state per service (online when unlisted). */
+function healthRegistry(states: Partial<Record<ServiceName, HealthState>>) {
+    return { getState: mock((service: ServiceName): HealthState => states[service] ?? 'online') };
+}
 
 interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<CallToolResult>
@@ -31,9 +47,11 @@ describe.concurrent('createPersonContextMCPServer', () => {
 
     beforeEach(() => {
         mockCoordinator = {
-            getPersonHistory: mock(async (): Promise<{ history: string | undefined, person: Omit<Contact, '_internal'> | undefined }> => ({
-                history: '--- Recent interactions with Alice Wonderland ---\n[email] [10:00] Hello\n--- End of recent history ---',
-                person:  makeContact(),
+            getPersonHistory: mock(async (): Promise<PersonHistoryResult> => ({
+                kind:     'observed',
+                history:  '--- Recent interactions with Alice Wonderland ---\n[email] [10:00] Hello\n--- End of recent history ---',
+                person:   makeContact(),
+                coverage: COVERAGE,
             })),
         };
     });
@@ -78,10 +96,75 @@ describe.concurrent('createPersonContextMCPServer', () => {
             expect(result.isError).toBeFalsy();
             expect(result.content).toHaveLength(1);
             const text = textContent(result.content[0]);
-            const parsed = JSON.parse(text) as { person: Omit<Contact, '_internal'>, history: string };
+            const parsed = JSON.parse(text) as { person: Omit<Contact, '_internal'>, history: string, coverage: PersonHistoryCoverage };
             expect(parsed.person.displayName).toBe('Alice Wonderland');
             expect(parsed.person.personId as string).toBe('alice-wonderland');
-            expect(parsed.history).toContain('Recent interactions');
+            expect(parsed.history).toBe('--- Recent interactions with Alice Wonderland ---\n[email] [10:00] Hello\n--- End of recent history ---');
+            expect(parsed.coverage).toEqual(COVERAGE);
+            expect(Object.keys(parsed)).toEqual(['person', 'history', 'coverage']);
+        });
+
+        test('passes no unavailable platforms when no health registry is wired', async () => {
+            const server = createPersonContextMCPServer({ coordinator: asCoordinator(mockCoordinator) });
+
+            await getTool(server, 'getPersonContext').handler({ identifier: 'alice' });
+
+            const callArgs = mockCoordinator.getPersonHistory.mock.calls[0] as [string, { unavailablePlatforms: unknown }];
+            expect(callArgs[1].unavailablePlatforms).toEqual({});
+        });
+
+        test('passes health-derived unavailable platforms by category and omits online ones', async () => {
+            const registry = healthRegistry({ discord: 'online', email: 'disabled', bsky: 'offline' });
+            const server = createPersonContextMCPServer({ coordinator: asCoordinator(mockCoordinator), healthRegistry: registry });
+
+            await getTool(server, 'getPersonContext').handler({ identifier: 'alice' });
+
+            const callArgs = mockCoordinator.getPersonHistory.mock.calls[0] as [string, { unavailablePlatforms: unknown }];
+            expect(callArgs[1].unavailablePlatforms).toEqual({ email: 'permanent_not_configured', bsky: 'offline_retryable_later' });
+            expect(registry.getState.mock.calls.map(call => call[0])).toEqual(['discord', 'email', 'bsky']);
+        });
+
+        test('treats starting and recovering services as retryable later', async () => {
+            const registry = healthRegistry({ discord: 'starting', bsky: 'recovering' });
+            const server = createPersonContextMCPServer({ coordinator: asCoordinator(mockCoordinator), healthRegistry: registry });
+
+            await getTool(server, 'getPersonContext').handler({ identifier: 'alice' });
+
+            const callArgs = mockCoordinator.getPersonHistory.mock.calls[0] as [string, { unavailablePlatforms: unknown }];
+            expect(callArgs[1].unavailablePlatforms).toEqual({ discord: 'offline_retryable_later', bsky: 'offline_retryable_later' });
+        });
+
+        test('keeps the history trailer and reports truncation through a real coordinator', async () => {
+            const contact = { ...makeContact(), _internal: { bskyDid: 'did:plc:alice' } };
+            const entries = Array.from({ length: 20 }, (_, i) => ({
+                platform:  'email' as const,
+                timestamp: new Date(Date.UTC(2025, 0, 1, i)).toISOString(),
+                summary:   `${String(i)}${'z'.repeat(1000)}`,
+                direction: 'inbound' as const,
+            }));
+            const coordinator = new PersonHistoryCoordinator({
+                contactBackend: { fuzzyLookup: async () => [contact] } as unknown as ContactBackend,
+                providers:      [{ platform: 'email', fetchHistory: async () => ({ platform: 'email', entries, coverage: 'complete', truncated: false, failures: [] }) }],
+            });
+            const server = createPersonContextMCPServer({ coordinator });
+
+            const result = await getTool(server, 'getPersonContext').handler({ identifier: 'alice' });
+
+            const parsed = JSON.parse(textContent(result.content[0])) as { history: string, coverage: PersonHistoryCoverage };
+            expect(parsed.history.endsWith('\n--- End of recent history ---')).toBe(true);
+            expect(parsed.history.length).toBeLessThanOrEqual(12_000);
+            expect(parsed.coverage.truncated).toBe(true);
+            expect(parsed.coverage.queried).toEqual(['email']);
+            expect(parsed.coverage.notConfigured).toEqual(['discord', 'bsky']);
+        });
+
+        test('describes the coverage block in the tool description', () => {
+            const server = createPersonContextMCPServer({ coordinator: asCoordinator(mockCoordinator) });
+            const { description } = getTool(server, 'getPersonContext');
+            expect(description).toContain('plus a coverage block');
+            expect(description).toContain('truncated means the search was bounded, so some entries were or may have been left out.');
+            expect(description).toContain('A null history means no entries were observed, not that none exist: it shows no interactions only on queried platforms that are not unavailable or partial, and only when truncated is false; notConfigured and notApplicable platforms were never searched.');
+            expect(description).not.toContain('A null history only means no interactions');
         });
 
         test('person result does not include _internal field', async () => {
@@ -95,10 +178,7 @@ describe.concurrent('createPersonContextMCPServer', () => {
         });
 
         test('returns helpful message when person not found', async () => {
-            mockCoordinator.getPersonHistory.mockImplementation(async (): Promise<{ history: string | undefined, person: undefined }> => ({
-                history: undefined,
-                person:  undefined,
-            }));
+            mockCoordinator.getPersonHistory.mockImplementation(async (): Promise<PersonHistoryResult> => ({ kind: 'contact_not_found' }));
             const server = createPersonContextMCPServer({ coordinator: asCoordinator(mockCoordinator) });
             const tool = getTool(server, 'getPersonContext');
 
@@ -194,9 +274,11 @@ describe.concurrent('createPersonContextMCPServer', () => {
         });
 
         test('handles person found but no history', async () => {
-            mockCoordinator.getPersonHistory.mockImplementation(async (): Promise<{ history: undefined, person: Omit<Contact, '_internal'> }> => ({
-                history: undefined,
-                person:  makeContact(),
+            mockCoordinator.getPersonHistory.mockImplementation(async (): Promise<PersonHistoryResult> => ({
+                kind:     'observed',
+                history:  undefined,
+                person:   makeContact(),
+                coverage: COVERAGE,
             }));
             const server = createPersonContextMCPServer({ coordinator: asCoordinator(mockCoordinator) });
             const tool = getTool(server, 'getPersonContext');
@@ -204,10 +286,12 @@ describe.concurrent('createPersonContextMCPServer', () => {
             const result = await tool.handler({ identifier: 'alice' });
             expect(result.isError).toBeFalsy();
             const text = textContent(result.content[0]);
-            const parsed = JSON.parse(text) as { person: Omit<Contact, '_internal'>, history: string | null };
+            const parsed = JSON.parse(text) as { person: Omit<Contact, '_internal'>, history: string | null, coverage: PersonHistoryCoverage };
             expect(parsed.person.displayName).toBe('Alice Wonderland');
-            // undefined history is serialized as null (not absent) so the agent sees an explicit null
+            // undefined history is serialized as null (not absent) so the agent sees an explicit null,
+            // and coverage says whether that null means "nothing there" or "could not look"
             expect(parsed.history).toBeNull();
+            expect(parsed.coverage).toEqual(COVERAGE);
         });
     });
 });

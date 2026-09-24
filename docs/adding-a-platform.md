@@ -86,28 +86,41 @@ The history provider is how your platform participates in `getPersonContext`.
 Implement `PlatformHistoryProvider` from `src/agent/history-providers/types.ts`:
 
 ```typescript
-import type { PlatformHistoryProvider, HistoryFetchParams, HistoryEntry } from '@/agent';
+import type { PlatformHistoryProvider, HistoryFetchParams, HistoryFetchResult, HistoryEntry } from '@/agent';
 
 export class YourPlatformHistoryProvider implements PlatformHistoryProvider {
     readonly platform = 'yourplatform';
 
     constructor(private readonly client: YourPlatformClient) {}
 
-    async fetchHistory(params: HistoryFetchParams): Promise<HistoryEntry[]> {
+    async fetchHistory(params: HistoryFetchParams): Promise<HistoryFetchResult> {
         try {
             // fetch using params.identifier (the platform-specific identifier for this person)
             // use params.maxMessages, params.startTime, params.endTime for filtering
-            // params.metadata may carry platform-specific extras (e.g. convoId, parentUri)
-            const items = await this.client.getMessages(params.identifier, params.maxMessages ?? 10);
-            return items.map((item): HistoryEntry => ({
+            // params.scope carries your platform's typed HistoryScope variant, if it has one
+            const { items, more } = await this.client.getMessages(params.identifier, params.maxMessages ?? 10);
+            return {
                 platform:  'yourplatform',
-                timestamp: item.createdAt,   // ISO 8601 string
-                summary:   item.text,
-                direction: 'inbound',        // or 'outbound' or 'mutual'
-            }));
+                entries:   items.map((item): HistoryEntry => ({
+                    platform:  'yourplatform',
+                    timestamp: item.createdAt,   // ISO 8601 string
+                    summary:   item.text,
+                    direction: 'inbound',        // or 'outbound' or 'mutual'
+                })),
+                coverage:  'complete',           // zero entries here means genuinely no matches
+                truncated: more,                 // more may exist: a fetch cap, a page, or sources skipped by a cap
+                failures:  [],
+            };
         } catch (err: unknown) {
             logger.warn({ err }, 'YourPlatformHistoryProvider: failed to fetch history');
-            return [];   // always return empty array on error — never throw
+            // never return an empty "complete" result for a failure, and never throw
+            return {
+                platform:  'yourplatform',
+                entries:   [],
+                coverage:  'unavailable',
+                truncated: false,
+                failures:  [{ source: 'messages', category: 'transient', error: err }],
+            };
         }
     }
 }
@@ -116,10 +129,12 @@ export class YourPlatformHistoryProvider implements PlatformHistoryProvider {
 **Key points:**
 
 - `params.identifier` is the platform-specific value stored in the contact record (e.g., a handle, email address). It is already resolved from the contact by the `PersonHistoryCoordinator`.
-- Return `[]` on errors — a failing provider must not break history for other platforms.
-- `direction` values: `'inbound'` (received from person), `'outbound'` (sent to person), `'mutual'` (shared interaction like a reaction).
+- Report errors in the result, not as an empty list: `coverage: 'unavailable'` when nothing could be read, `'partial'` when some sources (channels, mailboxes) failed and others were read, with one `failures` entry per failed source. `source` is a non-sensitive label (it reaches the model); `error` stays internal. Discovery steps (looking up a DM channel, listing channels) are sources too: catch their failures per source so the others still contribute, rather than letting one reject the whole fetch. A failing provider must still not break history for other platforms — the coordinator also turns a rejected call into an unavailable result.
+- If your platform needs extra per-contact data from `Contact._internal`, add a variant to `HistoryScope` in `src/agent/history-providers/types.ts` and a case to `buildHistoryScope` in the coordinator (the exhaustive switch fails typecheck until you do, once the platform is added to `knownPlatformSchema`).
+- `direction` values: `'inbound'` (received from person), `'outbound'` (sent to person), `'mutual'` (shared interaction like a reaction, or when you cannot tell).
+- The coordinator reports your platform in the tool's `coverage` block: `notConfigured` when no provider is registered, `notApplicable` when the contact has no identifier on it, `unavailable` without a call when service health already reports it down.
 
-See `src/integrations/bsky/history-provider.ts` for a complete example with thread, DM, and feed fetch modes.
+See `src/integrations/bsky/history-provider.ts` for a complete example with author-feed and direct-conversation scopes, and `src/integrations/discord/history-provider.ts` for per-channel partial coverage.
 
 ### 3. Contact Identifiers
 

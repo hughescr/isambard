@@ -510,7 +510,7 @@
     "version": "1.0.0",
     "tools": {
       "getPersonContext": {
-        "description": "Fetch cross-platform interaction history for a person. Returns recent messages, emails, and social interactions.",
+        "description": "Fetch cross-platform interaction history for a person. Returns recent messages, emails, and social interactions, plus a coverage block: queried lists the platforms searched; unavailable, partial and failures show which could not be (fully) read and why; notConfigured and notApplicable show platforms not searched; truncated means the search was bounded, so some entries were or may have been left out. A null history means no entries were observed, not that none exist: it shows no interactions only on queried platforms that are not unavailable or partial, and only when truncated is false; notConfigured and notApplicable platforms were never searched.",
         "annotations": {
           "title": "Get Person Context",
           "readOnlyHint": true,

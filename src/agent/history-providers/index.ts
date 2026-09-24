@@ -8,11 +8,22 @@
 
 // Types
 export type {
+    BskyHistoryQuery,
+    DiscordHistoryScope,
     HistoryEntry,
+    HistoryFailureCategory,
+    HistoryFetchFailure,
     HistoryFetchParams,
+    HistoryFetchResult,
+    HistoryScope,
     KnownPlatform,
+    PersonHistoryCoverage,
+    PersonHistoryFailure,
+    PersonHistoryResult,
     PlatformHistoryProvider
 } from './types';
+
+export { KNOWN_HISTORY_PLATFORMS } from './types';
 
 // Coordinator
 export { PersonHistoryCoordinator } from './coordinator';
