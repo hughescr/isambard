@@ -1,88 +1,75 @@
 /**
- * Bundled llama.cpp version validation.
+ * llama.cpp release validation for the binary node-llama-cpp actually loaded.
  *
- * The prebuilt binary shipping with node-llama-cpp has a Qwen3 non-causal
- * embedding bug (present in b8390, fixed in ≥ b8950).
+ * llama.cpp builds before b8950 have a Qwen3 non-causal embedding bug (present
+ * in b8390, fixed in b8950), so the embedder refuses any older release.
  *
- * Production must use a binary built from llama.cpp ≥ b8950.
- * Source rebuild:
- *   bunx node-llama-cpp source download --release b8953
- *   bunx node-llama-cpp source build
+ * The repo and release come from `llama.llamaCppRelease` after `getLlama()`:
+ * the prebuilt binaries', or those of a local source build when a
+ * `node-llama-cpp source download` has overridden them. Release tags are only
+ * meaningful for upstream llama.cpp, so any other repo (a fork, whose tags
+ * could say anything) is rejected outright. Upstream releases take two forms:
+ *   - `bNNNN` build tags: compatible when NNNN ≥ 8950.
+ *   - `vX.Y.Z` semver releases: compatible from v0.1.0, upstream's first
+ *     semver tag, 1513 commits after b8950. (node-llama-cpp 3.21.1's
+ *     prebuilts report v0.4.0, which is b10816.)
+ * Anything else is an unknown release and is rejected.
  */
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { IncompatibleLlamaCppError } from '@/errors';
+
+/** The only repo whose release tags this check can interpret */
+const UPSTREAM_LLAMA_CPP_REPO = 'ggml-org/llama.cpp';
 
 /** Minimum llama.cpp build required for correct Qwen3 non-causal embeddings */
 const MINIMUM_LLAMA_CPP_BUILD = 8950;
 
 /**
- * Path to the llama.cpp version info file bundled with node-llama-cpp.
- * Format: { "tag": "b8953", "llamaCppGithubRepo": "ggml-org/llama.cpp" }
+ * Upstream's first semver release, which already carries the b8950 fix.
+ * {@link isCompatibleSemver} encodes this floor as `major > 0 || minor >= 1`.
  */
-function getInfoFilePath(): string {
-    // Resolve relative to node_modules/node-llama-cpp
-    // Use import.meta.url to get the absolute path of this module,
-    // then navigate to node_modules from the project root.
-    const moduleDir = fileURLToPath(new URL('../../../', import.meta.url));
-    return path.join(moduleDir, 'node_modules', 'node-llama-cpp', 'llama', 'llama.cpp.info.json');
+const MINIMUM_LLAMA_CPP_RELEASE = 'v0.1.0';
+
+const BUILD_TAG = /^b(\d+)$/;
+const SEMVER_RELEASE = /^v(\d+)\.(\d+)\.\d+$/;
+
+/** True for vX.Y.Z at or above v0.1.0; the patch number never decides it. */
+function isCompatibleSemver(major: number, minor: number): boolean {
+    return major > 0 || minor >= 1;
 }
 
-interface LlamaCppInfo {
-    tag:                string
-    llamaCppGithubRepo: string
-}
-
-/**
- * Reads and parses the bundled llama.cpp version info.
- *
- * @returns Parsed build number and release tag, or null if the file is
- *          missing, malformed, or does not contain a parseable build number.
- */
-export async function getBundledLlamaCppVersion(): Promise<{ build: number, releaseTag: string } | null> {
-    try {
-        const content = await readFile(getInfoFilePath(), 'utf8');
-        // The outer catch treats malformed JSON and non-object JSON alike as an unknown
-        // version. Accessing tag on null throws into that same catch.
-        const info = JSON.parse(content) as Partial<LlamaCppInfo>;
-        const tag = info.tag;
-        if(typeof tag !== 'string') {
-            return null;
-        }
-
-        // Tags look like "b8953" — extract the numeric part
-        const match = /^b(\d+)$/.exec(tag);
-        if(match === null) {
-            return null;
-        }
-
-        // Stryker disable next-line NumberLiteralValue: radix 0 falls back to decimal unless the string starts with 0x, which the /^b(\d+)$/ guard rules out
-        const build = Number.parseInt(match[1]!, 10);
-        // A very long numeric tag can parse to Infinity or lose integer precision.
-        // Neither is a trustworthy build number for a compatibility decision.
-        if(!Number.isSafeInteger(build)) {
-            return null;
-        }
-
-        return { build, releaseTag: tag };
-    } catch{
-        // Silent: file not found (ENOENT), permission error, or any unexpected I/O failure.
-        // All of these mean "unknown version" — return null so assertLlamaCppCompatible
-        // throws IncompatibleLlamaCppError and surfaces the problem at startup.
-        return null;
+function isCompatibleRelease(release: string): boolean {
+    const semver = SEMVER_RELEASE.exec(release);
+    if(semver !== null) {
+        return isCompatibleSemver(Number(semver[1]), Number(semver[2]));
     }
+    const match = BUILD_TAG.exec(release);
+    if(match === null) {
+        return false;
+    }
+    const build = Number(match[1]);
+    // A very long numeric tag can parse to Infinity or lose integer precision.
+    // Neither is a trustworthy build number for a compatibility decision.
+    return Number.isSafeInteger(build) && build >= MINIMUM_LLAMA_CPP_BUILD;
 }
 
 /**
- * Asserts that the bundled llama.cpp is compatible (build ≥ 8950).
+ * Asserts that the loaded llama.cpp is an upstream release carrying the b8950
+ * Qwen3 non-causal embedding fix.
  *
- * @throws {IncompatibleLlamaCppError} If the build is too old or the version file is missing.
+ * @param repo - The loaded release's GitHub repo, from `llama.llamaCppRelease.repo`.
+ * @param release - The loaded release tag, from `llama.llamaCppRelease.release`.
+ * @throws {IncompatibleLlamaCppError} If the repo is not upstream llama.cpp, or the
+ *   release predates b8950 / v0.1.0 or is not a recognised tag.
  */
-export async function assertLlamaCppCompatible(): Promise<void> {
-    const version = await getBundledLlamaCppVersion();
-
-    if(version === null || version.build < MINIMUM_LLAMA_CPP_BUILD) {
-        throw new IncompatibleLlamaCppError(version?.build ?? null, MINIMUM_LLAMA_CPP_BUILD);
+export function assertLlamaCppCompatible(repo: string, release: string): void {
+    if(repo !== UPSTREAM_LLAMA_CPP_REPO || !isCompatibleRelease(release)) {
+        throw new IncompatibleLlamaCppError(
+            { repo, release },
+            {
+                repo:           UPSTREAM_LLAMA_CPP_REPO,
+                minimumBuild:   MINIMUM_LLAMA_CPP_BUILD,
+                minimumRelease: MINIMUM_LLAMA_CPP_RELEASE,
+            }
+        );
     }
 }

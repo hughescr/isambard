@@ -8,9 +8,9 @@
  *   const result = await embedder.encode(['hello world']);
  *   await embedder.close();
  *
- * NOTE: Requires a source-built node-llama-cpp binary (≥ b8950):
- *   bunx node-llama-cpp source download --release b8953
- *   bunx node-llama-cpp source build
+ * NOTE: Requires llama.cpp ≥ b8950 (Qwen3 non-causal embedding fix). node-llama-cpp's
+ * prebuilt binaries satisfy this; loadEmbedder() rejects an older loaded release, or
+ * one from a repo other than ggml-org/llama.cpp.
  */
 
 // Core API

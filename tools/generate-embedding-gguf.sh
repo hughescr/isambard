@@ -72,7 +72,8 @@ DEST_NAME="local_pplx-embed-v1-${SLUG}_${QUANT_LOWER}-noncausal.gguf"
 DEST="$CACHE_DIR/$DEST_NAME"
 PATCHER="$SCRIPT_DIR/patch-gguf-noncausal.py"
 
-# llama.cpp converter source cache (pinned to b8953, matching NLC build target)
+# llama.cpp converter source cache (pinned to b8953, the first confirmed-good tag past the
+# b8950 Qwen3 non-causal fix; independent of the llama.cpp node-llama-cpp's prebuilts ship)
 LLAMA_TAG="b8953"
 CONVERTER_CACHE="$HOME/.cache/llama-cpp-converter/$LLAMA_TAG"
 CONVERTER="$CONVERTER_CACHE/convert_hf_to_gguf.py"

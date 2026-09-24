@@ -6,11 +6,10 @@
  *   const result = await embedder.encode(['hello world', 'another text']);
  *   await embedder.close();
  *
- * NOTE: The prebuilt binary shipping with node-llama-cpp has a Qwen3 non-causal
- * embedding bug (present in b8390, fixed in ≥ b8950).
- * Run a source build after install:
- *   bunx node-llama-cpp source download --release b8953
- *   bunx node-llama-cpp source build
+ * NOTE: llama.cpp builds before b8950 have a Qwen3 non-causal embedding bug.
+ * node-llama-cpp's prebuilt binaries are past it (3.21.1 ships llama.cpp v0.4.0 = b10816);
+ * load() rejects any older release getLlama() reports, and any release from a repo
+ * other than ggml-org/llama.cpp (see version-check.ts).
  */
 import { access } from 'node:fs/promises';
 import { getLlama, LlamaLogLevel, type LlamaEmbeddingContext, type Llama, type LlamaModel  } from 'node-llama-cpp';
@@ -86,14 +85,12 @@ export class Embedder {
     /**
      * Creates and initializes an Embedder with the given options.
      *
-     * @throws {IncompatibleLlamaCppError} If the bundled llama.cpp is < b8950.
+     * @throws {IncompatibleLlamaCppError} If the llama.cpp release getLlama() loaded is not an
+     *   upstream ggml-org/llama.cpp release at or after b8950 / v0.1.0.
      * @throws {ModelFileNotFoundError} If the GGUF file is not found on disk.
      */
     static async load(opts?: EmbedderOptions): Promise<Embedder> {
-        // 1. Assert llama.cpp version is compatible
-        await assertLlamaCppCompatible();
-
-        // 2. Resolve options — defaults: 0.6b Q8_0, contextSize=32_768, gpuLayers=max
+        // 1. Resolve options — defaults: 0.6b Q8_0, contextSize=32_768, gpuLayers=max
         // Each option is independently overridable; all have well-tested defaults.
         // Options: { slug, quant, contextSize, gpuLayers } — any subset can be specified.
         const slug: ModelSlug = opts?.slug ?? '0.6b';
@@ -106,7 +103,7 @@ export class Embedder {
         // gpuLayers defaults to 'max'; number | 'max' because 0 is a valid value (CPU-only mode)
         const gpuLayers: number | 'max' = opts?.gpuLayers ?? DEFAULT_GPU_LAYERS;
 
-        // 3. Resolve model path and check existence
+        // 2. Resolve model path and check existence
         const modelPath = ggufPath(slug, quant);
         try {
             await access(modelPath);
@@ -114,12 +111,15 @@ export class Embedder {
             throw new ModelFileNotFoundError(modelPath, slug, quant);
         }
 
-        // 4. Initialize node-llama-cpp with warn log level (suppress debug output)
+        // 3. Initialize node-llama-cpp with warn log level (suppress debug output)
         const llamaOpts = { logLevel: LlamaLogLevel.warn };
         const llama = await getLlama(llamaOpts);
         let model: LlamaModel | undefined;
         let ctx: LlamaEmbeddingContext | undefined;
         try {
+            // 4. Check the repo and release getLlama actually loaded (prebuilt or local source build)
+            assertLlamaCppCompatible(llama.llamaCppRelease.repo, llama.llamaCppRelease.release);
+
             // Build model options with the resolved modelPath and gpuLayers
             const modelOpts = { modelPath, gpuLayers };
             model = await llama.loadModel(modelOpts);

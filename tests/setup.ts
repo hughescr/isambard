@@ -778,8 +778,10 @@ export const mockLlamaModel = {
 
 /** Mutable mock for the top-level Llama instance */
 export const mockLlamaInstance = {
-    loadModel: mock(async (_opts: unknown) => mockLlamaModel),
-    dispose:   mock(async () => undefined),
+    loadModel:       mock(async (_opts: unknown) => mockLlamaModel),
+    dispose:         mock(async () => undefined),
+    // The repo and release node-llama-cpp 3.21.1's prebuilt binaries report (llama.cpp v0.4.0 = b10816)
+    llamaCppRelease: { repo: 'ggml-org/llama.cpp', release: 'v0.4.0' } as const,
 };
 
 /** Mock for the top-level getLlama factory — exported so tests can verify call args */

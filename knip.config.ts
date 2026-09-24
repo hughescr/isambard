@@ -23,7 +23,6 @@ const config: KnipConfig = {
     ],
     ignoreBinaries: [
         'tools/run-stryker.sh',
-        'tools/setup-node-llama-cpp.sh',
     ],
     tags: ['internal'],
     bun:  true,

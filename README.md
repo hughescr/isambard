@@ -146,7 +146,7 @@ The per-turn provider line combines Codex and DeepSeek data from utraque's provi
 
 | Command | Description |
 |---------|-------------|
-| `bun run deploy:running` | Update running worktree from origin |
+| `bun run deploy:running` | Update running worktree from origin, install, and clear any stale llama.cpp source build |
 | `bun run dev` | Development with hot reload |
 | `bun test` | Run tests |
 | `bun run mutate` | Mutation testing (Stryker), LLM mutator frozen to cached mutants |
@@ -198,6 +198,14 @@ cd running && bun run dev:sst
 # Merge develop → running, push, then:
 bun run deploy:running
 ```
+
+`deploy:running` resets `running/` to `origin/running`, runs `bun install`, then
+`bunx node-llama-cpp source clear`. The clear matters: an older postinstall built
+llama.cpp from source, and its leftover `node_modules/node-llama-cpp/llama/llama.cpp`
+checkout and `llama.cpp.info.json` survive `bun install`. While they exist,
+node-llama-cpp refuses its own prebuilt binaries and retries the source build at
+every start. With nothing to clear the command is a no-op and exits 0, so it is
+safe on every deploy.
 
 ### TDD Workflow
 
@@ -517,7 +525,7 @@ src/
 │   │   ├── embedder.ts              # Embedder: wraps node-llama-cpp to produce packed binary embeddings
 │   │   ├── ubinary.ts               # Sign-bit packing: float32 vectors -> packed binary (ubinary) format
 │   │   ├── paths.ts                 # Cache directory resolution and GGUF filename construction
-│   │   ├── version-check.ts         # Bundled llama.cpp version validation
+│   │   ├── version-check.ts         # Loaded llama.cpp release validation (upstream, ≥ b8950 / v0.1.0)
 │   │   ├── types.ts                 # Types for the memory-vec embedding library
 │   │   └── index.ts                 # Public exports
 │   ├── memory-vec-store/            # SQLite-backed vector index for semantic memory search

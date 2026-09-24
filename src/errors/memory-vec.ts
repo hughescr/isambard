@@ -44,27 +44,54 @@ export class ModelFileNotFoundError extends MemoryVecError {
     }
 }
 
+/** The llama.cpp repo and release node-llama-cpp reports it loaded (`llama.llamaCppRelease`). */
+interface LoadedLlamaCppRelease {
+    repo:    string
+    release: string
+}
+
+/** The upstream repo and the oldest build tag and semver release known to carry the fix. */
+interface RequiredLlamaCppRelease {
+    repo:           string
+    minimumBuild:   number
+    minimumRelease: string
+}
+
 /**
- * Error thrown when the bundled llama.cpp is too old to support
- * Qwen3 non-causal embedding correctly (requires ≥ b8950).
+ * Error thrown when the llama.cpp release node-llama-cpp loaded is not known to
+ * support Qwen3 non-causal embedding correctly: it comes from a repo other than
+ * upstream llama.cpp, or predates the fix (requires ≥ b8950 or ≥ v0.1.0).
  *
- * Remediation: rebuild node-llama-cpp from llama.cpp source:
- *   bunx node-llama-cpp source download --release b8953
- *   bunx node-llama-cpp source build
+ * Remediation: node-llama-cpp's own prebuilt binaries are new enough, so clear
+ * any llama.cpp source download that overrides them, or upgrade node-llama-cpp:
+ *   bunx node-llama-cpp source clear
  */
 export class IncompatibleLlamaCppError extends MemoryVecError {
-    declare public readonly context: { currentBuild: number | null, minimumBuild: number };
+    declare public readonly context: {
+        repo:           string
+        release:        string
+        requiredRepo:   string
+        minimumBuild:   number
+        minimumRelease: string
+    };
 
-    constructor(currentBuild: number | null, minimumBuild: number) {
-        const currentDesc = currentBuild === null ? 'unknown (version file missing)' : `b${currentBuild}`;
-        const message = `Bundled llama.cpp is incompatible: found ${currentDesc}, need ≥ b${minimumBuild}.\n`
-          + 'Run a source build to fix:\n'
-          + '  bunx node-llama-cpp source download --release b8953\n'
-          + '  bunx node-llama-cpp source build';
+    constructor(loaded: LoadedLlamaCppRelease, required: RequiredLlamaCppRelease) {
+        const message = `node-llama-cpp loaded llama.cpp release "${loaded.release}" from ${loaded.repo}, `
+          + 'which is not known to carry the Qwen3 non-causal embedding fix: '
+          + `need ${required.repo} build ≥ b${required.minimumBuild} or release ≥ ${required.minimumRelease}.\n`
+          + 'If a llama.cpp source download is overriding the prebuilt binaries, clear it:\n'
+          + '  bunx node-llama-cpp source clear\n'
+          + 'Otherwise upgrade node-llama-cpp.';
         super(
             message,
             ErrorCode.INCOMPATIBLE_LLAMA_CPP,
-            { currentBuild, minimumBuild }
+            {
+                repo:           loaded.repo,
+                release:        loaded.release,
+                requiredRepo:   required.repo,
+                minimumBuild:   required.minimumBuild,
+                minimumRelease: required.minimumRelease,
+            }
         );
         this.name = 'IncompatibleLlamaCppError';
     }

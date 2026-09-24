@@ -25,7 +25,7 @@ describe('loadEmbedder / Embedder.load', () => {
         resetNodeLlamaCppMocks();
         resetMockFs();
         // Default: version check passes
-        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockResolvedValue(undefined);
+        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockReturnValue(undefined);
         // Default: model file exists (access resolves without error)
         mockFsPromises.access.mockImplementation(async _path => undefined);
     });
@@ -96,11 +96,25 @@ describe('loadEmbedder / Embedder.load', () => {
         await embedder.close();
     });
 
-    it('throws IncompatibleLlamaCppError if assertLlamaCppCompatible rejects', async () => {
-        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockRejectedValue(
-            new IncompatibleLlamaCppError(8390, 8950)
+    it('checks the llama.cpp release getLlama actually loaded', async () => {
+        const embedder = await loadEmbedder();
+        expect(versionCheck.assertLlamaCppCompatible).toHaveBeenCalledTimes(1);
+        expect(versionCheck.assertLlamaCppCompatible).toHaveBeenCalledWith('ggml-org/llama.cpp', 'v0.4.0');
+        await embedder.close();
+    });
+
+    it('releases llama without loading a model when the loaded release is incompatible', async () => {
+        const incompatible = new IncompatibleLlamaCppError(
+            { repo: 'ggml-org/llama.cpp', release: 'b8390' },
+            { repo: 'ggml-org/llama.cpp', minimumBuild: 8950, minimumRelease: 'v0.1.0' }
         );
-        await expect(loadEmbedder()).rejects.toBeInstanceOf(IncompatibleLlamaCppError);
+        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockImplementation(() => {
+            throw incompatible;
+        });
+
+        await expect(loadEmbedder()).rejects.toBe(incompatible);
+        expect(mockLlamaInstance.loadModel).not.toHaveBeenCalled();
+        expect(mockLlamaInstance.dispose).toHaveBeenCalledTimes(1);
     });
 
     it('throws ModelFileNotFoundError if model file does not exist', async () => {
@@ -168,7 +182,7 @@ describe('loadEmbedder options forwarding', () => {
     beforeEach(() => {
         resetNodeLlamaCppMocks();
         resetMockFs();
-        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockResolvedValue(undefined);
+        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockReturnValue(undefined);
         mockFsPromises.access.mockImplementation(async _path => undefined);
     });
 
@@ -229,7 +243,7 @@ describe('Embedder.encode', () => {
     beforeEach(async () => {
         resetNodeLlamaCppMocks();
         resetMockFs();
-        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockResolvedValue(undefined);
+        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockReturnValue(undefined);
         mockFsPromises.access.mockImplementation(async _path => undefined);
         embedder = await loadEmbedder();
     });
@@ -354,7 +368,7 @@ describe('Embedder.close', () => {
     beforeEach(() => {
         resetMockFs();
         resetNodeLlamaCppMocks();
-        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockResolvedValue(undefined);
+        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockReturnValue(undefined);
         mockFsPromises.access.mockImplementation(async _path => undefined);
     });
 
@@ -461,7 +475,7 @@ describe('Embedder mutation witnesses', () => {
     beforeEach(() => {
         resetMockFs();
         resetNodeLlamaCppMocks();
-        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockResolvedValue(undefined);
+        jest.spyOn(versionCheck, 'assertLlamaCppCompatible').mockReturnValue(undefined);
         mockFsPromises.access.mockImplementation(async _path => undefined);
     });
 

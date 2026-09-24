@@ -79,45 +79,43 @@ describe('ModelFileNotFoundError', () => {
 });
 
 describe('IncompatibleLlamaCppError', () => {
+    const required = { repo: 'ggml-org/llama.cpp', minimumBuild: 8950, minimumRelease: 'v0.1.0' };
+
+    function makeError(): IncompatibleLlamaCppError {
+        return new IncompatibleLlamaCppError({ repo: 'someone/llama.cpp-fork', release: 'b8390' }, required);
+    }
+
     it('is an instance of MemoryVecError', () => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
-        expect(err).toBeInstanceOf(MemoryVecError);
+        expect(makeError()).toBeInstanceOf(MemoryVecError);
     });
 
     it('has error code INCOMPATIBLE_LLAMA_CPP', () => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
-        expect(err.code).toBe(ErrorCode.INCOMPATIBLE_LLAMA_CPP);
+        expect(makeError().code).toBe(ErrorCode.INCOMPATIBLE_LLAMA_CPP);
     });
 
-    it.each([
-        ['current build', '8390'],
-        ['minimum build', '8950'],
-        ['source build command hint', 'source build'],
-        ['"Run a source build to fix" remediation line', 'Run a source build to fix'],
-        ['node-llama-cpp source download command', 'source download'],
-        // 'bunx node-llama-cpp source build' is the final line — unique because it has no trailing \n
-        ['bunx node-llama-cpp source build (final step)', 'bunx node-llama-cpp source build']
-    ])('includes %s in message', (_description, expected) => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
-        expect(err.message).toContain(expected);
+    it('names the loaded repo and release, the requirement, and both remediations in its message', () => {
+        expect(makeError().message).toBe(
+            'node-llama-cpp loaded llama.cpp release "b8390" from someone/llama.cpp-fork, '
+            + 'which is not known to carry the Qwen3 non-causal embedding fix: '
+            + 'need ggml-org/llama.cpp build ≥ b8950 or release ≥ v0.1.0.\n'
+            + 'If a llama.cpp source download is overriding the prebuilt binaries, clear it:\n'
+            + '  bunx node-llama-cpp source clear\n'
+            + 'Otherwise upgrade node-llama-cpp.'
+        );
     });
 
     it('has correct name', () => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
-        expect(err.name).toBe('IncompatibleLlamaCppError');
+        expect(makeError().name).toBe('IncompatibleLlamaCppError');
     });
 
-    it('also works when current build is null (version file missing)', () => {
-        const err = new IncompatibleLlamaCppError(null, 8950);
-        expect(err).toBeInstanceOf(IncompatibleLlamaCppError);
-        expect(err.message).toContain('8950');
-        expect(err.message).toContain('unknown (version file missing)');
-        expect(err.context).toEqual({ currentBuild: null, minimumBuild: 8950 });
-    });
-
-    it('preserves current and minimum build numbers in context', () => {
-        const err = new IncompatibleLlamaCppError(8390, 8950);
-        expect(err.context).toEqual({ currentBuild: 8390, minimumBuild: 8950 });
+    it('preserves the loaded repo and release and the requirement in context', () => {
+        expect(makeError().context).toEqual({
+            repo:           'someone/llama.cpp-fork',
+            release:        'b8390',
+            requiredRepo:   'ggml-org/llama.cpp',
+            minimumBuild:   8950,
+            minimumRelease: 'v0.1.0',
+        });
     });
 });
 
