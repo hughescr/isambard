@@ -179,7 +179,10 @@ describe('TaskBoardManager', () => {
 
             expect(sendPayloadToChannel).toHaveBeenCalledTimes(1);
             expect(editMessage).toHaveBeenCalledTimes(1);
-            expect(embedOf(editMessage.mock.calls, 0).data.fields?.[0].name).toContain('second');
+            // Exact match, not toContain: the board was 'sending' when the second view arrived, so
+            // this pins that onSent applies the newest recorded view once the send lands, rather
+            // than the view that was actually in flight.
+            expect(embedOf(editMessage.mock.calls, 0).data.fields?.[0].name).toBe('🔬 second');
         });
     });
 
@@ -252,7 +255,7 @@ describe('TaskBoardManager', () => {
             expect(editMessage).not.toHaveBeenCalled();
         });
 
-        test('edits when the rendered embed changes', async () => {
+        test('edits when the rendered embed changes, from the live phase, without re-sending or re-fetching the channel', async () => {
             const manager = makeManager();
 
             manager.applyViews([distinct('first')]);
@@ -260,9 +263,11 @@ describe('TaskBoardManager', () => {
             manager.applyViews([distinct('second')]);
             await settle();
 
+            expect(sendPayloadToChannel).toHaveBeenCalledTimes(1);
+            expect(fetchChannel).toHaveBeenCalledTimes(1);
             expect(editMessage).toHaveBeenCalledTimes(1);
             expect(editMessage.mock.calls[0][0]).toBe(sentMessage);
-            expect(embedOf(editMessage.mock.calls, 0).data.fields?.[0].name).toContain('second');
+            expect(embedOf(editMessage.mock.calls, 0).data.fields?.[0].name).toBe('🔬 second');
         });
     });
 
@@ -762,6 +767,133 @@ describe('TaskBoardManager', () => {
             await settle();
             expect(editMessage).toHaveBeenCalledTimes(3);
         });
+
+        // The terminal view must cancel the armed trailing timer: left armed, it would fire at the
+        // trailing edit's due time and spend the final edit's one retry early.
+        test('a terminal view cancels the armed trailing edit, so a failed final edit retries a full interval later', async () => {
+            let attempts = 0;
+            editMessage = mock(async () => {
+                attempts += 1;
+                if(attempts === 2) {
+                    throw new Error('final edit exploded');
+                }
+                return sentMessage;
+            });
+            const manager = makeManager();
+
+            manager.applyViews([distinct('first')]);
+            await settle();
+            manager.applyViews([distinct('second')]);
+            await settle();
+            advance(100);
+            manager.applyViews([distinct('third')]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(1);
+
+            manager.applyViews([settled('third', new Date(clockMs))]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(2);
+            expect(warnsWith('Task board final edit failed; retrying once')).toHaveLength(1);
+
+            // T0 + 3000: when the cancelled trailing edit would have fired.
+            advance(2900);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(2);
+
+            advance(99);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(2);
+
+            // T0 + 3100: one full interval after the failed final edit.
+            advance(1);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(3);
+            expect(editMessage.mock.calls[2][0]).toBe(sentMessage);
+            const retried = embedOf(editMessage.mock.calls, 2);
+            expect(retried.data.color).toBe(0x3B_A5_5C);
+            expect(retried.data.fields?.[0].name).toContain('third');
+            expect(retried.data.footer?.text).toBe('Finished 8:36:43 PM');
+            expect(warnsWith('Task board final edit failed twice; leaving the board as it stands')).toHaveLength(0);
+        });
+
+        // A newer terminal view during the retry wait gets its own fresh final edit, and a failure
+        // of that one re-arms the retry from its own time — the superseded retry timer is cancelled.
+        test('a newer terminal view during the retry wait cancels the old retry and restarts the interval', async () => {
+            let attempts = 0;
+            editMessage = mock(async () => {
+                attempts += 1;
+                if(attempts <= 2) {
+                    throw new Error('final edit exploded');
+                }
+                return sentMessage;
+            });
+            const manager = makeManager();
+
+            manager.applyViews([distinct('first')]);
+            await settle();
+            manager.applyViews([settled('first', new Date(clockMs))]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(1);
+
+            advance(1000);
+            manager.applyViews([settled('second', new Date(clockMs))]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(2);
+            expect(embedOf(editMessage.mock.calls, 1).data.fields?.[0].name).toContain('second');
+            expect(warnsWith('Task board final edit failed; retrying once')).toHaveLength(2);
+
+            // T0 + 3000: when the superseded retry would have fired.
+            advance(2000);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(2);
+
+            advance(999);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(2);
+
+            // T0 + 4000: one full interval after the second failed final edit.
+            advance(1);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(3);
+            const retried = embedOf(editMessage.mock.calls, 2);
+            expect(retried.data.color).toBe(0x3B_A5_5C);
+            expect(retried.data.fields?.[0].name).toContain('second');
+            expect(retried.data.footer?.text).toBe('Finished 8:36:44 PM');
+            expect(warnsWith('Task board final edit failed twice; leaving the board as it stands')).toHaveLength(0);
+        });
+
+        // Running work during the retry wait replaces the retry with an ordinary trailing edit; the
+        // retry timer must go, or it would still fire after the board is dropped.
+        test('a running view during the retry wait cancels the retry, so dropping the board edits nothing more', async () => {
+            let attempts = 0;
+            editMessage = mock(async () => {
+                attempts += 1;
+                if(attempts === 1) {
+                    throw new Error('final edit exploded');
+                }
+                return sentMessage;
+            });
+            const manager = makeManager();
+
+            manager.applyViews([distinct('first')]);
+            await settle();
+            manager.applyViews([settled('first', new Date(clockMs))]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(1);
+            expect(warnsWith('Task board final edit failed; retrying once')).toHaveLength(1);
+
+            advance(1000);
+            manager.applyViews([distinct('second')]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(1);
+
+            manager.applyViews([]);
+            advance(10_000);
+            await settle();
+
+            expect(editMessage).toHaveBeenCalledTimes(1);
+            expect(sendPayloadToChannel).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe('completions for a board that is no longer live', () => {
@@ -882,6 +1014,32 @@ describe('TaskBoardManager', () => {
             await settle();
 
             expect(editMessage).toHaveBeenCalledTimes(1);
+        });
+
+        // Further views while a trailing edit is armed only update what it will render; arming a
+        // second timer would orphan the first, which the drop could then no longer cancel.
+        test('keeps one trailing timer however many views arrive, so dropping the board cancels every owed edit', async () => {
+            const manager = makeManager();
+
+            manager.applyViews([distinct('first')]);
+            await settle();
+            manager.applyViews([distinct('second')]);
+            await settle();
+            advance(100);
+            manager.applyViews([distinct('third')]);
+            await settle();
+            advance(100);
+            manager.applyViews([distinct('fourth')]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(1);
+
+            manager.applyViews([]);
+            advance(10_000);
+            await settle();
+
+            expect(editMessage).toHaveBeenCalledTimes(1);
+            expect(embedOf(editMessage.mock.calls, 0).data.fields?.[0].name).toContain('second');
+            expect(sendPayloadToChannel).toHaveBeenCalledTimes(1);
         });
 
         test('keeps a board that is still present alongside one that left', async () => {

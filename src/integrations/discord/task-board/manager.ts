@@ -86,6 +86,29 @@ type BoardPhase
       | { kind: 'finalized', posted: PostedBoard }
       | { kind: 'abandoned' };
 
+/** One send attempt in flight; `send` carries it so a failure knows which attempt failed. */
+type SendingPhase = Extract<BoardPhase, { kind: 'sending' }>;
+
+type AssertNever<T extends never> = T;
+/**
+ * Compile-time-only exhaustiveness check for the phase-kind handling in
+ * `TaskBoardManager.applyView` below. `applyView` branches explicitly on `retry_pending` and
+ * `finalized` (each returning early or falling through as needed); `abandoned`, `sending`, `live`,
+ * `edit_pending`, and `finalizing` intentionally have no branch there and fall straight through to
+ * the shared apply-to-posted logic that follows — `applyToPosted` ignores any phase other than
+ * `live`/`edit_pending`/`finalizing`, so for `abandoned` and `sending` that fallthrough is a no-op;
+ * an abandoned board's `latest` is inert (it is never read again), and a sending board's `latest`
+ * is applied once by `onSent` when the send lands, not by this fallthrough (a `switch` with a case
+ * for every kind trips `@typescript-eslint/switch-exhaustiveness-check` without a `default`, and a
+ * `default` clause would just be the same unkillable no-op mutant as an explicit no-op case for
+ * these five kinds, so this is an `if`-chain instead). This list must still name every
+ * `BoardPhase['kind']`: if a new kind is added to `BoardPhase` without updating this list — and
+ * either giving it a branch or adding it to the intentional-fallthrough set above — `Exclude` stops
+ * resolving to `never` and this alias fails to compile.
+ */
+type _BoardPhaseKindsHandled = AssertNever<Exclude<BoardPhase['kind'],
+    'sending' | 'retry_pending' | 'finalized' | 'live' | 'edit_pending' | 'finalizing' | 'abandoned'>>;
+
 /** Everything the manager remembers about one board key. */
 interface BoardEntry {
     readonly key:      string
@@ -194,60 +217,54 @@ export class TaskBoardManager {
         // Stryker disable next-line llm: TaskBoardView.key is a required string, so the nullish fallback is unreachable.
         const entry = this.boards.get(view.key);
         if(entry === undefined) {
-            const created: BoardEntry = { key: view.key, latest: view, phase: { kind: 'sending', attempt: 1 } };
+            const sending: SendingPhase = { kind: 'sending', attempt: 1 };
+            const created: BoardEntry = { key: view.key, latest: view, phase: sending };
             this.boards.set(view.key, created);
-            void this.send(created);
+            void this.send(created, sending);
             return;
         }
 
-        switch(entry.phase.kind) {
-            case 'abandoned': {
+        // No `switch`: a case for every `BoardPhase` kind here would trip
+        // `@typescript-eslint/switch-exhaustiveness-check` without a `default`, and a `default`
+        // clause would be exactly the unkillable no-op mutant this shape avoids. Exhaustiveness is
+        // enforced at compile time by `_BoardPhaseKindsHandled` above instead. `abandoned`,
+        // `sending`, `live`, `edit_pending`, and `finalizing` intentionally have no branch below:
+        // they fall straight through to the `entry.latest = view` and `applyToPosted` below, which
+        // ignores any phase other than `live`/`edit_pending`/`finalizing`, so for `abandoned` and
+        // `sending` the fallthrough is a no-op — an abandoned board's `latest` is inert (it is never
+        // read again), and a sending board's `onSent` applies the newest `latest` itself once the
+        // send lands.
+        if(entry.phase.kind === 'retry_pending') {
+            const sending: SendingPhase = { kind: 'sending', attempt: 2 };
+            entry.latest = view;
+            entry.phase = sending;
+            void this.send(entry, sending);
+            return;
+        }
+        if(entry.phase.kind === 'finalized') {
+            if(view.state !== 'running') {
                 return;
             }
-            case 'sending': {
-                entry.latest = view;
-                return;
-            }
-            case 'retry_pending': {
-                entry.latest = view;
-                entry.phase = { kind: 'sending', attempt: 2 };
-                void this.send(entry);
-                return;
-            }
-            case 'finalized': {
-                if(view.state !== 'running') {
-                    return;
-                }
-                entry.previousFinished = entry.latest;
-                entry.phase = { kind: 'live', posted: entry.phase.posted };
-                break;
-            }
-            case 'live':
-            case 'edit_pending':
-            case 'finalizing': {
-                break;
-            }
-            default: {
-                const impossible: never = entry.phase;
-                return impossible;
-            }
+            entry.previousFinished = entry.latest;
+            entry.phase = { kind: 'live', posted: entry.phase.posted };
         }
         // A delayed repeat of the previous completion cannot overwrite newer running work.
-        if(view.state !== 'running' && JSON.stringify(view) === JSON.stringify(entry.previousFinished)) {
+        // `previousFinished` only ever holds a terminal view, so a running view never matches it.
+        if(JSON.stringify(view) === JSON.stringify(entry.previousFinished)) {
             return;
         }
         entry.latest = view;
         this.applyToPosted(entry);
     }
 
-    /** Posts `entry.latest` as a new message, or records the failure. */
-    private async send(entry: BoardEntry): Promise<void> {
+    /** Posts `entry.latest` as a new message, or records the failure of this `sending` attempt. */
+    private async send(entry: BoardEntry, sending: SendingPhase): Promise<void> {
         const view = entry.latest;
         try {
             const posted = await this.postBoard(view);
             this.onSent(entry, view, posted.message, posted.rendered);
         } catch (error) {
-            this.onSendFailed(entry, view, error);
+            this.onSendFailed(entry, view, error, sending.attempt);
         }
     }
 
@@ -286,8 +303,7 @@ export class TaskBoardManager {
     }
 
     /** Records a failed post: one retry is allowed, then the key is abandoned. */
-    private onSendFailed(entry: BoardEntry, view: TaskBoardView, error: unknown): void {
-        const attempt = entry.phase.kind === 'sending' ? entry.phase.attempt : 1;
+    private onSendFailed(entry: BoardEntry, view: TaskBoardView, error: unknown, attempt: SendingPhase['attempt']): void {
         if(attempt === 2) {
             entry.phase = { kind: 'abandoned' };
             this.deps.logger.warn({
@@ -334,15 +350,18 @@ export class TaskBoardManager {
         if(phase.kind === 'finalizing' && phase.status === 'retry-wait') {
             clearTimeout(phase.timer);
         }
-        const waitMs = posted.editedAt === undefined ? 0 : (posted.editedAt + this.deps.editIntervalMs) - at.getTime();
-        if(waitMs <= 0) {
-            this.editNow(entry, posted.message, rendered, at);
-            return;
+        // A board never edited since its send has no throttle window to wait out.
+        if(posted.editedAt !== undefined) {
+            const waitMs = (posted.editedAt + this.deps.editIntervalMs) - at.getTime();
+            if(waitMs > 0) {
+                const timer = setTimeout(() => {
+                    this.onEditDue(entry);
+                }, waitMs);
+                entry.phase = { kind: 'edit_pending', posted, timer };
+                return;
+            }
         }
-        const timer = setTimeout(() => {
-            this.onEditDue(entry);
-        }, waitMs);
-        entry.phase = { kind: 'edit_pending', posted, timer };
+        this.editNow(entry, posted.message, rendered, at);
     }
 
     /**
@@ -361,15 +380,19 @@ export class TaskBoardManager {
         void this.editFinal(entry, message, rendered, entry.phase);
     }
 
-    /** Fires a trailing edit or final retry against the latest view. */
-    private onEditDue(entry: BoardEntry): void {
+    /**
+     * Fires a trailing edit, or (with `attempt` 2) the final-edit retry, against the latest view.
+     * The attempt comes from the timer that fired rather than from the phase: a trailing edit only
+     * ever renders running work, which ignores the attempt, so deriving it would be dead logic.
+     */
+    private onEditDue(entry: BoardEntry, attempt?: 2): void {
         const phase = entry.phase;
-        if(phase.kind !== 'edit_pending' && !(phase.kind === 'finalizing' && phase.status === 'retry-wait')) {
+        // Exactly the phases that hold a timer (`edit_pending`, and `finalizing` in `retry-wait`).
+        if(!('timer' in phase)) {
             return;
         }
         const at = this.deps.now();
-        this.editNow(entry, phase.posted.message, renderTaskBoardEmbed(entry.latest, at, { timeZone: this.deps.timeZone }), at,
-            phase.kind === 'finalizing' ? 2 : 1);
+        this.editNow(entry, phase.posted.message, renderTaskBoardEmbed(entry.latest, at, { timeZone: this.deps.timeZone }), at, attempt);
     }
 
     /** Edits one board's message; a failure is logged and the key kept. */
@@ -429,7 +452,7 @@ export class TaskBoardManager {
             msg:       'Task board final edit failed; retrying once',
         });
         const timer = setTimeout(() => {
-            this.onEditDue(entry);
+            this.onEditDue(entry, 2);
         }, this.deps.editIntervalMs);
         entry.phase = { kind: 'finalizing', posted: attempt.posted, attempt: 1, status: 'retry-wait', timer };
     }
