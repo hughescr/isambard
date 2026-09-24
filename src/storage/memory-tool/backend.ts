@@ -1,4 +1,4 @@
-import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { type DynamoDBDocumentClient, type UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder } from '../client-holder';
 import type { IndexerJob } from '../memory-vec-store/types.js';
@@ -6,7 +6,7 @@ import { DynamoTableAccess } from '../repositories/base';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
 import { MemoryToolBackendQuery, type ListOptions, type ListResult, type ScoredMemoryItem } from './backend-query';
 import { MemoryToolBackendTagIndex } from './backend-tag-index';
-import { normalizeTags, generateContentPreview } from './key-generator';
+import { normalizeTags, generateContentPreview, MemoryToolKeyGenerator } from './key-generator';
 import type { TagIndexReconciliationOps } from './reconciliation/reconciler';
 import {
     type MemoryPath,
@@ -15,6 +15,34 @@ import {
     type TagIndexReadItem,
     extractLayerFromPath
 } from './types';
+
+type FailedMemoryItem = Record<string, { M?: Record<string, unknown> }>;
+
+/** Conditional failures include the previous row as raw DynamoDB AttributeValues. */
+function conditionalFailureItem(error: unknown): FailedMemoryItem | undefined {
+    if(!(error instanceof Error) || error.name !== 'ConditionalCheckFailedException') {
+        throw error;
+    }
+    return (error as Error & { Item?: FailedMemoryItem }).Item;
+}
+
+function accessRepair(key: { PK: string, SK: string }, timestamp: string, gsi: string, replaceMap: boolean): Omit<UpdateCommandInput, 'TableName'> {
+    return {
+        Key:                                 key,
+        ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
+
+        UpdateExpression: replaceMap
+            ? 'SET #metadata = :fresh, updatedAt = :now, GSI1SK = :gsi'
+            : 'SET #metadata.accessCount = :one, #metadata.lastAccessed = :now, updatedAt = :now, GSI1SK = :gsi',
+        ConditionExpression: replaceMap
+            ? 'attribute_exists(PK) AND (attribute_not_exists(#metadata) OR NOT attribute_type(#metadata, :map))'
+            : 'attribute_exists(PK) AND attribute_type(#metadata, :map) AND attribute_exists(#metadata.accessCount) AND NOT attribute_type(#metadata.accessCount, :number)',
+        ExpressionAttributeValues: replaceMap
+            ? { ':now': timestamp, ':gsi': gsi, ':map': 'M', ':fresh': { accessCount: 1, lastAccessed: timestamp } }
+            : { ':one': 1, ':now': timestamp, ':gsi': gsi, ':map': 'M', ':number': 'N' },
+        ExpressionAttributeNames: { '#metadata': 'metadata' },
+    };
+}
 
 /** Module-only key for binding reconciliation without exposing named facade methods. */
 export const reconciliationAccess = Symbol('memory-tool-reconciliation-access');
@@ -126,8 +154,91 @@ export class MemoryToolBackend extends DynamoTableAccess {
         return this.coreOps.get(path);
     }
 
+    /** Atomically record each access; stale paths are skipped and independent failures do not starve later paths. */
+    async recordMemoryAccess(paths: MemoryPath[], now: Date): Promise<void> {
+        const timestamp = now.toISOString();
+        let firstError: Error | undefined;
+        for(const path of paths) {
+            try {
+                // eslint-disable-next-line no-await-in-loop -- sequential writes respect the provisioned 2-WCU table
+                await this.recordSingleMemoryAccess(path, timestamp);
+            } catch (error) {
+                firstError ??= error instanceof Error ? error : new Error(String(error));
+            }
+        }
+        if(firstError !== undefined) {
+            throw firstError;
+        }
+    }
+
+    private async recordSingleMemoryAccess(path: MemoryPath, timestamp: string): Promise<void> {
+        const keys = MemoryToolKeyGenerator.createKeys(path, timestamp);
+        const common = {
+            Key:                                 { PK: keys.PK, SK: keys.SK },
+            ReturnValuesOnConditionCheckFailure: 'ALL_OLD' as const,
+        };
+        const values = {
+            ':zero':   0,
+            ':one':    1,
+            ':now':    timestamp,
+            ':gsi':    keys.GSI1SK,
+            ':map':    'M',
+            ':number': 'N',
+        };
+        const healthy: Omit<UpdateCommandInput, 'TableName'> = {
+            ...common,
+            UpdateExpression:          'SET #metadata.accessCount = if_not_exists(#metadata.accessCount, :zero) + :one, #metadata.lastAccessed = :now, updatedAt = :now, GSI1SK = :gsi',
+            ConditionExpression:       'attribute_exists(PK) AND attribute_type(#metadata, :map) AND (attribute_not_exists(#metadata.accessCount) OR attribute_type(#metadata.accessCount, :number))',
+            ExpressionAttributeValues: values,
+            ExpressionAttributeNames:  { '#metadata': 'metadata' },
+        };
+
+        // A conditional failure carries ALL_OLD: no read on the normal or legacy path.
+        // A racing repair retries the atomic increment, never a read-then-put overwrite.
+        for(let attempt = 0; attempt < 3; attempt++) {
+            let replaceMap: boolean;
+            try {
+                // eslint-disable-next-line no-await-in-loop -- conditional repair must finish before retrying the same row
+                await this.updateItem(healthy, 'recordMemoryAccess');
+                return;
+            } catch (error) {
+                const failedItem = conditionalFailureItem(error);
+                if(!failedItem) {
+                    logger.debug({ path, msg: 'Memory access skipped: item no longer exists' });
+                    return;
+                }
+                // DynamoDB returns ALL_OLD on an exception in raw AttributeValue form; the
+                // document-client's success-output unmarshalling does not run for errors.
+                const metadataMap = failedItem.metadata?.M;
+                replaceMap = metadataMap === undefined;
+                if(metadataMap !== undefined && metadataMap.accessCount === undefined) {
+                    continue;
+                }
+            }
+            const repair = accessRepair(common.Key, timestamp, keys.GSI1SK, replaceMap);
+            // eslint-disable-next-line no-await-in-loop -- repair is conditional on the failed update's row shape
+            if(await this.tryMemoryAccessRepair(repair, path)) {
+                return;
+            }
+        }
+        throw new Error(`Memory access repair conflicts exceeded for ${path}`);
+    }
+
+    private async tryMemoryAccessRepair(repair: Omit<UpdateCommandInput, 'TableName'>, path: MemoryPath): Promise<boolean> {
+        try {
+            await this.updateItem(repair, 'recordMemoryAccessRepair');
+            return true;
+        } catch (error) {
+            if(!conditionalFailureItem(error)) {
+                logger.debug({ path, msg: 'Memory access skipped: item no longer exists' });
+                return true;
+            }
+            return false;
+        }
+    }
+
     async update(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<MemoryToolItemData> {
-        // Skip tag index updates for metadata-only changes (e.g. recordAccess).
+        // Skip tag index updates for metadata-only changes (e.g. reconciliation).
         // The reconciler handles eventual consistency of tag index updatedAt/contentPreview.
         const contentOrTagsChanged = input.content !== undefined || input.tags !== undefined;
 

@@ -52,7 +52,7 @@ interface StateTopSetItem {
     /**
      * A cheap, deterministic fingerprint of `item.content` (`Bun.hash(content).toString()`) —
      * NOT `item.content`'s `updatedAt` field, which is a "last touched" stamp bumped by
-     * read-only access (`ContextBuilderImpl.recordAccess`, called on every `memory view` of a
+     * read-only access (`MemoryToolBackend.recordMemoryAccess`, called on every `memory view` of a
      * state item) as well as by real edits. Using `updatedAt` directly would report a path as
      * "changed" whenever Claude merely reads it, even when its content is byte-identical.
      */
@@ -125,12 +125,6 @@ export interface ContextBuilder {
      * @returns Formatted user memories string
      */
     loadUserMemories: (userId: string, now?: Date) => Promise<string>
-
-    /**
-     * Update access stats when memories are used
-     * @param paths Memory paths that were accessed
-     */
-    recordAccess: (paths: MemoryPath[]) => Promise<void>
 
     /**
      * Load recent events from the timeline
@@ -735,36 +729,6 @@ class ContextBuilderImpl implements ContextBuilder {
         const memoryResult = sections.join('\n');
         logger.debug({ userId, memoryCount: result.items.length - overflowCount, overflowCount }, 'User memories loaded');
         return memoryResult;
-    }
-
-    async recordAccess(paths: MemoryPath[]): Promise<void> {
-        for(const path of paths) {
-            // Get current item
-            // eslint-disable-next-line no-await-in-loop -- sequential: order-dependent (get then update same item)
-            const item = await this.#backend.get(path);
-
-            if(!item) {
-                // Skip if item doesn't exist
-                continue;
-            }
-
-            // Core reads normalize missing legacy metadata to {}, matching the schema.
-            const currentAccessCount = typeof item.metadata.accessCount === 'number'
-                ? item.metadata.accessCount
-                : 0;
-
-            // Update metadata with incremented access count and timestamp
-            // This metadata-only update bumps updatedAt (keeps item visible in GSI1) but skips tag index.
-            // The reconciler handles eventual tag index consistency, avoiding O(num_tags) write amplification.
-            // eslint-disable-next-line no-await-in-loop -- sequential: each update depends on prior get result
-            await this.#backend.update(path, {
-                metadata: {
-                    ...item.metadata,
-                    accessCount:  currentAccessCount + 1,
-                    lastAccessed: new Date().toISOString(),
-                },
-            });
-        }
     }
 
     async loadRecentEvents(limit = 50, now: Date = new Date()): Promise<RecentEventsResult> {

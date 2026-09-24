@@ -9,7 +9,8 @@ import {
     type MemoryToolItemData,
     type LayerName,
     type TagIndexReadItem,
-    createLayerName
+    createLayerName,
+    decodeMemoryAccessStats
 } from './types';
 import { InvariantViolationError } from '@/errors';
 
@@ -319,10 +320,8 @@ export class MemoryToolBackendQuery {
 
         // Score state items using sigmoid function for frequency × recency
         const scoredItems = stateItems.map((item) => {
-            // Stryker disable next-line NumberLiteralValue,llm: sigmoidScore clamps accessCount with Math.max(0, accessCount), so a -1 default is indistinguishable from 0
-            const accessCount = (item.metadata.accessCount as number | undefined) ?? 0;
-            const lastAccessed = (item.metadata.lastAccessed as string | undefined) ?? item.updatedAt;
-            const timeSinceLastAccessMs = nowMs - new Date(lastAccessed).getTime();
+            const { accessCount, lastAccessedAt } = decodeMemoryAccessStats(item.metadata, item.updatedAt);
+            const timeSinceLastAccessMs = nowMs - new Date(lastAccessedAt).getTime();
             return { item, score: sigmoidScore(accessCount, timeSinceLastAccessMs) };
         });
 
@@ -348,10 +347,8 @@ export class MemoryToolBackendQuery {
 
         // Score items using sigmoid function for frequency × recency
         const scoredItems = stateItems.map((item) => {
-            // Stryker disable next-line NumberLiteralValue: sigmoidScore clamps accessCount with Math.max(0, accessCount), so a -1 default is indistinguishable from 0
-            const accessCount = (item.metadata.accessCount as number | undefined) ?? 0;
-            const lastAccessed = (item.metadata.lastAccessed as string | undefined) ?? item.updatedAt;
-            const timeSinceLastAccessMs = nowMs - new Date(lastAccessed).getTime();
+            const { accessCount, lastAccessedAt } = decodeMemoryAccessStats(item.metadata, item.updatedAt);
+            const timeSinceLastAccessMs = nowMs - new Date(lastAccessedAt).getTime();
             return { item, score: sigmoidScore(accessCount, timeSinceLastAccessMs) };
         });
 

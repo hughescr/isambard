@@ -11,7 +11,7 @@ import { type DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, D
 import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../../client-holder';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
-import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexReadItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema  } from '../types';
+import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexReadItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema, decodePendingRenameIndexCleanup, type PendingRenameIndexCleanup  } from '../types';
 import type { PhaseAProgress, PhaseBProgress, PhaseCProgress, ReconciliationResult } from './types';
 
 // ============================================================================
@@ -326,16 +326,16 @@ async function checkOldPathIndicesCleanByTags(
 
 /**
  * Check if old path's tag indices are cleaned up
- * If previouslyKnownAsTags is present (new format): uses GetItem per old tag in parallel.
- * Otherwise (backward compat with old renames): enumerates all tags via GSI2 TAG_COUNTS.
+ * Known legacy tombstone tags use GetItem per old tag in parallel.
+ * Unknown tags require GSI2 TAG_COUNTS enumeration.
  */
 async function checkOldPathIndicesClean(
     ctx: PhaseAContext,
-    oldPath: string,
-    oldTags?: string[]
+    cleanup: PendingRenameIndexCleanup
 ): Promise<boolean> {
-    if(oldTags) {
-        return checkOldPathIndicesCleanByTags(ctx, oldPath, oldTags);
+    const oldPath = cleanup.oldPath;
+    if(cleanup.tags.kind === 'known') {
+        return checkOldPathIndicesCleanByTags(ctx, oldPath, cleanup.tags.tags);
     }
 
     // Backward compat: enumerate all tags via GSI2 TAG_COUNTS
@@ -376,29 +376,17 @@ async function cleanPreviouslyKnownAs(
     ctx: PhaseAContext,
     memoryItem: MemoryToolItem
 ): Promise<void> {
-    // DynamoDB can still return legacy rows without metadata despite the current schema.
-    const rawMetadata: unknown = memoryItem.metadata;
-    const metadata = rawMetadata !== null && typeof rawMetadata === 'object' && !Array.isArray(rawMetadata)
-        ? rawMetadata as Record<string, unknown>
-        : {};
-    const previousPath = metadata.previouslyKnownAs;
-
-    if(!previousPath || typeof previousPath !== 'string') {
+    const cleanup = decodePendingRenameIndexCleanup(memoryItem.metadata);
+    if(!cleanup) {
         return;
     }
 
-    // Extract previouslyKnownAsTags if present (new format) for efficient per-tag check
-    const previousTags = metadata.previouslyKnownAsTags;
-    const oldTags = Array.isArray(previousTags) && previousTags.every((tag: unknown): tag is string => typeof tag === 'string')
-        ? previousTags
-        : undefined;
-
     try {
-        const isClean = await checkOldPathIndicesClean(ctx, previousPath, oldTags);
+        const isClean = await checkOldPathIndicesClean(ctx, cleanup);
 
         if(isClean) {
             // Remove previouslyKnownAs and previouslyKnownAsTags from metadata
-            const { previouslyKnownAs: _, previouslyKnownAsTags: __, ...cleanMetadata } = metadata;
+            const { previouslyKnownAs: _, previouslyKnownAsTags: __, ...cleanMetadata } = memoryItem.metadata;
 
             await ctx.deps.updateMemoryMetadata(
                 memoryItem.path,
@@ -406,7 +394,7 @@ async function cleanPreviouslyKnownAs(
             );
 
             ctx.progress.metadataCleaned++;
-            logger.debug({ path: memoryItem.path, oldPath: previousPath, msg: 'Cleaned previouslyKnownAs metadata' });
+            logger.debug({ path: memoryItem.path, oldPath: cleanup.oldPath, msg: 'Cleaned previouslyKnownAs metadata' });
         }
 
         await delay(ctx.options.operationDelayMs, ctx.options.signal);

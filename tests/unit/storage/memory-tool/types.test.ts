@@ -11,10 +11,57 @@ import {
     isContentType,
     extractLayerFromPath,
     layerNameSchema,
+    decodeMemoryAccessStats,
+    decodePendingRenameIndexCleanup,
+    memoryAccessStatsSchema,
+    pendingRenameIndexCleanupSchema,
     type MemoryPath,
     type LayerName,
     type ContentType
 } from '@/storage/memory-tool/types';
+
+describe.concurrent('host-owned memory metadata', () => {
+    const fallback = '2025-01-01T00:00:00.000Z';
+    const accessed = '2025-02-01T00:00:00.000Z';
+
+    test.each([
+        ['absent', undefined, 0, fallback],
+        ['null', null, 0, fallback],
+        ['array', Object.assign([], { accessCount: 3, lastAccessed: accessed }), 0, fallback],
+        ['string count', { accessCount: '3', lastAccessed: accessed }, 0, accessed],
+        ['negative count', { accessCount: -1 }, 0, fallback],
+        ['fractional count', { accessCount: 1.5 }, 0, fallback],
+        ['invalid timestamp', { accessCount: 3, lastAccessed: 'yesterday' }, 3, fallback],
+        ['valid legacy row', { accessCount: 3, lastAccessed: accessed, annotation: 'retained' }, 3, accessed],
+    ] as const)('decodes access stats: %s', (_name, metadata, accessCount, lastAccessedAt) => {
+        expect(decodeMemoryAccessStats(metadata, fallback)).toEqual({ accessCount, lastAccessedAt });
+    });
+
+    test('access stats schema rejects malformed shape', () => {
+        expect(memoryAccessStatsSchema.safeParse({ accessCount: -1, lastAccessedAt: accessed }).success).toBe(false);
+        expect(memoryAccessStatsSchema.safeParse({ accessCount: 1, lastAccessedAt: accessed }).success).toBe(true);
+    });
+
+    test.each([
+        ['missing', undefined, undefined],
+        ['null', null, undefined],
+        ['array', Object.assign([], { previouslyKnownAs: '/state/old' }), undefined],
+        ['non-string path', { previouslyKnownAs: 4 }, undefined],
+        ['malformed path', { previouslyKnownAs: 'state/old' }, undefined],
+        ['known tags', { previouslyKnownAs: '/state/old', previouslyKnownAsTags: ['a'] }, { oldPath: '/state/old', tags: { kind: 'known', tags: ['a'] } }],
+        ['empty known tags', { previouslyKnownAs: '/state/old', previouslyKnownAsTags: [] }, { oldPath: '/state/old', tags: { kind: 'known', tags: [] } }],
+        ['legacy absent tags', { previouslyKnownAs: '/state/old' }, { oldPath: '/state/old', tags: { kind: 'legacy-unknown' } }],
+        ['legacy malformed tags', { previouslyKnownAs: '/state/old', previouslyKnownAsTags: ['a', 7] }, { oldPath: '/state/old', tags: { kind: 'legacy-unknown' } }],
+    ] as const)('decodes pending rename cleanup: %s', (_name, metadata, expected) => {
+        expect(decodePendingRenameIndexCleanup(metadata) as unknown).toEqual(expected);
+    });
+
+    test('pending cleanup schema validates known and legacy variants', () => {
+        expect(pendingRenameIndexCleanupSchema.safeParse({ oldPath: '/state/old', tags: { kind: 'legacy-unknown' } }).success).toBe(true);
+        expect(pendingRenameIndexCleanupSchema.safeParse({ oldPath: '/state/old', tags: { kind: 'known', tags: ['a'] } }).success).toBe(true);
+        expect(pendingRenameIndexCleanupSchema.safeParse({ oldPath: 'bad', tags: { kind: 'known', tags: [] } }).success).toBe(false);
+    });
+});
 
 describe.concurrent('memoryPathSchema', () => {
     test.each([

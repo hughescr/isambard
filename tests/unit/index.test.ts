@@ -60,6 +60,7 @@ import * as staticServicesModule from '@/services';
 import * as staticPersonAllowlistModule from '@/storage';
 import * as staticStorageClientModule from '@/storage/client';
 import * as staticMemoryToolModule from '@/storage/memory-tool';
+import { createMemoryPath } from '@/storage/memory-tool/types';
 import type { OperationalStateStore } from '@/storage/operational-state';
 import * as staticOperationalStateModule from '@/storage/operational-state';
 import * as staticSessionResumeModule from '@/storage/session-resume';
@@ -131,14 +132,16 @@ const defaultPerchConfig = {
  * `config.email`, so tests can prove the admin review channel wiring does not depend on email.
  */
 function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false, emailEnabled = true): {
-    createBotSpy:      ReturnType<typeof spyOn>
-    emailSetupSpy:     ReturnType<typeof spyOn>
-    emailListenerStop: ReturnType<typeof mock>
-    bskySetupSpy?:     ReturnType<typeof spyOn>
-    dmPollerStart:     ReturnType<typeof mock>
-    dmPollerStop:      ReturnType<typeof mock>
+    createBotSpy:       ReturnType<typeof spyOn>
+    recordMemoryAccess: ReturnType<typeof mock>
+    emailSetupSpy:      ReturnType<typeof spyOn>
+    emailListenerStop:  ReturnType<typeof mock>
+    bskySetupSpy?:      ReturnType<typeof spyOn>
+    dmPollerStart:      ReturnType<typeof mock>
+    dmPollerStop:       ReturnType<typeof mock>
 } {
     const mockDocClient = {} as unknown as DynamoDBDocumentClient;
+    const recordMemoryAccess = mock(async () => {});
     const getSessionIdForRole = mock(async (_role: 'conversation' | 'perch') => undefined as string | undefined);
     const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
         start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
@@ -195,7 +198,7 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
         // @ts-expect-error - Mocking constructor
         spyOn(staticQuestionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof staticQuestionRegistryModule.QuestionRegistry>)),
         // @ts-expect-error - Mocking constructor
-        spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticMemoryToolModule.MemoryToolBackend>)),
+        spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({ recordMemoryAccess } as unknown as InstanceType<typeof staticMemoryToolModule.MemoryToolBackend>)),
         // @ts-expect-error - Mocking constructor
         spyOn(staticPersonAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
             load: mock(async () => {}),
@@ -270,7 +273,7 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
     );
 
     return {
-        createBotSpy, emailSetupSpy, emailListenerStop, bskySetupSpy, dmPollerStart, dmPollerStop,
+        createBotSpy, recordMemoryAccess, emailSetupSpy, emailListenerStop, bskySetupSpy, dmPollerStart, dmPollerStop,
     };
 }
 
@@ -1414,6 +1417,19 @@ describe('createApp', () => {
 
             const botOptions = createBotSpy.mock.calls[0]?.[0] as { adminReviewChannelId?: unknown };
             expect(botOptions.adminReviewChannelId).toBe(ADMIN_REVIEW_CHANNEL_ID);
+        });
+
+        test('recordAccess callback delegates state touches to storage backend', async () => {
+            const { recordMemoryAccess } = wireHappyPath(spies);
+            const createMcpSharedDepsSpy = spyOn(staticMcpServersModule, 'createMcpSharedDeps');
+            spies.push(createMcpSharedDepsSpy);
+            await staticIndexModule.createApp();
+            const recordAccess = createMcpSharedDepsSpy.mock.calls[0][0].recordAccess!;
+            const path = createMemoryPath('/state/access.md');
+            await recordAccess([path]);
+            expect(recordMemoryAccess).toHaveBeenCalledTimes(1);
+            expect(recordMemoryAccess.mock.calls[0][0]).toEqual([path]);
+            expect(recordMemoryAccess.mock.calls[0][1]).toBeInstanceOf(Date);
         });
 
         test('email absent: contact approval requests post to the top-level admin review channel', async () => {

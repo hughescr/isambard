@@ -24,6 +24,53 @@ export const memoryPathSchema = z
 
 export type MemoryPath = z.infer<typeof memoryPathSchema>;
 
+/** Host-owned access stats; persisted as metadata.accessCount and metadata.lastAccessed. */
+export const memoryAccessStatsSchema = z.object({
+    accessCount:    z.number().int().nonnegative(),
+    lastAccessedAt: z.iso.datetime(),
+});
+export type MemoryAccessStats = z.infer<typeof memoryAccessStatsSchema>;
+
+/** Invalid legacy counts decode as zero. No production writer emits fractional counts. */
+export function decodeMemoryAccessStats(metadata: unknown, fallbackLastAccessedAt: string): MemoryAccessStats {
+    const raw = metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
+        ? metadata as Record<string, unknown>
+        : {};
+    const count = memoryAccessStatsSchema.shape.accessCount.safeParse(raw.accessCount);
+    const timestamp = memoryAccessStatsSchema.shape.lastAccessedAt.safeParse(raw.lastAccessed);
+    return {
+        accessCount:    count.success ? count.data : 0,
+        lastAccessedAt: timestamp.success ? timestamp.data : fallbackLastAccessedAt,
+    };
+}
+
+/** Decode-only legacy rename tombstone: its original writer has been removed. */
+const stringTagsSchema = z.array(z.string());
+export const pendingRenameIndexCleanupSchema = z.object({
+    oldPath: memoryPathSchema,
+    tags:    z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('known'), tags: stringTagsSchema }),
+        z.object({ kind: z.literal('legacy-unknown') }),
+    ]),
+});
+export type PendingRenameIndexCleanup = z.infer<typeof pendingRenameIndexCleanupSchema>;
+
+export function decodePendingRenameIndexCleanup(metadata: unknown): PendingRenameIndexCleanup | undefined {
+    if(metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) {
+        return undefined;
+    }
+    const raw = metadata as Record<string, unknown>;
+    const oldPath = memoryPathSchema.safeParse(raw.previouslyKnownAs);
+    if(!oldPath.success) {
+        return undefined;
+    }
+    const tags = stringTagsSchema.safeParse(raw.previouslyKnownAsTags);
+    return {
+        oldPath: oldPath.data,
+        tags:    tags.success ? { kind: 'known', tags: tags.data } : { kind: 'legacy-unknown' },
+    };
+}
+
 /**
  * Supported content types for memory tool items.
  */
@@ -47,6 +94,14 @@ export function isContentType(value: unknown): value is ContentType {
     return result.success;
 }
 
+/** Managed metadata keys remain tolerant so legacy rows are decoded, not rejected. */
+const memoryMetadataSchema = z.object({
+    accessCount:           z.unknown().optional(),
+    lastAccessed:          z.unknown().optional(),
+    previouslyKnownAs:     z.unknown().optional(),
+    previouslyKnownAsTags: z.unknown().optional(),
+}).catchall(z.unknown());
+
 /**
  * Memory tool item schema with Zod validation.
  * Represents a stored piece of content in the agent's memory system.
@@ -55,9 +110,9 @@ export const memoryToolItemSchema = z.object({
     path:           memoryPathSchema,
     content:        z.string().min(1).max(300_000), // 300KB limit for DynamoDB
     contentType:    contentTypeSchema,
-    metadata:       z.record(z.string(), z.unknown()).default({}),
+    metadata:       memoryMetadataSchema.default({}),
     createdAt:      z.iso.datetime(),
-    // "Last touched" — updated on both content edits and deliberate memory access (recordAccess)
+    // "Last touched" — updated on both content edits and deliberate memory access
     updatedAt:      z.iso.datetime(),
     tags:           z.custom<Set<string>>(val => val instanceof Set).optional(),
     contentPreview: z.string().max(100).optional(), // First 100 chars of content for tag index preview

@@ -190,42 +190,6 @@ describe('context builder final mutation boundaries', () => {
         expect(result).toContain('/events/full.md (2h ago):\nevent');
     });
 
-    test('recordAccess resolves only after its update completes', async () => {
-        const store = backend();
-        const path = createMemoryPath('/state/access.md');
-        store.get = mock(async () => item(path, 'x'));
-        let release!: () => void;
-        let markStarted!: () => void;
-        const started = new Promise<void>((resolve) => {
-            markStarted = resolve;
-        });
-        const gate = new Promise<void>((resolve) => {
-            release = resolve;
-        });
-        store.update = mock(async () => {
-            markStarted();
-            await gate;
-            return item(path, 'x');
-        });
-        const operation = createContextBuilder({ backend: store }).recordAccess([path]);
-        let settled = false;
-        const observer = operation.then(() => {
-            settled = true;
-            return undefined;
-        });
-        try {
-            await started;
-            await Promise.resolve();
-            expect(settled).toBe(false);
-            release();
-            await operation;
-            await observer;
-        } finally {
-            release();
-            await operation;
-        }
-    });
-
     test('user-memory budget includes an item that exactly fills it', async () => {
         const store = backend();
         const path = createMemoryPath('/users/u/exact');

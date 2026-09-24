@@ -783,6 +783,39 @@ describe('MemoryToolBackend - Date Filtering', () => {
         });
     });
 
+    test('both state ranking paths decode malformed metadata as zero and updatedAt', async () => {
+        const updatedAt = '2024-01-08T00:00:00.000Z';
+        const item: MemoryToolItem = {
+            PK:          'DIR#/state',
+            SK:          'FILE#bad.md',
+            GSI1PK:      'LAYER#state',
+            GSI1SK:      `UPDATED#${updatedAt}`,
+            path:        '/state/bad.md' as MemoryPath,
+            content:     'bad',
+            contentType: 'text/plain',
+            metadata:    { accessCount: '3', lastAccessed: 'bad' },
+            createdAt:   updatedAt,
+            updatedAt,
+        };
+        const valid: MemoryToolItem = {
+            ...item,
+            SK:       'FILE#valid.md',
+            path:     '/state/valid.md' as MemoryPath,
+            metadata: { accessCount: 1, lastAccessed: updatedAt },
+        };
+        ddbMock.on(QueryCommand).callsFake(async input => ({
+            Items: input.ExpressionAttributeValues?.[':pk'] === 'LAYER#state' ? [item, valid] : [],
+        }));
+        const now = new Date('2024-01-15T00:00:00.000Z');
+        const scored = await backend.getStateItemsScored({ now });
+        expect(scored).toHaveLength(2);
+        expect(scored[0].item.path).toBe(valid.path);
+        expect(scored[0].score).toBe(sigmoidScore(1, 7 * 24 * 60 * 60 * 1000));
+        expect(scored[1].score).toBe(sigmoidScore(0, 7 * 24 * 60 * 60 * 1000));
+        const loaded = await backend.getAutoLoadItems({ now });
+        expect(loaded.map(row => row.path)).toEqual([valid.path, item.path]);
+    });
+
     describe('getAutoLoadItems', () => {
         test('should use default limits (100 identity, 50 state)', async () => {
             ddbMock.on(QueryCommand)

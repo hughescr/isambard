@@ -2466,6 +2466,24 @@ describe('runTagIndexReconciliation', () => {
             expect(updateMemoryMetadata).not.toHaveBeenCalled();
         });
 
+        test('ignores a malformed previous path without enumerating rename tags', async () => {
+            mockLayerQuery('identity', [{
+                path:     '/identity/current.md',
+                tags:     [],
+                metadata: { previouslyKnownAs: 'identity/invalid.md', previouslyKnownAsTags: ['old'] },
+            }]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+            mockEmptyPhaseB();
+            deps.tagIndex.listTagCounts = mock(async () => []);
+
+            const result = await runTagIndexReconciliation(deps, options);
+            expect(result.phaseA.metadataCleaned).toBe(0);
+            expect(result.phaseA.errors).toBe(0);
+            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+        });
+
         test('falls back to tag enumeration for a partially invalid previous-tag list', async () => {
             mockLayerQuery('identity', [{
                 path:     '/identity/current.md',

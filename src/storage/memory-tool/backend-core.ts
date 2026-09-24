@@ -122,7 +122,7 @@ export class MemoryToolBackendCore {
             ...(input.metadata !== undefined && { metadata: input.metadata }),
             ...(input.tags !== undefined && { tags: input.tags.size > 0 ? input.tags : undefined }),
             ...(newContentPreview !== undefined && { contentPreview: newContentPreview }),
-            // updatedAt reflects "last touched" (content edit OR deliberate access via recordAccess),
+            // updatedAt reflects "last touched" (content edit or backend-recorded access),
             // not just content modification. This keeps accessed items visible in GSI1 time-ordered queries.
             // When preserveUpdatedAt is true (e.g. tag-only maintenance), the timestamp is not refreshed.
             updatedAt: input.preserveUpdatedAt ? existing.updatedAt : DateTime.utc().toISO(),

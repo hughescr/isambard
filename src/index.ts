@@ -872,7 +872,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             channelRegistry:           discordInfra.channelRegistry,
             inboxManager:              discordInfra.inboxManager,
             timezone:                  resolveTimezone(),
-            recordAccess:              paths => contextLayer.contextBuilder.recordAccess(paths),
+            recordAccess:              paths => storage.memoryBackend.recordMemoryAccess(paths, new Date()),
             bskyClient,
             bskyAllowlist:             bskySetup?.allowlist,
             bskyRateLimiter:           bskySetup?.rateLimiter,
