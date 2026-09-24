@@ -410,7 +410,7 @@ describe('createBootRecoveryRuntime', () => {
 
     test('loadRecovery reads the journal from exactly the recovery window before now and recomputes recovery and knownAt', async () => {
         const journal = makeJournal(entries);
-        const runtime = createBootRecoveryRuntime(journal, new FakeClock(1_000_000_000));
+        const runtime = createBootRecoveryRuntime(journal, new FakeClock(1_000_000_000), makeLogger());
 
         const loaded = await runtime.loadRecovery();
 
@@ -422,7 +422,8 @@ describe('createBootRecoveryRuntime', () => {
 
     test('runBoot runs the boot sequence over the given journal: one flush, one gate open', async () => {
         const journal = makeJournal();
-        const runtime = createBootRecoveryRuntime(journal, new FakeClock());
+        const logger = makeLogger();
+        const runtime = createBootRecoveryRuntime(journal, new FakeClock(), logger);
         const ingressGate = { open: mock((_ids: ReadonlySet<string>) => undefined) };
 
         const result = await runtime.runBoot<{ id: string }>({
@@ -439,6 +440,9 @@ describe('createBootRecoveryRuntime', () => {
         expect(journal.flush).toHaveBeenCalledTimes(1);
         expect(ingressGate.open).toHaveBeenCalledTimes(1);
         expect(ingressGate.open).toHaveBeenCalledWith(new Set(['m-1']));
+        expect(logger.info).toHaveBeenNthCalledWith(1, { redeliveredCount: 0, replayedCount: 1, msg: 'Boot recovery: response redelivery and message replay complete' });
+        expect(logger.info).toHaveBeenNthCalledWith(2, { msg: 'Boot recovery: journal flushed' });
+        expect(logger.info).toHaveBeenNthCalledWith(3, { replayedCount: 1, msg: 'Boot recovery: ingress gate opened' });
     });
 });
 
@@ -572,6 +576,7 @@ describe('startSessions', () => {
         await startSessions({ host, supervisor, logger });
 
         expect(order).toEqual(['openSessions', 'attachSessions', 'runRecovery', 'recover']);
+        expect(logger.info).toHaveBeenCalledWith({ conversation: 'open', perch: 'disabled', msg: 'Sessions opened and attached to Discord' });
         expect(host.attachSessions).toHaveBeenCalledWith(outcome, shutdown);
         expect(supervisor.runRecovery).toHaveBeenCalledWith(host.recoveryAdapter);
         expect(logger.error).not.toHaveBeenCalled();

@@ -55,6 +55,18 @@ describe('createShutdown', () => {
         expect(callLog).toEqual(['stopIngress', 'session:conversation']);
     });
 
+    it('logs exact ingress-stop success payload after stopIngress resolves', async () => {
+        const clock = new FakeClock();
+        const journal = new FakeJournal();
+        const logger = makeLogger();
+
+        await createShutdown({
+            sessions: [], journal, stopIngress: async () => undefined, clock, turnWaitMs: 1000, deadlineMs: 5000, logger,
+        }).run();
+
+        expect(logger.info).toHaveBeenNthCalledWith(1, { msg: 'Shutdown: ingress stopped' });
+    });
+
     it('calls every session\'s own shutdown concurrently with the configured turnWaitMs/deadlineMs', async () => {
         const clock = new FakeClock();
         const journal = new FakeJournal();

@@ -104,11 +104,13 @@ async function destroyOwnedDiscordClient(client: Client, providedClient: Client 
     }
 }
 
-async function runBotStopStep(phase: string, stop: () => void | Promise<void>, reportFailure: (error: unknown, phase: string) => void): Promise<void> {
+async function runBotStopStep(phase: string, stop: () => void | Promise<void>, reportFailure: (error: unknown, phase: string) => void): Promise<boolean> {
     try {
         await stop();
+        return true;
     } catch (error) {
         reportFailure(error, phase);
+        return false;
     }
 }
 
@@ -1196,8 +1198,11 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     logger.warn({ error: failure.message, msg: `${phase} failed after an earlier bot shutdown error` });
                 } catch{ /* Preserve the first shutdown failure. */ }
             };
-            // Stop coordinator if it exists
-            await runBotStopStep('Coordinator stop', () => coordinator?.stop(), recordFailure);
+            // Stop coordinator if it exists.
+            const currentCoordinator = coordinator;
+            if(currentCoordinator && await runBotStopStep('Coordinator stop', () => currentCoordinator.stop(), recordFailure)) {
+                logger.info({ msg: 'Coordinator stopped' });
+            }
             // Stop the perch driver's own timers (wrap-up/interrupt/pending) and the scheduler
             // BEFORE sessionShutdown.run() below waits out the shared turn-wait budget — otherwise an
             // interrupt or wrap-up timer can still fire while shutdown is politely waiting for the
@@ -1206,7 +1211,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // logs a spurious "shutting down" rejection. A no-op when perch was never enabled or
             // its conductor never opened (perchDriver/perchScheduler stay undefined).
             await runBotStopStep('Perch scheduler stop', () => perchScheduler?.stop(), recordFailure);
-            await runBotStopStep('Perch driver stop', () => perchDriver?.stop(), recordFailure);
+            const currentPerchDriver = perchDriver;
+            if(currentPerchDriver && await runBotStopStep('Perch driver stop', () => currentPerchDriver.stop(), recordFailure)) {
+                logger.info({ msg: 'Perch driver stopped' });
+            }
             // coordinator.stop() -> perch driver/scheduler stop() -> gate.stop() ->
             // sessionShutdown.run() (the session supervisor's cross-session
             // wait/interrupt/flush/close sequence, covering every opened session under ONE shared

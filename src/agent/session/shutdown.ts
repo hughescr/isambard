@@ -70,6 +70,7 @@ export function createShutdown(params: CreateShutdownParams): Shutdown {
 
     async function doRun(): Promise<ShutdownResult> {
         await stopIngress();
+        logger.info({ msg: 'Shutdown: ingress stopped' });
 
         let forced = false;
         let deadlineTimer: TimerHandle | undefined;

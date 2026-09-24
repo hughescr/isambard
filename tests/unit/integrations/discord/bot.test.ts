@@ -308,11 +308,13 @@ describe('createDiscordBot', () => {
     }
 
     function stubCoordinator() {
-        // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
-        spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
+        const coordinator = {
             setProcessor: mock(() => undefined),
             stop:         mock(() => undefined),
-        } as unknown as messageCoordinatorModule.MessageCoordinator)));
+        } as unknown as messageCoordinatorModule.MessageCoordinator;
+        // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
+        spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation(() => coordinator));
+        return coordinator;
     }
 
     test('should return an object with start and stop methods', () => {
@@ -3275,7 +3277,9 @@ describe('createDiscordBot', () => {
             test('stop() stops the perch driver and scheduler BEFORE waiting out the shared shutdown budget, so no timer can fire while a turn is being politely waited out', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
-                stubCoordinator();
+                const coordinator = stubCoordinator();
+                const info = spyOn(loggerModule.logger, 'info');
+                spies.push(info);
                 const callOrder: string[] = [];
                 const driver = {
                     runSlot: mock(() => 'started' as const),
@@ -3311,6 +3315,9 @@ describe('createDiscordBot', () => {
                 expect(callOrder).toEqual(['perchScheduler.stop', 'perchDriver.stop', 'perch.shutdown']);
                 expect(driver.stop).toHaveBeenCalledTimes(1);
                 expect(scheduler.stop).toHaveBeenCalledTimes(1);
+                expect(coordinator.stop).toHaveBeenCalledTimes(1);
+                expect(info).toHaveBeenCalledWith({ msg: 'Coordinator stopped' });
+                expect(info).toHaveBeenCalledWith({ msg: 'Perch driver stopped' });
             });
 
             test('stop() waits for each asynchronous perch timer shutdown', async () => {

@@ -111,15 +111,16 @@ async function openWithin(open: () => Promise<unknown>, ms: number, message: str
  * window read, the recovery computation and the boot sequence itself.
  * @param journal The conversation session's journal.
  * @param clock Supplies "now" for the recovery window.
+ * @param logger Records boot-recovery completion milestones.
  * @returns A {@link BootRecoveryRuntime} for a host's {@link BootRecoveryAdapter}.
  */
-export function createBootRecoveryRuntime(journal: Pick<SessionJournal, 'readSince' | 'flush'>, clock: Clock): BootRecoveryRuntime {
+export function createBootRecoveryRuntime(journal: Pick<SessionJournal, 'readSince' | 'flush'>, clock: Clock, logger: Pick<Logger, 'info'>): BootRecoveryRuntime {
     return {
         loadRecovery: async () => {
             const entries = await journal.readSince(clock.now() - RECOVERY_WINDOW_MS);
             return { recovery: computeRecovery(entries), knownAt: lastKnownAt(entries) };
         },
-        runBoot: params => runBootSequence({ ...params, journal }),
+        runBoot: params => runBootSequence({ ...params, journal, logger }),
     };
 }
 
@@ -202,7 +203,7 @@ export function createSessionSupervisor(params: CreateSessionSupervisorParams): 
 
         async runRecovery(adapter: BootRecoveryAdapter): Promise<void> {
             if(openedConversation) {
-                await adapter.recover(createBootRecoveryRuntime(openedConversation.journal, clock));
+                await adapter.recover(createBootRecoveryRuntime(openedConversation.journal, clock, logger));
             }
         },
     };
@@ -222,7 +223,7 @@ export interface SessionHost {
 export interface StartSessionsParams {
     host:       SessionHost
     supervisor: SessionSupervisor
-    logger:     Pick<Logger, 'error'>
+    logger:     Pick<Logger, 'info' | 'error'>
 }
 
 /**
@@ -238,6 +239,7 @@ export async function startSessions(params: StartSessionsParams): Promise<void> 
         await host.ready;
         const outcome = await supervisor.openSessions();
         await host.attachSessions(outcome, supervisor.shutdown);
+        logger.info({ conversation: outcome.conversation, perch: outcome.perch, msg: 'Sessions opened and attached to Discord' });
         await supervisor.runRecovery(host.recoveryAdapter);
     } catch (err) {
         logger.error({ err, msg: 'Session startup failed' });

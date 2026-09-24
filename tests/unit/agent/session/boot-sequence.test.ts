@@ -7,6 +7,7 @@
  * @module tests/unit/agent/session/boot-sequence
  */
 import { describe, it, expect, mock } from 'bun:test';
+import type { Logger } from '@hughescr/logger';
 import { FakeJournal } from '../../../helpers/fake-journal';
 import { runBootSequence } from '@/agent/session/boot-sequence';
 import type { UndeliveredEnvelope } from '@/agent/session/recovery';
@@ -17,6 +18,10 @@ function undeliveredEnvelope(overrides: Partial<UndeliveredEnvelope> = {}): Unde
 
 interface ReplayedItem {
     id: string
+}
+
+function makeLogger(): Pick<Logger, 'info'> {
+    return { info: mock() };
 }
 
 describe('runBootSequence', () => {
@@ -36,6 +41,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: () => undefined },
             journal,
+            logger:          makeLogger(),
         });
 
         expect(deliver).toHaveBeenCalledTimes(2);
@@ -65,6 +71,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: () => undefined },
             journal,
+            logger:          makeLogger(),
         });
 
         expect(deliver).toHaveBeenCalledTimes(2);
@@ -99,6 +106,7 @@ describe('runBootSequence', () => {
                 },
             },
             journal,
+            logger: makeLogger(),
         });
 
         expect(callLog).toEqual(['deliver', 'replay:submit', 'journal:flush', 'gate:open', 'catchup:submit']);
@@ -118,6 +126,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: () => undefined },
             journal,
+            logger:          makeLogger(),
         });
 
         expect(submitReplay).toHaveBeenCalledTimes(1);
@@ -139,6 +148,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: openSpy },
             journal,
+            logger:          makeLogger(),
         });
 
         expect(submitReplay).not.toHaveBeenCalled();
@@ -161,6 +171,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: openSpy },
             journal,
+            logger:          makeLogger(),
         });
 
         expect(openSpy).toHaveBeenCalledWith(new Set(['msg-1', 'msg-2']));
@@ -179,6 +190,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 3,
             ingressGate:     { open: () => undefined },
             journal,
+            logger:          makeLogger(),
         });
 
         expect(submitCatchUp).toHaveBeenCalledTimes(1);
@@ -198,6 +210,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 1,
             ingressGate:     { open: () => undefined },
             journal,
+            logger:          makeLogger(),
         })).rejects.toThrow(boom);
     });
 
@@ -214,6 +227,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: () => undefined },
             journal,
+            logger:          makeLogger(),
         });
 
         expect(submitCatchUp).not.toHaveBeenCalled();
@@ -240,6 +254,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: openSpy },
             journal,
+            logger:          makeLogger(),
         })).rejects.toThrow(boom);
 
         expect(openSpy).toHaveBeenCalledWith(new Set());
@@ -259,6 +274,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: openSpy },
             journal,
+            logger:          makeLogger(),
         })).rejects.toThrow(boom);
 
         expect(openSpy).toHaveBeenCalledWith(new Set());
@@ -279,6 +295,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: openSpy },
             journal,
+            logger:          makeLogger(),
         })).rejects.toThrow(boom);
 
         expect(openSpy).toHaveBeenCalledWith(new Set());
@@ -301,6 +318,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: openSpy },
             journal,
+            logger:          makeLogger(),
         })).rejects.toThrow('flush boom');
 
         expect(openSpy).toHaveBeenCalledWith(new Set(['msg-1']));
@@ -319,9 +337,32 @@ describe('runBootSequence', () => {
             unreadCount:     () => 5,
             ingressGate:     { open: () => undefined },
             journal,
+            logger:          makeLogger(),
         })).rejects.toThrow('boom');
 
         expect(submitCatchUp).not.toHaveBeenCalled();
+    });
+
+    it('logs exact ordered success payloads for recovery, journal flush, and ingress opening', async () => {
+        const journal = new FakeJournal();
+        const info = mock((_payload: object) => undefined);
+
+        await runBootSequence<ReplayedItem>({
+            recovery:        { undelivered: [undeliveredEnvelope()] },
+            deliver:         async () => undefined,
+            replayUnhandled: async () => [{ id: 'msg-1' }, { id: 'msg-2' }],
+            submitReplay:    async () => undefined,
+            submitCatchUp:   async () => undefined,
+            unreadCount:     () => 0,
+            ingressGate:     { open: () => undefined },
+            journal,
+            logger:          { info } as unknown as Pick<Logger, 'info'>,
+        });
+
+        expect(info).toHaveBeenNthCalledWith(1, { redeliveredCount: 1, replayedCount: 2, msg: 'Boot recovery: response redelivery and message replay complete' });
+        expect(info).toHaveBeenNthCalledWith(2, { msg: 'Boot recovery: journal flushed' });
+        expect(info).toHaveBeenNthCalledWith(3, { replayedCount: 2, msg: 'Boot recovery: ingress gate opened' });
+        expect(info).toHaveBeenCalledTimes(3);
     });
 
     it('flushes the journal exactly once per boot sequence', async () => {
@@ -336,6 +377,7 @@ describe('runBootSequence', () => {
             unreadCount:     () => 0,
             ingressGate:     { open: () => undefined },
             journal,
+            logger:          makeLogger(),
         });
 
         expect(journal.flushCount).toBe(1);

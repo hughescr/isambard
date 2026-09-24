@@ -1332,8 +1332,6 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 bskySetup.dmPoller.start();
                 logger.info('Bluesky DM poller started');
             }
-
-            logger.info('Isambard application started successfully');
         },
 
         stop: () => {

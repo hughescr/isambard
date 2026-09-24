@@ -88,7 +88,7 @@ function makeFakeContextPolicy(overrides: Record<string, unknown> = {}) {
  * sequence the Discord adapter drives.
  */
 function recoveryRuntimeFor(journal: ReturnType<typeof makeFakeJournal>): BootRecoveryRuntime {
-    return createBootRecoveryRuntime(journal, systemClock);
+    return createBootRecoveryRuntime(journal, systemClock, loggerModule.logger);
 }
 
 /** `journal` is test-only: it builds `recoveryRuntime` unless the caller supplies one directly. */

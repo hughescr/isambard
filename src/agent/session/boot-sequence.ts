@@ -27,6 +27,7 @@
  *
  * @module agent/session/boot-sequence
  */
+import type { Logger } from '@hughescr/logger';
 import type { RecoveryResult, UndeliveredEnvelope } from './recovery';
 
 /** The subset of {@link import('./recovery').RecoveryResult} this module reads. */
@@ -84,6 +85,8 @@ export interface RunBootSequenceParams<TReplayedMessage extends { id: string }> 
     unreadCount:     () => number
     ingressGate:     BootIngressGate
     journal:         BootJournal
+    /** Records durable completion milestones for boot recovery. */
+    logger:          Pick<Logger, 'info'>
 }
 
 /** What {@link runBootSequence} resolves with. */
@@ -114,7 +117,7 @@ export interface BootRecoveryRuntime {
     /** Reads the conversation journal's recovery window and recomputes recovery from it. */
     loadRecovery: () => Promise<BootRecoveryLoad>
     /** Runs {@link runBootSequence} once over the conversation journal (the runtime supplies `journal`). */
-    runBoot:      <TReplayedMessage extends { id: string }>(params: Omit<RunBootSequenceParams<TReplayedMessage>, 'journal'>) => Promise<RunBootSequenceResult>
+    runBoot:      <TReplayedMessage extends { id: string }>(params: Omit<RunBootSequenceParams<TReplayedMessage>, 'journal' | 'logger'>) => Promise<RunBootSequenceResult>
 }
 
 /** A host's replay/ingress-gate side of boot-time crash recovery, driven by the runtime once the conversation session has opened. */
@@ -132,7 +135,7 @@ export interface BootRecoveryAdapter {
 export async function runBootSequence<TReplayedMessage extends { id: string }>(
     params: RunBootSequenceParams<TReplayedMessage>
 ): Promise<RunBootSequenceResult> {
-    const { recovery, deliver, replayUnhandled, submitReplay, submitCatchUp, unreadCount, ingressGate, journal } = params;
+    const { recovery, deliver, replayUnhandled, submitReplay, submitCatchUp, unreadCount, ingressGate, journal, logger } = params;
 
     // The gate must open exactly once no matter what fails above it — a rejection here would
     // otherwise leave it in `buffering` forever, silently buffering every live message until a
@@ -155,10 +158,13 @@ export async function runBootSequence<TReplayedMessage extends { id: string }>(
             await submitReplay(replayed);
         }
         replayedIds = new Set(replayed.map(message => message.id));
+        logger.info({ redeliveredCount: recovery.undelivered.length, replayedCount, msg: 'Boot recovery: response redelivery and message replay complete' });
 
         await journal.flush();
+        logger.info({ msg: 'Boot recovery: journal flushed' });
     } finally {
         ingressGate.open(replayedIds);
+        logger.info({ replayedCount: replayedIds.size, msg: 'Boot recovery: ingress gate opened' });
     }
 
     let catchUpSubmitted = false;
