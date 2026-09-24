@@ -11,7 +11,7 @@
  */
 import type { EnvelopeKind, JournalEntry } from './types';
 
-/** A background task with a `task_started` entry but no later `task_finished`/`task_lost` (or legacy `task_completed`). */
+/** A background task with a `task_started` entry but no later `task_finished`/`task_lost`. */
 export interface LostTask {
     taskId:       string
     description?: string
@@ -68,14 +68,9 @@ interface RecoveryAccumulator {
 function applyTaskEntry(acc: RecoveryAccumulator, entry: JournalEntry): void {
     if(entry.type === 'task_started') {
         acc.taskDescriptions.set(entry.taskId, entry.description);
-    } else if(entry.type === 'task_finished' || entry.type === 'task_lost' || isLegacyTaskCompleted(entry)) {
+    } else if(entry.type === 'task_finished' || entry.type === 'task_lost') {
         acc.resolvedTaskIds.add(entry.taskId);
     }
-}
-
-/** Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25. A `task_completed` row resolves its task exactly like `task_finished`. */
-function isLegacyTaskCompleted(entry: JournalEntry): entry is Extract<JournalEntry, { type: 'task_completed' }> {
-    return entry.type === 'task_completed';
 }
 
 /** Folds an envelope-lifecycle entry (`envelope_submitted`/`turn_completed`/`response_delivered`) into `acc`; every other entry type is a no-op here. */

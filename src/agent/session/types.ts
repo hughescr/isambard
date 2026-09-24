@@ -270,12 +270,6 @@ export type JournalEntry
       | { type: 'task_started', at: Date, taskId: string, description: string }
       /** A task that left the ledger's running set, with the terminal status the ledger gave it; a later row for the same task records a late `task_notification` correcting that status, and the LAST row is its final outcome. `task_lost` (below) stays separate: loss is epistemic, not a fourth outcome. */
       | { type: 'task_finished', at: Date, taskId: string, description?: string, outcome: TaskFinishedOutcome }
-      /**
-       * Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25. Read-only — written
-       * by builds before `task_finished` existed, for every terminal task whatever its status, so
-       * its outcome is unknown. Nothing writes it any more.
-       */
-      | { type: 'task_completed', at: Date, taskId: string, description?: string }
       | { type: 'task_lost', at: Date, taskId: string, description?: string }
       /**
        * A background-work launch (R2): recorded by the {@link
@@ -291,12 +285,7 @@ export type JournalEntry
       /** Metadata only: the summary itself is never persisted (see conductor.ts's module doc). */
       | { type: 'compaction_completed', at: Date }
       | { type: 'compaction_failed', at: Date, error: string }
-      /**
-       * Every writer sets `cause`. It is optional only because legacy pre-#61 journal rows
-       * (`{ resumed, fallback? }`, normalised to `outcome` on read) never recorded one: can be
-       * safely deleted after 2026-09-25 — make `cause` required then.
-       */
-      | { type: 'session_opened', at: Date, role: SessionRole, sessionId: string, outcome: SessionOpenOutcome, cause?: SessionOpenCause }
+      | { type: 'session_opened', at: Date, role: SessionRole, sessionId: string, outcome: SessionOpenOutcome, cause: SessionOpenCause }
       /**
        * A controlled close-and-resume the host asked for — today, because the identity behind
        * this session's SDK `systemPrompt` changed, and the SDK fixes that prompt at `query()`

@@ -1433,7 +1433,6 @@ describe('createConductor', () => {
             expect(h.journal.byKind('task_finished')).toEqual([
                 { type: 'task_finished', at: expect.any(Date), taskId: 'task-1', description: 'run a thing', outcome: 'completed' },
             ]);
-            expect(h.journal.byKind('task_completed')).toEqual([]);
             expect(h.journal.byKind('task_lost')).toEqual([]);
         });
 

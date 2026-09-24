@@ -35,16 +35,6 @@ describe('computeRecovery', () => {
         expect(computeRecovery(entries).lostTasks).toEqual([]);
     });
 
-    // Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25.
-    test('task_started followed by a legacy task_completed is not lost', () => {
-        const entries: JournalEntry[] = [
-            { type: 'task_started', at: AT, taskId: 'task-1', description: 'do the thing' },
-            { type: 'task_completed', at: AT, taskId: 'task-1' },
-        ];
-
-        expect(computeRecovery(entries).lostTasks).toEqual([]);
-    });
-
     test('a task_launched row for a started task does not resolve it', () => {
         const entries: JournalEntry[] = [
             { type: 'task_started', at: AT, taskId: 'task-1', description: 'do the thing' },

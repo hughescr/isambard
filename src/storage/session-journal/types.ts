@@ -33,7 +33,7 @@ const sessionRoleSchema = z.enum(['conversation', 'perch']);
 /** Every {@link JournalEntry} member carries this. Storage coerces the persisted ISO string back to `Date` on read. */
 const journalEntryBase = { at: z.coerce.date() };
 
-/** The fields every `session_opened` row carries, in both the current and the legacy shape. */
+/** The fields every `session_opened` row carries. */
 const sessionOpenedBase = {
     ...journalEntryBase, type: z.literal('session_opened'), role: sessionRoleSchema, sessionId: z.string(),
 };
@@ -76,48 +76,12 @@ const currentJournalEntrySchema = z.discriminatedUnion('type', [
     }),
 ]);
 
-// Legacy pre-#61 journal rows: can be safely deleted after 2026-09-25. Every journal reader looks
-// back at most 48 hours (`readSince`) and no build from #61 on writes either shape, so once the
-// rows written before that deploy have aged out of every read window, delete this whole block
-// (both schemas and `legacySessionOpenOutcome`) and make `journalEntrySchema` the bare
-// `currentJournalEntrySchema`. The same date marks the matching agent-side pieces: the
-// `task_completed` JournalEntry member, recovery.ts's `isLegacyTaskCompleted`, and the optional
-// `cause` on `session_opened` (src/agent/session/types.ts), which becomes required.
-/**
- * Legacy `session_opened` row: `{ resumed, fallback? }` instead of `outcome`, and no `cause`.
- * Normalised on read to the current shape, `cause` absent: `fallback` → `'resume_fallback'`, else
- * `resumed` → `'resumed'`, else `'fresh'`. The `{ resumed: true, fallback: true }` pair, which no
- * writer ever produced, is accepted and normalised deterministically — `fallback` wins, so it
- * reads as `'resume_fallback'`.
- */
-const legacySessionOpenedSchema = z.object({ ...sessionOpenedBase, resumed: z.boolean(), fallback: z.boolean().optional() })
-    .transform(({ resumed, fallback, ...rest }) => ({ ...rest, outcome: legacySessionOpenOutcome(resumed, fallback) }));
-
-/** Legacy `task_completed` row: written for every terminal task whatever its status, so it carries no outcome. Read-only. */
-const legacyTaskCompletedSchema = z.object({
-    ...journalEntryBase, type: z.literal('task_completed'), taskId: z.string(), description: z.string().optional(),
-});
-
-/** {@link legacySessionOpenedSchema}'s `{ resumed, fallback? }` → `outcome` rule. */
-function legacySessionOpenOutcome(resumed: boolean, fallback: boolean | undefined): 'fresh' | 'resumed' | 'resume_fallback' {
-    if(fallback === true) {
-        return 'resume_fallback';
-    }
-    return resumed ? 'resumed' : 'fresh';
-}
-
 /**
  * Validates one journal row's entry fields (everything except the DynamoDB key/TTL wrapper).
  * `satisfies z.ZodType<JournalEntry>` is the compile-time guarantee that this schema's output
  * cannot drift from the agent-owned `JournalEntry` union without a type error here.
- *
- * Tolerates legacy pre-#61 journal rows (can be safely deleted after 2026-09-25): a row the
- * current shapes reject is tried against the legacy `session_opened` shape (normalised to
- * `outcome` on read, `cause` absent) and the legacy `task_completed` shape. The legacy options
- * sit outside the `type`-keyed discriminated union because zod forbids two options sharing one
- * discriminator value.
  */
-export const journalEntrySchema = z.union([currentJournalEntrySchema, legacySessionOpenedSchema, legacyTaskCompletedSchema]) satisfies z.ZodType<JournalEntry>;
+export const journalEntrySchema = currentJournalEntrySchema satisfies z.ZodType<JournalEntry>;
 
 /**
  * DynamoDB item shape for one journal row. `PK` groups every row for a role; `SK` orders rows
