@@ -11,7 +11,7 @@ export interface OutboxReplayDeps {
 }
 
 const DELIVERY_TOKEN_PREFIX = 'iz';
-const DELIVERY_TOKEN_BASE_MAX_LENGTH = 18;
+const DELIVERY_TOKEN_BASE_MAX_LENGTH = 17;
 const DELIVERY_TOKEN_PART_LENGTH = 6;
 
 /**

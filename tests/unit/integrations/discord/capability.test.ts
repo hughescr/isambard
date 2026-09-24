@@ -102,8 +102,15 @@ describe('deliveryTokenFor', () => {
     test('caps its longest token at the shared delivery-code budget length', () => {
         const item = makeOutboxItem({ progress: { attemptCount: 0, deliveryToken: '1234567890abcdefgh' } });
 
-        expect(deliveryTokenFor(item, 35)).toBe('iz1234567890abcdefgh00000z');
+        expect(deliveryTokenFor(item, 35)).toBe('iz1234567890abcdefg00000z');
         expect(deliveryTokenFor(item, 35)).toHaveLength(DELIVERY_TOKEN_MAX_LENGTH);
+    });
+
+    test('never produces a token longer than Discord\'s 25-character nonce limit', () => {
+        const item = makeOutboxItem({ progress: { attemptCount: 0, deliveryToken: 'x'.repeat(100) } });
+
+        expect(deliveryTokenFor(item, 35)).toHaveLength(25);
+        expect(deliveryTokenFor(item, 35).length).toBeLessThanOrEqual(25);
     });
 });
 

@@ -45,6 +45,12 @@ describe('outboxItemSchema', () => {
         const invalid: OutboxItem = { ...(validItem as unknown as OutboxItem), ttl: 1_700_000_000 };
         expect(invalid.ttl as unknown as number).toBe(1_700_000_000);
     });
+
+    test('progress.deliveryToken accepts the 16-character producer value and the 17-character base budget, but rejects 18 characters', () => {
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveryToken: '0123456789abcdef' } }).success).toBe(true);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveryToken: '0'.repeat(17) } }).success).toBe(true);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveryToken: '0'.repeat(18) } }).success).toBe(false);
+    });
 });
 
 describe('serializedDiscordPayloadSchema', () => {
