@@ -1,7 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { ActivityType } from 'discord.js';
-import { mockGenerateTextWithSystemPrompt } from '../../../../setup';
+import { mockGenerateTextWithSystemPrompt, originalGenerateTextWithSystemPrompt } from '../../../../setup';
 import type { Signal } from '@/agent';
 import { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
 
@@ -19,6 +19,9 @@ describe('IdleStatusGenerator', () => {
     });
 
     afterEach(() => {
+        // Shared with the turn-synopsis wiring tests: leave neither calls nor idle responses behind.
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
         (mockLogger.debug as ReturnType<typeof mock>).mockClear();
         (mockLogger.error as ReturnType<typeof mock>).mockClear();
         (mockLogger.info as ReturnType<typeof mock>).mockClear();

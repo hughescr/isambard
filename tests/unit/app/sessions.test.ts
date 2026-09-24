@@ -2737,6 +2737,11 @@ describe('ambient-line wiring on the conductors', () => {
 });
 
 describe('#39: each conductor factory wires its own turn synopsis producer', () => {
+    beforeEach(() => {
+        // #117: a setup-module mock retains calls from earlier files; counts must start at this test.
+        mockGenerateTextWithSystemPrompt.mockClear();
+    });
+
     afterEach(() => {
         jest.restoreAllMocks();
         mockGenerateTextWithSystemPrompt.mockReset();
