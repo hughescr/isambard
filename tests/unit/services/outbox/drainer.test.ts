@@ -3,7 +3,7 @@ import { createChannelId } from '@/agent/types';
 import { ChannelNotFoundByIdError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
 import type { OutboxBackend } from '@/services/outbox/backend';
-import { createOutboxDrainer, type OutboxDrainerDeps, type OutboxDrainer } from '@/services/outbox/drainer';
+import { createOutboxDrainer, OutboxVerificationPendingError, type OutboxDrainerDeps, type OutboxDrainer } from '@/services/outbox/drainer';
 import type { OutboxItem } from '@/services/outbox/types';
 import type { ServiceName } from '@/services/types';
 
@@ -42,6 +42,7 @@ describe('createOutboxDrainer', () => {
         acknowledgeDelivered: ReturnType<typeof mock>
         discard:              ReturnType<typeof mock>
         markFailed:           ReturnType<typeof mock>
+        markUnknown:          ReturnType<typeof mock>
     };
     let registry: {
         isAvailable: ReturnType<typeof mock>
@@ -63,6 +64,7 @@ describe('createOutboxDrainer', () => {
             acknowledgeDelivered: mock(async (): Promise<void> => undefined),
             discard:              mock(async (): Promise<void> => undefined),
             markFailed:           mock(async (): Promise<void> => undefined),
+            markUnknown:          mock(async (): Promise<void> => undefined),
         };
         registry = {
             isAvailable: mock((): boolean => true),
@@ -98,7 +100,7 @@ describe('createOutboxDrainer', () => {
         });
         const result = await drainer.drain(SERVICE);
         expect(result.failed).toBe(3);
-        expect(jest.getTimerCount()).toBe(0);
+        expect(jest.getTimerCount()).toBe(1);
     });
 
     test('reports delivered-but-unacknowledged separately and does not reschedule', async () => {
@@ -229,7 +231,7 @@ describe('createOutboxDrainer', () => {
 
             expect(result.failed).toBe(1);
             expect(result.delivered).toBe(1);
-            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item1, 'Network error', { retryable: true });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item1, 'Network error', expect.objectContaining({ retryable: true, nextAttemptAt: expect.any(String) }));
             expect(outboxBackend.acknowledgeDelivered).toHaveBeenCalledWith(item2);
         });
 
@@ -243,7 +245,7 @@ describe('createOutboxDrainer', () => {
             const result = await drainer.drain(SERVICE);
 
             expect(result.failed).toBe(1);
-            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'plain string error', { retryable: true });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'plain string error', expect.objectContaining({ retryable: true, nextAttemptAt: expect.any(String) }));
         });
 
         test('records a null delivery failure as the string null', async () => {
@@ -255,7 +257,7 @@ describe('createOutboxDrainer', () => {
 
             await drainer.drain(SERVICE);
 
-            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'null', { retryable: true });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'null', expect.objectContaining({ retryable: true, nextAttemptAt: expect.any(String) }));
         });
 
         test('logs error when delivery fails', async () => {
@@ -274,6 +276,65 @@ describe('createOutboxDrainer', () => {
         });
     });
 
+    test('persists a verification-pending failure as unknown with a scheduled retry', async () => {
+        const item = makeItem({ progress: { attemptCount: 1, outcome: 'unknown' } });
+        outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw new OutboxVerificationPendingError('history unavailable');
+        });
+        const retrying = createOutboxDrainer({ ...deps, now: () => 1000 });
+
+        expect(await retrying.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 });
+        expect(outboxBackend.markUnknown).toHaveBeenCalledWith(item, 'history unavailable', '1970-01-01T00:00:01.200Z');
+        expect(outboxBackend.markFailed).not.toHaveBeenCalled();
+        expect(jest.getTimerCount()).toBe(1);
+        retrying.stop();
+    });
+
+    test('abandons a classified known rejection and records its decision', async () => {
+        const item = makeItem();
+        const classify = mock(async () => ({ disposition: 'abandon' as const, confidence: 0.97 }));
+        outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw Object.assign(new Error('Missing Permissions'), { status: 403 });
+        });
+        const classified = createOutboxDrainer({ ...deps, failureClassifier: { classify } });
+
+        expect(await classified.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 1, unacknowledged: 0 });
+        expect(classify).toHaveBeenCalledWith({ message: 'Missing Permissions', status: 403 });
+        expect(outboxBackend.discard).toHaveBeenCalledWith(item, 'classified_abandon');
+        expect(logger.warn).toHaveBeenCalledWith({ service: SERVICE, itemId: item.id, decision: 'abandon', confidence: 0.97 }, 'Discarded classified outbox delivery failure');
+        classified.stop();
+    });
+
+    test('uses the deterministic retry fallback when no classifier is configured', async () => {
+        const item = makeItem();
+        outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw Object.assign(new Error('Discord unavailable'), { status: 503 });
+        });
+
+        expect(await drainer.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+        expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Discord unavailable', { retryable: true, nextAttemptAt: expect.any(String) });
+        expect(outboxBackend.discard).not.toHaveBeenCalled();
+    });
+
+    test('preserves the earliest pending retry from a batch', async () => {
+        const early = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001', progress: { attemptCount: 0 } });
+        const late = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002', progress: { attemptCount: 8 } });
+        outboxBackend.dequeue.mockImplementationOnce(async (): Promise<OutboxItem[]> => [early, late]).mockImplementationOnce(async (): Promise<OutboxItem[]> => []);
+        deliverFn.mockImplementation(async (): Promise<void> => {
+            throw new Error('offline');
+        });
+
+        await drainer.drain(SERVICE);
+        jest.advanceTimersByTime(100);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+    });
+
     test('treats an unready channel after registry check as a retryable delivery error', async () => {
         const item = makeItem();
         outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
@@ -283,7 +344,7 @@ describe('createOutboxDrainer', () => {
         const result = await drainer.drain(SERVICE);
         expect(result.failed).toBe(1);
         expect(result.discarded).toBe(0);
-        expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, expect.any(String), { retryable: true });
+        expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, expect.any(String), expect.objectContaining({ retryable: true, nextAttemptAt: expect.any(String) }));
     });
 
     describe('drain() — bounded attempts', () => {
@@ -306,7 +367,7 @@ describe('createOutboxDrainer', () => {
                 throw new Error('Channel unavailable');
             });
             expect(await drainer.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
-            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Channel unavailable', { retryable: true });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Channel unavailable', expect.objectContaining({ retryable: true, nextAttemptAt: expect.any(String) }));
         });
 
         test('ninth prior failure is terminal on the tenth failed delivery', async () => {

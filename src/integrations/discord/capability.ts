@@ -1,6 +1,9 @@
 import type { Client, Message, TextChannel, EmbedBuilder, ActionRowBuilder } from 'discord.js';
 import type { ChannelId } from '@/config';
+import { DISCORD_MAX_LENGTH } from '@/integrations/discord/messages';
+import { deliveryTokenFor } from '@/integrations/discord/outbox-replay';
 import { withDiscordRetry } from '@/integrations/discord/retry';
+import { appendDeliveryCode, maxContentLengthForDeliveryCode } from '@/integrations/discord/zero-width-delivery-code';
 import { serializedDiscordPayloadSchema, type ServiceHealthRegistry, type OutboxBackend, type OutboxItem, type OutboxPriority, type OutboxItemType } from '@/services';
 
 /**
@@ -103,9 +106,28 @@ function buildOutboxItem(channelId: ChannelId, content: ChannelContent, options:
             }),
         priority:  options?.priority ?? 'medium',
         dedupeKey: options?.dedupeKey ?? crypto.randomUUID(),
-        progress:  { attemptCount: 0 },
+        progress:  { attemptCount: 0, deliveryToken: crypto.randomUUID().replaceAll('-', '').slice(0, 16) },
         epoch:     options?.epoch ?? 0,
     };
+}
+
+function sendPayloadWithDeliveryToken(content: ChannelContent, item: OutboxItem): Parameters<TextChannel['send']>[0] {
+    const nonce = deliveryTokenFor(item, 0);
+    const payload = typeof content === 'string'
+        ? { content }
+        : content;
+    // A component-only payload receives an otherwise invisible content field so an
+    // ambiguous initial send remains discoverable during outbox replay.
+    return { ...payload, content: appendDeliveryCode(payload.content ?? '', nonce), nonce, enforceNonce: true } as unknown as Parameters<TextChannel['send']>[0];
+}
+
+function exceedsOutboxDeliveryBudget(content: ChannelContent, item: OutboxItem): boolean {
+    const text = typeof content === 'string' ? content : content.content;
+    return text !== undefined && text.length > maxContentLengthForDeliveryCode(deliveryTokenFor(item, 0), DISCORD_MAX_LENGTH);
+}
+
+function canAttemptImmediateSend(content: ChannelContent, item: OutboxItem | undefined, ready: boolean, hasClient: boolean): boolean {
+    return (item === undefined || !exceedsOutboxDeliveryBudget(content, item)) && ready && hasClient;
 }
 
 export class DiscordCapabilityImpl implements DiscordCapability {
@@ -121,27 +143,37 @@ export class DiscordCapabilityImpl implements DiscordCapability {
         return this.client !== undefined && this.deps.registry.isAvailable('discord');
     }
 
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- readiness, ambiguous-send persistence, and no-outbox fallback are distinct recovery contracts.
     async sendToChannel(channelId: ChannelId, content: ChannelContent, options?: SendOptions): Promise<SendResult> {
-        if(this.isReady() && this.client !== undefined) {
+        const outboxItem = this.deps.outboxBackend !== undefined && options?.skipOutbox !== true
+            ? buildOutboxItem(channelId, content, options)
+            : undefined;
+        const client = this.client;
+        if(canAttemptImmediateSend(content, outboxItem, this.isReady(), client !== undefined)) {
             try {
-                const channel = await this.client.channels.fetch(channelId);
+                const channel = await client!.channels.fetch(channelId);
                 if(!isTextSendable(channel)) {
                     return { status: 'unavailable' };
                 }
-                const message = await withDiscordRetry(() => channel.send(content as Parameters<TextChannel['send']>[0]));
+                const payload = outboxItem === undefined ? content as Parameters<TextChannel['send']>[0] : sendPayloadWithDeliveryToken(content, outboxItem);
+                const message = await withDiscordRetry(() => channel.send(payload));
                 return { status: 'sent', message };
             } catch (err) {
                 this.deps.logger.warn(
                     { error: err instanceof Error ? err.message : String(err), channelId },
                     'Discord send failed, attempting outbox queue'
                 );
+                if(outboxItem !== undefined) {
+                    outboxItem.progress.outcome = 'unknown';
+                    outboxItem.progress.lastError = err instanceof Error ? err.message : String(err);
+                    outboxItem.progress.lastAttemptAt = new Date().toISOString();
+                }
             }
         }
 
-        if(this.deps.outboxBackend !== undefined && options?.skipOutbox !== true) {
-            const item = buildOutboxItem(channelId, content, options);
-            await this.deps.outboxBackend.enqueue(item);
-            return { status: 'queued', outboxId: item.id };
+        if(outboxItem !== undefined && this.deps.outboxBackend !== undefined) {
+            await this.deps.outboxBackend.enqueue(outboxItem);
+            return { status: 'queued', outboxId: outboxItem.id };
         }
 
         return { status: 'unavailable' };

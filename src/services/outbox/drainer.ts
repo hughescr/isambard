@@ -1,16 +1,28 @@
 import type { ServiceHealthRegistry } from '../health-registry';
 import type { ServiceLogger } from '../types';
 import type { OutboxBackend } from './backend';
+import { OUTBOX_FAILURE_FALLBACK, type OutboxFailureClassifier } from './failure-classifier';
 import type { OutboxItem, OutboxService, OutboxDiscardReason } from './types';
 
+/** Raised by the replay adapter when an unknown result could not be verified safely. */
+export class OutboxVerificationPendingError extends Error {
+    constructor(message = 'Discord delivery verification remains indeterminate') {
+        super(message);
+        this.name = 'OutboxVerificationPendingError';
+    }
+}
+
 export interface OutboxDrainerDeps {
-    outboxBackend:    OutboxBackend
-    registry:         ServiceHealthRegistry
-    deliverFn:        (item: OutboxItem) => Promise<void>
-    logger:           ServiceLogger
-    batchSize?:       number
-    drainIntervalMs?: number
-    maxAttempts?:     number
+    outboxBackend:      OutboxBackend
+    registry:           ServiceHealthRegistry
+    deliverFn:          (item: OutboxItem) => Promise<void>
+    logger:             ServiceLogger
+    batchSize?:         number
+    drainIntervalMs?:   number
+    maxAttempts?:       number
+    failureClassifier?: OutboxFailureClassifier
+    /** Injected for deterministic delayed-retry tests. */
+    now?:               () => number
 }
 
 export interface DrainResult {
@@ -34,9 +46,31 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
     const batchSize = deps.batchSize ?? DEFAULT_BATCH_SIZE;
     const drainIntervalMs = deps.drainIntervalMs ?? DEFAULT_DRAIN_INTERVAL;
     const maxAttempts = deps.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    const now = deps.now ?? Date.now;
+    const failureClassifier = deps.failureClassifier;
     let stopped = false;
     let draining = false;
     let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+    let pendingAt: number | undefined;
+
+    function retryAt(item: OutboxItem): string {
+        const delay = Math.min(drainIntervalMs * 2 ** item.progress.attemptCount, 60_000);
+        return new Date(now() + delay).toISOString();
+    }
+
+    function schedule(service: OutboxService, delay: number): void {
+        const scheduledAt = now() + delay;
+        if(pendingAt !== undefined && pendingAt <= scheduledAt) {
+            return;
+        }
+        clearTimeout(pendingTimer);
+        pendingAt = scheduledAt;
+        pendingTimer = setTimeout(() => {
+            pendingTimer = undefined;
+            pendingAt = undefined;
+            void drain(service);
+        }, delay);
+    }
 
     // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- sequential send, retry, discard and acknowledgement have distinct failure contracts
     async function drain(service: OutboxService): Promise<DrainResult> {
@@ -79,11 +113,43 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                     await deliverFn(item);
                 } catch (err: unknown) {
                     const message = err instanceof Error ? err.message : String(err);
+                    const nextAttemptAt = retryAt(item);
+                    if(err instanceof OutboxVerificationPendingError) {
+                        try {
+                            // eslint-disable-next-line no-await-in-loop -- persist the safe verification state before processing later work
+                            await outboxBackend.markUnknown(item, message, nextAttemptAt);
+                            schedule(service, Math.max(0, new Date(nextAttemptAt).getTime() - now()));
+                        } catch (error: unknown) {
+                            logger.error({ service, itemId: item.id, error }, 'Failed to persist indeterminate outbox verification');
+                        }
+                        continue;
+                    }
+                    const details = typeof err === 'object' && err !== null ? err as { status?: unknown, code?: unknown } : {};
+                    const knownRejection = typeof details.status === 'number' || typeof details.code === 'number';
+                    const classification = knownRejection && failureClassifier !== undefined
+                        // eslint-disable-next-line no-await-in-loop -- a classification belongs to this item and must precede its disposition
+                        ? await failureClassifier.classify({ message, ...(typeof details.status === 'number' ? { status: details.status } : {}), ...(typeof details.code === 'number' ? { code: details.code } : {}) })
+                        : OUTBOX_FAILURE_FALLBACK;
+                    if(classification.disposition === 'abandon') {
+                        try {
+                            // eslint-disable-next-line no-await-in-loop -- discard must complete before continuing with later work
+                            await outboxBackend.discard(item, 'classified_abandon');
+                            logger.warn({ service, itemId: item.id, decision: classification.disposition, confidence: classification.confidence }, 'Discarded classified outbox delivery failure');
+                            result.discarded += 1;
+                        } catch (error: unknown) {
+                            logger.error({ service, itemId: item.id, reason: 'classified_abandon', error }, 'Failed to discard classified outbox item');
+                        }
+                        result.failed += 1;
+                        continue;
+                    }
                     const retryable = item.progress.attemptCount + 1 < maxAttempts;
                     logger.error({ service, itemId: item.id, error: message }, 'Failed to deliver outbox item');
                     try {
                         // eslint-disable-next-line no-await-in-loop -- sequential outbox processing preserves order
-                        await outboxBackend.markFailed(item, message, { retryable });
+                        await outboxBackend.markFailed(item, message, { retryable, ...(retryable ? { nextAttemptAt } : {}) });
+                        if(retryable) {
+                            schedule(service, Math.max(0, new Date(nextAttemptAt).getTime() - now()));
+                        }
                         if(!retryable) {
                             result.discarded += 1;
                         }
@@ -108,9 +174,7 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
             const batchFull = items.length >= batchSize;
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stop() can run between awaits
             if(batchFull && result.failed === 0 && result.unacknowledged === 0 && !dispositionError && registry.isAvailable(service) && !stopped) {
-                pendingTimer = setTimeout(() => {
-                    void drain(service);
-                }, drainIntervalMs);
+                schedule(service, drainIntervalMs);
             }
             return result;
         } finally {
@@ -125,6 +189,7 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
             stopped = true;
             clearTimeout(pendingTimer);
             pendingTimer = undefined;
+            pendingAt = undefined;
         },
     };
 }

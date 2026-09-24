@@ -3,7 +3,9 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type Client
 import { createChannelId } from '../../../../src/agent/types';
 import { ChannelNotFoundByIdError } from '../../../../src/errors';
 import { DiscordCapabilityImpl, type DiscordCapability, type DiscordCapabilityDeps, type DiscordCapabilityLogger, type SendOptions } from '../../../../src/integrations/discord/capability';
-import { createOutboxReplayDeliverFn } from '../../../../src/integrations/discord/outbox-replay';
+import { DISCORD_MAX_LENGTH } from '../../../../src/integrations/discord/messages';
+import { createOutboxReplayDeliverFn, DELIVERY_TOKEN_MAX_LENGTH, deliveryTokenFor } from '../../../../src/integrations/discord/outbox-replay';
+import { appendDeliveryCode, decodeDeliveryCode, maxContentLengthForDeliveryCode } from '../../../../src/integrations/discord/zero-width-delivery-code';
 import type { ServiceHealthRegistry } from '../../../../src/services/health-registry';
 import type { OutboxBackend, OutboxItem } from '../../../../src/services/outbox';
 
@@ -94,6 +96,17 @@ function makeCapability(
     return { cap, registry, logger };
 }
 
+// ---- outbox delivery token ----
+
+describe('deliveryTokenFor', () => {
+    test('caps its longest token at the shared delivery-code budget length', () => {
+        const item = makeOutboxItem({ progress: { attemptCount: 0, deliveryToken: '1234567890abcdefgh' } });
+
+        expect(deliveryTokenFor(item, 35)).toBe('iz1234567890abcdefgh00000z');
+        expect(deliveryTokenFor(item, 35)).toHaveLength(DELIVERY_TOKEN_MAX_LENGTH);
+    });
+});
+
 // ---- setClient / isReady ----
 
 describe('DiscordCapabilityImpl.isReady', () => {
@@ -173,6 +186,34 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         expect(result.status).toBe('unavailable');
     });
 
+    test('when outboxable content is sent immediately: appends only its invisible code and nonce', async () => {
+        const channel = makeChannel();
+        const client  = makeClient(channel);
+        const { cap } = makeCapability(true, makeOutboxBackend());
+        cap.setClient(client);
+
+        await cap.sendToChannel(createChannelId('channel-1'), 'Hello');
+
+        const payload = (channel.send as ReturnType<typeof mock>).mock.calls[0]?.[0] as { content: string, nonce: string, enforceNonce: boolean };
+        expect(decodeDeliveryCode(payload.content)).toBe(payload.nonce);
+        expect(payload.content).not.toContain(`[${payload.nonce}]`);
+        expect(payload.enforceNonce).toBe(true);
+    });
+
+    test('queues outboxable text that would exceed Discord length after its invisible code', async () => {
+        const channel = makeChannel();
+        const outbox = makeOutboxBackend();
+        const { cap } = makeCapability(true, outbox);
+        cap.setClient(makeClient(channel));
+        const token = deliveryTokenFor(makeOutboxItem({ progress: { attemptCount: 0, deliveryToken: 'lengthboundary' } }), 0);
+
+        const result = await cap.sendToChannel(createChannelId('channel-1'), 'a'.repeat(maxContentLengthForDeliveryCode(token) + 1));
+
+        expect(result.status).toBe('queued');
+        expect(channel.send).not.toHaveBeenCalled();
+        expect(outbox.enqueue).toHaveBeenCalledTimes(1);
+    });
+
     test('when ready but send throws: falls back to outbox, returns {status: queued}', async () => {
         const channel = makeChannel(async () => {
             throw new Error('Discord error');
@@ -185,6 +226,11 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const result = await cap.sendToChannel(createChannelId('channel-1'), 'Hello');
         expect(result.status).toBe('queued');
         expect(outbox.enqueue).toHaveBeenCalledTimes(1);
+        expect((outbox.enqueue as ReturnType<typeof mock>).mock.calls[0]?.[0]).toMatchObject({
+            destination: 'channel-1',
+            payload:     { text: 'Hello' },
+            progress:    { attemptCount: 0, outcome: 'unknown', lastError: 'Discord error', deliveryToken: expect.any(String) },
+        });
         expect(logger.warn).toHaveBeenCalledTimes(1);
         expect(logger.warn).toHaveBeenCalledWith({ error: 'Discord error', channelId: 'channel-1' }, 'Discord send failed, attempting outbox queue');
     });
@@ -425,8 +471,8 @@ describe('createOutboxReplayDeliverFn', () => {
         await deliver(item);
 
         expect(channel.send).toHaveBeenCalledTimes(2);
-        expect(channel.send).toHaveBeenNthCalledWith(1, 'Hello');
-        expect(channel.send).toHaveBeenNthCalledWith(2, { embeds, components });
+        expect(channel.send).toHaveBeenNthCalledWith(1, { content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)), nonce: deliveryTokenFor(item, 0), enforceNonce: true });
+        expect(channel.send).toHaveBeenNthCalledWith(2, { embeds, components, content: appendDeliveryCode('', deliveryTokenFor(item, 1)), nonce: deliveryTokenFor(item, 1), enforceNonce: true });
     });
 
     test('sends components when the queued item has no embeds', async () => {
@@ -437,19 +483,21 @@ describe('createOutboxReplayDeliverFn', () => {
             components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }],
         }];
 
-        await deliver(makeOutboxItem({ payload: { components } }));
+        const item = makeOutboxItem({ payload: { components } });
+        await deliver(item);
 
-        expect(channel.send).toHaveBeenCalledWith({ embeds: undefined, components });
+        expect(channel.send).toHaveBeenCalledWith({ embeds: undefined, components, content: appendDeliveryCode('', deliveryTokenFor(item, 0)), nonce: deliveryTokenFor(item, 0), enforceNonce: true });
     });
 
     test('sends text-only queued items exactly once', async () => {
         const channel = makeChannel();
         const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) });
 
-        await deliver(makeOutboxItem({ payload: { text: 'Hello' } }));
+        const item = makeOutboxItem({ payload: { text: 'Hello' } });
+        await deliver(item);
 
         expect(channel.send).toHaveBeenCalledTimes(1);
-        expect(channel.send).toHaveBeenCalledWith('Hello');
+        expect(channel.send).toHaveBeenCalledWith({ content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)), nonce: deliveryTokenFor(item, 0), enforceNonce: true });
     });
 
     test('sends embeds when the queued item has no components', async () => {
@@ -457,9 +505,27 @@ describe('createOutboxReplayDeliverFn', () => {
         const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) });
         const embeds = [{ title: 'Approval needed' }];
 
-        await deliver(makeOutboxItem({ payload: { embeds } }));
+        const item = makeOutboxItem({ payload: { embeds } });
+        await deliver(item);
 
-        expect(channel.send).toHaveBeenCalledWith({ embeds, components: undefined });
+        expect(channel.send).toHaveBeenCalledWith({ embeds, components: undefined, content: appendDeliveryCode('', deliveryTokenFor(item, 0)), nonce: deliveryTokenFor(item, 0), enforceNonce: true });
+    });
+
+    test('keeps every replayed chunk within the Discord UTF-16 content limit after its code is appended', async () => {
+        const channel = makeChannel();
+        const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) });
+        const item = makeOutboxItem({ progress: { attemptCount: 0, deliveryToken: 'boundarytoken' }, payload: {} });
+        const firstToken = deliveryTokenFor(item, 0);
+        item.payload = { text: 'a'.repeat(maxContentLengthForDeliveryCode(firstToken) + 1) };
+
+        await deliver(item);
+
+        const sent = (channel.send as ReturnType<typeof mock>).mock.calls.map(call => call[0] as { content: string, nonce: string });
+        expect(sent).toHaveLength(2);
+        expect(sent[0]?.content).toHaveLength(DISCORD_MAX_LENGTH);
+        expect(sent.every(payload => payload.content.length <= DISCORD_MAX_LENGTH)).toBe(true);
+        expect(sent.map(payload => decodeDeliveryCode(payload.content))).toEqual([deliveryTokenFor(item, 0), deliveryTokenFor(item, 1)]);
+        expect(sent.map(payload => payload.nonce)).toEqual([deliveryTokenFor(item, 0), deliveryTokenFor(item, 1)]);
     });
 
     test('rejects when sending a text chunk fails', async () => {
@@ -484,6 +550,73 @@ describe('createOutboxReplayDeliverFn', () => {
         const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => null) });
 
         await expect(deliver(makeOutboxItem({}))).rejects.toThrow(ChannelNotFoundByIdError);
+    });
+
+    test('acknowledges an unknown delivery found by its invisible code without resending', async () => {
+        const item = makeOutboxItem({ progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: 'knownmarker' }, payload: { text: 'Hello' } });
+        const send = mock(async (): Promise<Message> => ({ id: 'duplicate' } as Message));
+        const fetch = mock(async () => new Map([['message-1', { content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)) }]]));
+        const channel = { send, messages: { fetch } } as unknown as TextChannel;
+
+        await createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(item);
+
+        expect(fetch).toHaveBeenCalledWith({ limit: 100 });
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    test('does not acknowledge an unknown text and component delivery until every code is present', async () => {
+        const components = [{ type: 1, components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }] }];
+        const item = makeOutboxItem({ progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: 'textandcomponents' }, payload: { text: 'Hello', components } });
+        const send = mock(async (): Promise<Message> => ({ id: 'replacement' } as Message));
+        const fetch = mock(async () => new Map([['message-1', { content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)) }]]));
+        const channel = { send, messages: { fetch } } as unknown as TextChannel;
+
+        await createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(item);
+
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenNthCalledWith(1, { content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)), nonce: deliveryTokenFor(item, 0), enforceNonce: true });
+        expect(send).toHaveBeenNthCalledWith(2, { embeds: undefined, components, content: appendDeliveryCode('', deliveryTokenFor(item, 1)), nonce: deliveryTokenFor(item, 1), enforceNonce: true });
+    });
+
+    test('retries an unknown delivery after successful history proves its code absent', async () => {
+        const item = makeOutboxItem({ progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: 'missingmarker' }, payload: { text: 'Hello' } });
+        const send = mock(async (): Promise<Message> => ({ id: 'replacement' } as Message));
+        const fetch = mock(async () => new Map());
+        const channel = { send, messages: { fetch } } as unknown as TextChannel;
+
+        await createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(item);
+
+        expect(fetch).toHaveBeenCalledWith({ limit: 100 });
+        expect(send).toHaveBeenCalledWith({ content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)), nonce: deliveryTokenFor(item, 0), enforceNonce: true });
+    });
+
+    test('defers an unknown delivery when history cannot be fetched', async () => {
+        const item = makeOutboxItem({ progress: { attemptCount: 1, outcome: 'unknown' } });
+        const fetch = mock(async (): Promise<Map<string, never>> => {
+            throw new Error('history unavailable');
+        });
+        const channel = { send: mock(async (): Promise<Message> => ({ id: 'unexpected' } as Message)), messages: { fetch } } as unknown as TextChannel;
+
+        await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(item)).rejects.toThrow('Discord delivery verification remains indeterminate');
+        expect(channel.send).not.toHaveBeenCalled();
+    });
+
+    test('marks exhausted transport send retries as an indeterminate delivery', async () => {
+        const channel = makeChannel(async () => {
+            const error = new Error('request timed out');
+            error.name = 'AbortError';
+            throw error;
+        });
+
+        await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toThrow('Discord delivery verification remains indeterminate');
+    });
+
+    test('marks an ambiguous server error as indeterminate instead of classifying it', async () => {
+        const channel = makeChannel(async () => {
+            throw Object.assign(new Error('Discord gateway timeout'), { status: 504 });
+        });
+
+        await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toThrow('Discord delivery verification remains indeterminate');
     });
 });
 

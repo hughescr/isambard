@@ -22,12 +22,18 @@ const outboxPayloadSchema = serializedDiscordPayloadSchema;
 
 export const outboxServiceSchema = z.enum(['discord']);
 export type OutboxService = z.infer<typeof outboxServiceSchema>;
-export type OutboxDiscardReason = 'stale_epoch' | 'permanent_error';
+export type OutboxDiscardReason = 'stale_epoch' | 'permanent_error' | 'classified_abandon';
 
 const outboxProgressSchema = z.object({
     attemptCount:  z.number().int().min(0).default(0),
     lastAttemptAt: z.iso.datetime().optional(),
     lastError:     z.string().optional(),
+    /** Rows written before delayed delivery are immediately eligible. */
+    nextAttemptAt: z.iso.datetime().optional(),
+    /** An unknown outcome must be verified at the destination before it can be resent. */
+    outcome:       z.enum(['retryable', 'unknown']).optional(),
+    /** Visible token used for history verification; nonce is not returned by REST history. */
+    deliveryToken: z.string().min(1).max(25).optional(),
 });
 
 export const outboxItemSchema = z.object({

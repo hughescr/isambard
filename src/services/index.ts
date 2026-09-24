@@ -15,8 +15,8 @@ export { createReconnectionLoop } from './reconnection-loop';
 // Outbox
 export type { OutboxItem, OutboxItemType, OutboxPriority, OutboxService, OutboxDiscardReason } from './outbox';
 export { serializedDiscordPayloadSchema, outboxServiceSchema, OutboxBackend } from './outbox';
-export type { OutboxDrainer, DrainResult } from './outbox';
-export { createOutboxDrainer, createOutboxDrainListener } from './outbox';
+export type { OutboxDrainer, DrainResult, OutboxFailure, OutboxFailureClassification, OutboxFailureClassifier } from './outbox';
+export { createOutboxDrainer, createOutboxDrainListener, OutboxVerificationPendingError, OUTBOX_FAILURE_FALLBACK } from './outbox';
 
 // Approved outbound actions
 export type {

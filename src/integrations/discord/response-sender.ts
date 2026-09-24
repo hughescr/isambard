@@ -2,13 +2,19 @@ import { logger } from '@hughescr/logger';
 import type { TextChannel, Client } from 'discord.js';
 import type { DiscordCapability, SendResult } from './capability';
 import { type ResponseRouter, WellKnownChannelNotFoundError  } from './channel-registry';
-import { splitMessage } from './messages';
+import { DISCORD_MAX_LENGTH, splitMessage } from './messages';
+import { DELIVERY_TOKEN_MAX_LENGTH } from './outbox-replay';
 import type { DiscordRateLimiter } from './rate-limiter';
 import { withDiscordRetry } from './retry';
 import { type ChannelId } from './types';
+import { maxContentLengthForDeliveryCode } from './zero-width-delivery-code';
 import type { EnvelopeKind } from '@/agent';
 import { ChannelNotAccessibleError, InvariantViolationError } from '@/errors';
 import type { OutboxItemType } from '@/services';
+
+// Every capability send appends a delivery code. Reserve the largest token-shaped code before
+// splitting so the code remains whole and no tagged chunk crosses Discord's content limit.
+const MAX_CONTENT_LENGTH_WITH_DELIVERY_CODE = maxContentLengthForDeliveryCode('0'.repeat(DELIVERY_TOKEN_MAX_LENGTH), DISCORD_MAX_LENGTH);
 
 /**
  * Maps an envelope kind to the outbox item type used when queuing through a
@@ -198,7 +204,9 @@ export async function sendEnvelopeResponse(config: SendEnvelopeResponseConfig): 
         return { status: 'skipped', reason: 'no-response' };
     }
 
-    const chunks = splitMessage(resolved.content);
+    const chunks = discordCapability === undefined
+        ? splitMessage(resolved.content)
+        : splitMessage(resolved.content, MAX_CONTENT_LENGTH_WITH_DELIVERY_CODE);
 
     return discordCapability
         ? sendChunksViaCapability(discordCapability, resolved.targetChannelId, chunks, envelopeId, kind)

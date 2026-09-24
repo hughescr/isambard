@@ -87,7 +87,10 @@ export class OutboxBackend extends DynamoTableAccess {
                 const raw: Record<string, unknown> = item;
                 const parsed = outboxItemSchema.safeParse(raw);
                 if(parsed.success) {
-                    valid.push(parsed.data);
+                    const nextAttemptAt = parsed.data.progress.nextAttemptAt;
+                    if(nextAttemptAt === undefined || new Date(nextAttemptAt).getTime() <= Date.now()) {
+                        valid.push(parsed.data);
+                    }
                 } else {
                     // eslint-disable-next-line no-await-in-loop -- malformed rows are deleted before advancing the paginated read loop
                     await this.cleanupMalformedItem(raw, service, parsed.error);
@@ -118,13 +121,15 @@ export class OutboxBackend extends DynamoTableAccess {
         await this.putItem(this.createPersistedRow(item));
     }
 
-    async markFailed(item: OutboxItem, error: string, options: { retryable: boolean }): Promise<void> {
+    async markFailed(item: OutboxItem, error: string, options: { retryable: boolean, nextAttemptAt?: string }): Promise<void> {
         const updated: OutboxItem = {
             ...item,
             progress: {
                 attemptCount:  item.progress.attemptCount + 1,
                 lastError:     error,
                 lastAttemptAt: new Date().toISOString(),
+                outcome:       'retryable',
+                ...(options.nextAttemptAt === undefined ? {} : { nextAttemptAt: options.nextAttemptAt }),
             },
         };
         if(options.retryable) {
@@ -138,5 +143,20 @@ export class OutboxBackend extends DynamoTableAccess {
             await this.persistFailure(updated);
             throw deleteError;
         }
+    }
+
+    /** Persist an ambiguous send outcome; it is never eligible for blind replay. */
+    async markUnknown(item: OutboxItem, error: string, nextAttemptAt: string): Promise<void> {
+        await this.persistFailure({
+            ...item,
+            progress: {
+                ...item.progress,
+                attemptCount:  item.progress.attemptCount + 1,
+                lastError:     error,
+                lastAttemptAt: new Date().toISOString(),
+                nextAttemptAt,
+                outcome:       'unknown',
+            },
+        });
     }
 }

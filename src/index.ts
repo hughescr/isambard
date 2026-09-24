@@ -23,6 +23,7 @@ import {
 import { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, createApprovedActionOutcomeDelivery, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient, checkEmailSendDelivery, emailSendParamsSchema } from '@/integrations/email';
+import { createJevOutboxFailureClassifier } from '@/integrations/typesafe/jev-outbox-failure-classifier';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, createOutboxDrainListener, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionOutcomeReporter, createApprovedActionRetryListener, createWakingActionWriter, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedActionOutcomeReporter, type ApprovedOutboundActionExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type ContactChangeRequest, type EmbedderLike } from '@/storage';
 import { resolveTimezone } from '@/utils';
@@ -676,8 +677,10 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     // Outbox drainer — delivers queued Discord messages when Discord comes back online
     const outboxDrainer: OutboxDrainer = createOutboxDrainer({
         outboxBackend,
-        registry:  healthRegistry,
-        deliverFn: createOutboxReplayDeliverFn({ fetchChannel: channelId => discordCapability.fetchChannel(channelId) }),
+        registry:          healthRegistry,
+        deliverFn:         createOutboxReplayDeliverFn({ fetchChannel: channelId => discordCapability.fetchChannel(channelId) }),
+        // Config wiring for Resource.TypesafeApiKey is intentionally deferred until its SST secret is added.
+        failureClassifier: createJevOutboxFailureClassifier({}),
         logger,
     });
     registerCleanup({ name: 'outbox drainer', run: () => outboxDrainer.stop() });

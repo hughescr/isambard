@@ -174,6 +174,21 @@ describe('OutboxBackend', () => {
             // PK/SK from DynamoDB should not blow up parse (extra keys are stripped by schema)
         });
 
+        test('skips rows deferred to a future retry while keeping ready rows', async () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2030-01-01T00:00:00.000Z'));
+            const deferred = makeItem({ id: 'aaaaaaaa-1111-4222-8333-444444444445', progress: { attemptCount: 2, nextAttemptAt: '2030-01-01T00:00:01.000Z' } });
+            const ready = makeItem({ id: 'aaaaaaaa-1111-4222-8333-444444444446', progress: { attemptCount: 1, nextAttemptAt: '2029-12-31T23:59:59.999Z' } });
+            ddbMock.on(QueryCommand).resolves({
+                Items: [
+                    { PK: 'OUTBOX#discord', SK: 'ITEM#1#deferred', ...deferred },
+                    { PK: 'OUTBOX#discord', SK: 'ITEM#1#ready', ...ready },
+                ],
+            });
+
+            expect(await backend.dequeue('discord')).toEqual([expect.objectContaining({ id: ready.id, progress: ready.progress })]);
+        });
+
         test('deletes an invalid destination, then pages to the next valid item', async () => {
             const invalid = { ...makeItem(), destination: '', PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' };
             const valid = { ...makeItem(), PK: 'OUTBOX#discord', SK: 'ITEM#1#good' };
@@ -428,6 +443,28 @@ describe('OutboxBackend', () => {
             ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
 
             await expect(backend.acknowledgeDelivered(makeItem())).rejects.toThrow('delete failed');
+        });
+    });
+
+    describe('markUnknown()', () => {
+        test('increments attempts and preserves the delivery token while scheduling verification', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            const item = makeItem({ progress: { attemptCount: 2, deliveryToken: 'delivery-token', outcome: 'unknown' } });
+
+            await backend.markUnknown(item, 'history unavailable', '2030-01-01T00:01:00.000Z');
+
+            const stored = ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item;
+            expect(stored).toMatchObject({
+                id:       ITEM_ID,
+                progress: {
+                    attemptCount:  3,
+                    deliveryToken: 'delivery-token',
+                    outcome:       'unknown',
+                    lastError:     'history unavailable',
+                    nextAttemptAt: '2030-01-01T00:01:00.000Z',
+                },
+            });
+            expect(stored?.progress).toHaveProperty('lastAttemptAt', expect.any(String));
         });
     });
 

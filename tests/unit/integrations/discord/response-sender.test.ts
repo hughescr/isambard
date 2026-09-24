@@ -16,11 +16,15 @@ import type { Client, TextChannel } from 'discord.js';
 import { mockLogger } from '../../../setup';
 import { InvariantViolationError } from '@/errors';
 import { WellKnownChannelNotFoundError } from '@/errors/discord';
-import type { DiscordCapability } from '@/integrations/discord/capability';
+import { DiscordCapabilityImpl, type DiscordCapability } from '@/integrations/discord/capability';
 import { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
+import { DISCORD_MAX_LENGTH } from '@/integrations/discord/messages';
+import { DELIVERY_TOKEN_MAX_LENGTH } from '@/integrations/discord/outbox-replay';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse, type SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
 import type { ChannelId } from '@/integrations/discord/types';
+import { decodeDeliveryCode, maxContentLengthForDeliveryCode } from '@/integrations/discord/zero-width-delivery-code';
+import type { OutboxBackend } from '@/services';
 
 describe('sendEnvelopeResponse', () => {
     let mockResponseRouter: ResponseRouter;
@@ -367,6 +371,45 @@ describe('sendEnvelopeResponse', () => {
             envelopeId:  'env-11', kind:        'catchup', chunkIndex:  0, totalChunks: 1,
             msg:         'Envelope response chunk sent via capability facade',
         });
+    });
+
+    test('with a real discordCapability, splits against the delivery-code budget before appending one complete code', async () => {
+        const largestDeliveryToken = '0'.repeat(DELIVERY_TOKEN_MAX_LENGTH);
+        const content = 'a'.repeat(maxContentLengthForDeliveryCode(largestDeliveryToken, DISCORD_MAX_LENGTH));
+        const channel = {
+            send: mock(async () => ({ id: 'message-with-code' })),
+        } as unknown as TextChannel;
+        const capabilityClient = {
+            channels: { fetch: mock(async () => channel) },
+        } as unknown as Client;
+        const capability = new DiscordCapabilityImpl({
+            registry:      { isAvailable: mock(() => true) } as never,
+            logger:        { warn: mock(), error: mock(), info: mock() },
+            outboxBackend: { enqueue: mock(async () => undefined) } as unknown as OutboxBackend,
+        });
+        capability.setClient(capabilityClient);
+        mockResolveEnvelopeTarget.mockResolvedValue({
+            targetChannelId: 'target-channel-456' as ChannelId,
+            shouldSend:      true,
+            content,
+        });
+
+        const result = await sendEnvelopeResponse({
+            envelopeId:        'env-delivery-code-boundary',
+            kind:              'catchup',
+            text:              content,
+            responseRouter:    mockResponseRouter,
+            client:            mockClient,
+            rateLimiter:       mockRateLimiter,
+            discordCapability: capability,
+        });
+
+        expect(result).toEqual({ status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['message-with-code'] });
+        expect(channel.send).toHaveBeenCalledTimes(1);
+        const payload = (channel.send as ReturnType<typeof mock>).mock.calls[0]?.[0] as { content: string, nonce: string };
+        expect(payload.content.slice(0, content.length)).toBe(content);
+        expect(payload.content.length).toBeLessThanOrEqual(DISCORD_MAX_LENGTH);
+        expect(decodeDeliveryCode(payload.content)).toBe(payload.nonce);
     });
 
     test('with a discordCapability, a discord-kind envelope queues under the agent_response outbox type', async () => {
