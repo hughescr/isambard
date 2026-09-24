@@ -2094,6 +2094,14 @@ describe('InboxManager', () => {
                 'Discord inbox catch-up reached message fetch limit'
             );
         });
+
+        test('does not warn when loadUnread coverage is complete', async () => {
+            const loadedManager = managerForLoadedMessages([]);
+
+            await loadedManager.loadUnread();
+
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
     });
 
     describe('replayUnhandled', () => {
@@ -2144,6 +2152,18 @@ describe('InboxManager', () => {
                 { channelId, coverage: 'limitReached', fetched: 100, matchedInFetched: 100 },
                 'Discord inbox replay reached message fetch limit'
             );
+        });
+
+        test('does not warn when replay coverage is complete', async () => {
+            const checkpoint = makeCheckpoint({
+                lastSeenAt: '2025-01-25T13:00:00.000Z',
+                handled:    { messageId: '100', at: '2025-01-25T12:00:00.000Z' },
+            });
+            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+
+            await manager.replayUnhandled();
+
+            expect(mockLogger.warn).not.toHaveBeenCalled();
         });
 
         test('should exclude messages with id <= handled.messageId and bot-authored messages', async () => {

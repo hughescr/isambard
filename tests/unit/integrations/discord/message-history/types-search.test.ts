@@ -51,6 +51,13 @@ describe.concurrent('discordSearchResultSchema', () => {
     ])('rejects invalid %s', (_fieldName, override) => {
         expect(discordSearchResultSchema.safeParse({ ...validSearchResult, ...override }).success).toBe(false);
     });
+
+    test.each([
+        ['id', { id: 'a' }],
+        ['replyTo', { replyTo: 'a' }],
+    ])('accepts single-character %s', (_fieldName, override) => {
+        expect(discordSearchResultSchema.safeParse({ ...validSearchResult, ...override }).success).toBe(true);
+    });
 });
 
 describe('batchOverflowSummarySchema', () => {
@@ -64,6 +71,13 @@ describe('batchOverflowSummarySchema', () => {
         ['empty author', { authors: [''] }],
     ])('rejects %s', (_name, override) => {
         expect(batchOverflowSummarySchema.safeParse({ ...validBatch, ...override }).success).toBe(false);
+    });
+
+    test.each([
+        ['single-character synopsis', { synopsis: 'a' }],
+        ['single-character author', { authors: ['a'] }],
+    ])('accepts %s', (_name, override) => {
+        expect(batchOverflowSummarySchema.safeParse({ ...validBatch, ...override }).success).toBe(true);
     });
 });
 
@@ -100,6 +114,52 @@ describe('searchResponseSchema', () => {
         }
     });
 
+    test('accepts count-only overflow with zero count', () => {
+        const result = searchResponseSchema.safeParse({
+            ...validSearchResponse,
+            overflow: { mode: 'count-only', count: 0 },
+        });
+        expect(result.success).toBe(true);
+    });
+
+    test('accepts summarized overflow with zero count and zero covered count', () => {
+        const result = searchResponseSchema.safeParse({
+            ...validSearchResponse,
+            overflow: { mode: 'summarized', count: 0, batchSummaries: [], summarizedCount: 0 },
+        });
+        expect(result.success).toBe(true);
+    });
+
+    test('accepts summarized overflow whose covered count equals the overflow count', () => {
+        const result = searchResponseSchema.safeParse({
+            ...validSearchResponse,
+            overflow: { mode: 'summarized', count: 5, batchSummaries: [], summarizedCount: 5 },
+        });
+        expect(result.success).toBe(true);
+    });
+
+    test('reports the exact message for a negative count-only overflow count', () => {
+        const result = searchResponseSchema.safeParse({
+            ...validSearchResponse,
+            overflow: { mode: 'count-only', count: -1 },
+        });
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toBe('Count cannot be negative');
+        }
+    });
+
+    test('reports the exact message for a negative summarized overflow covered count', () => {
+        const result = searchResponseSchema.safeParse({
+            ...validSearchResponse,
+            overflow: { mode: 'summarized', count: 1, batchSummaries: [], summarizedCount: -1 },
+        });
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            expect(result.error.issues[0]?.message).toBe('Summarized count cannot be negative');
+        }
+    });
+
     test('rejects mixed count-only and summarized overflow fields', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,
@@ -123,6 +183,14 @@ describe('searchResponseSchema', () => {
         ['summarized negative covered count', { mode: 'summarized', count: 1, batchSummaries: [], summarizedCount: -1 }],
     ])('rejects %s', (_name, overflow) => {
         expect(searchResponseSchema.safeParse({ ...validSearchResponse, overflow }).success).toBe(false);
+    });
+
+    test('accepts metadata with zero fetched and zero matchedInFetched', () => {
+        const result = searchResponseSchema.safeParse({
+            ...validSearchResponse,
+            metadata: { ...completeMetadata, fetched: 0, matchedInFetched: 0 },
+        });
+        expect(result.success).toBe(true);
     });
 
     test('accepts limit-reached coverage', () => {

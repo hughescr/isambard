@@ -79,6 +79,15 @@ describe.concurrent('discordAuthorSchema', () => {
         });
         expect(result.success).toBe(false);
     });
+
+    test.each([
+        ['id', { id: 'a' }],
+        ['username', { username: 'a' }],
+        ['displayName', { displayName: 'a' }],
+    ])('should accept single-character %s', (_fieldName, override) => {
+        const result = discordAuthorSchema.safeParse({ ...validAuthor, ...override });
+        expect(result.success).toBe(true);
+    });
 });
 
 describe('discordAttachmentSchema', () => {
@@ -106,6 +115,11 @@ describe('discordAttachmentSchema', () => {
             : base;
         const result = discordAttachmentSchema.safeParse(testData);
         expect(result.success).toBe(false);
+    });
+
+    test('should accept single-character filename', () => {
+        const result = discordAttachmentSchema.safeParse({ ...validAttachment, filename: 'a' });
+        expect(result.success).toBe(true);
     });
 });
 
