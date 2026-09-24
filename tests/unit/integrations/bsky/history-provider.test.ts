@@ -343,6 +343,27 @@ describe('BskyHistoryProvider', () => {
             expect(result.truncated).toBe(true);
         });
 
+        test('stops paging once a page fills maxMessages even when a next cursor is returned', async () => {
+            mockGetAuthorFeed.mockImplementation(async (_actor, _limit, cursor) => (cursor === undefined
+                ? {
+                    items: [
+                        makeFeedItem({ text: 'first', createdAt: '2026-03-28T12:00:00.000Z' }),
+                        makeFeedItem({ text: 'second', createdAt: '2026-03-28T11:00:00.000Z' }),
+                    ],
+                    cursor: 'next-page',
+                }
+                : { items: [] }));
+
+            const result = await provider.fetchHistory({ identifier: 'alice.bsky.social', maxMessages: 2 });
+
+            expect(mockGetAuthorFeed).toHaveBeenCalledTimes(1);
+            expect(result.entries.map(entry => entry.summary)).toEqual([
+                '@alice.bsky.social: first',
+                '@alice.bsky.social: second',
+            ]);
+            expect(result.truncated).toBe(true);
+        });
+
         test('marks a feed scan stopped at its page cap as truncated', async () => {
             mockGetAuthorFeed.mockImplementation(async (_actor, _limit, cursor) => ({
                 items:  [makeFeedItem({ createdAt: '2026-03-28T12:00:00.000Z' })],
