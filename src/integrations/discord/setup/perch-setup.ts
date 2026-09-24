@@ -66,7 +66,7 @@ function wrapConductorWithDelivery(
                     envelopeId: envelope.id,
                     kind:       envelope.kind,
                     channelId,
-                    text:       result.response!,
+                    text:       result.response,
                     responseRouter,
                     client,
                     rateLimiter,
