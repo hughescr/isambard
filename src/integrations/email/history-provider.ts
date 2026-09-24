@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import { parseMailboxMessageRef } from './types';
+import { formatAddressForDisplay, parseMailboxMessageRef } from './types';
 import type { WildDuckClient, WildDuckSearchParams, WildDuckSearchResult } from './wildduck-client';
 import type { PlatformHistoryProvider, HistoryFetchParams, HistoryEntry } from '@/agent';
 import { EmailFolder } from '@/config';
@@ -35,8 +35,7 @@ function determineDirection(result: WildDuckSearchResult, botAddress: string): '
     if(isSentMailFolder(result.message)) {
         return 'outbound';
     }
-    // Check if the from address contains the bot's address
-    if(result.from.toLowerCase().includes(botAddress.toLowerCase())) {
+    if(result.from?.address?.toLowerCase() === botAddress.toLowerCase()) {
         return 'outbound';
     }
     return 'inbound';
@@ -48,7 +47,7 @@ function determineDirection(result: WildDuckSearchResult, botAddress: string): '
 function toHistoryEntry(result: WildDuckSearchResult, botAddress: string): HistoryEntry {
     const direction  = determineDirection(result, botAddress);
     const subject    = truncate(result.subject, MAX_SUBJECT_CHARS);
-    const summary    = `${result.from} — "${subject}"`;
+    const summary    = `${formatAddressForDisplay(result.from)} — "${subject}"`;
 
     return {
         platform:  'email',

@@ -7,6 +7,7 @@ import {
     classifierVerdictSchema,
     draftsMailboxMessageRefSchema,
     emailSenderProfileSchema,
+    formatAddressForDisplay,
     formatMailboxMessageRef,
     mailboxMessageRefSchema,
     parseMailboxMessageRef
@@ -66,6 +67,15 @@ describe.concurrent('emailSenderProfileSchema', () => {
 
     test('rejects an unknown sender profile', () => {
         expect(emailSenderProfileSchema.safeParse('personal').success).toBe(false);
+    });
+});
+
+describe.concurrent('formatAddressForDisplay', () => {
+    test('renders normal, name-only, and absent search addresses unambiguously', () => {
+        expect(formatAddressForDisplay({ address: 'person@example.com' })).toBe('person@example.com');
+        expect(formatAddressForDisplay({ name: 'Person', address: 'person@example.com' })).toBe('Person <person@example.com>');
+        expect(formatAddressForDisplay(null)).toBe('(no address)');
+        expect(formatAddressForDisplay({ name: 'Person', address: null })).toBe('Person (no address)');
     });
 });
 

@@ -6,6 +6,7 @@ export {
     classifierVerdictSchema,
     draftsMailboxMessageRefSchema,
     emailSenderProfileSchema,
+    formatAddressForDisplay,
     formatMailboxMessageRef,
     mailboxMessageRefSchema,
     parseMailboxMessageRef
@@ -15,6 +16,8 @@ export type {
     AttachmentData,
     EmailMetadata,
     EmailAddress,
+    NameOnlyEmailAddress,
+    SearchEmailAddress,
     EmailHeaders,
     VerificationResults,
     AuthCheckResult,

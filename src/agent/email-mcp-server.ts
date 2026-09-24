@@ -12,20 +12,10 @@ import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthG
 import { EmailFolder } from '@/config';
 import { EmailProcessingError } from '@/errors';
 // eslint-disable-next-line boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatMailboxMessageRef, mailboxMessageRefSchema, searchDraftsByReviewState, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta } from '@/integrations/email';
+import { draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, mailboxMessageRefSchema, searchDraftsByReviewState, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
-/**
- * Format an email address for display to Claude in MCP tool responses.
- * WARNING: NOT RFC 2822 compliant — does NOT quote or escape special characters in names.
- * MUST NOT be used to construct addresses for To:, Cc:, or any outgoing email field.
- * For AI-readable display only.
- */
-function formatAddressForDisplay(addr: { name?: string, address: string }): string {
-    return addr.name ? `${addr.name} <${addr.address}>` : addr.address;
-}
-
 /** Mailboxes accessible directly by the agent without admin review. */
 const ACCESSIBLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive]);
 
@@ -537,8 +527,8 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const lines = [
                             `Found ${results.length} email${results.length === 1 ? '' : 's'}:`,
                             ...results.map((r) => {
-                                const toStr = r.to.length > 0 ? r.to.join(', ') : '(none)';
-                                return `- ${r.message} | From: ${r.from} | To: ${toStr} | Subject: ${r.subject} | Date: ${r.date}`;
+                                const toStr = r.to.length > 0 ? r.to.map(address => formatAddressForDisplay(address)).join(', ') : '(none)';
+                                return `- ${r.message} | From: ${formatAddressForDisplay(r.from)} | To: ${toStr} | Subject: ${r.subject} | Date: ${r.date}`;
                             }),
                         ];
 

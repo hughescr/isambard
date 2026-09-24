@@ -440,7 +440,7 @@ describe('WildDuckClient', () => {
             expect(results[0]?.message).toBe('CleanInbox:42');
         });
 
-        test('formats from address with name when present', async () => {
+        test('maps named sender address to a structured address', async () => {
             const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
@@ -459,10 +459,10 @@ describe('WildDuckClient', () => {
 
             const results = await client.search({});
 
-            expect(results[0]?.from).toBe('Alice Smith <alice@example.com>');
+            expect(results[0]?.from).toEqual({ name: 'Alice Smith', address: 'alice@example.com' });
         });
 
-        test('formats from address without name when absent', async () => {
+        test('maps unnamed sender address to a structured address', async () => {
             const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
@@ -481,10 +481,10 @@ describe('WildDuckClient', () => {
 
             const results = await client.search({});
 
-            expect(results[0]?.from).toBe('noname@example.com');
+            expect(results[0]?.from).toEqual({ address: 'noname@example.com' });
         });
 
-        test('preserves documented empty address fallbacks in search display values', async () => {
+        test('maps empty raw address objects to null for senders and recipients', async () => {
             const client = await makeSearchInitializedClient();
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
                 success: true,
@@ -499,11 +499,11 @@ describe('WildDuckClient', () => {
             }));
 
             const [result] = await client.search({});
-            expect(result.from).toBe('');
-            expect(result.to).toEqual(['', 'Recipient <>']);
+            expect(result.from).toBeNull();
+            expect(result.to).toEqual([null, { name: 'Recipient', address: null }]);
         });
 
-        test('preserves an empty sender address when WildDuck supplies only a display name', async () => {
+        test('maps a name-only sender to a null-address record', async () => {
             const client = await makeSearchInitializedClient();
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
                 success: true,
@@ -518,10 +518,10 @@ describe('WildDuckClient', () => {
             }));
 
             const [result] = await client.search({});
-            expect(result.from).toBe('Sender <>');
+            expect(result.from).toEqual({ name: 'Sender', address: null });
         });
 
-        test('maps to addresses to formatted strings', async () => {
+        test('maps recipient addresses to structured values', async () => {
             const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
@@ -543,7 +543,7 @@ describe('WildDuckClient', () => {
 
             const results = await client.search({});
 
-            expect(results[0]?.to).toEqual(['Bob <bob@example.com>', 'carol@example.com']);
+            expect(results[0]?.to).toEqual([{ name: 'Bob', address: 'bob@example.com' }, { address: 'carol@example.com' }]);
         });
 
         test('uses raw mailbox value when mailbox ID is not in map', async () => {
@@ -2125,7 +2125,7 @@ describe('WildDuckClient', () => {
             const client = new WildDuckClient(CLIENT_OPTIONS);
             client.search = mock(async () => [{
                 message: '42',
-                from:    'sender@example.com',
+                from:    { address: 'sender@example.com' },
                 to:      [],
                 subject: 'Malformed upstream result',
                 date:    '2025-01-01T10:00:00.000Z',
@@ -2175,7 +2175,7 @@ describe('WildDuckClient', () => {
             const client = new WildDuckClient(CLIENT_OPTIONS);
             client.search = mock(async () => [{
                 message: 'Work:Projects:42',
-                from:    'sender@example.com',
+                from:    { address: 'sender@example.com' },
                 to:      [],
                 subject: 'Colon in folder name',
                 date:    '2025-01-01T10:00:00.000Z',
@@ -2188,7 +2188,7 @@ describe('WildDuckClient', () => {
             const client = new WildDuckClient(CLIENT_OPTIONS);
             client.search = mock(async () => [{
                 message: 'CleanInbox:7.5',
-                from:    'sender@example.com',
+                from:    { address: 'sender@example.com' },
                 to:      [],
                 subject: 'Fractional suffix',
                 date:    '2025-01-01T10:00:00.000Z',

@@ -2,7 +2,7 @@ import { logger } from '@hughescr/logger';
 import { convert } from 'html-to-text';
 import { EmailFolder } from '@/config';
 import { WildDuckError, WildDuckAuthError } from '@/errors';
-import { formatMailboxMessageRef, parseMailboxMessageRef, type EmailMetadata, type EmailAddress, type EmailHeaders, type VerificationResults } from '@/integrations/email/types';
+import { formatMailboxMessageRef, parseMailboxMessageRef, type EmailMetadata, type EmailAddress, type EmailHeaders, type SearchEmailAddress, type VerificationResults } from '@/integrations/email/types';
 
 export { WildDuckError, WildDuckAuthError } from '@/errors';
 
@@ -35,6 +35,20 @@ function mapAddress(addr: { address: string, name?: string }): EmailAddress {
     };
 }
 
+/** Maps a partial WildDuck search address while preserving whether an address exists. */
+function mapSearchAddress(addr: { name?: string, address?: string }): SearchEmailAddress {
+    if(addr.address) {
+        return {
+            address: addr.address,
+            ...(addr.name ? { name: addr.name } : {}),
+        };
+    }
+    if(addr.name) {
+        return { name: addr.name, address: null };
+    }
+    return null;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -57,8 +71,8 @@ export interface WildDuckSearchParams {
 export interface WildDuckSearchResult {
     /** 'FolderName:uid' format e.g. 'CleanInbox:42' */
     message: string
-    from:    string
-    to:      string[]
+    from:    SearchEmailAddress
+    to:      SearchEmailAddress[]
     subject: string
     date:    string
 }
@@ -612,13 +626,8 @@ export class WildDuckClient {
             : Number.NaN;
         const message    = formatMailboxMessageRef({ folder: folderName, uid });
 
-        const from = result.from.name
-            ? `${result.from.name} <${result.from.address ?? ''}>`
-            : (result.from.address ?? '');
-
-        const to = result.to.map(addr => (
-            addr.name ? `${addr.name} <${addr.address ?? ''}>` : (addr.address ?? '')
-        ));
+        const from = mapSearchAddress(result.from);
+        const to   = result.to.map(address => mapSearchAddress(address));
 
         return {
             message,

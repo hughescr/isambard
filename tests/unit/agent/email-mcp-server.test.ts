@@ -1842,15 +1842,15 @@ describe('createEmailMCPServer', () => {
             mockSearchWildDuck.search = mock(async () => [
                 {
                     message: 'CleanInbox:42',
-                    from:    'Alice <alice@example.com>',
-                    to:      ['me@example.com'],
+                    from:    { name: 'Alice', address: 'alice@example.com' },
+                    to:      [{ address: 'me@example.com' }],
                     subject: 'Hello world',
                     date:    '2025-01-01T10:00:00.000Z',
                 },
                 {
                     message: 'Archive:17',
-                    from:    'bob@example.com',
-                    to:      ['me@example.com', 'other@example.com'],
+                    from:    { address: 'bob@example.com' },
+                    to:      [{ address: 'me@example.com' }, { address: 'other@example.com' }],
                     subject: 'Second email',
                     date:    '2025-01-02T10:00:00.000Z',
                 },
@@ -1873,7 +1873,7 @@ describe('createEmailMCPServer', () => {
             mockSearchWildDuck.search = mock(async () => [
                 {
                     message: 'CleanInbox:1',
-                    from:    'alice@example.com',
+                    from:    { address: 'alice@example.com' },
                     to:      [],
                     subject: 'Test',
                     date:    '2025-01-01T10:00:00.000Z',
@@ -1894,7 +1894,7 @@ describe('createEmailMCPServer', () => {
             mockSearchWildDuck.search = mock(async () => [
                 {
                     message: 'CleanInbox:1',
-                    from:    'alice@example.com',
+                    from:    { address: 'alice@example.com' },
                     to:      [],
                     subject: 'Test',
                     date:    '2025-01-01T10:00:00.000Z',
@@ -3790,7 +3790,7 @@ describe('createEmailMCPServer', () => {
         test('search preserves omitted fields, mixed-case content, and empty producer fields', async () => {
             const search = mock(async () => [{
                 message: 'CleanInbox:1',
-                from:    '',
+                from:    null,
                 to:      [],
                 subject: '',
                 date:    '',
@@ -3800,7 +3800,7 @@ describe('createEmailMCPServer', () => {
             expect(search).toHaveBeenCalledWith(expect.objectContaining({
                 query: expect.objectContaining({ content: 'MiXeD' }) as unknown,
             }));
-            expect(getText(result)).toBe('Found 1 email:\n- CleanInbox:1 | From:  | To: (none) | Subject:  | Date: ');
+            expect(getText(result)).toBe('Found 1 email:\n- CleanInbox:1 | From: (no address) | To: (none) | Subject:  | Date: ');
         });
 
         test('one send attachment is uploaded with its exact name, type, and content', async () => {

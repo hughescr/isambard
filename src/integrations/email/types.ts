@@ -125,6 +125,26 @@ export interface EmailAddress {
     address: string
 }
 
+/** A search-result address that has a display name but no usable email address. */
+export interface NameOnlyEmailAddress {
+    name:    string
+    address: null
+}
+
+/** An address returned by a WildDuck search, including partial address data. */
+export type SearchEmailAddress = EmailAddress | NameOnlyEmailAddress | null;
+
+/** Formats an address for human-readable display without producing an outbound address. */
+export function formatAddressForDisplay(address: SearchEmailAddress): string {
+    if(address === null) {
+        return '(no address)';
+    }
+    if(address.address === null) {
+        return `${address.name} (no address)`;
+    }
+    return address.name ? `${address.name} <${address.address}>` : address.address;
+}
+
 // Selected headers we expose
 export interface EmailHeaders {
     messageId?:             string

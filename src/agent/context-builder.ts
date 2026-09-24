@@ -11,8 +11,8 @@ import type { SummarizeEventBatchesFn } from './event-summarizer';
 import { formatTimeHeader } from './time-header';
 import type { BlueskyClient, BskyRejectionBackend } from '@/integrations/bsky';
 import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, type FailedCalendarEvent, CaldavTimeoutError, CaldavAuthError } from '@/integrations/caldav';
-// eslint-disable-next-line boundaries/dependencies -- Draft review states are the public email persistence contract shared by the perch context.
-import { searchDraftsByReviewState } from '@/integrations/email';
+// eslint-disable-next-line boundaries/dependencies -- The perch context consumes public email display and draft-state contracts.
+import { formatAddressForDisplay, searchDraftsByReviewState } from '@/integrations/email';
 import type { ServiceHealthRegistry } from '@/services';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, resolveTimezone } from '@/utils';
@@ -526,7 +526,7 @@ class ContextBuilderImpl implements ContextBuilder {
                 const inboxLines: string[] = [];
                 for(const summary of summaries) {
                     const age = formatShortRelativeTime(new Date(summary.date), now);
-                    const fromStr = summary.from.name ? `${summary.from.name} <${summary.from.address}>` : summary.from.address;
+                    const fromStr = formatAddressForDisplay(summary.from);
                     inboxLines.push(`- [CleanInbox:${summary.id}] From: ${fromStr} | Subject: ${summary.subject} | ${age}`);
                 }
                 return `## Inbox\nYou have mail (${counts.unseen} unread):\n${inboxLines.join('\n')}`;

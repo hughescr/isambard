@@ -20,8 +20,8 @@ const mockClient = {
 function makeSearchResult(overrides: Partial<WildDuckSearchResult> = {}): WildDuckSearchResult {
     return {
         message: 'CleanInbox:42',
-        from:    'Alice <alice@example.com>',
-        to:      ['bot@isambard.ai'],
+        from:    { name: 'Alice', address: 'alice@example.com' },
+        to:      [{ address: 'bot@isambard.ai' }],
         subject: 'Hello there',
         date:    '2026-03-28T10:00:00.000Z',
         ...overrides,
@@ -69,8 +69,8 @@ describe('EmailHistoryProvider', () => {
     test('converts inbound email to HistoryEntry', async () => {
         const searchResult = makeSearchResult({
             message: 'CleanInbox:42',
-            from:    'Alice <alice@example.com>',
-            to:      ['bot@isambard.ai'],
+            from:    { name: 'Alice', address: 'alice@example.com' },
+            to:      [{ address: 'bot@isambard.ai' }],
             subject: 'Hello there',
             date:    '2026-03-28T10:00:00.000Z',
         });
@@ -91,8 +91,8 @@ describe('EmailHistoryProvider', () => {
     test('sets direction to outbound for Sent Mail messages (from bot)', async () => {
         const searchResult = makeSearchResult({
             message: 'Sent Mail:17',
-            from:    'bot@isambard.ai',
-            to:      ['alice@example.com'],
+            from:    { address: 'bot@isambard.ai' },
+            to:      [{ address: 'alice@example.com' }],
             subject: 'Reply from bot',
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
@@ -111,8 +111,8 @@ describe('EmailHistoryProvider', () => {
         // 'alice@example.com' does not contain 'bot@isambard.ai'.
         const searchResult = makeSearchResult({
             message: 'Sent Mail:17',
-            from:    'alice@example.com',
-            to:      ['bot@isambard.ai'],
+            from:    { address: 'alice@example.com' },
+            to:      [{ address: 'bot@isambard.ai' }],
             subject: 'External sender in Sent Mail',
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
@@ -126,15 +126,15 @@ describe('EmailHistoryProvider', () => {
         mockSearch.mockResolvedValueOnce([
             makeSearchResult({
                 message: 'Sent MailX',
-                from:    'alice@example.com',
+                from:    { address: 'alice@example.com' },
             }),
             makeSearchResult({
                 message: 'Sent Mail:17',
-                from:    'alice@example.com',
+                from:    { address: 'alice@example.com' },
             }),
             makeSearchResult({
                 message: 'Sent Mail:archive:17',
-                from:    'alice@example.com',
+                from:    { address: 'alice@example.com' },
             }),
         ]);
 
@@ -145,11 +145,11 @@ describe('EmailHistoryProvider', () => {
         expect(result[2].direction).toBe('inbound');
     });
 
-    test('sets direction to outbound when from address matches bot address', async () => {
+    test('sets direction to outbound when from address exactly matches bot address case-insensitively', async () => {
         const searchResult = makeSearchResult({
             message: 'CleanInbox:99',
-            from:    'bot@isambard.ai',
-            to:      ['alice@example.com'],
+            from:    { address: 'BOT@ISAMBARD.AI' },
+            to:      [{ address: 'alice@example.com' }],
             subject: 'Bot sent this somehow',
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
@@ -159,22 +159,34 @@ describe('EmailHistoryProvider', () => {
         expect(result[0].direction).toBe('outbound');
     });
 
-    test('sets direction to outbound when the bot address appears inside a display name', async () => {
+    test('sets direction to inbound when a display name contains the bot address', async () => {
         mockSearch.mockResolvedValueOnce([makeSearchResult({
             message: 'CleanInbox:100',
-            from:    'Relay via bot@isambard.ai <relay@example.com>',
+            from:    { name: 'Relay via bot@isambard.ai', address: 'relay@example.com' },
         })]);
 
         const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
-        expect(result[0].direction).toBe('outbound');
+        expect(result[0].direction).toBe('inbound');
+    });
+
+    test('keeps near-match and absent sender addresses inbound outside Sent Mail', async () => {
+        mockSearch.mockResolvedValueOnce([
+            makeSearchResult({ message: 'CleanInbox:101', from: { address: 'notbot@isambard.ai' } }),
+            makeSearchResult({ message: 'CleanInbox:102', from: { address: 'bot@isambard.ai.example.org' } }),
+            makeSearchResult({ message: 'CleanInbox:103', from: null }),
+        ]);
+
+        const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
+
+        expect(result.map(entry => entry.direction)).toEqual(['inbound', 'inbound', 'inbound']);
     });
 
     test('sets direction to inbound when from is not bot address and not Sent Mail', async () => {
         const searchResult = makeSearchResult({
             message: 'CleanInbox:1',
-            from:    'alice@example.com',
-            to:      ['bot@isambard.ai'],
+            from:    { address: 'alice@example.com' },
+            to:      [{ address: 'bot@isambard.ai' }],
             subject: 'Inbound',
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
@@ -380,21 +392,20 @@ describe('EmailHistoryProvider', () => {
 
     test('summary includes from address and subject', async () => {
         const searchResult = makeSearchResult({
-            from:    'Bob Smith <bob@example.com>',
+            from:    { name: 'Bob Smith', address: 'bob@example.com' },
             subject: 'Meeting tomorrow',
         });
         mockSearch.mockResolvedValueOnce([searchResult]);
 
         const result = await provider.fetchHistory({ identifier: 'alice@example.com' });
 
-        expect(result[0].summary).toContain('Bob Smith <bob@example.com>');
-        expect(result[0].summary).toContain('Meeting tomorrow');
+        expect(result[0].summary).toBe('Bob Smith <bob@example.com> — "Meeting tomorrow"');
     });
 
     test('handles multiple messages and preserves all', async () => {
         const results = [
             makeSearchResult({ message: 'CleanInbox:1', subject: 'First',  date: '2026-03-28T09:00:00.000Z' }),
-            makeSearchResult({ message: 'Sent Mail:2',  subject: 'Second', date: '2026-03-28T10:00:00.000Z', from: 'bot@isambard.ai' }),
+            makeSearchResult({ message: 'Sent Mail:2',  subject: 'Second', date: '2026-03-28T10:00:00.000Z', from: { address: 'bot@isambard.ai' } }),
         ];
         mockSearch.mockResolvedValueOnce(results);
 

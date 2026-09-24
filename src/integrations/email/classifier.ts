@@ -1,6 +1,6 @@
 import { logger } from '@hughescr/logger';
 import { CLASSIFIER_SYSTEM_PROMPT } from './classifier-prompt';
-import { classifierVerdictSchema, type EmailMetadata, type ClassifierVerdict } from './types';
+import { classifierVerdictSchema, formatAddressForDisplay, type EmailMetadata, type ClassifierVerdict } from './types';
 import { ClassifierError } from '@/errors';
 
 type GenerateText = (
@@ -79,11 +79,8 @@ export class EmailClassifier {
      * Build the user message from email metadata.
      */
     private buildUserMessage(email: EmailMetadata): string {
-        const toAddresses = email.to.map(addr => (addr.name ? `${addr.name} <${addr.address}>` : addr.address)).join(', ');
-
-        const fromHeader = email.from.name
-            ? `${email.from.name} <${email.from.address}>`
-            : email.from.address;
+        const toAddresses = email.to.map(address => formatAddressForDisplay(address)).join(', ');
+        const fromHeader  = formatAddressForDisplay(email.from);
 
         const lines = [
             `From: ${fromHeader}`,
