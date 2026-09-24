@@ -14,11 +14,13 @@
  * notification. A tick that throws or rejects (a transient Bluesky API failure, most likely) is
  * caught and logged, never propagated into the `setInterval` callback.
  *
- * @module integrations/discord/setup/bsky-dm-poller
+ * @module integrations/bsky/dm-poller
  */
 import { logger as defaultLogger, type Logger } from '@hughescr/logger';
+import type { BskyCheckpointManager } from './checkpoint';
+import type { BlueskyClient } from './client';
+import type { BskyConversation } from './types';
 import type { NotifyFn } from '@/agent';
-import type { BlueskyClient, BskyCheckpointManager, BskyConversation } from '@/integrations/bsky';
 import type { ServiceHealthRegistry } from '@/services';
 
 /** Default DM poll interval: 2 minutes. */

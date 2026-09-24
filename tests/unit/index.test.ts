@@ -36,6 +36,7 @@ import * as staticQuestionRegistryModule from '@/agent/question-registry';
 import { createChannelId } from '@/agent/types';
 import * as staticAppLifecycleModule from '@/app/lifecycle';
 import * as staticMcpServersModule from '@/app/mcp-servers';
+import * as staticRuntimeModule from '@/app/runtime';
 import { createSessionAmbience as importedCreateSessionAmbience } from '@/app/sessions';
 import * as staticSessionsModule from '@/app/sessions';
 import type { SessionConfig } from '@/config';
@@ -72,6 +73,23 @@ const realCreateHealthOutageCoalescer = importedCreateHealthOutageCoalescer;
 const realCreateHealthNotificationListener = importedCreateHealthNotificationListener;
 const realCreateSessionAmbience = importedCreateSessionAmbience;
 const realCreateApprovedActionRetryListener = staticServicesModule.createApprovedActionRetryListener;
+
+/**
+ * The #41 session-host members of a mocked DiscordBot. `ready` NEVER resolves, so app.start()'s
+ * `startSessions` never opens a conductor: wireHappyPath builds a REAL conversation conductor over
+ * the real SDK `query`, and opening it would spawn the real Claude CLI during `bun test`.
+ */
+function pendingSessionHost() {
+    const ready = new Promise<void>(() => {
+        // Deliberately never resolves: the bot never signals readiness in these tests.
+    });
+    return {
+        ready,
+        attachSessions:  mock(async () => undefined),
+        stopIngress:     mock(() => undefined),
+        recoveryAdapter: { recover: mock(async () => undefined) },
+    };
+}
 
 const sessionConfig: SessionConfig = {
     compactThresholdPercent: 60,
@@ -121,7 +139,7 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
     const mockDocClient = {} as unknown as DynamoDBDocumentClient;
     const getSessionIdForRole = mock(async (_role: 'conversation' | 'perch') => undefined as string | undefined);
     const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-        start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+        start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
     });
     const emailListenerStop = mock(async () => {});
     const emailSetupSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
@@ -297,7 +315,7 @@ describe('createApp', () => {
             throw botStopError;
         });
         createBotSpy.mockReturnValueOnce({
-            start: mock(async () => undefined), stop: botStop, triggerCatchUp: mock(async () => undefined),
+            start: mock(async () => undefined), stop: botStop, triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
         });
         emailListenerStop.mockRejectedValueOnce(new Error('listener stop failed'));
 
@@ -635,7 +653,7 @@ describe('createApp', () => {
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
-                triggerCatchUp: mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createBotSpy);
 
@@ -777,20 +795,104 @@ describe('createApp', () => {
         });
     });
 
-    describe('Shutdown config wiring (P10)', () => {
-        test('passes config.session.shutdownTurnWaitMs and shutdownDeadlineMs through to createDiscordBot, so an operator-configured budget actually reaches the conductor shutdown orchestrator', async () => {
-            const { createBotSpy } = wireHappyPath(spies, {
+    describe('Session supervisor wiring (#41)', () => {
+        test('passes config.session.shutdownTurnWaitMs and shutdownDeadlineMs to the session supervisor, so an operator-configured budget reaches the cross-session shutdown', async () => {
+            wireHappyPath(spies, {
                 shutdownTurnWaitMs: 5000,
                 shutdownDeadlineMs: 30_000,
             });
+            const supervisorSpy = spyOn(staticRuntimeModule, 'createSessionSupervisor');
+            spies.push(supervisorSpy);
 
             const { createApp } = staticIndexModule;
             await createApp();
 
-            expect(createBotSpy).toHaveBeenCalledWith(expect.objectContaining({
-                shutdownTurnWaitMs: 5000,
-                shutdownDeadlineMs: 30_000,
+            expect(supervisorSpy).toHaveBeenCalledTimes(1);
+            expect(supervisorSpy).toHaveBeenCalledWith(expect.objectContaining({
+                turnWaitMs: 5000,
+                deadlineMs: 30_000,
             }));
+        });
+
+        test('supervises the built conversation and perch conductors with their journals; the bot no longer receives journals or the shutdown budget', async () => {
+            const { createBotSpy } = wireHappyPath(spies);
+            const conversationConductor = { open: mock(async () => ({ sessionId: 'conv', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
+            const perchConductor = { open: mock(async () => ({ sessionId: 'perch', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
+            spies.push(
+                spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                    conductor: conversationConductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+                }),
+                spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
+                    conductor: perchConductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, compactionTelemetry: {} as CompactionTelemetry, setWakeTurnDelivery: mock(() => undefined), slotHooks: { onSlotStart: () => undefined, onSlotEnd: () => undefined },
+                })
+            );
+            const supervisorSpy = spyOn(staticRuntimeModule, 'createSessionSupervisor');
+            spies.push(supervisorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const supervisorParams = supervisorSpy.mock.calls[0][0];
+            expect(supervisorParams.conversation?.conductor).toBe(conversationConductor);
+            expect(typeof supervisorParams.conversation?.journal.flush).toBe('function');
+            expect(supervisorParams.perch?.conductor).toBe(perchConductor);
+            expect(typeof supervisorParams.perch?.journal.flush).toBe('function');
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+            expect('journal' in botOptions).toBe(false);
+            expect('perchJournal' in botOptions).toBe(false);
+            expect('shutdownTurnWaitMs' in botOptions).toBe(false);
+            expect('exit' in botOptions).toBe(false);
+        });
+
+        test('app.start() launches startSessions with the bot as host, and opens nothing while the bot is not ready', async () => {
+            const { createBotSpy } = wireHappyPath(spies);
+            spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    { destroy: mock(() => {}) } as unknown as DynamoDBClient,
+                docClient: { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient,
+                tableName: 'IsambardMemory',
+            }));
+            const open = mock(async () => ({ sessionId: 'conv', resumed: false }));
+            spies.push(spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: { open, submit: mock(), status: mock(() => ({ sessionId: undefined })), shutdown: mock(async () => undefined) } as unknown as Conductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+            }));
+            const startSessionsSpy = spyOn(staticRuntimeModule, 'startSessions');
+            spies.push(startSessionsSpy);
+
+            const { createApp } = staticIndexModule;
+            const app = await createApp();
+            expect(startSessionsSpy).not.toHaveBeenCalled();
+
+            await app.start();
+
+            expect(startSessionsSpy).toHaveBeenCalledTimes(1);
+            expect(startSessionsSpy.mock.calls[0][0].host).toBe(createBotSpy.mock.results[0]!.value);
+            expect(open).not.toHaveBeenCalled();
+            await app.stop();
+        });
+
+        test('a repeated app.start() without an intervening stop reuses the lifecycle startSessions chain instead of launching a second one', async () => {
+            wireHappyPath(spies);
+            const startSessionsSpy = spyOn(staticRuntimeModule, 'startSessions');
+            spies.push(
+                spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                    client:    { destroy: mock(() => {}) } as unknown as DynamoDBClient,
+                    docClient: { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient,
+                    tableName: 'IsambardMemory',
+                }),
+                spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                    conductor: { open: mock(async () => ({ sessionId: 'conv', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })), shutdown: mock(async () => undefined) } as unknown as Conductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+                }),
+                startSessionsSpy
+            );
+
+            const { createApp } = staticIndexModule;
+            const app = await createApp();
+
+            await app.start();
+            await app.start();
+
+            expect(startSessionsSpy).toHaveBeenCalledTimes(1);
+            await app.stop();
         });
     });
 
@@ -806,7 +908,7 @@ describe('createApp', () => {
                 return { conductor: fakeConductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined) };
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createConversationConductorSpy, createBotSpy);
 
@@ -844,7 +946,7 @@ describe('createApp', () => {
                 conductor: fakePerch, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, compactionTelemetry: {} as CompactionTelemetry, setWakeTurnDelivery: mock(() => undefined), slotHooks: { onSlotStart: () => undefined, onSlotEnd: () => undefined },
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createConversationConductorSpy, createPerchConductorSpy, createBotSpy);
 
@@ -937,7 +1039,7 @@ describe('createApp', () => {
                 conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createConversationConductorSpy, createBotSpy);
 
@@ -956,7 +1058,7 @@ describe('createApp', () => {
                 conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createConversationConductorSpy, createBotSpy);
 
@@ -984,7 +1086,7 @@ describe('createApp', () => {
                 conductor: fakeConductor('perch-sess'), ledgerStore: perchLedgerStore, compactionTelemetry: {} as CompactionTelemetry, setWakeTurnDelivery: mock(() => undefined), slotHooks: { onSlotStart: () => undefined, onSlotEnd: () => undefined },
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createConversationConductorSpy, createPerchConductorSpy, createBotSpy);
 
@@ -1005,7 +1107,7 @@ describe('createApp', () => {
                 conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createConversationConductorSpy, createBotSpy);
 
@@ -1032,7 +1134,7 @@ describe('createApp', () => {
                 conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createConversationConductorSpy, createBotSpy);
 
@@ -1084,7 +1186,7 @@ describe('createApp', () => {
                     conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
                 });
                 const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                    start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                    start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
                 });
                 spies.push(createConversationConductorSpy, createBotSpy);
 
@@ -1109,7 +1211,7 @@ describe('createApp', () => {
                     conductor: fakeConductor('perch-sess'), ledgerStore: perchLedgerStore, compactionTelemetry: {} as CompactionTelemetry, setWakeTurnDelivery: mock(() => undefined), slotHooks: { onSlotStart: () => undefined, onSlotEnd: () => undefined },
                 });
                 const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                    start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                    start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
                 });
                 spies.push(createConversationConductorSpy, createPerchConductorSpy, createBotSpy);
 
@@ -1381,7 +1483,7 @@ describe('createApp', () => {
                 return { conductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined) };
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createBridgeSpy, createConversationConductorSpy, createBotSpy);
 
@@ -1451,7 +1553,7 @@ describe('createApp', () => {
                 conductor: fakeConductor('perch-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, compactionTelemetry: {} as CompactionTelemetry, setWakeTurnDelivery: perchSetWakeTurnDelivery, slotHooks: { onSlotStart: () => undefined, onSlotEnd: () => undefined },
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createBridgeSpy, createConversationConductorSpy, createPerchConductorSpy, createBotSpy);
 
@@ -1677,7 +1779,7 @@ describe('createApp', () => {
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
-                triggerCatchUp: mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createBotSpy);
 
@@ -1846,7 +1948,7 @@ describe('createApp', () => {
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
-                triggerCatchUp: mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createBotSpy);
 
@@ -1993,7 +2095,7 @@ describe('createApp', () => {
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
-                triggerCatchUp: mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createBotSpy);
 
@@ -2147,7 +2249,7 @@ describe('createApp', () => {
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
-                triggerCatchUp: mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createBotSpy);
 
@@ -2306,7 +2408,7 @@ describe('createApp', () => {
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
-                triggerCatchUp: mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createBotSpy);
 
@@ -2600,7 +2702,7 @@ describe('createApp', () => {
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mockBotStop,
-                triggerCatchUp: mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             });
             spies.push(createBotSpy);
 

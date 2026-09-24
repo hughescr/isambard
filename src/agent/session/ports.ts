@@ -23,6 +23,18 @@ export interface SessionJournal {
     readSince: (sinceMs: number) => Promise<JournalEntry[]>
 }
 
+/**
+ * What the session supervisor (`src/app/runtime.ts`) reports once it has tried to open this
+ * process's sessions. `conversation` is `'failed'` only when its open rejected or timed out — the
+ * supervisor has then already called its injected `exit(1)`, so a host only ever sees it when that
+ * exit returns (in tests). `perch` is `'disabled'` when its open failed; perch is then off for the
+ * rest of the process, with no retry. `'absent'` means the session was never built.
+ */
+export interface SessionOpenOutcome {
+    conversation: 'open' | 'failed' | 'absent'
+    perch:        'open' | 'disabled' | 'absent'
+}
+
 /** Role-keyed store for the one resumable session id per {@link SessionRole}. */
 export interface ResumeStore {
     load: (role: SessionRole) => Promise<string | undefined>

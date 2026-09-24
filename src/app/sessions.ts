@@ -11,9 +11,11 @@
  * callback, the only source the real SDK fires it for
  * (anthropics/claude-agent-sdk-typescript#465).
  *
- * `createConversationConductor` BUILDS but never OPENS the conductor — the caller (`src/index.ts`)
- * decides when opening is safe (after the guild cache and channel registry exist) and degrades to
- * the one-shot processor if `open()` rejects.
+ * `createConversationConductor` BUILDS but never OPENS the conductor. The session supervisor
+ * (`src/app/runtime.ts`) opens it, sequenced by `startSessions` after the Discord bot signals
+ * readiness (the guild cache and channel registry exist). A conversation open that rejects or
+ * times out exits the process with code 1 so the deploy supervisor restarts it; there is no
+ * fallback agent.
  *
  * Two completeness-critic gaps this module closes (see the work-package brief):
  *  - Post-compaction reset: the compaction sink calls `contextPolicy.resetAll()` on
@@ -29,6 +31,11 @@
 import type { HookCallbackMatcher, HookEvent, McpServerConfig, Options, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Logger } from '@hughescr/logger';
 import { createMcpServerInstances, type McpSharedDeps } from './mcp-servers';
+// The same window drives this module's own recovery reads ({@link loadBootRecovery}: the
+// pre-open `bootLostTasks` snapshot, perch's task-launch seed and its compaction bundle) and the
+// session supervisor's boot-time recovery; perch's boot bundles take theirs from the conductor's
+// own read instead (#98).
+import { RECOVERY_WINDOW_MS } from './runtime';
 import {
     attachTurnSynopsis,
     buildSessionQueryOptions,
@@ -114,17 +121,6 @@ type TaskListSource = CreateBootBundleBuilderParams['taskListReader'];
 
 /** How many distinct recently-submitted Discord authors the boot bundle's `recentUsers` section reports, most recent first. */
 const RECENT_AUTHORS_LIMIT = 10;
-
-/**
- * How far back {@link loadBootRecovery} re-derives crash recovery from its own role's journal (P8)
- * — a read independent of the one `Conductor.open()` does internally on this process's boot,
- * matching `conductor.ts`'s own (private) `RECOVERY_WINDOW_MS` and `catchup-setup.ts`'s copy.
- * Used at construction by both {@link createConversationConductor} (its pre-open `bootLostTasks`
- * snapshot — see {@link ConversationConductorResult}'s doc) and {@link createPerchConductor} (its
- * task-launch seed), and by perch's compaction bundle. Perch's boot bundles take their recovery
- * from the conductor's own read instead (#98).
- */
-const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Fallback lookback window for a `compact` boot bundle's events section when
@@ -383,7 +379,8 @@ export interface ConversationConductorResult {
      * doc). A read of the journal AFTER `open()` has run — as `runConductorInboxInit` used to do,
      * recomputing recovery on its own — races that write; in production, with the channel
      * registry hydration and other boot work that runs between `open()` and
-     * `runConductorInboxInit` in `bot.ts`'s `clientReady`, that write reliably lands first, and
+     * `runConductorInboxInit` (reached through the session supervisor's boot recovery), that
+     * write reliably lands first, and
      * `computeRecovery` treats a task with its own `task_lost` entry as already resolved — so the
      * post-open read would see NO lost tasks at all, even when this boot genuinely lost one.
      * Reading here, before `open()` is even called, cannot race that write.
@@ -800,9 +797,9 @@ export interface PerchConductorResult {
  * unified set — see `createMcpServerInstances`'s own role-gating doc), system prompt, hooks, and
  * ledger, and
  * returns a {@link Conductor} that has NOT been opened — mirrors
- * {@link createConversationConductor}'s own build-only contract exactly; the caller
- * (`src/index.ts`/`bot.ts`'s `clientReady`) decides when opening is safe and degrades to the
- * legacy perch scheduler/runner if `open()` rejects.
+ * {@link createConversationConductor}'s own build-only contract exactly; the session supervisor
+ * (`src/app/runtime.ts`) opens it after the conversation conductor, and a perch open that rejects
+ * or times out leaves perch disabled for the process, with no restart.
  *
  * Unlike the conversation conductor, perch's boot bundle renders crash recovery, so a background
  * task a prior process started but never finished, or a perch-channel Discord turn that finished

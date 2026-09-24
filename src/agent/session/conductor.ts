@@ -94,8 +94,8 @@ const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
  * on the session-open path, and a slow read must cost a missing bundle, never a stuck open.
  *
  * This caps the delay the build ADDS to one open attempt. It does not make the whole open fit
- * inside `bot.ts`'s 30 s `CONDUCTOR_OPEN_TIMEOUT_MS`: `open()` also awaits boot recovery, the
- * resume-store load, the CLI's own start-up and a resume-store write, and a boot resume that
+ * inside the session supervisor's 30 s `CONDUCTOR_OPEN_TIMEOUT_MS` (`src/app/runtime.ts`):
+ * `open()` also awaits boot recovery, the resume-store load, the CLI's own start-up and a resume-store write, and a boot resume that
  * fails pays for a second build before its fresh fallback. An open that was already slow can
  * still exceed that deadline (conversation then exits the process; perch is disabled). Losing the
  * race does not cancel the build's reads either; their late result is simply ignored.

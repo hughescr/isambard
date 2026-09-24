@@ -55,6 +55,22 @@ const sessionConfig: SessionConfig = {
 };
 
 // ─── 1. Config wiring ───────────────────────────────────────────────────────
+/**
+ * The #41 session-host members of a mocked DiscordBot. `ready` never resolves, so app.start()'s
+ * `startSessions` never opens a conductor (no real SDK/CLI during tests).
+ */
+function pendingSessionHost() {
+    const ready = new Promise<void>(() => {
+        // Deliberately never resolves: the bot never signals readiness in these tests.
+    });
+    return {
+        ready,
+        attachSessions:  mock(async () => undefined),
+        stopIngress:     mock(() => undefined),
+        recoveryAdapter: { recover: mock(async () => undefined) },
+    };
+}
+
 describe('Vector feature wiring', () => {
     describe('1. Config: loadConfig returns vectorIndex.enabled', () => {
         it('loadConfig() returns vectorIndex.enabled = true by default', () => {
@@ -137,7 +153,7 @@ describe('Vector feature wiring', () => {
             const mockBot = {
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
-                triggerCatchUp: mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             };
 
             spies.push(
@@ -413,7 +429,7 @@ describe('Vector feature wiring', () => {
                 spyOn(discordBotModule, 'createDiscordBot').mockReturnValue({
                     start:          mock(async () => undefined),
                     stop:           mock(async () => undefined),
-                    triggerCatchUp: mock(async () => undefined),
+                    triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
                 }),
                 spyOn(registerCommandsModule, 'registerAllCommands').mockResolvedValue(undefined),
                 // @ts-expect-error -- mocking constructor

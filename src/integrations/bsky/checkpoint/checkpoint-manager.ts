@@ -302,7 +302,7 @@ export class BskyCheckpointManager {
     /**
      * Removes the given `lastMessage.id` values from the DM checkpoint's `processedMessageIds`,
      * so a batch already marked processed by {@link processDirectMessages} is treated as new
-     * again on the next tick. Used by `bsky-dm-poller.ts` when `notify()` returns `false` (the
+     * again on the next tick. Used by `dm-poller.ts` when `notify()` returns `false` (the
      * conductor is not yet open) — the checkpoint was already advanced before delivery was
      * attempted, so without this the batch would be silently and permanently lost rather than
      * retried (review finding).

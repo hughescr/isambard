@@ -150,7 +150,7 @@ export {
 
 export { buildCatchupText, type CatchupSummary } from './catchup-text';
 
-export type { SessionJournal, ResumeStore } from './ports';
+export type { SessionJournal, ResumeStore, SessionOpenOutcome } from './ports';
 
 export type { DiscordEnvelopeInput } from './discord-envelope-input';
 
@@ -252,6 +252,9 @@ export {
     type BootIngressGate,
     type BootJournal,
     type BootRecovery,
+    type BootRecoveryAdapter,
+    type BootRecoveryLoad,
+    type BootRecoveryRuntime,
     type RunBootSequenceParams,
     type RunBootSequenceResult
 } from './boot-sequence';

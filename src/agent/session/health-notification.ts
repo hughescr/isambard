@@ -103,8 +103,8 @@ export function createHealthOutageCoalescer(params: CreateHealthOutageCoalescerP
     // never eagerly from `report()`. `notify()` returns `false` while its conductor is
     // unattached or attached-but-not-yet-open (see notification-bridge.ts's module doc), which is
     // reachable at real composition-root boot: this coalescer is subscribed at the same
-    // unconditional scope as the rest of createApp()'s health listeners, before bot.ts's
-    // clientReady ever calls `conductor.open()`. Marking a key "reported" before delivery was
+    // unconditional scope as the rest of createApp()'s health listeners, before the session
+    // supervisor ever calls `conductor.open()`. Marking a key "reported" before delivery was
     // even attempted would permanently lose that outage notice for the rest of the epoch (epoch
     // does not advance on CONNECT_FAIL) the moment the very first flush landed
     // inside that boot window — silently, since `report()`/`flush()` never throw. Gating on

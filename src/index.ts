@@ -7,7 +7,7 @@ import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
 import { loadPlugins, QuestionRegistry, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createQuotaNotes, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, type ConversationConductorResult, type PerchConductorResult } from '@/app';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, createSessionSupervisor, startSessions, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider, atUriSchema, cidSchema, type BskyReplyInput } from '@/integrations/bsky';
@@ -918,8 +918,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     }
 
     // P9: build (never open) the long-lived conversation conductor — after the OAuth env write
-    // (top of this function) and mcpSharedDeps (above), and before createDiscordBot so the bot
-    // can open it itself once the guild cache and channel registry exist (P9/P10). P13b: the
+    // (top of this function) and mcpSharedDeps (above), and before createDiscordBot and the
+    // session supervisor, which opens it once the bot signals readiness (#41). P13b: the
     // conductor is the only path now — the one-shot legacy agent it used to sit beside is gone.
     //
     // #39: the last thinking content either session's turn synopsis producer saw (last writer
@@ -996,8 +996,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
     // P12: build (never open) the perch conductor, AFTER the conversation conductor above and
     // only when perch is actually configured/enabled — an unused conductor would still spend a
-    // whole CLI child session for nothing. bot.ts's clientReady opens it (after the conversation
-    // conductor); a rejected or omitted open() just leaves perch disabled, without a restart.
+    // whole CLI child session for nothing. The session supervisor opens it (after the
+    // conversation conductor); a failed open just leaves perch disabled, without a restart.
     let perchConductor: Conductor | undefined;
     let perchLedgerStore: LedgerStore | undefined;
     let perchJournal: SessionJournal | undefined;
@@ -1124,23 +1124,15 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         // notificationBridge.attachConductor() has run (above). Q6-Q8 wire the actual
         // notification sources; this package only threads the seam through.
         notify:                   notificationBridge.notify,
-        // P9/P13b: conductor-mode dependencies. bot.ts's clientReady opens conversationConductor
-        // once the guild cache and channel registry exist; a rejected/timed-out open() leaves
-        // message processing disabled for this process (there is no fallback agent to degrade to).
+        // P9/P13b: conductor-mode dependencies. The session supervisor (below) opens the
+        // conductors once the bot signals readiness and hands the bot the outcome; the bot only
+        // wires Discord around whichever sessions opened.
         conversationConductor,
         ledgerStore:              conversationLedgerStore,
         contextPolicy:            conversationContextPolicy,
-        journal:                  conversationJournal,
-        // P12: the perch conductor's own build-only-then-open trio, undefined unless conductor
-        // mode AND perch are both enabled. bot.ts's clientReady opens it after the conversation
-        // conductor; a rejected/omitted open() just leaves perch disabled, without a restart.
+        // P12: the perch conductor and its ledger, undefined unless perch is enabled.
         perchConductor,
         perchLedgerStore,
-        perchJournal,
-        // P10: own config.session.shutdownTurnWaitMs/shutdownDeadlineMs — without these,
-        // createShutdown falls back to its hard-coded 60s/120s defaults regardless of config.
-        shutdownTurnWaitMs:       config.session.shutdownTurnWaitMs,
-        shutdownDeadlineMs:       config.session.shutdownDeadlineMs,
         // R1: without this, catchup-setup.ts always falls back to its own hard-coded 24h
         // default regardless of an operator-configured config.session.bootEventsWindowMs.
         bootEventsWindowMs:       config.session.bootEventsWindowMs,
@@ -1163,6 +1155,24 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     });
     botForConstructionCleanup.bot = bot;
     logger.info('Discord bot created');
+
+    // #41: the session supervisor owns session open, failure, shutdown and boot-recovery policy
+    // (src/app/runtime.ts). It opens nothing until app.start() launches startSessions, which waits
+    // for the bot's first clientReady. The conversation conductor is always built (P13b), so it
+    // is always supervised; perch only when enabled.
+    const sessionSupervisor = createSessionSupervisor({
+        conversation: { conductor: conversationConductor, journal: conversationJournal },
+        perch:        perchConductor && perchJournal ? { conductor: perchConductor, journal: perchJournal } : undefined,
+        turnWaitMs:   config.session.shutdownTurnWaitMs,
+        deadlineMs:   config.session.shutdownDeadlineMs,
+        stopIngress:  () => {
+            bot.stopIngress();
+        },
+        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the one place this process terminates on a failed conversation open; the supervisor's injected exit
+        exit:  code => process.exit(code),
+        clock: systemClock,
+        logger,
+    });
 
     // Collect slash command builders for bulk registration at startup
     const commandBuilders = [buildCalendarCommand, buildContactCommand, buildAllowlistCommand];
@@ -1215,13 +1225,20 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
     // Subscribe to health changes: run recovery phase when Discord reconnects.
     // Registered inside app.start() AFTER bot.start() so it only fires on reconnects.
-    // Catch-up on first connection is handled by setupInboxAndCatchUp in bot.ts clientReady.
+    // Catch-up on first connection is handled by startSessions -> the bot's recovery adapter.
     let unsubscribeDiscordRecovery: (() => void) | undefined;
 
     // Wire discordReconnectFn now that bot is available.
     discordReconnectFn = async () => {
         await bot.start();
     };
+
+    // #41: the whole session-startup chain (open, attachSessions, boot recovery) runs at most once
+    // per lifecycle. createApp lets app.start() re-enter this lifecycle's start() without a stop;
+    // the supervisor's own single-flight covers only the open, and a second chain would attach a
+    // second set of Discord wiring and rerun boot recovery. A stop-then-start builds a new
+    // lifecycle, and with it a fresh chain.
+    let sessionStartup: Promise<void> | undefined;
 
     let isStopped = false;
     let stopPromise: Promise<void> | null = null;
@@ -1233,6 +1250,12 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
             // Mark Discord as starting
             healthRegistry.sendEvent('discord', { type: 'CONFIGURE' });
+
+            // #41: the startup chain waits on bot.ready, which resolves on the first clientReady —
+            // from this login or, if Discord is down now, from the reconnection loop's later one.
+            // It never rejects (failures are logged inside startSessions), and a repeated start()
+            // reuses it (see sessionStartup above).
+            sessionStartup ??= startSessions({ host: bot, supervisor: sessionSupervisor, logger });
 
             logger.info('Connecting to Discord...');
             try {
@@ -1252,8 +1275,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             }
 
             // Register recovery subscriber now — after initial bot.start() — so it only fires on reconnects.
-            // Catch-up on first connection is handled by runConductorInboxInit inside bot.ts
-            // clientReady. P10: extracted to src/app/lifecycle.ts's createDiscordRecoveryHandler,
+            // Catch-up on first connection is handled by startSessions -> the bot's recovery
+            // adapter (runConductorInboxInit). P10: extracted to src/app/lifecycle.ts's createDiscordRecoveryHandler,
             // tested in isolation there — this is thin wiring only. P13b: the one-shot branch
             // (botStateManager/bot) is gone from CreateDiscordRecoveryHandlerParams — the
             // conductor's submitCatchUp is the only recovery path now.

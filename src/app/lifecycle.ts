@@ -109,8 +109,8 @@ export interface CreateDiscordRecoveryHandlerParams {
  * one-shot branch (recovering a stuck `processing_message` bot-state mode, then
  * `bot.triggerCatchUp()`) is gone — the conductor is the only path, and its ledger is the sole
  * writer of processing-state transitions. Catch-up on the FIRST connection is handled elsewhere
- * (`runConductorInboxInit`, run from `bot.ts`'s own `clientReady`); this handler only fires on a
- * later reconnect.
+ * (`runConductorInboxInit`, run by `startSessions` in `src/app/runtime.ts` through the bot's
+ * recovery adapter); this handler only fires on a later reconnect.
  * @param params See {@link CreateDiscordRecoveryHandlerParams}.
  * @returns A `ServiceHealthChange` listener, ready to pass to `healthRegistry.subscribe`.
  */

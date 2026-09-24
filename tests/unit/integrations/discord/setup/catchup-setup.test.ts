@@ -9,8 +9,9 @@ import { describe, test, expect, mock, jest, afterEach, spyOn } from 'bun:test';
 import * as loggerModule from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import * as agentModule from '@/agent';
-import type { SendOutcome } from '@/agent';
+import { systemClock, type BootRecoveryRuntime, type SendOutcome } from '@/agent';
 import { createChannelId } from '@/agent/types';
+import { createBootRecoveryRuntime } from '@/app/runtime';
 import { InvariantViolationError } from '@/errors';
 import { ResponseRouter } from '@/integrations/discord/channel-registry';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
@@ -81,17 +82,28 @@ function makeFakeContextPolicy(overrides: Record<string, unknown> = {}) {
     };
 }
 
-function conductorParams(overrides: Partial<RunConductorInboxInitParams> = {}): RunConductorInboxInitParams {
+/**
+ * The production recovery runtime (the session supervisor's half of boot recovery) over a test
+ * journal, so these tests keep exercising the real journal read, recovery computation and boot
+ * sequence the Discord adapter drives.
+ */
+function recoveryRuntimeFor(journal: ReturnType<typeof makeFakeJournal>): BootRecoveryRuntime {
+    return createBootRecoveryRuntime(journal, systemClock);
+}
+
+/** `journal` is test-only: it builds `recoveryRuntime` unless the caller supplies one directly. */
+function conductorParams(overrides: Partial<RunConductorInboxInitParams> & { journal?: ReturnType<typeof makeFakeJournal> } = {}): RunConductorInboxInitParams {
+    const { journal = makeFakeJournal(), ...rest } = overrides;
     return {
         inboxManager:          makeFakeInboxManager() as unknown as RunConductorInboxInitParams['inboxManager'],
         readyClient:           makeFakeClient(),
         perchConfig:           undefined,
         ingressGate:           makeFakeIngressGate() as unknown as RunConductorInboxInitParams['ingressGate'],
         conversationConductor: makeFakeConductor() as unknown as RunConductorInboxInitParams['conversationConductor'],
-        journal:               makeFakeJournal(),
+        recoveryRuntime:       recoveryRuntimeFor(journal),
         responseRouter:        { resolveDeliveryTarget: ResponseRouter.prototype.resolveDeliveryTarget } as RunConductorInboxInitParams['responseRouter'],
         rateLimiter:           {} as unknown as RunConductorInboxInitParams['rateLimiter'],
-        ...overrides,
+        ...rest,
     };
 }
 
@@ -337,6 +349,33 @@ describe('runConductorInboxInit', () => {
 
         expect(journal.flush).toHaveBeenCalledTimes(1);
         expect(ingressGate.open).toHaveBeenCalledTimes(1);
+    });
+
+    test('a rejected recovery load opens the ingress gate once through the backstop and never runs the boot sequence', async () => {
+        const ingressGate = makeFakeIngressGate();
+        const runBoot = mock(async () => ({ replayedCount: 0, catchUpSubmitted: false }));
+        const recoveryRuntime = { loadRecovery: mock(() => Promise.reject(new Error('journal unavailable'))), runBoot } as unknown as BootRecoveryRuntime;
+
+        await expect(runConductorInboxInit(conductorParams({ ingressGate: ingressGate as never, recoveryRuntime }))).rejects.toThrow('journal unavailable');
+
+        expect(ingressGate.open).toHaveBeenCalledTimes(1);
+        expect(ingressGate.open).toHaveBeenCalledWith(new Set());
+        expect(runBoot).not.toHaveBeenCalled();
+    });
+
+    test('runs the runtime boot sequence exactly once, with this adapter\'s gate and without supplying a journal', async () => {
+        const ingressGate = makeFakeIngressGate();
+        const recovery = { lostTasks: [], undelivered: [], deliveredEnvelopeIds: [], lastSessionId: undefined };
+        const runBoot = mock(async (_params: Record<string, unknown>) => ({ replayedCount: 0, catchUpSubmitted: false }));
+        const recoveryRuntime = { loadRecovery: mock(async () => ({ recovery, knownAt: undefined })), runBoot } as unknown as BootRecoveryRuntime;
+
+        await runConductorInboxInit(conductorParams({ ingressGate: ingressGate as never, recoveryRuntime }));
+
+        expect(runBoot).toHaveBeenCalledTimes(1);
+        const [params] = runBoot.mock.calls[0];
+        expect(params.recovery).toBe(recovery);
+        expect(params.ingressGate).toBe(ingressGate);
+        expect('journal' in params).toBe(false);
     });
 
     test('reads recovery entries from exactly 24 hours before the current time', async () => {
@@ -1129,7 +1168,7 @@ describe('setupInboxAndCatchUp', () => {
             readyClient:           makeFakeClient(),
             perchConfig:           undefined,
             conversationConductor: makeFakeConductor(),
-            journal:               makeFakeJournal(),
+            recoveryRuntime:       recoveryRuntimeFor(makeFakeJournal()),
             responseRouter:        {},
             rateLimiter:           {},
             ingressGate:           makeFakeIngressGate(),

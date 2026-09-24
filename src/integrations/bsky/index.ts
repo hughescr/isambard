@@ -29,3 +29,4 @@ export type { BskyApprovedReply, BskyApprovedDm, BskyOutboundApprovalsDeps } fro
 export { BskyRejectionBackend } from './rejection-backend';
 export type { BskyRejectionItem } from './rejection-backend';
 export { BskyHistoryProvider } from './history-provider';
+export { createBskyDmPoller, DEFAULT_DM_POLL_INTERVAL_MS, type BskyDmPoller, type BskyDmPollerOptions } from './dm-poller';

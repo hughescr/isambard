@@ -186,8 +186,8 @@ a Discord turn is a turn submitted to the conversation conductor.
 - `setupPerchDriverAndScheduler()` builds `createPerchDriver()` (owns a slot's submit/wrap-up/
   interrupt-timer lifecycle against the perch conductor) and `createPerchScheduler()` (cron-based
   hourly trigger), and wires the scheduler's `onPerchTrigger` to the driver's `runSlot()`
-- `bot.ts` calls this setup function once `perchConductor.open()` has succeeded, and manages
-  lifecycle (start/stop)
+- `bot.ts` calls this setup function from `attachSessions` once the session supervisor
+  (`src/app/runtime.ts`) reports the perch session open, and manages lifecycle (start/stop)
 
 ### handlers.ts
 - On `messageCreate` in the perch-time channel, submits a `discord`-kind turn straight to the

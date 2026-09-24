@@ -1,7 +1,8 @@
 /**
  * Ingress Gate
  *
- * Buffers live messages arriving during boot so the boot sequence (P10's `runBootSequence`) can
+ * Buffers live messages arriving during boot so the boot sequence (P10's, in
+ * `agent/session/boot-sequence.ts`) can
  * decide, once it knows which message ids it already replayed from Discord history, which
  * buffered messages still need to reach the coordinator — a message that arrives while
  * `loadUnread`/replay is running must be answered exactly once, not twice.

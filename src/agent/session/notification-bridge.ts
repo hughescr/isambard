@@ -9,8 +9,9 @@
  * `createConversationConductor` itself consumes email's MCP server instance, so the dependency
  * runs the other way), and attaches the real conductor via {@link NotificationBridge.attachConductor}
  * once `createConversationConductor` resolves. `createConversationConductor` resolving is NOT
- * the same as the conductor being open: `bot.ts`'s `clientReady` calls `conductor.open()` later
- * still, after the Discord login round-trip, so there is a real window — after attach, before
+ * the same as the conductor being open: the session supervisor (`src/app/runtime.ts`) calls
+ * `conductor.open()` later still, after the Discord login round-trip and the bot's first
+ * `clientReady`, so there is a real window — after attach, before
  * open — during which a naive "attached, so deliver" `notify()` would burn a source's dedupe key
  * (and, for a coalesced source, its own "already reported" memory) on a delivery that never
  * happened, permanently losing it for as long as the underlying key stays the same (a health

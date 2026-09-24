@@ -3,10 +3,12 @@ import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
 import { MessageFlags, type Client } from 'discord.js';
 import * as agentModule from '@/agent';
-import { type Conductor, type LedgerStore  } from '@/agent';
+import { systemClock, type Conductor, type LedgerStore, type SessionJournal } from '@/agent';
+import { createSessionSupervisor, startSessions, type SessionSupervisor } from '@/app/runtime';
 import { DEFAULT_TASK_BOARD_CONFIG, type DiscordConfig } from '@/config/schemas';
+import { InvariantViolationError } from '@/errors';
 import type { AllowlistCommandHandler } from '@/integrations/discord/allowlist-commands';
-import { createDiscordBot, type DiscordBotOptions } from '@/integrations/discord/bot';
+import { createDiscordBot as createRealDiscordBot, type DiscordBot, type DiscordBotOptions } from '@/integrations/discord/bot';
 import * as channelRegistryModule from '@/integrations/discord/channel-registry/discovery';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import * as clientModule from '@/integrations/discord/client';
@@ -97,6 +99,60 @@ function mockRest(): { on: ReturnType<typeof mock> } {
     return { on: mock(() => undefined) };
 }
 
+/**
+ * Session inputs the bot itself no longer takes (#41): the harness hands them, with the bot's own
+ * conductors, to a REAL session supervisor (`src/app/runtime.ts`) the way `src/index.ts` does, so
+ * the conductor-mode tests below exercise the bot and the supervisor together.
+ */
+interface SessionHarnessOptions {
+    journal?:            SessionJournal
+    perchJournal?:       SessionJournal
+    exit?:               (code: number) => void
+    shutdownTurnWaitMs?: number
+    shutdownDeadlineMs?: number
+}
+type TestBotOptions = DiscordBotOptions & SessionHarnessOptions;
+
+const harnessedBots = new Map<Client, { bot: DiscordBot, options: TestBotOptions, started: boolean }>();
+
+/** Builds the real bot and records it against its Discord client, for {@link startHarnessedSessions}. */
+function createDiscordBot(options: TestBotOptions): DiscordBot {
+    const bot = createRealDiscordBot(options);
+    const client = options.client ?? globalThis.__discordClient;
+    if(client) {
+        harnessedBots.set(client, { bot, options, started: false });
+    }
+    return bot;
+}
+
+/** A real session supervisor over the bot's conductors, supervised only when the old bot would have opened them (its full dependency set present). */
+function supervisorFor(bot: DiscordBot, options: TestBotOptions): SessionSupervisor {
+    const { conversationConductor, ledgerStore, contextPolicy, journal, perchConductor, perchLedgerStore, perchJournal } = options;
+    return createSessionSupervisor({
+        conversation: conversationConductor && ledgerStore && contextPolicy && journal ? { conductor: conversationConductor, journal } : undefined,
+        perch:        perchConductor && perchLedgerStore && perchJournal ? { conductor: perchConductor, journal: perchJournal } : undefined,
+        turnWaitMs:   options.shutdownTurnWaitMs ?? 60_000,
+        deadlineMs:   options.shutdownDeadlineMs ?? 120_000,
+        stopIngress:  () => {
+            bot.stopIngress();
+        },
+        exit: options.exit ?? ((code: number): void => {
+            throw new Error(`harness: exit(${code}) called without an injected exit mock`);
+        }),
+        clock:  options.clock ?? systemClock,
+        logger: loggerModule.logger,
+    });
+}
+
+/** Runs `startSessions` once for the bot built on `client` — what `src/index.ts`'s app.start() does. */
+async function startHarnessedSessions(client: Client): Promise<void> {
+    const harnessed = harnessedBots.get(client);
+    if(harnessed && !harnessed.started) {
+        harnessed.started = true;
+        await startSessions({ host: harnessed.bot, supervisor: supervisorFor(harnessed.bot, harnessed.options), logger: loggerModule.logger });
+    }
+}
+
 describe('createDiscordBot', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
 
@@ -162,6 +218,7 @@ describe('createDiscordBot', () => {
         jest.useRealTimers();
         // Clear global Discord client state to prevent test pollution
         globalThis.__discordClient = undefined;
+        harnessedBots.clear();
     });
 
     function makeMockClientForConductor(): Client {
@@ -224,7 +281,7 @@ describe('createDiscordBot', () => {
         } as unknown as LedgerStore & { get: ReturnType<typeof mock>, emit: (ledger: unknown, event?: unknown) => void };
     }
 
-    function conductorDeps(overrides: Record<string, unknown> = {}): Partial<DiscordBotOptions> {
+    function conductorDeps(overrides: Record<string, unknown> = {}): Partial<TestBotOptions> {
         return {
             conversationConductor: makeFakeConductor(),
             ledgerStore:           makeFakeLedgerStore(),
@@ -237,13 +294,17 @@ describe('createDiscordBot', () => {
         };
     }
 
-    /** Fires the registered clientReady handler and waits for its async body to settle. */
+    /**
+     * Fires the registered clientReady handler, then (the first time per bot) runs the real
+     * `startSessions` sequence — open, attachSessions, boot recovery — and waits for it to settle.
+     */
     async function triggerReady(client: Client): Promise<void> {
         const calls = (client.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (c: Client) => void | Promise<void>][];
         const handler = calls.find(([event]) => event === 'clientReady')?.[1];
         if(handler) {
             await handler(client);
         }
+        await startHarnessedSessions(client);
     }
 
     function stubCoordinator() {
@@ -509,8 +570,9 @@ describe('createDiscordBot', () => {
                 // eslint-disable-next-line no-await-in-loop -- sequential: each handler must complete before next
                 await Promise.resolve(handler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
-            // After first clientReady, messageCreate handler should be registered
+            // After first clientReady (and the sessions attaching), messageCreate handler should be registered
             expect(messageCreateHandlerCount).toBe(1);
 
             // Fire clientReady again (simulating reconnect)
@@ -518,6 +580,7 @@ describe('createDiscordBot', () => {
                 // eslint-disable-next-line no-await-in-loop -- sequential: each handler must complete before next
                 await Promise.resolve(handler(mockClient));
             }
+            await flushMicrotasks();
 
             // messageCreate should still be 1 — the initialized flag prevents duplicate registration
             expect(messageCreateHandlerCount).toBe(1);
@@ -585,8 +648,11 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            // clientReady alone only signals readiness: messageCreate waits for the sessions.
+            expect(messageCreateRegistered).toBe(false);
+            await startHarnessedSessions(mockClient);
 
-            // After clientReady fires, messageCreate SHOULD be registered
+            // After clientReady fires and the sessions attach, messageCreate SHOULD be registered
             expect(messageCreateRegistered).toBe(true);
         });
     });
@@ -1627,27 +1693,6 @@ describe('createDiscordBot', () => {
             expect(errorLog).toHaveBeenCalledWith({ error: 'boom', msg: 'Conductor open() failed — exiting so the deploy supervisor restarts this process' });
         });
 
-        test('falls back to process.exit when no exit override is given and open() rejects', async () => {
-            const client = makeMockClientForConductor();
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
-            const processExitSpy = spyOn(process, 'exit').mockImplementation((() => undefined) as never);
-            spies.push(processExitSpy);
-
-            const conductor = makeFakeConductor({ open: mock(() => Promise.reject(new Error('boom'))) });
-            const deps = conductorDeps({ conversationConductor: conductor, exit: undefined });
-
-            createDiscordBot({
-                config:          mockConfig,
-                channelRegistry: mockChannelRegistry,
-                ...deps,
-            });
-
-            await triggerReady(client);
-
-            expect(processExitSpy).toHaveBeenCalledTimes(1);
-            expect(processExitSpy).toHaveBeenCalledWith(1);
-        });
-
         test('never wires the coordinator without hanging forever when open() never settles', async () => {
             jest.useFakeTimers();
             const errorLog = spyOn(loggerModule.logger, 'error');
@@ -1673,48 +1718,19 @@ describe('createDiscordBot', () => {
                 ...deps,
             });
 
-            const calls = (client.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (c: Client) => void | Promise<void>][];
-            const handler = calls.find(([event]) => event === 'clientReady')?.[1];
-            const readyPromise = handler ? Promise.resolve(handler(client)) : Promise.resolve();
+            const readyPromise = triggerReady(client);
 
+            await flushMicrotasks();
             jest.advanceTimersByTime(29_999);
             await flushMicrotasks();
             expect(deps.exit).not.toHaveBeenCalled();
             jest.advanceTimersByTime(1);
-            for(let i = 0; i < 10; i += 1) {
-                // eslint-disable-next-line no-await-in-loop -- deterministic microtask-drain, not a real async loop
-                await Promise.resolve();
-            }
             await readyPromise;
 
             expect(setupCoordinatorIntegrationSpy).not.toHaveBeenCalled();
             expect(conductor.subscribeTurn).not.toHaveBeenCalled();
             expect(deps.exit).toHaveBeenCalledWith(1);
             expect(errorLog).toHaveBeenCalledWith({ error: 'conductor.open() timed out', msg: 'Conductor open() failed — exiting so the deploy supervisor restarts this process' });
-        });
-
-        test('clears the conductor-open timeout after a successful open', async () => {
-            jest.useFakeTimers();
-            const client = makeMockClientForConductor();
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
-            const clearTimeoutSpy = spyOn(globalThis, 'clearTimeout');
-            spies.push(clearTimeoutSpy);
-            const deps = conductorDeps();
-
-            createDiscordBot({
-                config:          mockConfig,
-                channelRegistry: mockChannelRegistry,
-                ...deps,
-            });
-            let readySettled = false;
-            void triggerReady(client).then(() => {
-                readySettled = true;
-                return undefined;
-            });
-            await flushMicrotasks();
-
-            expect(readySettled).toBe(true);
-            expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
         });
 
         test('message processing receives a logged rate limiter and LLM-backed answer classifier', async () => {
@@ -1770,50 +1786,23 @@ describe('createDiscordBot', () => {
             expect(typeof capturedParams?.envelopeProvider?.channelList).toBe('function');
         });
 
-        test('calls open() only once across repeated clientReady (reconnect) events', async () => {
+        test('a repeated clientReady (reconnect) does not re-run the readiness setup', async () => {
             const client = makeMockClientForConductor();
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
             stubCoordinator();
-
-            const deps = conductorDeps();
+            const initializeSpy = spyOn(eventHandlerSetupModule, 'initializeChannelRegistry').mockImplementation(() => undefined);
+            spies.push(initializeSpy);
 
             createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                ...deps,
+                ...conductorDeps(),
             });
 
             await triggerReady(client);
             await triggerReady(client);
 
-            expect((deps.conversationConductor as ReturnType<typeof makeFakeConductor>).open).toHaveBeenCalledTimes(1);
-        });
-
-        test('does not open the conductor when its journal is unavailable', async () => {
-            const client = makeMockClientForConductor();
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
-            const conductor = makeFakeConductor();
-            const deps = conductorDeps({ conversationConductor: conductor, journal: undefined });
-
-            createDiscordBot({ config: mockConfig, channelRegistry: mockChannelRegistry, ...deps });
-            await triggerReady(client);
-
-            expect(conductor.open).not.toHaveBeenCalled();
-        });
-
-        test('does not open the perch conductor when no perch journal is configured', async () => {
-            const client = makeMockClientForConductor();
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
-
-            // A perch conductor and its ledger without a journal is not a complete perch: open() must
-            // stay untouched rather than opening a session whose turns could never be journalled.
-            const perchConductor = makeFakeConductor();
-            const deps = conductorDeps({ perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1') });
-
-            createDiscordBot({ config: mockConfig, channelRegistry: mockChannelRegistry, ...deps });
-            await triggerReady(client);
-
-            expect(perchConductor.open).not.toHaveBeenCalled();
+            expect(initializeSpy).toHaveBeenCalledTimes(1);
         });
 
         test('seeds lastSessionId from the ledger after a successful open()', async () => {
@@ -2099,42 +2088,24 @@ describe('createDiscordBot', () => {
             expect(warn).toHaveBeenCalledWith({ error: 'warning logger failed', msg: 'Conductor shutdown warning failed after an earlier bot shutdown error' });
         });
 
-        test('exposes bot.shutdown once the conductor has opened; undefined before that', async () => {
+        test('stop() with a provided client runs the attached session shutdown and leaves the global client in place', async () => {
             const client = makeMockClientForConductor();
             globalThis.__discordClient = client;
             stubCoordinator();
+            const conductor = makeFakeConductor();
 
-            const deps = conductorDeps();
             const bot = createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
                 client,
-                ...deps,
+                ...conductorDeps({ conversationConductor: conductor }),
             });
 
-            expect(bot.shutdown).toBeUndefined();
-
             await triggerReady(client);
-
-            expect(bot.shutdown).toBeDefined();
-            expect(typeof bot.shutdown?.run).toBe('function');
             await bot.stop();
+
+            expect(conductor.shutdown).toHaveBeenCalledTimes(1);
             expect(globalThis.__discordClient).toBe(client);
-        });
-
-        test('bot.shutdown is undefined in oneshot mode (no conductor deps provided)', async () => {
-            const client = makeMockClientForConductor();
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
-            stubCoordinator();
-
-            const bot = createDiscordBot({
-                config:          mockConfig,
-                channelRegistry: mockChannelRegistry,
-            });
-
-            await triggerReady(client);
-
-            expect(bot.shutdown).toBeUndefined();
         });
 
         test('triggerCatchUp submits a catch-up envelope through the conductor in conductor mode when unread mail remains', async () => {
@@ -3500,6 +3471,278 @@ describe('createDiscordBot', () => {
         });
     });
 
+    describe('Session host adapter (#41)', () => {
+        /** Fires clientReady directly (no session supervisor) and waits for `bot.ready`. */
+        async function fireReady(client: Client, bot: DiscordBot): Promise<void> {
+            const calls = (client.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (c: Client) => void][];
+            calls.find(([event]) => event === 'clientReady')?.[1](client);
+            await bot.ready;
+        }
+
+        function fakeGate() {
+            return { admit: mock(() => 'pass'), open: mock(() => undefined), state: mock(() => 'buffering'), stop: mock(() => undefined) };
+        }
+
+        test('ready resolves only after the wake-turn delivery binding and initializeChannelRegistry', async () => {
+            const client = makeMockClientForConductor();
+            const order: string[] = [];
+            spies.push(spyOn(eventHandlerSetupModule, 'initializeChannelRegistry').mockImplementation(() => {
+                order.push('initializeChannelRegistry');
+            }));
+            const setWakeTurnDelivery = mock(() => {
+                order.push('setWakeTurnDelivery');
+            });
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, ...conductorDeps(), setWakeTurnDelivery });
+            void bot.ready.then(() => {
+                order.push('ready');
+                return undefined;
+            });
+            await flushMicrotasks();
+            expect(order).toEqual([]);
+
+            await fireReady(client, bot);
+            await flushMicrotasks();
+
+            expect(order).toEqual(['setWakeTurnDelivery', 'initializeChannelRegistry', 'ready']);
+        });
+
+        test('the bot itself never opens a conductor, builds a shutdown or exits the process', async () => {
+            const client = makeMockClientForConductor();
+            stubCoordinator();
+            const createShutdownSpy = spyOn(agentModule, 'createShutdown');
+            const exitSpy = spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+            spies.push(createShutdownSpy, exitSpy);
+            const conversationConductor = makeFakeConductor();
+            const perchConductor = makeFakeConductor();
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, ...conductorDeps({ conversationConductor, perchConductor, perchLedgerStore: makeFakeLedgerStore('perch') }) });
+
+            await fireReady(client, bot);
+            await bot.attachSessions({ conversation: 'open', perch: 'open' }, undefined);
+            await bot.stop();
+
+            expect(conversationConductor.open).not.toHaveBeenCalled();
+            expect(perchConductor.open).not.toHaveBeenCalled();
+            expect(createShutdownSpy).not.toHaveBeenCalled();
+            expect(exitSpy).not.toHaveBeenCalled();
+        });
+
+        test('attachSessions before ready throws an InvariantViolationError', async () => {
+            const bot = createRealDiscordBot({ config: mockConfig, client: makeMockClientForConductor(), channelRegistry: mockChannelRegistry, ...conductorDeps() });
+
+            const attaching = bot.attachSessions({ conversation: 'open', perch: 'absent' }, undefined);
+            await expect(attaching).rejects.toBeInstanceOf(InvariantViolationError);
+            await expect(attaching).rejects.toThrow('Invariant violated in bot.attachSessions: called before the Discord client signalled readiness (bot.ready)');
+        });
+
+        test.each(['conversationConductor', 'ledgerStore', 'contextPolicy'] as const)('attachSessions with the conversation open but no %s throws an InvariantViolationError', async (missing) => {
+            const client = makeMockClientForConductor();
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, ...conductorDeps({ [missing]: undefined }) });
+            await fireReady(client, bot);
+
+            const attaching = bot.attachSessions({ conversation: 'open', perch: 'absent' }, undefined);
+            await expect(attaching).rejects.toBeInstanceOf(InvariantViolationError);
+            await expect(attaching).rejects.toThrow('Invariant violated in bot.attachSessions: the conversation session opened, but the bot was built without its conductor, ledger store or context policy');
+        });
+
+        test('attachSessions runs the post-open steps in order: presence, task board, perch, mute, coordinator, message processing, cleanup', async () => {
+            const client = makeMockClientForConductor();
+            const order: string[] = [];
+            const push = (step: string) => (): void => {
+                order.push(step);
+            };
+            spies.push(
+                spyOn(presenceSetupModule, 'setupConductorPresence').mockImplementation(() => {
+                    order.push('presence');
+                    return { presenceManager: { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager, unsubscribeLedgers: mock(() => undefined) };
+                }),
+                spyOn(taskBoardSetupModule, 'setupTaskBoard').mockImplementation(() => {
+                    order.push('taskBoard');
+                    return { stop: mock(() => undefined) };
+                }),
+                spyOn(perchSetupModule, 'setupPerchDriverAndScheduler').mockImplementation(() => {
+                    order.push('perch');
+                    return { driver: { runSlot: mock(() => 'started' as const), stop: mock(() => undefined) }, scheduler: { start: mock(() => undefined), stop: mock(() => undefined), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() } };
+                }),
+                spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation(() => {
+                    order.push('coordinator');
+                    return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
+                }),
+                spyOn(eventHandlerSetupModule, 'setupMessageProcessing').mockImplementation(push('messageProcessing')),
+                spyOn(eventHandlerSetupModule, 'setupChannelCleanupHandlers').mockImplementation(push('cleanup'))
+            );
+            const channelRegistry = { ...mockChannelRegistry, muteChannel: mock(async () => {
+                order.push('mute');
+            }) } as unknown as ChannelRegistryManager;
+            const bot = createRealDiscordBot({
+                config:               { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
+                client,
+                channelRegistry,
+                identityContext:      'Test identity',
+                adminReviewChannelId: createChannelId('333444555666777888'),
+                perchConfig:          { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
+                ...conductorDeps({ perchConductor: makeFakeConductor(), perchLedgerStore: makeFakeLedgerStore('perch') }),
+            });
+            await fireReady(client, bot);
+
+            await bot.attachSessions({ conversation: 'open', perch: 'open' }, undefined);
+
+            expect(order).toEqual(['presence', 'taskBoard', 'perch', 'mute', 'coordinator', 'messageProcessing', 'cleanup']);
+        });
+
+        test('a failed conversation outcome wires no coordinator and no ingress gate', async () => {
+            const client = makeMockClientForConductor();
+            const coordinatorSpy = spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration');
+            const gateSpy = spyOn(ingressGateModule, 'createIngressGate');
+            spies.push(coordinatorSpy, gateSpy);
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, ...conductorDeps() });
+            await fireReady(client, bot);
+
+            await bot.attachSessions({ conversation: 'failed', perch: 'absent' }, undefined);
+
+            expect(coordinatorSpy).not.toHaveBeenCalled();
+            expect(gateSpy).not.toHaveBeenCalled();
+        });
+
+        test('a disabled perch outcome wires no perch driver even with a perch conductor and perch enabled', async () => {
+            const client = makeMockClientForConductor();
+            stubCoordinator();
+            const perchSpy = spyOn(perchSetupModule, 'setupPerchDriverAndScheduler');
+            spies.push(perchSpy);
+            const bot = createRealDiscordBot({
+                config:          mockConfig,
+                client,
+                channelRegistry: mockChannelRegistry,
+                perchConfig:     { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
+                ...conductorDeps({ perchConductor: makeFakeConductor(), perchLedgerStore: makeFakeLedgerStore('perch') }),
+            });
+            await fireReady(client, bot);
+
+            await bot.attachSessions({ conversation: 'open', perch: 'disabled' }, undefined);
+
+            expect(perchSpy).not.toHaveBeenCalled();
+        });
+
+        test('stop() stops the ingress gate and then runs the attached shutdown', async () => {
+            const client = makeMockClientForConductor();
+            stubCoordinator();
+            const order: string[] = [];
+            const gate = fakeGate();
+            gate.stop.mockImplementation(() => {
+                order.push('gate.stop');
+            });
+            spies.push(spyOn(ingressGateModule, 'createIngressGate').mockReturnValue(gate as unknown as ReturnType<typeof ingressGateModule.createIngressGate>));
+            const shutdown = { run: mock(async () => {
+                order.push('shutdown.run');
+                return { forced: false };
+            }) };
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, ...conductorDeps() });
+            await fireReady(client, bot);
+            await bot.attachSessions({ conversation: 'open', perch: 'absent' }, shutdown);
+
+            await bot.stop();
+
+            expect(order).toEqual(['gate.stop', 'shutdown.run']);
+        });
+
+        test('stop() with no shutdown attached neither stops the gate nor runs a shutdown', async () => {
+            const client = makeMockClientForConductor();
+            stubCoordinator();
+            const gate = fakeGate();
+            spies.push(spyOn(ingressGateModule, 'createIngressGate').mockReturnValue(gate as unknown as ReturnType<typeof ingressGateModule.createIngressGate>));
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, ...conductorDeps() });
+            await fireReady(client, bot);
+            await bot.attachSessions({ conversation: 'open', perch: 'absent' }, undefined);
+
+            await bot.stop();
+
+            expect(gate.stop).not.toHaveBeenCalled();
+        });
+
+        test('a rejected attached shutdown is logged with the existing warning and stop() continues', async () => {
+            const client = makeMockClientForConductor();
+            stubCoordinator();
+            const warn = spyOn(loggerModule.logger, 'warn');
+            spies.push(warn);
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, ...conductorDeps() });
+            await fireReady(client, bot);
+            await bot.attachSessions({ conversation: 'open', perch: 'absent' }, { run: mock(() => Promise.reject(new Error('shutdown boom'))) });
+
+            await expect(bot.stop()).resolves.toBeUndefined();
+
+            expect(warn).toHaveBeenCalledWith({ error: 'shutdown boom', msg: 'Conductor shutdown() failed — continuing with the rest of stop()' });
+            expect(client.destroy).toHaveBeenCalledTimes(1);
+        });
+
+        test('stopIngress() stops the gate once the conversation session is attached', async () => {
+            const client = makeMockClientForConductor();
+            stubCoordinator();
+            const gate = fakeGate();
+            spies.push(spyOn(ingressGateModule, 'createIngressGate').mockReturnValue(gate as unknown as ReturnType<typeof ingressGateModule.createIngressGate>));
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, ...conductorDeps() });
+            await fireReady(client, bot);
+            await bot.attachSessions({ conversation: 'open', perch: 'absent' }, undefined);
+
+            bot.stopIngress();
+
+            expect(gate.stop).toHaveBeenCalledTimes(1);
+        });
+
+        test('stopIngress() is a no-op before any gate exists', () => {
+            const bot = createRealDiscordBot({ config: mockConfig, client: makeMockClientForConductor(), channelRegistry: mockChannelRegistry, ...conductorDeps() });
+
+            expect(() => {
+                bot.stopIngress();
+            }).not.toThrow();
+        });
+
+        test('recoveryAdapter.recover forwards the runtime to setupInboxAndCatchUp and waits for it', async () => {
+            const client = makeMockClientForConductor();
+            stubCoordinator();
+            const inbox = deferredPromise<undefined>();
+            const setupSpy = spyOn(catchupSetupModule, 'setupInboxAndCatchUp').mockImplementation(() => inbox.promise);
+            spies.push(setupSpy);
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, inboxManager: {} as unknown as InboxManager, ...conductorDeps() });
+            await fireReady(client, bot);
+            await bot.attachSessions({ conversation: 'open', perch: 'absent' }, undefined);
+            const runtime = { loadRecovery: mock(), runBoot: mock() } as unknown as agentModule.BootRecoveryRuntime;
+
+            const recovering = bot.recoveryAdapter.recover(runtime);
+            await expectPromiseToRemainPending(recovering);
+            inbox.resolve(undefined);
+            await recovering;
+
+            expect(setupSpy).toHaveBeenCalledTimes(1);
+            expect(setupSpy.mock.calls[0][0].recoveryRuntime).toBe(runtime);
+        });
+
+        test('recoveryAdapter.recover is a no-op when the conversation session is not open', async () => {
+            const client = makeMockClientForConductor();
+            const setupSpy = spyOn(catchupSetupModule, 'setupInboxAndCatchUp');
+            spies.push(setupSpy);
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, inboxManager: {} as unknown as InboxManager, ...conductorDeps() });
+            await fireReady(client, bot);
+            await bot.attachSessions({ conversation: 'failed', perch: 'absent' }, undefined);
+
+            await bot.recoveryAdapter.recover({} as agentModule.BootRecoveryRuntime);
+
+            expect(setupSpy).not.toHaveBeenCalled();
+        });
+
+        test('recoveryAdapter.recover is a no-op without an inbox manager', async () => {
+            const client = makeMockClientForConductor();
+            stubCoordinator();
+            const setupSpy = spyOn(catchupSetupModule, 'setupInboxAndCatchUp');
+            spies.push(setupSpy);
+            const bot = createRealDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, ...conductorDeps() });
+            await fireReady(client, bot);
+            await bot.attachSessions({ conversation: 'open', perch: 'absent' }, undefined);
+
+            await bot.recoveryAdapter.recover({} as agentModule.BootRecoveryRuntime);
+
+            expect(setupSpy).not.toHaveBeenCalled();
+        });
+    });
+
     describe('Channel Cleanup Events', () => {
         test('should call coordinator.removeChannel() on channelDelete event', async () => {
             const mockRemoveChannel = mock(() => undefined);
@@ -3558,6 +3801,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             // Verify channelDelete handler was registered
             expect(channelDeleteHandler).toBeDefined();
@@ -3615,6 +3859,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             // channelDelete handler should still be registered (no-op when coordinator is undefined)
             expect(channelDeleteHandler).toBeDefined();
@@ -3698,6 +3943,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             // Verify guildDelete handler was registered
             expect(guildDeleteHandler).toBeDefined();
@@ -3778,6 +4024,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             // Verify guildDelete handler was registered
             expect(guildDeleteHandler).toBeDefined();
@@ -3841,6 +4088,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             // guildDelete handler should still be registered (no-op when coordinator is undefined)
             expect(guildDeleteHandler).toBeDefined();
@@ -3943,6 +4191,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             expect(interactionCreateHandler).toBeDefined();
 
@@ -4008,6 +4257,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             expect(interactionCreateHandler).toBeDefined();
 
@@ -4077,6 +4327,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             expect(interactionCreateHandler).toBeDefined();
 
@@ -4138,6 +4389,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             expect(interactionCreateHandler).toBeDefined();
 
@@ -4199,6 +4451,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             expect(interactionCreateHandler).toBeDefined();
 
@@ -4264,6 +4517,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             expect(interactionCreateHandler).toBeDefined();
 
@@ -4326,6 +4580,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             expect(interactionCreateHandler).toBeDefined();
 
@@ -4387,6 +4642,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             expect(interactionCreateHandler).toBeDefined();
 
@@ -4450,6 +4706,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             // muteChannel must be called once with the admin review channel
             expect(muteChannelMock).toHaveBeenCalledTimes(1);
@@ -4495,6 +4752,7 @@ describe('createDiscordBot', () => {
                 // Must not throw even though muteChannel throws
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             // Bot must still be stoppable after mute failure
             await bot.stop();
@@ -4545,6 +4803,7 @@ describe('createDiscordBot', () => {
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
+            await startHarnessedSessions(mockClient);
 
             // muteChannel must NOT be called when adminReviewChannelId is absent (even with email enabled)
             expect(muteChannelMock).not.toHaveBeenCalled();

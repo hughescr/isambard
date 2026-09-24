@@ -8,9 +8,9 @@ import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from '../response-sender';
 import { createChannelId, createUserId, isDmScope, type ChannelId, type ChannelScope } from '../types';
 import {
-    type PerchConfig, type Conductor, type SessionJournal, type QueryEnvelope, type UndeliveredEnvelope, type ContextPolicy,
-    type TimeHeaderProvider,
-    computeRecovery, lastKnownAt, buildDiscordEnvelope, buildCatchupEnvelope, formatTimeHeader, runBootSequence
+    type PerchConfig, type Conductor, type QueryEnvelope, type UndeliveredEnvelope, type ContextPolicy,
+    type TimeHeaderProvider, type BootRecoveryRuntime,
+    buildDiscordEnvelope, buildCatchupEnvelope, formatTimeHeader
 } from '@/agent';
 import { InvariantViolationError, ResponseUnavailableError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services';
@@ -42,18 +42,8 @@ interface ReplayableMessage {
 const REPLAY_CAVEAT = '[REPLAY NOTE] These messages were received before a restart and may already have been answered — check before repeating work.';
 
 /**
- * How far back {@link runConductorInboxInit} reads the journal to recompute boot-time recovery —
- * matches `Conductor`'s own internal recovery window (P8), duplicated here because
- * `Conductor.open()` computes and fully consumes its `RecoveryResult` internally (task_lost
- * journaling, delivery-guard seeding, boot-bundle text) without exposing it. See
- * {@link runConductorInboxInit}'s own doc for why recomputing here — rather than adding a new
- * Conductor-surface — is the deliberate choice.
- */
-const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-/**
  * Fallback lookback window for the merged boot envelope's events-since-mark seeding (R1) when the
- * journal carries no `turn_completed`/`turn_failed` entry to derive {@link lastKnownAt} from (a
+ * journal carries no `turn_completed`/`turn_failed` entry to derive `lastKnownAt` from (a
  * genuinely fresh journal). Matches `sessionConfigSchema`'s own `bootEventsWindowMs` default
  * (24h) — duplicated here since {@link RunConductorInboxInitParams} takes it as a plain optional
  * number, not the config object itself.
@@ -193,7 +183,12 @@ export interface RunConductorInboxInitParams {
     perchConfig:           PerchConfig | undefined
     ingressGate:           IngressGate<Message>
     conversationConductor: Conductor
-    journal:               SessionJournal
+    /**
+     * The session supervisor's half of boot recovery (`src/app/runtime.ts`): the journal read and
+     * recovery computation ({@link BootRecoveryRuntime.loadRecovery}) and the boot sequence itself
+     * ({@link BootRecoveryRuntime.runBoot}). This adapter decides when each runs.
+     */
+    recoveryRuntime:       BootRecoveryRuntime
     responseRouter:        ResponseRouter
     rateLimiter:           DiscordRateLimiter
     /**
@@ -208,7 +203,7 @@ export interface RunConductorInboxInitParams {
     discordCapability?:    DiscordCapability
     /**
      * R1: drives the merged boot envelope's events-since-mark section. Seeded here from the
-     * journal-derived {@link lastKnownAt} boundary (or the `bootEventsWindowMs` fallback) before
+     * journal-derived `lastKnownAt` boundary (or the `bootEventsWindowMs` fallback) before
      * `eventsDelta()` is read, then advanced via `markEventsSeen()` once the envelope has
      * submitted. Optional — when omitted, the merged envelope carries no events section, exactly
      * like omitting `healthRegistry` leaves `ContextPolicy.healthNote()` permanently disabled.
@@ -224,11 +219,11 @@ export interface RunConductorInboxInitParams {
     /**
      * R1: background-task descriptions lost at restart, sourced from
      * `createConversationConductor`'s own {@link import('@/app/sessions').ConversationConductorResult.bootLostTasks}
-     * — a snapshot read BEFORE `conversationConductor.open()` was ever called, so it cannot race
+     * — a snapshot read BEFORE the conversation session was ever opened, so it cannot race
      * `Conductor.open()`'s own fire-and-forget `task_lost` journal write (see that field's own
-     * doc for why a read taken after `open()` — this module's own `journal.readSince` below,
-     * computed for `runBootSequence`'s undelivered-redelivery needs — would reliably see the same
-     * tasks as already resolved). Optional so tests and any caller that predates this field keep
+     * doc for why a read taken after `open()` — `recoveryRuntime.loadRecovery()` below, done for
+     * the boot sequence's undelivered-redelivery needs — would reliably see the same tasks as
+     * already resolved). Optional so tests and any caller that predates this field keep
      * working: when omitted, the merged envelope falls back to this function's own (racy) local
      * `recovery.lostTasks` computation, matching pre-R1-fix behaviour exactly.
      */
@@ -242,17 +237,19 @@ export interface RunConductorInboxInitParams {
 }
 
 /**
- * The conductor-mode inbox/boot sequence (P10), run once from `bot.ts`'s `clientReady`: loads
- * unread mail, then runs {@link runBootSequence} exactly once to redeliver
- * anything a crash left undelivered and replay anything received-but-unhandled, opening the
- * ingress gate always (even with nothing to replay — a boot with no crash-recovery work still
- * needs its live-message buffer drained). Once that sequence resolves, this function builds and
- * submits ONE merged boot envelope (R1: the boot bundle and the Discord catch-up merge into a
- * single envelope on the Discord side) via {@link submitMergedBootEnvelope} — unread overview,
- * events since the journal-derived `lastKnownAt` mark, recovery's lost tasks, and the undelivered
- * replies this same boot actually redelivered — submitted with a turn or appended without one per
- * the envelope's own contract (see `buildCatchupEnvelope`'s doc). `runBootSequence`'s own
- * `submitCatchUp` callback is therefore a no-op here: the merged envelope subsumes it.
+ * The Discord side of boot-time crash recovery (P10), run once through the bot's recovery adapter
+ * when the session supervisor (`src/app/runtime.ts`) runs recovery: loads unread mail, loads the
+ * recovery through `recoveryRuntime.loadRecovery()`, then runs the runtime's boot sequence
+ * (`recoveryRuntime.runBoot`) exactly once to redeliver anything a crash left undelivered and
+ * replay anything received-but-unhandled, opening the ingress gate always (even with nothing to
+ * replay — a boot with no crash-recovery work still needs its live-message buffer drained). Once
+ * that sequence resolves, this function builds and submits ONE merged boot envelope (R1: the boot
+ * bundle and the Discord catch-up merge into a single envelope on the Discord side) via
+ * {@link submitMergedBootEnvelope} — unread overview, events since the journal-derived
+ * `lastKnownAt` mark, recovery's lost tasks, and the undelivered replies this same boot actually
+ * redelivered — submitted with a turn or appended without one per the envelope's own contract
+ * (see `buildCatchupEnvelope`'s doc). The boot sequence's own `submitCatchUp` callback is
+ * therefore a no-op here: the merged envelope subsumes it.
  *
  * Perch's `triggerOnStartup` test mode means perch handles everything this boot: recovery
  * (undelivered redelivery, replay, the gate opening) still runs unconditionally below so a crash
@@ -260,15 +257,15 @@ export interface RunConductorInboxInitParams {
  * mirroring the oneshot branch's own "perch scheduler handles presence, no action needed here"
  * comment.
  *
- * `Conductor.open()` (already awaited by the caller before this runs) computes and consumes its
- * own boot-time `RecoveryResult` entirely internally and does not expose it, so `recovery` is
- * recomputed here via the same pure {@link computeRecovery} over a fresh `journal.readSince`
- * window — a deliberate, documented duplication of one read-only computation, not of the
- * wait/interrupt/flush sequence the P10 folded gap is actually about (that sequence has exactly
- * one owner: `Conductor.shutdown`, via `createShutdown`).
+ * `Conductor.open()` (already awaited by the session supervisor before this runs) computes and
+ * consumes its own boot-time `RecoveryResult` entirely internally and does not expose it, so the
+ * runtime recomputes `recovery` from a fresh journal read over the same window — a deliberate,
+ * documented duplication of one read-only computation, not of the wait/interrupt/flush sequence
+ * the P10 folded gap is actually about (that sequence has exactly one owner:
+ * `Conductor.shutdown`, run by the supervisor's cross-session shutdown).
  *
- * `submitReplay` (composed here, since `runBootSequence` itself never builds an envelope — see
- * its own module doc) and the merged boot envelope both submit through
+ * `submitReplay` (composed here, since the boot sequence itself never builds an envelope — see
+ * `agent/session/boot-sequence.ts`'s module doc) and the merged boot envelope both submit through
  * `conversationConductor.submit` and then deliver any response through the SAME
  * `conversationConductor.deliver` + {@link sendEnvelopeResponse} idempotency path the live
  * coordinator uses (`setup/coordinator-setup.ts`), so a boot-time submission and a live one can
@@ -278,7 +275,7 @@ export interface RunConductorInboxInitParams {
 export async function runConductorInboxInit(params: RunConductorInboxInitParams): Promise<void> {
     const {
         inboxManager, readyClient, perchConfig, ingressGate,
-        conversationConductor, journal, responseRouter, rateLimiter, excludeChannelIds, discordCapability,
+        conversationConductor, recoveryRuntime, responseRouter, rateLimiter, excludeChannelIds, discordCapability,
         contextPolicy, bootEventsWindowMs, bootLostTasks, timeHeader = formatTimeHeader,
     } = params;
 
@@ -449,10 +446,10 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
 
     /**
      * Seeds `contextPolicy`'s events mark from `knownAt` (or the `bootEventsWindowMs` fallback)
-     * — called BEFORE `runBootSequence` opens the ingress gate, not from inside
+     * — called BEFORE the boot sequence opens the ingress gate, not from inside
      * `submitMergedBootEnvelope` after it already has. A Discord message buffered during boot is
      * released the moment the gate opens; if the mark were seeded only later (inside
-     * `submitMergedBootEnvelope`, which runs AFTER `runBootSequence` resolves), a live turn
+     * `submitMergedBootEnvelope`, which runs AFTER the boot sequence resolves), a live turn
      * released by that gate could call `contextPolicy.eventsDelta()` — and, on a non-withdrawn
      * submit, its own `markEventsSeen()` — concurrently with this boot sequence moving the mark
      * backwards to `knownAt`, an order-dependent race with no single correct outcome. Seeding
@@ -469,44 +466,43 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
 
     const skipCatchUp = Boolean(perchConfig?.testMode?.triggerOnStartup);
 
-    // Tracks whether `runBootSequence` was actually reached — once it is, ITS OWN `finally`
-    // guarantees the gate opens exactly once, so the backstop below must not double-open it.
+    // Tracks whether the runtime's boot sequence was actually reached — once it is, ITS OWN
+    // `finally` guarantees the gate opens exactly once, so the backstop below must not double-open
+    // it.
     let bootSequenceStarted = false;
     try {
         inboxManager.setBotUserId(readyClient.user!.id);
         await inboxManager.loadUnread();
 
-        const entries = await journal.readSince(Date.now() - RECOVERY_WINDOW_MS);
-        const recovery = computeRecovery(entries);
+        const { recovery, knownAt } = await recoveryRuntime.loadRecovery();
 
-        // R1 concurrency fix: seed BEFORE runBootSequence opens the ingress gate — see
+        // R1 concurrency fix: seed BEFORE the boot sequence opens the ingress gate — see
         // seedEventsMark's own doc for the race this ordering removes. Skipped entirely when
         // this boot's merged envelope is suppressed (perch testMode), matching
         // submitMergedBootEnvelope's own skipCatchUp gate below.
         if(!skipCatchUp) {
-            seedEventsMark(lastKnownAt(entries));
+            seedEventsMark(knownAt);
         }
 
         bootSequenceStarted = true;
-        await runBootSequence<ReplayableMessage>({
+        await recoveryRuntime.runBoot<ReplayableMessage>({
             recovery,
             deliver:         deliverUndelivered,
             replayUnhandled: () => inboxManager.replayUnhandled({ excludeChannelIds }),
             submitReplay,
             // R1: the catch-up envelope is now built as ONE merged boot envelope after this
             // sequence resolves (see submitMergedBootEnvelope) — this callback is a deliberate
-            // no-op so runBootSequence's own conditional call does not also submit a second,
+            // no-op so the boot sequence's own conditional call does not also submit a second,
             // narrower catch-up-only envelope.
             submitCatchUp:   () => Promise.resolve(),
             unreadCount:     () => (skipCatchUp ? 0 : inboxManager.getUnreadOverview().totalUnread),
             ingressGate,
-            journal,
         });
 
         if(!skipCatchUp) {
             try {
-                // R1 race fix: `bootLostTasks` (a pre-`conductor.open()` snapshot — see its own
-                // doc) is preferred when supplied; the local `recovery.lostTasks` computed just
+                // R1 race fix: `bootLostTasks` (a snapshot taken before the session opened — see
+                // its own doc) is preferred when supplied; the local `recovery.lostTasks` computed just
                 // above is a fallback ONLY for a caller that predates that field, since a read of
                 // THIS journal at THIS point in the boot sequence races `Conductor.open()`'s own
                 // fire-and-forget `task_lost` write and, in production, reliably loses it.
@@ -518,9 +514,10 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
             }
         }
     } finally {
-        // Backstop for a failure BEFORE `runBootSequence` is ever reached (e.g. `loadUnread`
-        // itself rejects) — without this, such a failure would leave the gate stuck in
-        // `buffering` forever, since `runBootSequence`'s own `finally` never gets a chance to run.
+        // Backstop for a failure BEFORE the boot sequence is ever reached (e.g. `loadUnread` or
+        // the recovery load itself rejects) — without this, such a failure would leave the gate
+        // stuck in `buffering` forever, since the boot sequence's own `finally` never gets a
+        // chance to run.
         if(!bootSequenceStarted) {
             ingressGate.open(new Set());
         }
@@ -539,7 +536,8 @@ interface SetupInboxParams {
 
     /** The long-lived conversation conductor's own boot-time recovery/replay/catch-up sequence — see {@link runConductorInboxInit}. */
     conversationConductor: Conductor
-    journal:               SessionJournal
+    /** Forwarded verbatim to {@link runConductorInboxInit} — see its own `RunConductorInboxInitParams.recoveryRuntime` doc. */
+    recoveryRuntime:       BootRecoveryRuntime
     responseRouter:        ResponseRouter
     rateLimiter:           DiscordRateLimiter
     ingressGate:           IngressGate<Message>
@@ -570,7 +568,7 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): Promise<void> {
         perchConfig,
         healthRegistry,
         conversationConductor,
-        journal,
+        recoveryRuntime,
         responseRouter,
         rateLimiter,
         ingressGate,
@@ -588,7 +586,7 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): Promise<void> {
 
             await runConductorInboxInit({
                 inboxManager, readyClient, perchConfig, ingressGate,
-                conversationConductor, journal, responseRouter, rateLimiter, excludeChannelIds, discordCapability,
+                conversationConductor, recoveryRuntime, responseRouter, rateLimiter, excludeChannelIds, discordCapability,
                 contextPolicy, bootEventsWindowMs, bootLostTasks, timeHeader,
             });
         } catch (error) {

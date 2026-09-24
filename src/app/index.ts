@@ -12,6 +12,16 @@ export {
     createSessionAmbience, type CreateSessionAmbienceParams, type SessionAmbience
 } from './sessions';
 export {
+    createSessionSupervisor,
+    startSessions,
+    CONDUCTOR_OPEN_TIMEOUT_MS,
+    type CreateSessionSupervisorParams,
+    type SessionSupervisor,
+    type SupervisedSession,
+    type SessionHost,
+    type StartSessionsParams
+} from './runtime';
+export {
     registerSignalHandlers,
     createDiscordRecoveryHandler,
     type RegisterSignalHandlersParams,

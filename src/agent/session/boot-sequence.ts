@@ -27,7 +27,7 @@
  *
  * @module agent/session/boot-sequence
  */
-import type { UndeliveredEnvelope } from './recovery';
+import type { RecoveryResult, UndeliveredEnvelope } from './recovery';
 
 /** The subset of {@link import('./recovery').RecoveryResult} this module reads. */
 export interface BootRecovery {
@@ -63,9 +63,10 @@ export interface RunBootSequenceParams<TReplayedMessage extends { id: string }> 
     /**
      * Submits the catch-up envelope. Called only when `unreadCount() > 0`.
      *
-     * R1: `catchup-setup.ts`'s `runConductorInboxInit` (this module's only production caller)
-     * now passes `() => Promise.resolve()` here unconditionally — the boot bundle and the
-     * Discord catch-up merge into ONE envelope built AFTER this whole sequence resolves
+     * R1: the only production caller is the session supervisor (`src/app/runtime.ts`), which
+     * runs this through the Discord adapter's `runConductorInboxInit` (`catchup-setup.ts`, via
+     * {@link BootRecoveryRuntime.runBoot}); that adapter passes `() => Promise.resolve()` here
+     * unconditionally — the boot bundle and the Discord catch-up merge into ONE envelope built AFTER this whole sequence resolves
      * (`submitMergedBootEnvelope`), so this seam is deliberately a no-op in production. It (and
      * `unreadCount` below) is retained rather than removed because it is still real,
      * independently-testable behaviour this module owns and exercises in its own test suite —
@@ -91,6 +92,35 @@ export interface RunBootSequenceResult {
     replayedCount:    number
     /** Whether the catch-up envelope was submitted. */
     catchUpSubmitted: boolean
+}
+
+/** What {@link BootRecoveryRuntime.loadRecovery} resolves with. */
+export interface BootRecoveryLoad {
+    /** The recovery recomputed from the conversation journal's recovery window. */
+    recovery: RecoveryResult
+    /** The journal-derived last-known-alive boundary (`lastKnownAt`), or `undefined` for a fresh journal. */
+    knownAt:  Date | undefined
+}
+
+/**
+ * The runtime's half of boot-time crash recovery, handed to a host's {@link BootRecoveryAdapter}.
+ * The runtime (`src/app/runtime.ts`) owns the journal read, the recovery computation and the boot
+ * sequence itself; the host only supplies the platform callbacks and decides WHEN each step runs,
+ * because it has to interleave its own work between them (loading unread mail before the journal
+ * read, seeding the events mark before the ingress gate opens, submitting its merged boot envelope
+ * afterwards).
+ */
+export interface BootRecoveryRuntime {
+    /** Reads the conversation journal's recovery window and recomputes recovery from it. */
+    loadRecovery: () => Promise<BootRecoveryLoad>
+    /** Runs {@link runBootSequence} once over the conversation journal (the runtime supplies `journal`). */
+    runBoot:      <TReplayedMessage extends { id: string }>(params: Omit<RunBootSequenceParams<TReplayedMessage>, 'journal'>) => Promise<RunBootSequenceResult>
+}
+
+/** A host's replay/ingress-gate side of boot-time crash recovery, driven by the runtime once the conversation session has opened. */
+export interface BootRecoveryAdapter {
+    /** Runs the host's boot recovery through `runtime`. Must not reject. */
+    recover: (runtime: BootRecoveryRuntime) => Promise<void>
 }
 
 /**

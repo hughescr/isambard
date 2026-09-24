@@ -9,6 +9,7 @@ import type { ContextBuilder } from '@/agent/context-builder';
 import * as memoryMcpServer from '@/agent/memory-mcp-server';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
 import * as mcpServersModule from '@/app/mcp-servers';
+import * as runtimeModule from '@/app/runtime';
 import * as sessionsModule from '@/app/sessions';
 import * as configLoader from '@/config/loader';
 import { sessionConfigSchema, type DiscordConfig, type DynamoDBConfig, type AgentConfig, type Config, type SessionConfig } from '@/config/schemas';
@@ -34,6 +35,22 @@ import { DynamoDBClientHolder } from '@/storage/client-holder';
  * 4. Optional components (memory system) are handled gracefully
  * 5. Error conditions are handled appropriately
  */
+/**
+ * The #41 session-host members of a mocked DiscordBot. `ready` never resolves, so app.start()'s
+ * `startSessions` never opens a conductor (no real SDK/CLI during tests).
+ */
+function pendingSessionHost() {
+    const ready = new Promise<void>(() => {
+        // Deliberately never resolves: the bot never signals readiness in these tests.
+    });
+    return {
+        ready,
+        attachSessions:  mock(async () => undefined),
+        stopIngress:     mock(() => undefined),
+        recoveryAdapter: { recover: mock(async () => undefined) },
+    };
+}
+
 describe('Bot Lifecycle Integration', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
     let mockDiscordConfig: DiscordConfig;
@@ -77,7 +94,7 @@ describe('Bot Lifecycle Integration', () => {
         mockDiscordBot = {
             start:          mock(async () => undefined),
             stop:           mock(async () => undefined),
-            triggerCatchUp: mock(async () => undefined),
+            triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
         };
 
         // Mock DynamoDB client creation
@@ -450,7 +467,8 @@ describe('Bot Lifecycle Integration', () => {
                 conductor: fakeConductor('perch-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, compactionTelemetry: {} as CompactionTelemetry, setWakeTurnDelivery: mock(() => undefined), slotHooks: { onSlotStart: () => undefined, onSlotEnd: () => undefined },
             });
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
-            spies.push(createConversationConductorSpy, createPerchConductorSpy, createDiscordBotSpy);
+            const createSessionSupervisorSpy = spyOn(runtimeModule, 'createSessionSupervisor');
+            spies.push(createConversationConductorSpy, createPerchConductorSpy, createDiscordBotSpy, createSessionSupervisorSpy);
 
             await createApp();
 
@@ -483,9 +501,10 @@ describe('Bot Lifecycle Integration', () => {
             expect(perchItem).toBeDefined();
             expect(conversationItem).not.toEqual(perchItem);
 
-            const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as { journal?: unknown, perchJournal?: unknown };
-            expect(botOptions.journal).toBe(conversationJournal);
-            expect(botOptions.perchJournal).toBe(perchJournal);
+            // #41: the same two journals reach the session supervisor, paired with their conductors.
+            const supervisorParams = createSessionSupervisorSpy.mock.calls[0][0];
+            expect(supervisorParams.conversation?.journal).toBe(conversationJournal);
+            expect(supervisorParams.perch?.journal).toBe(perchJournal);
         });
 
         it('passes a working isPerchPaused function into createDiscordBot (Q3 / B4)', async () => {
@@ -616,7 +635,7 @@ describe('Bot Lifecycle Integration', () => {
                     throw new Error('Login failed');
                 }),
                 stop:           mock(async () => undefined),
-                triggerCatchUp: mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
             };
 
             spies.push(
@@ -663,7 +682,7 @@ describe('Bot Lifecycle Integration', () => {
                 const bot: DiscordBot = {
                     start:          mock(async () => undefined),
                     stop:           mock(async () => undefined),
-                    triggerCatchUp: mock(async () => undefined),
+                    triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
                 };
                 bots.push(bot);
                 return bot;
@@ -839,7 +858,7 @@ describe('Bot Lifecycle Integration', () => {
                 const bot: DiscordBot = {
                     start:          mock(async () => undefined),
                     stop:           mock(async () => undefined),
-                    triggerCatchUp: mock(async () => undefined),
+                    triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
                 };
                 bots.push(bot);
                 return bot;

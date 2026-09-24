@@ -8,14 +8,16 @@ import {
     BskyCheckpointManager,
     BskyOutboundApprovals,
     BskyRejectionBackend,
+    createBskyDmPoller,
+    DEFAULT_DM_POLL_INTERVAL_MS,
     type BlueskyClient,
+    type BskyDmPoller,
     type BskyReplyInput
 } from '@/integrations/bsky';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { BskyApprovalInteractionAdapter } from '@/integrations/discord/approvals/bsky-adapter';
 import { buildBskyApprovalEmbed } from '@/integrations/discord/approvals/bsky-embeds';
 import type { DiscordCapability } from '@/integrations/discord/capability';
-import { createBskyDmPoller, DEFAULT_DM_POLL_INTERVAL_MS, type BskyDmPoller } from '@/integrations/discord/setup/bsky-dm-poller';
 import { TokenBucketRateLimiter, type ApprovedOutboundActionWriter, type ServiceHealthRegistry } from '@/services';
 import type { DynamoDBClientHolder, MemoryToolBackend, PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';

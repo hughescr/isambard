@@ -4,14 +4,14 @@
  * the checkpoint itself), and raises exactly one accumulate notification per non-empty batch.
  */
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { makeHealthRegistry } from '../../../../helpers/fake-health-registry';
-import { mockLogger } from '../../../../setup';
+import { makeHealthRegistry } from '../../../helpers/fake-health-registry';
+import { mockLogger } from '../../../setup';
 import type { NotifyParams } from '@/agent';
 import type { BlueskyClient, BskyConversation } from '@/integrations/bsky';
 import type { BskyCheckpointManager } from '@/integrations/bsky/checkpoint';
 import {
     createBskyDmPoller, DEFAULT_DM_POLL_INTERVAL_MS, type BskyDmPollerOptions
-} from '@/integrations/discord/setup/bsky-dm-poller';
+} from '@/integrations/bsky/dm-poller';
 
 /** Flush enough microtask turns for a tick's `await`-chain (listConversations → processDirectMessages) to settle. */
 async function flushMicrotasks(): Promise<void> {
